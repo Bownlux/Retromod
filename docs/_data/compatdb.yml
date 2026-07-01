@@ -293,3 +293,17 @@
   reporter: "UrAveragePheniox"
   date: "2026-06-29"
   issue: 110
+
+- name: "management wanted more decor 1.20.1"
+  badge: diamond
+  mod_version: "forge 1.20.1"
+  host_mc: "1.21.1 neoforge"
+  loader: neoforge
+  retromod: "1.2.0-snapshot.6+1.21.1-neoforge"
+  links:
+    modrinth: "https://modrinth.com/mod/management-wanted-more-decor"
+  summary: "nothing"
+  details: "<img width=\"958\" height=\"245\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/a8535d9e-fa61-4fac-b13d-cc6c49408c57\" />"
+  reporter: "euzzyfnaf19"
+  date: "2026-07-01"
+  issue: 115
