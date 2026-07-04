@@ -69,6 +69,46 @@ class Forge1122LifecycleTest {
         return cw.toByteArray();
     }
 
+    /**
+     * #120: a real 1.12.2 @Mod carries modid + name + version + dependencies (e.g. Scape and
+     * Run Parasites' SRPMain). Modern Forge's @Mod has ONLY value(); it reads value() = null
+     * from the old shape and dies "mods.toml missing metadata for modid null". The upgrade must
+     * collapse the whole annotation to @Mod(value=modid), no matter how many old elements it had.
+     */
+    @Test
+    @DisplayName("#120: @Mod(modid,name,version,dependencies) collapses to @Mod(value=modid)")
+    void fullLegacyModAnnotationCollapsesToValue() {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        Forge1122LifecycleSynthetics.register(t);
+
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+        cw.visit(Opcodes.V17, ACC_PUBLIC, "test/SRPMain", null, "java/lang/Object", null);
+        AnnotationVisitor av = cw.visitAnnotation("Lnet/minecraftforge/fml/common/Mod;", true);
+        av.visit("modid", "srparasites");
+        av.visit("name", "Scape and Run Parasites");
+        av.visit("version", "1.10.7");
+        av.visit("dependencies", "before:jeid@[2.2.5,)");
+        av.visitEnd();
+        MethodVisitor c = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+        c.visitCode(); c.visitVarInsn(ALOAD, 0);
+        c.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        c.visitInsn(RETURN); c.visitMaxs(0, 0); c.visitEnd();
+        cw.visitEnd();
+
+        byte[] out = Forge1122LifecycleSynthetics.upgradeLegacyModClass(cw.toByteArray());
+        ClassNode cn = new ClassNode();
+        new ClassReader(out).accept(cn, 0);
+        AnnotationNode mod = cn.visibleAnnotations.stream()
+                .filter(a -> a.desc.equals("Lnet/minecraftforge/fml/common/Mod;"))
+                .findFirst().orElseThrow();
+        assertEquals(2, mod.values.size(),
+                "every old element must be dropped, leaving only value: " + mod.values);
+        assertEquals("value", mod.values.get(0));
+        assertEquals("srparasites", mod.values.get(1),
+                "value must be the modid so modern Forge reads a real id, not null");
+    }
+
     @Test
     @DisplayName("@Mod(modid=...) becomes @Mod(value) and the ctor gains the lifecycle call")
     void modClassIsUpgraded() {
