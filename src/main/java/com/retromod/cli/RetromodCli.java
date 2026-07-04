@@ -127,6 +127,18 @@ public class RetromodCli {
     }
     
     private static void registerAllShims() {
+        // Activate the 1.12.2 @Mod(modid=...) modernization for the whole CLI session (#120).
+        // The runtime activates it when the 1.12.2 shim chain registers; the CLI's per-command
+        // flows can call transformJar BEFORE that point, so a 1.12.2 mod's @Mod would keep the
+        // old shape and modern Forge would read a null modid ("mods.toml missing metadata for
+        // modid null"). The pass is self-gating on the old annotation shape, so activating it
+        // globally here is harmless for every other mod.
+        try {
+            com.retromod.shim.forge.Forge1122LifecycleSynthetics.register(
+                    RetromodTransformer.getInstance());
+        } catch (Exception ignored) {
+        }
+
         // Fabric shims: complete 1.14.4 to 26.1 chain
         shimRegistry.register(new Fabric_1_14_4_to_1_15_2());
         shimRegistry.register(new Fabric_1_15_2_to_1_16_5());
