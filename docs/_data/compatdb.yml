@@ -431,3 +431,18 @@
   reporter: "UrAveragePheniox"
   date: "2026-06-29"
   issue: 110
+
+- name: "CustomNPCs-Unofficial"
+  badge: borked
+  mod_version: "1.21.1.20260124"
+  source_mc: "1.21.1"
+  host_mc: "26.2"
+  loader: fabric
+  retromod: "1.2.0-snapshot .7+26.2-fabric"
+  links:
+    modrinth: "https://modrinth.com/mod/customnpcs-unofficial/version/1.21.1.20260124"
+  summary: "Crashes at bootstrap due to \"java.lang.VerifyError: Bad type on operand stack\"."
+  details: "Will provide the log soon, as it seems it's too big to be put into \"Details\"."
+  reporter: "andrewharn"
+  date: "2026-07-04"
+  issue: 121
