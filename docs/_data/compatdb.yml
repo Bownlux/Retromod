@@ -506,3 +506,18 @@
   reporter: "andrewharn"
   date: "2026-07-04"
   issue: 129
+
+- name: "VillagerViewer"
+  badge: borked
+  mod_version: "1.0.0"
+  source_mc: "MC 1.21.9-1.21.10"
+  host_mc: "26.2"
+  loader: fabric
+  retromod: "1.2.0"
+  links:
+    modrinth: "https://modrinth.com/mod/villagerviewer/version/1.21.9"
+  summary: "crash, failed conversion"
+  details: "crash report: java.lang.RuntimeException: Could not execute entrypoint stage 'main' due to errors, provided by 'villagerviewer' at 'org.oldskooler.villagerviewer.VillagerViewer'! 	at net.fabricmc.loader.impl.FabricLoaderImpl.lambda$invokeEntrypoints$0(FabricLoaderImpl.java:413) 	at net.fabricmc.loader.impl.util.ExceptionUtil.gatherExceptions(ExceptionUtil.java:33) 	at net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:411) 	at net.fabricmc.loader.impl.game.minecraft.Hooks.startClient(Hooks.java:52) 	at knot//net.minecraft.client.Minecraft.<init>(Minecraft.java:456) 	at knot//net.minecraft.client.main.Main.main(Main.java:278) 	at net.fabricmc.loader.impl.game.minecraft.MinecraftGameProvider.launch(MinecraftGameProvider.java:514) 	at net.fabricmc.loader.impl.launch.knot.Knot.launch(Knot.java:72) 	at net.fabricmc.loader.impl.launch.knot.KnotClient.main(KnotClient.java:23) Caused by: java.lang.NoClassDefFoundError: net/fabricmc/fabric/api/screenhandler/v1/ExtendedScreenHandlerType$ExtendedFactory 	at knot//org.oldskooler.villagerviewer.VillagerViewer.<clinit>(VillagerViewer.java:31) 	at java.base/java.lang.Class.forName0(Native Method) 	at java.base/java.lang.Class.forName(Class.java:547) 	at net.fabricmc.loader.impl.util.DefaultLanguageAdapter.create(DefaultLanguageAdapter.java:53) 	at net.fabricmc.loader.impl.entrypoint.EntrypointStorage$NewEntry.getOrCreate(EntrypointStorage.java:124) 	at net.fabricmc.loader.impl.entrypoint.EntrypointContainerImpl.getEntrypoint(EntrypointContainerImpl.java:53) 	at net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:409) 	... 6 more Caused by: java.lang.ClassNotFoundException: net.fabricmc.fabric.api.screenhandler.v1.ExtendedScreenHandlerType$ExtendedFactory 	at java.base/jdk.internal.loader.BuiltinClassLoader.loadClass(BuiltinClassLoader.java:580) 	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:490) 	at net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.loadClass(KnotClassDelegate.java:239) 	at net.fabricmc.loader.impl.launch.knot.KnotClassLoader.loadClass(KnotClassLoader.java:119) 	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:490) 	... 13 more verify-report: Retromod Transform Verification Report ═══════════════════════════════════════ Mod:     VillagerViewer Target:  MC 26.2 Time:    2026-07-07 00:10:50 Result:  FAILED Found 1 issue(s): ── Missing Classes ──   ✗ [Lcom.retromod.generated.legacyrenderer.BlendMode; not found in MC 26.2"
+  reporter: "AlyQuick"
+  date: "2026-07-07"
+  issue: 147
