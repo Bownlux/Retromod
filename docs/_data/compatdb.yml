@@ -506,3 +506,17 @@
   reporter: "andrewharn"
   date: "2026-07-04"
   issue: 129
+
+- name: "Eldrich End"
+  badge: borked
+  mod_version: "1.20.1"
+  host_mc: "26.1.1"
+  loader: fabric
+  retromod: "1.2.0"
+  links:
+    curseforge: "https://www.curseforge.com/minecraft/mc-mods/eldritch-end/files/all?page=1&pageSize=20&showAlphaFiles=hide"
+  summary: "Crashes on launch."
+  details: "Crashes on launch, won't even load."
+  reporter: "redzgaming68-oss"
+  date: "2026-07-10"
+  issue: 150
