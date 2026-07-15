@@ -520,3 +520,25 @@
   reporter: "Soviet1290"
   date: "2026-07-06"
   issue: 142
+
+- name: "CERBON's Better Beacons"
+  bundle: true
+  badge: copper
+  host_mc: "26.1.2"
+  loader: fabric
+  retromod: "1.2.0"
+  mods:
+    - name: "CERBON's Better Beacons"
+      version: "2.1.1"
+      source_mc: "1.21.1"
+      link: "https://modrinth.com/mod/cerbons-better-beacons"
+    - name: "CERBON's API"
+      version: "1.3.0"
+      source_mc: "1.21"
+      link: "https://modrinth.com/mod/cerbons-api"
+    - name: "[Issued Mods.zip](https://github.com/user-attachments/files/30038836/Issued.Mods.zip)"
+  summary: "Not working"
+  details: "it appears in the mods as if it was working, but ingame doesn't works at all. you also can't access to the configuration of the mod, so basically it's like a ghost mod, you can see it but can't do nothing with it"
+  reporter: "Santy-nog"
+  date: "2026-07-15"
+  issue: 159
