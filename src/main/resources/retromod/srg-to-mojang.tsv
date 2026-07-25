@@ -68,7 +68,7 @@
 # once. Verify after manual edits:
 #   awk -F'\t' '!/^#/&&NF{print $1,$2}' srg-to-mojang.tsv | sort | uniq -d
 #
-# Entries below: 30222 FIELD, 24035 METHOD.
+# Entries below: 30221 FIELD, 24036 METHOD.
 # =========================================================================
 
 # -------------------------------------------------------------------------
@@ -22388,7 +22388,6 @@ FIELD	f_191773_	CODEC
 FIELD	f_191774_	LIST_CODEC
 FIELD	f_191775_	feature
 FIELD	f_191776_	placement
-FIELD	f_191782_	place
 FIELD	f_191814_	level
 FIELD	f_191815_	generator
 FIELD	f_191816_	topFeature
@@ -37942,7 +37941,6 @@ METHOD	m_78257_	getBaseDir
 METHOD	m_78260_	createAccess
 METHOD	m_78262_	getBackupPath
 METHOD	m_78265_	getStorageVersion
-METHOD	m_78271_	levelPath
 METHOD	m_78277_	getLevelId
 METHOD	m_78283_	getLevelPath
 METHOD	m_78287_	saveDataTag
@@ -47138,6 +47136,7 @@ METHOD	m_191715_	spread
 METHOD	m_191731_	of
 METHOD	m_191756_	of
 METHOD	m_191781_	getFeatures
+METHOD	m_191782_	place
 METHOD	m_191821_	getCarvingMask
 METHOD	m_191824_	getHeight
 METHOD	m_191828_	getBlockState
