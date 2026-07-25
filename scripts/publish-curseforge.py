@@ -75,6 +75,14 @@ def load_game_versions(token):
         t.get("id") for t in types
         if str(t.get("slug", "")) == "modloader" or str(t.get("name", "")) == "Modloader"
     }
+    # CurseForge added a mandatory "Environment" version group (Client / Server): an upload that
+    # omits it is rejected with errorCode 1021 "You must select at least one version from the
+    # environment group of versions". Resolve that group's type id here so we can tag every file.
+    env_type_ids = {
+        t.get("id") for t in types
+        if "environment" in str(t.get("slug", "")).lower()
+        or str(t.get("name", "")).strip().lower() == "environment"
+    }
     if not mc_type_ids:
         sys.exit("ERROR: could not identify CurseForge's Minecraft version types from "
                  "/api/game/version-types - aborting rather than uploading with wrong "
@@ -86,6 +94,7 @@ def load_game_versions(token):
     # pick a stale id that the upload API then 500s on.
     mc_candidates = {}
     loaders = {}
+    env = {}
     for v in _get_json(token, "/api/game/versions"):
         name = (v.get("name") or "").strip()
         vid = v.get("id")
@@ -93,6 +102,9 @@ def load_game_versions(token):
         if name.lower() in ("fabric", "forge", "neoforge", "quilt") \
                 and (not loader_type_ids or tid in loader_type_ids):
             loaders[name.lower()] = vid
+        elif name.lower() in ("client", "server") \
+                and (not env_type_ids or tid in env_type_ids):
+            env[name.lower()] = vid
         elif tid in mc_type_ids and re.fullmatch(r"\d+\.\d+(\.\d+)?", name):  # "1.20.1", "26.2"
             mc_candidates.setdefault(name, []).append(vid)
 
@@ -122,7 +134,20 @@ def load_game_versions(token):
         sys.exit("ERROR: resolved 0 Minecraft versions after type-filtering - the CF API "
                  "response shape may have changed (expected 'gameVersionTypeID' per version). "
                  "Aborting.")
-    return mc, loaders
+
+    # Environment override / fallback: CF_ENV_IDS="client=1234,server=5678" pins ids. Retromod is
+    # a client+server transformer, so both apply; CF requires at least one (errorCode 1021).
+    for pair in os.environ.get("CF_ENV_IDS", "").strip().split(","):
+        if "=" in pair:
+            k, val = pair.split("=", 1)
+            if val.strip().isdigit():
+                env[k.strip().lower()] = int(val.strip())
+                print(f"  FORCED env {k.strip()} -> {val.strip()} (CF_ENV_IDS)")
+    if not env:
+        print("  WARNING: could not resolve CurseForge's Client/Server environment version ids; "
+              "uploads will be rejected with errorCode 1021. Pin them with "
+              "CF_ENV_IDS=\"client=<id>,server=<id>\" if CF renamed the group.")
+    return mc, loaders, env
 
 
 def extract_changelog(path):
@@ -210,9 +235,11 @@ def main():
             f"(Settings -> Secrets and variables -> Actions -> Variables)."
         )
 
-    mc_map, loader_map = load_game_versions(token)
+    mc_map, loader_map, env_map = load_game_versions(token)
+    env_ids = list(env_map.values())
     changelog = extract_changelog(args.changelog_file)
-    print(f"CF knows {len(mc_map)} MC versions, loaders: {sorted(loader_map)}")
+    print(f"CF knows {len(mc_map)} MC versions, loaders: {sorted(loader_map)}, "
+          f"environment: {sorted(env_map)}")
     print(f"Mode: {'DRY RUN (no uploads)' if args.dry_run else 'LIVE upload'} | "
           f"version={args.version} type={args.release_type}\n")
 
@@ -227,7 +254,8 @@ def main():
                 print(f"  SKIP {base}: CF has no '{loader_name}' loader tag"); skipped += 1; continue
             if mcver not in mc_map:
                 print(f"  SKIP {base}: CF has no '{mcver}' game version yet"); skipped += 1; continue
-            gv = [mc_map[mcver], loader_map[loader_name]]
+            # [MC version, loader, Client, Server]: CF requires an environment-group version too.
+            gv = [mc_map[mcver], loader_map[loader_name]] + env_ids
             name = f"Retromod {args.version} ({loader_dir} {mcver})"
             if args.dry_run:
                 print(f"  DRY  {base}  gameVersions={gv}  \"{name}\""); uploaded += 1
