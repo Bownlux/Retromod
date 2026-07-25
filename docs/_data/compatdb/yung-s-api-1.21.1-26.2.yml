@@ -1,0 +1,17 @@
+name: YUNG's API
+badge: gold
+mod_version: 5.1.6
+source_mc: 1.21.1
+host_mc: '26.2'
+loader: fabric
+retromod: 1.2.0-snapshot.7
+links:
+  modrinth: https://modrinth.com/mod/yungs-api
+summary: The whole worldgen library works on 26.2; its structures register AND generate.
+details: 'The mod that drove the snapshot.7 worldgen chain. Its Reflections-based AutoRegister system
+  found nothing in transformed jars (missing zip directory entries), its bundled javassist was corrupted
+  by re-serialization, and the 26.x codec/registry reworks broke its structure types; all fixed. Verified
+  on a 26.2 dedicated server: every worldgen registry binds with zero errors and jigsaw structure assembly
+  runs clean. Server-verified; client-side rendering not separately exercised.'
+reporter: Bownlux
+date: 2026-07-02

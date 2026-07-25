@@ -136,6 +136,187 @@ public class Corpus26xDescriptorAdaptationTest {
     }
 
     @Test
+    @DisplayName("Vec3.<init>(Vector3f) widened to <init>(Vector3fc), INVOKESPECIAL kept, no cast")
+    void vec3JomlCtorWiden() {
+        // static void call(Vector3f v) { new Vec3(v); } -- the joml concrete->interface widening.
+        List<AbstractInsnNode> insns = transformBody("(Lorg/joml/Vector3f;)V", mv -> {
+            mv.visitTypeInsn(NEW, "net/minecraft/world/phys/Vec3");
+            mv.visitInsn(DUP);
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitMethodInsn(INVOKESPECIAL, "net/minecraft/world/phys/Vec3", "<init>",
+                    "(Lorg/joml/Vector3f;)V", false);
+            mv.visitInsn(POP); // discard the constructed Vec3
+        });
+        MethodInsnNode c = firstCall(insns, "net/minecraft/world/phys/Vec3");
+        assertNotNull(c, "the Vec3 ctor call must survive");
+        assertEquals("<init>", c.name, "still a constructor");
+        assertEquals(INVOKESPECIAL, c.getOpcode(), "constructor invocation opcode preserved");
+        assertEquals("(Lorg/joml/Vector3fc;)V", c.desc, "arg widened to the Vector3fc interface");
+        // A Vector3f IS-A Vector3fc, so the upcast needs no checkcast/conversion insn.
+        assertFalse(hasOpcodeBefore(insns, CHECKCAST, c), "no checkcast needed for the upcast");
+    }
+
+    @Test
+    @DisplayName("PoseStack.mulPose(Quaternionf) widens to (Quaternionfc), no cast")
+    void poseStackMulPoseWiden() {
+        List<AbstractInsnNode> insns = transformBody(
+                "(Lcom/mojang/blaze3d/vertex/PoseStack;Lorg/joml/Quaternionf;)V", mv -> {
+            mv.visitVarInsn(ALOAD, 0); // PoseStack receiver
+            mv.visitVarInsn(ALOAD, 1); // Quaternionf arg
+            mv.visitMethodInsn(INVOKEVIRTUAL, "com/mojang/blaze3d/vertex/PoseStack", "mulPose",
+                    "(Lorg/joml/Quaternionf;)V", false);
+        });
+        MethodInsnNode c = firstCall(insns, "com/mojang/blaze3d/vertex/PoseStack");
+        assertNotNull(c, "the mulPose call survives");
+        assertEquals("(Lorg/joml/Quaternionfc;)V", c.desc, "arg widened to the Quaternionfc interface");
+        assertFalse(hasOpcodeBefore(insns, CHECKCAST, c), "no checkcast needed for the upcast");
+    }
+
+    @Test
+    @DisplayName("Vec3::new method reference (invokedynamic handle) also widens to Vector3fc")
+    void vec3JomlCtorReferenceWiden() {
+        // The codec form `VECTOR3F.map(Vec3::new, Vec3::toVector3f)` (jade EntityAccessorImpl):
+        // Vec3::new compiles to an invokedynamic whose impl handle is H_NEWINVOKESPECIAL
+        // Vec3.<init>(Vector3f)V. The direct-call redirect never sees it, so the handle must be
+        // widened separately or it dies NoSuchMethodError at <clinit>.
+        org.objectweb.asm.Handle metafactory = new org.objectweb.asm.Handle(H_INVOKESTATIC,
+                "java/lang/invoke/LambdaMetafactory", "metafactory",
+                "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;"
+                        + "Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;"
+                        + "Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;", false);
+        org.objectweb.asm.Handle vec3New = new org.objectweb.asm.Handle(H_NEWINVOKESPECIAL,
+                "net/minecraft/world/phys/Vec3", "<init>", "(Lorg/joml/Vector3f;)V", false);
+        List<AbstractInsnNode> insns = transformBody("()V", mv -> {
+            mv.visitInvokeDynamicInsn("apply", "()Ljava/util/function/Function;", metafactory,
+                    org.objectweb.asm.Type.getMethodType("(Ljava/lang/Object;)Ljava/lang/Object;"),
+                    vec3New,
+                    org.objectweb.asm.Type.getMethodType("(Lorg/joml/Vector3f;)Lnet/minecraft/world/phys/Vec3;"));
+            mv.visitInsn(POP); // discard the produced Function
+        });
+        org.objectweb.asm.tree.InvokeDynamicInsnNode indy = null;
+        for (AbstractInsnNode i : insns) {
+            if (i instanceof org.objectweb.asm.tree.InvokeDynamicInsnNode idn) { indy = idn; break; }
+        }
+        assertNotNull(indy, "the invokedynamic survives the transform");
+        org.objectweb.asm.Handle impl = (org.objectweb.asm.Handle) indy.bsmArgs[1];
+        assertEquals("<init>", impl.getName(), "still a constructor reference");
+        assertEquals(H_NEWINVOKESPECIAL, impl.getTag(), "tag stays H_NEWINVOKESPECIAL");
+        assertEquals("net/minecraft/world/phys/Vec3", impl.getOwner(), "owner unchanged");
+        assertEquals("(Lorg/joml/Vector3fc;)V", impl.getDesc(),
+                "the Vec3::new handle's arg widened to the Vector3fc interface");
+    }
+
+    @Test
+    @DisplayName("new KeyMapping(String,Type,int,String) -> RetroKeyMapping.create factory + CHECKCAST")
+    void keyMappingCtorBridge() {
+        // A keybind: new KeyMapping(name, type, code, categoryString). The category String became a
+        // KeyMapping.Category in 26.x, so the ctor is redirected to the reflective factory.
+        List<AbstractInsnNode> insns = transformBody(
+                "(Lcom/mojang/blaze3d/platform/InputConstants$Type;)V", mv -> {
+            mv.visitTypeInsn(NEW, "net/minecraft/client/KeyMapping");
+            mv.visitInsn(DUP);
+            mv.visitLdcInsn("key.jade.showoverlay");
+            mv.visitVarInsn(ALOAD, 0);                    // InputConstants$Type
+            mv.visitIntInsn(BIPUSH, 72);                  // key code
+            mv.visitLdcInsn("key.categories.misc");       // category as a String
+            mv.visitMethodInsn(INVOKESPECIAL, "net/minecraft/client/KeyMapping", "<init>",
+                    "(Ljava/lang/String;Lcom/mojang/blaze3d/platform/InputConstants$Type;ILjava/lang/String;)V",
+                    false);
+            mv.visitInsn(POP); // discard the constructed KeyMapping
+        });
+        MethodInsnNode factory = firstCall(insns, "com/retromod/polyfill/minecraft/RetroKeyMapping");
+        assertNotNull(factory, "the KeyMapping ctor is redirected to the RetroKeyMapping factory");
+        assertEquals("create", factory.name);
+        assertEquals(INVOKESTATIC, factory.getOpcode(), "constructor-to-factory is a static call");
+        // The factory returns Object, so a CHECKCAST to KeyMapping is appended.
+        boolean checkcast = insns.stream().anyMatch(i -> i instanceof TypeInsnNode ti
+                && ti.getOpcode() == CHECKCAST && ti.desc.equals("net/minecraft/client/KeyMapping"));
+        assertTrue(checkcast, "a CHECKCAST to KeyMapping is appended after the Object-returning factory");
+        // The NEW of KeyMapping is gone (the ctor-to-factory rewrite removed it).
+        boolean newKeyMapping = insns.stream().anyMatch(i -> i instanceof TypeInsnNode ti
+                && ti.getOpcode() == NEW && ti.desc.equals("net/minecraft/client/KeyMapping"));
+        assertFalse(newKeyMapping, "the NEW KeyMapping is removed by the ctor->factory rewrite");
+    }
+
+    @Test
+    @DisplayName("SimpleJsonResourceReloadListener(Gson,String) subclass is rebased onto the synthetic")
+    void simpleJsonReloadListenerRebase() {
+        // A mod class that extends the removed Gson-based listener and calls super(gson, "dir").
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, "test/MyThemeLoader", null,
+                "net/minecraft/server/packs/resources/SimpleJsonResourceReloadListener", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitInsn(ACONST_NULL);          // the Gson (irrelevant to the rebase)
+        mv.visitLdcInsn("my_dir");
+        mv.visitMethodInsn(INVOKESPECIAL,
+                "net/minecraft/server/packs/resources/SimpleJsonResourceReloadListener", "<init>",
+                "(Lcom/google/gson/Gson;Ljava/lang/String;)V", false);
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        byte[] out = transformer.transformClass(cw.toByteArray(), "test/MyThemeLoader");
+        ClassNode cn = new ClassNode();
+        new ClassReader(out).accept(cn, 0);
+        assertEquals("com/retromod/polyfill/minecraft/RetroSimpleJsonReloadListener", cn.superName,
+                "the extends clause is rebased onto the synthesized superclass");
+        boolean superCtorRewritten = cn.methods.stream()
+                .flatMap(m -> java.util.Arrays.stream(m.instructions.toArray()))
+                .anyMatch(i -> i instanceof MethodInsnNode mi && mi.getOpcode() == INVOKESPECIAL
+                        && mi.name.equals("<init>")
+                        && mi.owner.equals("com/retromod/polyfill/minecraft/RetroSimpleJsonReloadListener")
+                        && mi.desc.equals("(Lcom/google/gson/Gson;Ljava/lang/String;)V"));
+        assertTrue(superCtorRewritten, "the super(gson, dir) call is rewritten to the synthetic's ctor");
+        // The synthesized superclass (and its reflective scan helper) are registered as synthetics.
+        assertTrue(transformer.getSyntheticClasses()
+                .containsKey("com/retromod/polyfill/minecraft/RetroSimpleJsonReloadListener"),
+                "the synthesized superclass is registered for embedding");
+    }
+
+    @Test
+    @DisplayName("RetroReloadScan is fail-safe (no Minecraft -> empty map, never throws)")
+    void retroReloadScanFailSafe() {
+        Object result = com.retromod.polyfill.minecraft.RetroReloadScan.scan(null, "any_dir", null);
+        assertTrue(result instanceof java.util.Map, "always returns a Map");
+        assertTrue(((java.util.Map<?, ?>) result).isEmpty(), "no Minecraft on the test classpath -> empty");
+    }
+
+    @Test
+    @DisplayName("RetroKeyMapping factory is fail-safe (no Minecraft -> null, never throws)")
+    void retroKeyMappingFailSafe() {
+        // With no Minecraft on the test classpath, the reflective construction can't succeed; the
+        // factory returns null (the redirect's CHECKCAST null passes) instead of throwing.
+        assertNull(com.retromod.polyfill.minecraft.RetroKeyMapping.create(
+                "key.test", null, 72, "key.categories.misc"));
+        assertNull(com.retromod.polyfill.minecraft.RetroKeyMapping.createDefault(
+                "key.test", 72, "some.mod.category"));
+    }
+
+    @Test
+    @DisplayName("Util.backgroundExecutor() retargets to TracingExecutor + appends .service() unwrap")
+    void utilExecutorReturnUnwrap() {
+        // 26.x: Util.backgroundExecutor() returns TracingExecutor (not ExecutorService); unwrap it.
+        List<AbstractInsnNode> insns = transformBody("()V", mv -> {
+            mv.visitMethodInsn(INVOKESTATIC, "net/minecraft/util/Util", "backgroundExecutor",
+                    "()Ljava/util/concurrent/ExecutorService;", false);
+            mv.visitInsn(POP); // discard the ExecutorService the caller would use
+        });
+        MethodInsnNode call = firstCall(insns, "net/minecraft/util/Util");
+        assertNotNull(call, "the Util.backgroundExecutor call survives");
+        assertEquals("backgroundExecutor", call.name);
+        assertEquals("()Lnet/minecraft/TracingExecutor;", call.desc, "retargeted to the TracingExecutor form");
+        MethodInsnNode unwrap = firstCall(insns, "net/minecraft/TracingExecutor");
+        assertNotNull(unwrap, "a .service() unwrap call is appended");
+        assertEquals("service", unwrap.name);
+        assertEquals("()Ljava/util/concurrent/ExecutorService;", unwrap.desc, "unwrap yields ExecutorService");
+        assertEquals(INVOKEVIRTUAL, unwrap.getOpcode(), "unwrap is an instance call on the wrapper");
+        assertTrue(insns.indexOf(call) < insns.indexOf(unwrap), "unwrap comes AFTER the retargeted call");
+    }
+
+    @Test
     @DisplayName("CompoundTag.getList(String,int) -> getListOrEmpty(String) dropping the int")
     void compoundTagGetListArgDrop() {
         List<AbstractInsnNode> insns = transformBody("(Lnet/minecraft/nbt/CompoundTag;Ljava/lang/String;)V", mv -> {

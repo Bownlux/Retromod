@@ -1,0 +1,14 @@
+name: Carts MMNM
+badge: borked
+mod_version: 1.16.5
+host_mc: 1.20.1
+loader: forge
+retromod: '0.5'
+links:
+  curseforge: https://www.curseforge.com/minecraft/mc-mods/carts-mmnm-addon
+summary: Crashes on second boot,
+details: 'Borked [cartaddon-0.8.04.jar.txt](https://github.com/user-attachments/files/29478865/cartaddon-0.8.04.jar.txt)
+  Note: also tested with mine mine no mi being 1.20.1 (Crash still happens)'
+reporter: UrAveragePheniox
+date: '2026-06-29'
+issue: 110

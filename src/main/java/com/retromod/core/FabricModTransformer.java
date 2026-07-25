@@ -499,6 +499,14 @@ public class FabricModTransformer {
                     transformed = bytecodeTransformer.transformClass(original, className);
                 }
 
+                // 26.x GUI 2D-transform migration, POST-remap (pose()/GuiGraphics/PoseStack are
+                // Mojang-named now, so a Fabric mod's intermediary GUI calls are finally reachable).
+                // Same conservative peephole the offline batch path applies; parity for the runtime
+                // retromod-input flow. No-op unless the class matches, and returns input on failure.
+                if (transformed != null && RetromodPreLaunch.isUnobfuscatedTarget(targetMcVersion)) {
+                    transformed = com.retromod.shim.common.Gui2DTransformMigration.migrate(transformed);
+                }
+
                 boolean wroteFirst = false;
                 if (transformed != null && transformed != original) {
                     Files.write(classFile, transformed);

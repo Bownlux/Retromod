@@ -516,6 +516,100 @@ public final class Mc26_1To26_2CoreMoves {
             "net/minecraft/client/renderer/GameRenderer", "mainCamera",
             "()Lnet/minecraft/client/Camera;"
         );
+
+        // Minecraft.screen (the public @Nullable active-screen field, still public on
+        // 26.1-snapshot-10) moved to Gui in 26.2: `private Screen screen` on net/minecraft/client/
+        // gui/Gui with public accessors screen()/setScreen(Screen), reached through the public final
+        // Minecraft.gui field (Minecraft.setScreenAndShow is itself just gui.setScreen +
+        // renderFrame). Null-during-gameplay semantics match the old field. Pure-bytecode hop, no
+        // reflection: this is the TOP client-structure residual (corpus: 31 mods read, 408 sites,
+        // many per-frame). Write caveat: the 6 mods that PUTFIELD directly (screen-suppress/restore
+        // idioms, e.g. fastquit) now go through the real setScreen, i.e. modern semantics (screen
+        // close/init hooks fire) instead of a silent field swap; net-better than the
+        // NoSuchFieldError they'd otherwise crash with.
+        t.registerFieldHopAccessor(
+            "net/minecraft/client/Minecraft", "screen",
+            "gui", "Lnet/minecraft/client/gui/Gui;",
+            "screen", "()Lnet/minecraft/client/gui/screens/Screen;",
+            "setScreen", "(Lnet/minecraft/client/gui/screens/Screen;)V"
+        );
+
+        // Options.hideGui (public boolean on 26.1-snapshot-10) is gone in 26.2: the F1 state moved
+        // to Hud.isHidden (private; public isHidden()/toggle(), NO absolute setter; vanilla reads it
+        // as mc.gui.hud.isHidden()). The Options receiver can't reach that, so GETFIELD/PUTFIELD
+        // become opcode-aware static calls on the embedded reflective RetroClientEnv, which caches
+        // the Hud instance (mc.gui and gui.hud are public final) and expresses a write as the
+        // conditional toggle. Corpus: 12 mods read, 1 writes (controlify's manual F1 toggle).
+        Common_1_21_11_to_26_1_ClassMoves.ensureSyntheticRegistered(
+            t, "com/retromod/polyfill/minecraft/RetroClientEnv");
+        t.registerFieldStaticBridge(
+            "net/minecraft/client/Options", "hideGui",
+            "com/retromod/polyfill/minecraft/RetroClientEnv",
+            "isHideGui", "(Ljava/lang/Object;)Z",
+            "setHideGui", "(Ljava/lang/Object;Z)V"
+        );
+
+        // 17 Gui members moved to Hud in 26.2 (getChat/getFont/getTabList/title API/...); the
+        // receiver hop goes through the generated GuiToHudHop forwarder (see its javadoc).
+        GuiToHudHopSynthetic.register(t);
+
+        // 1.21.11-era client classes that moved sub-packages at 26.2 (verified: old path present on
+        // 26.1-snapshot-10, only the new path on 26.2). Surfaced by nekomasfixed (#157), whose
+        // 1.21.11 mixins target them. Inners registered explicitly (the remapper is exact-keyed).
+        t.registerClassRedirect("net/minecraft/client/resources/model/AtlasManager",
+                "net/minecraft/client/resources/model/sprite/AtlasManager");
+        for (String inner : new String[]{"AtlasConfig", "AtlasEntry", "PendingStitch", "PendingStitchResults"}) {
+            t.registerClassRedirect("net/minecraft/client/resources/model/AtlasManager$" + inner,
+                    "net/minecraft/client/resources/model/sprite/AtlasManager$" + inner);
+        }
+        t.registerClassRedirect("net/minecraft/client/renderer/state/ParticleGroupRenderState",
+                "net/minecraft/client/renderer/state/level/ParticleGroupRenderState");
+        t.registerClassRedirect("net/minecraft/client/renderer/state/CameraRenderState",
+                "net/minecraft/client/renderer/state/level/CameraRenderState");
+
+        // The promoted 26.1 blend-factor enums (SourceFactor/DestFactor) were DELETED at 26.2
+        // (verified: present on 26.1-snapshot-10, absent on 26.2). Their only mod use is feeding
+        // RenderSystem.blendFunc(Separate), which the render-state neutralizer already pops, so a
+        // GETSTATIC of an enum constant becomes a pushed null (static-field nuller) instead of a
+        // NoClassDefFoundError. The GlStateManager$class_4534/4535 hybrid spellings converge onto
+        // these names via the class-move tsv first.
+        t.registerStaticFieldNuller("com/mojang/blaze3d/platform/SourceFactor");
+        t.registerStaticFieldNuller("com/mojang/blaze3d/platform/DestFactor");
+
+        // 26.2 introduced BlockItemTags (paired block+item tag ids) and DELETED the corresponding
+        // per-registry constants: 17 from BlockTags and 16 from ItemTags (all still present on
+        // 26.1-snapshot-10, so 26.2 epoch; the full constant diff was enumerated against both
+        // jars). A GETSTATIC of a deleted constant becomes GETSTATIC BlockItemTags.X +
+        // INVOKEVIRTUAL BlockItemTagId.block()/item(), the exact shape registerStaticFieldAccessor
+        // exists for (26.2 ColorCollection precedent). Corpus scan hit: Darker Depths'
+        // RotatedPillarBlockMixin reads BlockTags.LOGS_THAT_BURN in its handler body.
+        String bit = "net/minecraft/tags/BlockItemTags";
+        String bitId = "net/minecraft/tags/BlockItemTagId";
+        String bitIdDesc = "L" + bitId + ";";
+        String tagKeyRet = "()Lnet/minecraft/tags/TagKey;";
+        for (String c : new String[]{
+                "SAPLINGS", "OAK_LOGS", "DARK_OAK_LOGS", "BIRCH_LOGS", "ACACIA_LOGS",
+                "SPRUCE_LOGS", "MANGROVE_LOGS", "CHERRY_LOGS", "CRIMSON_STEMS", "WARPED_STEMS",
+                "LOGS_THAT_BURN", "SMELTS_TO_GLASS", "DIAMOND_ORES", "REDSTONE_ORES",
+                "LAPIS_ORES", "COAL_ORES", "EMERALD_ORES"}) {
+            t.registerStaticFieldAccessor(
+                "net/minecraft/tags/BlockTags", c,
+                bit, c, bitIdDesc,
+                null, null, null,
+                bitId, "block", tagKeyRet,
+                null);
+        }
+        for (String c : new String[]{
+                "STONE_BUTTONS", "BUTTONS", "DOORS", "SLABS", "STAIRS", "TRAPDOORS",
+                "SMALL_FLOWERS", "FLOWERS", "FENCES", "GRASS_BLOCKS", "COPPER_CHESTS",
+                "LIGHTNING_RODS", "COPPER_GOLEM_STATUES", "CHAINS", "LANTERNS", "BARS"}) {
+            t.registerStaticFieldAccessor(
+                "net/minecraft/tags/ItemTags", c,
+                bit, c, bitIdDesc,
+                null, null, null,
+                bitId, "item", tagKeyRet,
+                null);
+        }
     }
 
     private static final String BLOCKS = "net/minecraft/world/level/block/Blocks";

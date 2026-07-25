@@ -1,0 +1,16 @@
+name: True Darkness Biomes
+badge: copper
+mod_version: 1.x
+source_mc: 1.20.1
+host_mc: 1.21.11
+loader: fabric
+retromod: 1.1.0-snapshot.1
+links:
+  modrinth: https://modrinth.com/mod/true-darkness-refabricated
+summary: Loads and plays after whole-class mixin stripping; the darkened-light rendering itself is inert.
+details: Crashed on world create before snapshot.1 (ClassCastException in its LightTexture mixin). The
+  render mixins are whole-class-stripped now (#68), so worlds load — but that means the actual darkness
+  effect doesn't apply.
+reporter: Bownlux
+date: 2026-05-29
+issue: 68

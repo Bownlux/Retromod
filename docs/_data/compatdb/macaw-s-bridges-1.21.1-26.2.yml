@@ -1,0 +1,18 @@
+name: Macaw's Bridges
+badge: gold
+mod_version: 3.1.2
+source_mc: 1.21.1
+host_mc: '26.2'
+loader: neoforge
+retromod: 1.2.0-snapshot.7
+links:
+  modrinth: https://modrinth.com/mod/macaws-bridges
+summary: Constructs, registers, renders, and places in-world on NeoForge 26.2; everything tested works.
+details: 'The snapshot.7 acceptance mod for the Forge-to-NeoForge migration spine. Needed (and drove)
+  a chain of fixes: the FMLJavaModLoadingContext bridge, the registry-id thread-local, the 26.2 ColorCollection
+  accessors, the 1.21.4+ client item definitions (all items rendered as the missing-texture checkerboard
+  before), and the removed is() overloads (placing a bridge crashed the server tick loop before). Verified
+  in-game: creative tabs are fully textured, bridges place, and the world persists across rejoin. Gold
+  rather than diamond only because not every block variant was individually play-tested.'
+reporter: Bownlux
+date: 2026-07-02

@@ -1,0 +1,16 @@
+name: EMI
+badge: gold
+mod_version: 2.x
+source_mc: 1.21.1
+host_mc: 26.1.2
+loader: neoforge
+retromod: 1.1.0-snapshot.3
+links:
+  modrinth: https://modrinth.com/mod/emi
+summary: Recipe viewer loads and indexes recipes after the RecipesUpdatedEvent rename fix.
+details: 'Crashed at construct time on snapshot.2 and earlier (NoClassDefFoundError: RecipesUpdatedEvent
+  — the event was renamed in the 1.21.4 line). Fixed by a class redirect in snapshot.3; the listener only
+  re-triggers EMI''s own reload, so the rename is all it needed.'
+reporter: Bownlux
+date: 2026-06-10
+issue: 82

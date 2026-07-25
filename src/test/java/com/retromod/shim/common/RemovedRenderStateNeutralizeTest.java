@@ -49,6 +49,15 @@ class RemovedRenderStateNeutralizeTest {
         m.visitMethodInsn(INVOKESTATIC, RS, "depthMask", "(Z)V", false);
         m.visitInsn(ICONST_1); m.visitInsn(ICONST_1); m.visitInsn(ICONST_1); m.visitInsn(ICONST_0);
         m.visitMethodInsn(INVOKESTATIC, RS, "colorMask", "(ZZZZ)V", false);
+        // Removed shader-binding setters (reference + primitive args must all pop cleanly).
+        m.visitInsn(ACONST_NULL); // a Supplier<ShaderInstance>
+        m.visitMethodInsn(INVOKESTATIC, RS, "setShader", "(Ljava/util/function/Supplier;)V", false);
+        m.visitInsn(FCONST_1); m.visitInsn(FCONST_1); m.visitInsn(FCONST_1); m.visitInsn(FCONST_0);
+        m.visitMethodInsn(INVOKESTATIC, RS, "setShaderColor", "(FFFF)V", false);
+        m.visitInsn(ICONST_0);
+        m.visitInsn(ACONST_NULL); // an Identifier
+        m.visitMethodInsn(INVOKESTATIC, RS, "setShaderTexture",
+                "(ILnet/minecraft/resources/Identifier;)V", false);
         m.visitInsn(RETURN);
         m.visitMaxs(4, 1);
         m.visitEnd();

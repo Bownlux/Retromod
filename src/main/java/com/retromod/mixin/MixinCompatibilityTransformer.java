@@ -625,8 +625,16 @@ public class MixinCompatibilityTransformer {
             for (AnnotationNode annotation : annotations) {
                 String desc = annotation.desc;
 
-                if (INJECT_DESC.equals(desc) || REDIRECT_DESC.equals(desc) ||
-                    MODIFY_ARG_DESC.equals(desc) || MODIFY_VAR_DESC.equals(desc)) {
+                if (desc != null && desc.startsWith("Lorg/spongepowered/asm/mixin/injection/")
+                        && !desc.contains("/callback/")) {
+                    // Family-prefix dispatch, mirroring the MixinExtras branch below. The former
+                    // explicit whitelist (@Inject/@Redirect/@ModifyArg/@ModifyVariable) silently
+                    // skipped @ModifyArgs (plural) and @ModifyConstant, leaving their method=/at=
+                    // selectors unremapped while sibling mixins in the same config were rewritten
+                    // (#157, nekomasfixed's LabelCommandRendererCommandMixin + the wildfire
+                    // NetherFortressGeneratorMixin). Non-selector-bearing members of the package
+                    // (@Surrogate/@Group/@Coerce) pass through untouched: the walker only rewrites
+                    // method/at/target/slice keys and adds nothing unless it rewrote something.
                     modified |= transformInjectionAnnotation(annotation, false);
                 } else if (desc != null && desc.startsWith(MIXINEXTRAS_INJECTOR_PREFIX)) {
                     // MixinExtras injectors (@ModifyReturnValue / @ModifyExpressionValue /
@@ -698,6 +706,28 @@ public class MixinCompatibilityTransformer {
                     for (Object at : ats) {
                         if (at instanceof AnnotationNode atNode) {
                             modified |= transformAtAnnotation(atNode);
+                        }
+                    }
+                }
+            }
+
+            // @Slice(from=@At(...), to=@At(...)) carries @At nodes the "at" branch never sees;
+            // their target strings (often FIELD selectors) survived unremapped and made the whole
+            // injection fail once everything else resolved (#157, nekomasfixed's BlocksMixin
+            // slice-to Lclass_2246;field_46283:Lclass_2248;).
+            if ("slice".equals(key)) {
+                List<Object> slices = value instanceof List<?> l
+                        ? new ArrayList<>(l)
+                        : List.of(value);
+                for (Object sl : slices) {
+                    if (!(sl instanceof AnnotationNode sliceNode) || sliceNode.values == null) {
+                        continue;
+                    }
+                    for (int j = 0; j < sliceNode.values.size(); j += 2) {
+                        String sk = (String) sliceNode.values.get(j);
+                        if (("from".equals(sk) || "to".equals(sk))
+                                && sliceNode.values.get(j + 1) instanceof AnnotationNode sliceAt) {
+                            modified |= transformAtAnnotation(sliceAt);
                         }
                     }
                 }
@@ -931,7 +961,8 @@ public class MixinCompatibilityTransformer {
             return remapDescriptorClasses(direct);
         }
 
-        // owner-qualified form: [Lowner;]methodName[(descriptor)]
+        // owner-qualified form: [Lowner;]methodName[(descriptor)] or the FIELD form
+        // [Lowner;]fieldName:Ltype; (a @At(value="FIELD") / @Redirect field target)
         if (target.startsWith("L") && target.contains(";")) {
             int semiIdx = target.indexOf(';');
             String owner = target.substring(1, semiIdx);
@@ -940,6 +971,16 @@ public class MixinCompatibilityTransformer {
             String newOwner = transformer.getClassRedirects().getOrDefault(owner, owner);
 
             int descIdx = rest.indexOf('(');
+            // FIELD selector: "fieldName:Ltype;" (a ':' with no method descriptor). This was
+            // previously parsed as a METHOD name, so the whole "field_46283:Lnet/minecraft/
+            // class_2248;" tail survived unmapped while the method selector in the same mixin
+            // was rewritten (#157, nekomasfixed's BlocksMixin).
+            int colonIdx = rest.indexOf(':');
+            if (descIdx < 0 && colonIdx >= 0) {
+                String fieldName = rest.substring(0, colonIdx);
+                String fieldDesc = remapDescriptorClasses(rest.substring(colonIdx + 1));
+                return "L" + newOwner + ";" + remapFieldName(fieldName) + ":" + fieldDesc;
+            }
             String methodName = descIdx >= 0 ? rest.substring(0, descIdx) : rest;
             String desc = descIdx >= 0 ? rest.substring(descIdx) : "";
 

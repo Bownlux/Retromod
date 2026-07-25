@@ -1,5 +1,7 @@
 # Turns "Compatibility report" issues (the compat_report.yml form) into PRs that
-# append the entry to docs/_data/compatdb.yml — nobody hand-writes YAML.
+# add a per-entry file under docs/_data/compatdb/ (issue-<N>.yml) — nobody
+# hand-writes YAML, and because every PR touches only its own new file,
+# concurrent report PRs never conflict with each other.
 #
 # Flow: user submits the pre-filled form (the Compatibility DB page builds the
 # URL) → this workflow parses the structured body → opens a PR with the YAML
@@ -127,7 +129,13 @@ jobs:
             entry += `  reporter: ${q(issue.user.login)}\n  date: ${q(today)}\n  issue: ${issue.number}\n`;
 
             // ── branch + commit + PR ──
-            const path = 'docs/_data/compatdb.yml';
+            // One FILE per entry (docs/_data/compatdb/ is a Jekyll data directory): concurrent
+            // report PRs each add their own issue-N.yml, so they can NEVER textually conflict
+            // with each other (the old shared-file append meant every second open PR needed a
+            // manual conflict fix, and GitHub's built-in resolution mangled the YAML and broke
+            // the docs build). The per-entry file is a top-level mapping, so the list-item
+            // prefix the emitter produces is stripped and the body dedented.
+            const path = `docs/_data/compatdb/issue-${issue.number}.yml`;
             const base = context.payload.repository.default_branch;
             const branch = `compat-report/issue-${issue.number}`;
 
@@ -138,13 +146,13 @@ jobs:
               await github.rest.git.updateRef({ ...context.repo, ref: `heads/${branch}`, sha: baseRef.data.object.sha, force: true });
             }
 
-            const file = await github.rest.repos.getContent({ ...context.repo, path, ref: base });
-            const current = Buffer.from(file.data.content, 'base64').toString('utf8');
+            // "\n- name: ..." list item → "name: ..." top-level mapping (dedent the 2-space body).
+            const mapping = entry.replace(/^\n- /, '').replace(/\n  /g, '\n') + '\n';
+            // No sha: the branch was just reset to base, where this per-issue file never exists.
             await github.rest.repos.createOrUpdateFileContents({
               ...context.repo, path, branch,
               message: `compatdb: ${name} (${badge}) — from #${issue.number}`,
-              content: Buffer.from(current + entry).toString('base64'),
-              sha: file.data.sha,
+              content: Buffer.from(mapping).toString('base64'),
             });
 
             const prs = await github.rest.pulls.list({ ...context.repo, state: 'open', head: `${context.repo.owner}:${branch}` });

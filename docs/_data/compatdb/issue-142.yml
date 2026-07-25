@@ -1,0 +1,24 @@
+name: Kilt
+badge: borked
+mod_version: 21.1.5 for 1.21.1
+host_mc: 1.21.10
+loader: fabric
+retromod: 1.2.0 snapshot 8
+links:
+  modrinth: https://modrinth.com/mod/kilt
+summary: it dosent work fabric loader shows a error wall
+details: 'RuntimeException: Errors occurred while remapping NeoForge mods! <html>at knot//xyz.bluspring.kilt.loader.KiltLoader.createModContainers(KiltLoader.kt:619)<br>at
+  knot//xyz.bluspring.knit.loader.KnitLoader.scanMods(KnitLoader.kt:173)<br>at knot//xyz.bluspring.knit.loader.fabric.KnitEarlierInitializer$onLanguageAdapterLaunch$1.invokeSuspend(KnitEarlierInitializer.kt:16)<br>at
+  knot//kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)<br>at knot//kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)<br>at
+  knot//kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:124)<br>at knot//kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:89)<br>at
+  knot//kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:586)<br>at knot//kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:798)<br>at
+  knot//kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:717)<br>at
+  knot//kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:704)</html>
+  NoSuchMethodError: ''int com.retromod.polyfill.fabric.embedded.TinyVisitor$TinyMetadata.index(java.lang.String)''
+  <html>at knot//net.fabricmc.mapping.tree.TinyMappingFactory$Visitor.start(TinyMappingFactory.java:218)<br>at
+  knot//net.fabricmc.mapping.reader.v2.TinyV2Factory.visit(TinyV2Factory.java:59)<br>at knot//net.fabricmc.mapping.tree.TinyMappingFactory.load(TinyMappingFactory.java:71)<br>at
+  knot//net.fabricmc.mapping.tree.TinyMappingFactory.load(TinyMappingFactory.java:57)<br>at knot//xyz.bluspring.kilt.loader.remap.KiltRemapper.&lt;clinit&gt;(KiltRemapper.kt:116)<br>at
+  knot//xyz.bluspring.kilt.loader.KiltLoader.createModContainers(KiltLoader.kt:616)<br>... 10 more</html>'
+reporter: Soviet1290
+date: '2026-07-06'
+issue: 142

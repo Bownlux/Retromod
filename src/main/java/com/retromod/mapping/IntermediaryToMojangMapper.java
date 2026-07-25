@@ -158,17 +158,29 @@ public class IntermediaryToMojangMapper {
     private static final Pattern COMP_PATTERN = Pattern.compile("comp_\\d+");
     // Fully-qualified "net/minecraft/class_XXXX" style paths
     private static final Pattern FQ_CLASS_PATTERN = Pattern.compile("[a-z]+(?:/[a-z]+)*/class_\\d+");
+    // NESTED intermediary class: "net/minecraft/class_X$class_Y" (one or more "$class_N" named-inner
+    // segments). The tsv carries the COMBINED entry (e.g. class_327$class_6415 -> Font$DisplayMode),
+    // but FQ_CLASS_PATTERN stops at '$' and maps only the outer, leaving a "Font$class_6415" hybrid
+    // that doesn't resolve on 26.x (the inner id has no top-level mapping). Match + look up the whole
+    // nested name FIRST. Anonymous "$1" inners keep their index and are handled correctly by the
+    // outer-only FQ map, so this pattern targets only "$class_N" named inners.
+    private static final Pattern NESTED_FQ_CLASS_PATTERN =
+            Pattern.compile("[a-z]+(?:/[a-z]+)*/class_\\d+(?:\\$class_\\d+)+");
 
     /** Remap all intermediary references in a string. */
     public String remapString(String input) {
         if (input == null) return null;
 
-        // FQ class names first, so we don't partial-match "class_XXXX" within a path
+        // Nested FQ (combined tsv entry) first, then plain FQ, so we don't partial-match a
+        // "class_XXXX" within a path or leave a nested inner id unmapped.
         String result = input;
         if (result.contains("class_")) {
-            result = replaceByPattern(result, FQ_CLASS_PATTERN, classMap);
+            result = replaceByPattern(result, NESTED_FQ_CLASS_PATTERN, classMap);
             if (result.contains("class_")) {
-                result = replaceByPattern(result, CLASS_PATTERN, classMap);
+                result = replaceByPattern(result, FQ_CLASS_PATTERN, classMap);
+                if (result.contains("class_")) {
+                    result = replaceByPattern(result, CLASS_PATTERN, classMap);
+                }
             }
         }
 
@@ -193,10 +205,14 @@ public class IntermediaryToMojangMapper {
 
         if (!descriptor.contains("class_")) return descriptor;
 
-        String result = replaceByPattern(descriptor, FQ_CLASS_PATTERN, classMap);
+        // Nested FQ (combined tsv entry) first (Lnet/minecraft/class_X$class_Y;), then plain FQ.
+        String result = replaceByPattern(descriptor, NESTED_FQ_CLASS_PATTERN, classMap);
 
         if (result.contains("class_")) {
-            result = replaceByPattern(result, CLASS_PATTERN, classMap);
+            result = replaceByPattern(result, FQ_CLASS_PATTERN, classMap);
+            if (result.contains("class_")) {
+                result = replaceByPattern(result, CLASS_PATTERN, classMap);
+            }
         }
 
         return result;

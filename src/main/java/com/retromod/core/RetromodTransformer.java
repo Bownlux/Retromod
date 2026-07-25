@@ -156,6 +156,12 @@ public class RetromodTransformer implements ClassFileTransformer {
     private final Map<FieldKey, FieldAccessorTarget> fieldAccessorRedirects = new ConcurrentHashMap<>(16);
     /** GETSTATIC of a removed static field -> a (collection-field + optional enum-arg + accessor-call + cast) sequence. */
     private final Map<FieldKey, StaticFieldAccessor> staticFieldAccessors = new ConcurrentHashMap<>(64);
+    /** Instance field moved behind a public sibling field's accessors: GETFIELD owner.name ->
+     *  GETFIELD owner.hopField + INVOKEVIRTUAL getter (26.2 Minecraft.screen -> mc.gui.screen()). */
+    private final Map<FieldKey, FieldHopAccessor> fieldHopAccessors = new ConcurrentHashMap<>(8);
+    /** Instance field whose state moved somewhere the receiver can't reach: GETFIELD/PUTFIELD become
+     *  INVOKESTATIC bridge calls that consume the receiver as an ignored arg (26.2 Options.hideGui). */
+    private final Map<FieldKey, FieldStaticBridge> fieldStaticBridges = new ConcurrentHashMap<>(8);
 
     // Super constructor descriptor changes: a parent ctor gained required params in newer
     // MC; pushes extra args before INVOKESPECIAL (e.g. Button gained CreateNarration).
@@ -411,6 +417,49 @@ public class RetromodTransformer implements ClassFileTransformer {
         convertingRedirects.put(new MethodKey(oldOwner, oldName, oldDesc),
                 new ConvertingTarget(newOwner, newName, newDesc, argConvOpcode, retAdaptOpcode));
         convertingOwners.add(oldOwner);
+    }
+
+    /**
+     * Register a RETURN-UNWRAP redirect: a vanilla method that still exists but whose return type
+     * became a WRAPPER. The call is retargeted to the same owner/name with {@code newDesc} (the
+     * wrapper-returning descriptor), then {@code unwrapOwner.unwrapName(unwrapDesc)} is appended as an
+     * {@code INVOKEVIRTUAL} to pull the original type back out, so the caller sees the type it
+     * expected. Motivating 26.x case: {@code Util.backgroundExecutor()}/{@code ioPool()}/{@code
+     * nonCriticalIoPool()} used to return {@code ExecutorService} and now return {@code
+     * TracingExecutor} (a record wrapping it), unwrapped via {@code TracingExecutor.service()}. A
+     * mod hits {@code NoSuchMethodError} on the {@code ExecutorService}-returning form at init. This
+     * is a converting redirect whose return adaptation is a method CALL rather than a single insn.
+     */
+    public void registerReturnUnwrapRedirect(
+            String owner, String name, String oldDesc, String newDesc,
+            String unwrapOwner, String unwrapName, String unwrapDesc) {
+        registerReturnUnwrapRedirect(owner, name, oldDesc, newDesc,
+                unwrapOwner, unwrapName, unwrapDesc, false);
+    }
+
+    /**
+     * {@link #registerReturnUnwrapRedirect(String, String, String, String, String, String, String)}
+     * with control over the unwrap's invoke kind: pass {@code unwrapItf=true} when the wrapper type
+     * is an INTERFACE (e.g. 26.x {@code ClientAsset$Texture.texturePath()}), so the appended call is
+     * {@code INVOKEINTERFACE} (an INVOKEVIRTUAL on an interface is an IncompatibleClassChangeError).
+     * The retargeted call may also RENAME the method ({@code newName}), e.g. {@code
+     * PlayerSkin.texture()} -> {@code body()} + {@code texturePath()} unwrap.
+     */
+    public void registerReturnUnwrapRedirect(
+            String owner, String name, String oldDesc, String newName, String newDesc,
+            String unwrapOwner, String unwrapName, String unwrapDesc, boolean unwrapItf) {
+        convertingRedirects.put(new MethodKey(owner, name, oldDesc),
+                new ConvertingTarget(owner, newName, newDesc, 0, 0,
+                        unwrapOwner, unwrapName, unwrapDesc, unwrapItf));
+        convertingOwners.add(owner);
+    }
+
+    /** Same-name variant of the interface-aware unwrap registration. */
+    public void registerReturnUnwrapRedirect(
+            String owner, String name, String oldDesc, String newDesc,
+            String unwrapOwner, String unwrapName, String unwrapDesc, boolean unwrapItf) {
+        registerReturnUnwrapRedirect(owner, name, oldDesc, name, newDesc,
+                unwrapOwner, unwrapName, unwrapDesc, unwrapItf);
     }
 
     /**
@@ -758,6 +807,58 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
+     * Register a "hop" accessor for an instance field that moved onto an object reachable through a
+     * PUBLIC sibling field of the same owner. {@code GETFIELD owner.name} becomes
+     * {@code GETFIELD owner.hopField} + {@code INVOKEVIRTUAL hopClass.getter}; {@code PUTFIELD}
+     * becomes {@code SWAP} + {@code GETFIELD owner.hopField} + {@code SWAP} +
+     * {@code INVOKEVIRTUAL hopClass.setter}. Pure bytecode (no reflection), so it's safe on hot
+     * render/input paths. 26.2's {@code Minecraft.screen} -> {@code mc.gui.screen()} /
+     * {@code mc.gui.setScreen(s)} is the motivating case.
+     *
+     * <p>The PUTFIELD rewrite uses {@code SWAP}, so the field type must be a category-1 value
+     * (any reference or 32-bit primitive; long/double are rejected at registration).
+     *
+     * @param setterName pass null for a read-only hop (PUTFIELD then passes through unchanged)
+     */
+    public void registerFieldHopAccessor(
+            String owner, String name,
+            String hopField, String hopDesc,
+            String getterName, String getterDesc,
+            String setterName, String setterDesc) {
+        if (setterDesc != null && (setterDesc.startsWith("(J") || setterDesc.startsWith("(D"))) {
+            throw new IllegalArgumentException(
+                    "registerFieldHopAccessor: long/double field types can't be SWAPped: " + setterDesc);
+        }
+        String hopClass = hopDesc.substring(1, hopDesc.length() - 1); // Lpkg/Cls; -> pkg/Cls
+        fieldHopAccessors.put(new FieldKey(owner, name), new FieldHopAccessor(
+                hopField, hopDesc, hopClass, getterName, getterDesc, setterName, setterDesc));
+        LOGGER.debug("Registered field hop accessor: {}.{} -> .{}.{}()/{}()",
+                owner, name, hopField, getterName, setterName);
+    }
+
+    /**
+     * Register a static bridge for an instance field whose state moved somewhere the receiver can no
+     * longer reach (a different object entirely). {@code GETFIELD owner.name} becomes
+     * {@code INVOKESTATIC bridgeOwner.getterName getterDesc} and {@code PUTFIELD} becomes
+     * {@code INVOKESTATIC bridgeOwner.setterName setterDesc}; both descs must consume the receiver
+     * as their first (typically {@code Ljava/lang/Object;}, ignored) argument, which is what keeps
+     * the stack balanced. Unlike the field-to-method form of {@link #registerFieldRedirect}, this is
+     * opcode-aware, so reads and writes get different call shapes. 26.2's {@code Options.hideGui} ->
+     * {@code RetroClientEnv.isHideGui/setHideGui} (state moved to {@code mc.gui.hud}) is the
+     * motivating case.
+     */
+    public void registerFieldStaticBridge(
+            String owner, String name,
+            String bridgeOwner,
+            String getterName, String getterDesc,
+            String setterName, String setterDesc) {
+        fieldStaticBridges.put(new FieldKey(owner, name), new FieldStaticBridge(
+                bridgeOwner, getterName, getterDesc, setterName, setterDesc));
+        LOGGER.debug("Registered field static bridge: {}.{} -> {}.{}/{}",
+                owner, name, bridgeOwner, getterName, setterName);
+    }
+
+    /**
      * Owners of removed classes whose static-field reads should become a pushed default (null / 0)
      * rather than fault on the missing class. Used by the 1.12.2 Block bridge: {@code super(Material.IRON)}
      * reads {@code Material.IRON} before the super call, but Material was removed in 26.1, so the
@@ -904,6 +1005,8 @@ public class RetromodTransformer implements ClassFileTransformer {
         constructorRedirectOwners.clear();
         fieldAccessorRedirects.clear();
         staticFieldAccessors.clear();
+        fieldHopAccessors.clear();
+        fieldStaticBridges.clear();
         superCtorRedirects.clear();
         syntheticClasses.clear();
         embeddedShimClasses.clear();
@@ -1047,6 +1150,14 @@ public class RetromodTransformer implements ClassFileTransformer {
             }
             return false;
         });
+        fieldHopAccessors.entrySet().removeIf(e -> {
+            if (isPhantom.test(e.getValue().hopClass())) { dropped.add(e.getValue().hopClass()); return true; }
+            return false;
+        });
+        fieldStaticBridges.entrySet().removeIf(e -> {
+            if (isPhantom.test(e.getValue().owner())) { dropped.add(e.getValue().owner()); return true; }
+            return false;
+        });
 
         if (!dropped.isEmpty()) {
             // Rebuild the fast-path owner sets from the surviving redirects; the dropped
@@ -1102,6 +1213,12 @@ public class RetromodTransformer implements ClassFileTransformer {
             if (isPhantom.test(v.argOwner())) phantoms.add(v.argOwner());
             if (isPhantom.test(v.castType())) phantoms.add(v.castType());
         });
+        fieldHopAccessors.values().forEach(v -> {
+            if (isPhantom.test(v.hopClass())) phantoms.add(v.hopClass());
+        });
+        fieldStaticBridges.values().forEach(v -> {
+            if (isPhantom.test(v.owner())) phantoms.add(v.owner());
+        });
         return phantoms;
     }
 
@@ -1135,6 +1252,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                 neutralizedMethods.isEmpty() && staticFieldAccessors.isEmpty() &&
                 mojangMethodRenames.isEmpty() && argDropRedirects.isEmpty() &&
                 constructorRedirects.isEmpty() && fieldAccessorRedirects.isEmpty() &&
+                fieldHopAccessors.isEmpty() && fieldStaticBridges.isEmpty() &&
                 intermediaryMethodNames.isEmpty() && intermediaryFieldNames.isEmpty() &&
                 srgMethodNames.isEmpty() && srgFieldNames.isEmpty()) {
             return originalBytes;
@@ -1337,6 +1455,31 @@ public class RetromodTransformer implements ClassFileTransformer {
                             }
 
                             @Override
+                            public String mapInvokeDynamicMethodName(String name, String descriptor) {
+                                // The invokedynamic NAME slot is the SAM method of the functional
+                                // interface the lambda implements; LambdaMetafactory resolves it
+                                // against the RUNTIME interface. A lambda over an intermediary-named
+                                // MC interface kept its method_N SAM name while the interface itself
+                                // was remapped, so the metafactory threw LambdaConversionException
+                                // at first use (#157: nekomasfixed's TargetingConditions$Selector
+                                // lambda kept method_18303 instead of test). The indy descriptor is
+                                // the capture signature, not the SAM descriptor, so desc-based
+                                // disambiguation doesn't apply; functional interfaces have a single
+                                // abstract method, so the flat name lookup is the right resolution.
+                                if (!intermediaryMethodNames.isEmpty()
+                                        && (name.startsWith("method_") || name.startsWith("comp_"))) {
+                                    String mojang = intermediaryMethodNames.get(name);
+                                    if (mojang != null) return mojang;
+                                }
+                                if (!srgMethodNames.isEmpty() && name.length() > 3
+                                        && ((name.startsWith("m_") && name.endsWith("_"))
+                                            || name.startsWith("func_"))) {
+                                    String mojang = srgMethodNames.get(name);
+                                    if (mojang != null) return mojang;
+                                }
+                                return name;
+                            }
+
                             public String mapFieldName(String owner, String name, String descriptor) {
                                 // Remap intermediary field names (field_XXXX → Mojang name)
                                 if (!intermediaryFieldNames.isEmpty() && name.startsWith("field_")) {
@@ -1809,33 +1952,76 @@ public class RetromodTransformer implements ClassFileTransformer {
         }
     }
 
+    /** Tri-state result of {@link #classifyThrowable}. */
+    private static final int THROWABLE_NO = 0, THROWABLE_YES = 1, THROWABLE_UNKNOWN = 2;
+
     /**
      * Fallback common-supertype for when ASM's {@code getCommonSuperClass} can't resolve a type
      * via {@code Class.forName} (it lives in a Fabric Jar-in-Jar, is a mod class, or was remapped
      * off the transform classpath).
      *
-     * <p>Always returning {@code Object} corrupts the recomputed {@code StackMapTable} when the
-     * merge is two exception types: ASM types the caught value as {@code Object} at a
-     * catch-handler join where the consumer needs a {@code Throwable}, a {@code VerifyError} at
-     * load (#94 follow-up). When either operand is a {@code Throwable}, that's the correct common
-     * supertype; fall back to {@code Object} only when neither is (or can't be shown to be) one.
+     * <p>Two opposite failure modes have to be threaded here, so the answer is NOT simply "return
+     * Throwable if either looks like one":
+     * <ul>
+     *   <li><b>Merging two exception types must NOT collapse to {@code Object}</b> ({@code #94},
+     *       forge-config-api-port {@code ConfigTracker}): a catch-handler join where the caught
+     *       value is later consumed as a {@code Throwable} fails verification if ASM typed it as
+     *       {@code Object}. So two Throwables merge to {@code Throwable}.
+     *   <li><b>Merging a {@code Throwable} with a plain non-exception must NOT over-generalize to
+     *       {@code Throwable}</b> (jade {@code CommonProxy.lambda$loadComplete$5}): a try body's
+     *       {@code goto} and the catch's rethrow both fall into the same trailing {@code return},
+     *       so ASM merges {@code ModMetadata} (try, local 3) with {@code Throwable} (catch, local
+     *       3). The real common supertype is {@code Object}; typing it {@code Throwable} is too
+     *       specific and a predecessor providing {@code ModMetadata} then fails the frame check
+     *       (a {@code VerifyError} at load).
+     * </ul>
+     *
+     * <p>The distinguisher is whether an operand is <em>provably</em> a Throwable (bytes read), a
+     * <em>provable non</em>-Throwable (bytes read, isn't one), or <em>unresolvable</em> (a
+     * JiJ/mod class we can't read). Only the unresolvable case is ambiguous, and there we lean on
+     * Java's near-universal exception naming convention ({@code *Exception}/{@code *Error}): a
+     * {@code JijParsingException} merged with a JDK exception stays {@code Throwable}; a
+     * {@code ModMetadata} merged with a {@code Throwable} becomes {@code Object}.
      */
     static String commonSuperFallback(String type1, String type2) {
-        if (isThrowable(type1) || isThrowable(type2)) {
+        int c1 = classifyThrowable(type1);
+        int c2 = classifyThrowable(type2);
+        // Both provably Throwables: their common supertype is at least Throwable (#94).
+        if (c1 == THROWABLE_YES && c2 == THROWABLE_YES) {
+            return "java/lang/Throwable";
+        }
+        // Exactly one is a provable Throwable; the other decides the merge.
+        if (c1 == THROWABLE_YES || c2 == THROWABLE_YES) {
+            int otherClass = (c1 == THROWABLE_YES) ? c2 : c1;
+            String other = (c1 == THROWABLE_YES) ? type2 : type1;
+            if (otherClass == THROWABLE_NO) {
+                // Provably not an exception (e.g. ModMetadata): common supertype is Object.
+                return "java/lang/Object";
+            }
+            // Unresolvable: guess from the name. Exception-named -> Throwable (#94), else Object.
+            return looksLikeThrowable(other) ? "java/lang/Throwable" : "java/lang/Object";
+        }
+        // Neither is a provable Throwable. Two unresolvable, exception-named operands are almost
+        // certainly a catch-handler join of two JiJ exceptions, so keep them Throwable (same
+        // spirit as #94); anything else is Object.
+        if (c1 == THROWABLE_UNKNOWN && c2 == THROWABLE_UNKNOWN
+                && looksLikeThrowable(type1) && looksLikeThrowable(type2)) {
             return "java/lang/Throwable";
         }
         return "java/lang/Object";
     }
 
     /**
-     * True if {@code internalName} is {@code java/lang/Throwable} or a subclass, read from
-     * classpath resources rather than {@code Class.forName} (which failed above). Returns false
-     * if any link in the superclass chain can't be read (a JiJ/mod class), treating "unknown" as
-     * not-a-Throwable so the Object fallback holds for non-exception merges.
+     * Tri-state: is {@code internalName} {@code java/lang/Throwable} or a subclass? Returns
+     * {@link #THROWABLE_YES} / {@link #THROWABLE_NO} when the type (and its superclass chain) can
+     * be read, and {@link #THROWABLE_UNKNOWN} when a link can't be resolved (a JiJ/mod class off
+     * the transform classpath). The old boolean version folded UNKNOWN into NO, which made a
+     * {@code Throwable}+unresolvable merge indistinguishable from a {@code Throwable}+known-non-
+     * exception one; {@link #commonSuperFallback} needs to tell those apart.
      */
-    private static boolean isThrowable(String internalName) {
+    private static int classifyThrowable(String internalName) {
         if (internalName == null) {
-            return false;
+            return THROWABLE_NO;
         }
         // Classloading handles the common case (JDK exceptions and anything on the transform
         // classpath) and must come first: under Java 9+ modules getResourceAsStream doesn't
@@ -1843,16 +2029,17 @@ public class RetromodTransformer implements ClassFileTransformer {
         try {
             return Throwable.class.isAssignableFrom(
                     Class.forName(internalName.replace('/', '.'), false,
-                            RetromodTransformer.class.getClassLoader()));
+                            RetromodTransformer.class.getClassLoader()))
+                    ? THROWABLE_YES : THROWABLE_NO;
         } catch (Throwable ignored) {
             // not loadable via forName; fall through to a byte-level superclass walk
         }
         // Walk the superclass chain from class bytes, for types readable as a resource but not
-        // loadable via forName. Returns false if any link can't be read (a JiJ/mod class).
+        // loadable via forName. UNKNOWN if any link can't be read (a JiJ/mod class).
         String name = internalName;
         for (int guard = 0; guard < 64 && name != null && !"java/lang/Object".equals(name); guard++) {
             if ("java/lang/Throwable".equals(name)) {
-                return true;
+                return THROWABLE_YES;
             }
             java.io.InputStream in = RetromodTransformer.class.getClassLoader()
                     .getResourceAsStream(name + ".class");
@@ -1860,15 +2047,37 @@ public class RetromodTransformer implements ClassFileTransformer {
                 in = ClassLoader.getSystemResourceAsStream(name + ".class");
             }
             if (in == null) {
-                return false;
+                return THROWABLE_UNKNOWN;
             }
             try (java.io.InputStream stream = in) {
                 name = new ClassReader(stream).getSuperName();
             } catch (java.io.IOException | RuntimeException ex) {
-                return false;
+                return THROWABLE_UNKNOWN;
             }
         }
-        return false;
+        // Fully walked to Object (or a null super, i.e. the top) without hitting Throwable.
+        if (name == null || "java/lang/Object".equals(name)) {
+            return THROWABLE_NO;
+        }
+        return THROWABLE_UNKNOWN; // guard exhausted on a pathological chain
+    }
+
+    /**
+     * Heuristic for an <em>unresolvable</em> type: does its simple name follow Java's exception
+     * naming convention ({@code *Exception} / {@code *Error} / {@code *Throwable})? Only consulted
+     * when the bytes can't be read, so a provable non-Throwable that happens to be so named is
+     * already handled by {@link #classifyThrowable} returning {@code NO} first.
+     */
+    private static boolean looksLikeThrowable(String internalName) {
+        if (internalName == null) {
+            return false;
+        }
+        String simple = internalName.substring(internalName.lastIndexOf('/') + 1);
+        int dollar = simple.lastIndexOf('$'); // Outer$SomeException -> SomeException
+        if (dollar >= 0) {
+            simple = simple.substring(dollar + 1);
+        }
+        return simple.endsWith("Exception") || simple.endsWith("Error") || simple.endsWith("Throwable");
     }
 
     /**
@@ -1888,7 +2097,13 @@ public class RetromodTransformer implements ClassFileTransformer {
         "net/minecraft/core/Registry",  // Registry became an interface in newer MC
         // Component (the old yarn Text class) became an interface in 26.1; without this,
         // INVOKEVIRTUAL on .copy()/.append() after remap fails verification.
-        "net/minecraft/network/chat/Component"
+        "net/minecraft/network/chat/Component",
+        // java.util.function.Supplier: the removed net.minecraft.util.LazyLoadedValue (a class)
+        // is redirected to Supplier (an interface), so a mod's INVOKEVIRTUAL LazyLoadedValue.get()
+        // becomes an owner=Supplier call that must be INVOKEINTERFACE. Only calls whose owner was
+        // rewritten to Supplier are affected; a mod's own java.util.function.Supplier calls are
+        // already INVOKEINTERFACE (unchanged by the class->interface fix).
+        "java/util/function/Supplier"
     );
 
     // Types that became interfaces only on 26.x - consulted ONLY on 26.x hosts. On 1.20.x-1.21.x
@@ -2030,6 +2245,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                     && superCtorRedirects.isEmpty()
                     && neutralizedMethods.isEmpty() && staticFieldAccessors.isEmpty()
                     && argDropRedirects.isEmpty()
+                    && fieldHopAccessors.isEmpty() && fieldStaticBridges.isEmpty()
                     && convertingRedirects.isEmpty() && singletonRedirects.isEmpty()) {
                 return mv;
             }
@@ -2577,6 +2793,41 @@ public class RetromodTransformer implements ClassFileTransformer {
                     }
                 }
             }
+
+            // Method-REFERENCE form of a converting redirect (e.g. `Vec3::new` inside a codec
+            // `VECTOR3F.map(Vec3::new, Vec3::toVector3f)`): the direct-call converting redirect only
+            // fires on INVOKE* sites in visitMethodInsn, NOT on the H_NEWINVOKESPECIAL/H_INVOKE*
+            // method handle a `X::y` reference compiles into the invokedynamic bootstrap args. Apply
+            // the SAME retarget to the handle, but ONLY when the redirect needs no spliced conversion
+            // (argConvOpcode/retAdaptOpcode == 0): a method handle has no call site to insert a
+            // conversion into, so a widening/narrowing/return-POP redirect can't be expressed as one.
+            // A pure descriptor change (Vec3.<init>(Vector3f)->(Vector3fc), the joml concrete->
+            // interface arg) is exactly this shape; jade's EntityAccessorImpl$SyncData died on it
+            // (NoSuchMethodError in <clinit> at map(Vec3::new,...), reached via a packet TYPE static
+            // init from CommonProxy.onInitialize).
+            if (!convertingRedirects.isEmpty() && bootstrapMethodArguments != null) {
+                for (int i = 0; i < bootstrapMethodArguments.length; i++) {
+                    if (!(bootstrapMethodArguments[i] instanceof org.objectweb.asm.Handle h)) continue;
+                    String resolvedOwner = classRedirects.getOrDefault(h.getOwner(), h.getOwner());
+                    String resolvedDesc = resolveDescriptor(h.getDesc());
+                    ConvertingTarget conv = convertingRedirects.get(
+                            new MethodKey(resolvedOwner, h.getName(), resolvedDesc));
+                    if (conv == null && !resolvedDesc.equals(h.getDesc())) {
+                        conv = convertingRedirects.get(new MethodKey(resolvedOwner, h.getName(), h.getDesc()));
+                    }
+                    if (conv == null || conv.argConvOpcode() != 0 || conv.retAdaptOpcode() != 0
+                            || conv.unwrapOwner() != null) continue;
+                    // Only a same-invoke-kind retarget is expressible by editing the handle. A ctor
+                    // reference (H_NEWINVOKESPECIAL <init>) must stay a ctor; a ctor->factory belongs
+                    // to constructorRedirects (handled above). Skip a mismatch rather than emit a
+                    // handle whose tag and target disagree.
+                    if ("<init>".equals(h.getName()) != "<init>".equals(conv.name())) continue;
+                    bootstrapMethodArguments[i] = new org.objectweb.asm.Handle(
+                            h.getTag(), conv.owner(), conv.name(), conv.desc(), h.isInterface());
+                    LOGGER.info("Converting method-reference redirect: {}.{}{} -> {}.{}{}",
+                            h.getOwner(), h.getName(), h.getDesc(), conv.owner(), conv.name(), conv.desc());
+                }
+            }
             super.visitInvokeDynamicInsn(name, descriptor, bootstrapMethodHandle, bootstrapMethodArguments);
 
             // Indy-typed rewrite arming: a LambdaMetafactory indy producing a Consumer carries the
@@ -2815,6 +3066,15 @@ public class RetromodTransformer implements ClassFileTransformer {
                     if (conv.argConvOpcode() != 0) super.visitInsn(conv.argConvOpcode());
                     super.visitMethodInsn(opcode, conv.owner(), conv.name(), conv.desc(), isInterface);
                     if (conv.retAdaptOpcode() != 0) super.visitInsn(conv.retAdaptOpcode());
+                    // Post-call unwrap: the retargeted call returned a WRAPPER; pull the original
+                    // type back out (e.g. TracingExecutor.service() -> ExecutorService). Interface
+                    // wrappers (ClientAsset$Texture) need INVOKEINTERFACE.
+                    if (conv.unwrapOwner() != null) {
+                        super.visitMethodInsn(
+                                conv.unwrapItf() ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL,
+                                conv.unwrapOwner(), conv.unwrapName(), conv.unwrapDesc(),
+                                conv.unwrapItf());
+                    }
                     return;
                 }
             }
@@ -3040,6 +3300,66 @@ public class RetromodTransformer implements ClassFileTransformer {
                 return;
             }
 
+            // Field moved behind a public sibling field's accessors (26.2 Minecraft.screen ->
+            // mc.gui.screen()/setScreen). Pure-bytecode hop: no reflection on hot paths.
+            FieldHopAccessor hop = fieldHopAccessors.get(key);
+            if (hop != null) {
+                if (opcode == Opcodes.GETFIELD) {
+                    // [recv] -> [hopObj] -> getter()
+                    super.visitFieldInsn(Opcodes.GETFIELD, owner, hop.hopField(), hop.hopDesc());
+                    super.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                            hop.hopClass(), hop.getterName(), hop.getterDesc(), false);
+                    LOGGER.trace("Field hop redirect: GETFIELD {}.{} -> .{}.{}()",
+                            owner, name, hop.hopField(), hop.getterName());
+                    return;
+                }
+                if (opcode == Opcodes.PUTFIELD && hop.setterName() != null) {
+                    // [recv, value] -> SWAP -> GETFIELD hop -> SWAP -> [hopObj, value] -> setter().
+                    // Registration rejects long/double field types, so SWAP is always legal.
+                    super.visitInsn(Opcodes.SWAP);
+                    super.visitFieldInsn(Opcodes.GETFIELD, owner, hop.hopField(), hop.hopDesc());
+                    super.visitInsn(Opcodes.SWAP);
+                    super.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                            hop.hopClass(), hop.setterName(), hop.setterDesc(), false);
+                    LOGGER.trace("Field hop redirect: PUTFIELD {}.{} -> .{}.{}()",
+                            owner, name, hop.hopField(), hop.setterName());
+                    return;
+                }
+                // GETSTATIC/PUTSTATIC (or a read-only hop's PUTFIELD): pass through unchanged.
+                super.visitFieldInsn(opcode, owner, name, descriptor);
+                return;
+            }
+
+            // Field state moved somewhere the receiver can't reach (26.2 Options.hideGui ->
+            // Hud.isHidden): opcode-aware static bridge consuming the receiver as an ignored arg.
+            FieldStaticBridge bridge = fieldStaticBridges.get(key);
+            if (bridge != null) {
+                if (opcode == Opcodes.GETFIELD) {
+                    super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                            bridge.owner(), bridge.getterName(), bridge.getterDesc(), false);
+                    // Same widened-return CHECKCAST rule as the field-to-method redirect below.
+                    String newReturn = bridge.getterDesc()
+                            .substring(bridge.getterDesc().lastIndexOf(')') + 1);
+                    if (descriptor != null && descriptor.startsWith("L")
+                            && !descriptor.equals(newReturn)) {
+                        super.visitTypeInsn(Opcodes.CHECKCAST,
+                                descriptor.substring(1, descriptor.length() - 1));
+                    }
+                    LOGGER.trace("Field static bridge: GETFIELD {}.{} -> {}.{}",
+                            owner, name, bridge.owner(), bridge.getterName());
+                    return;
+                }
+                if (opcode == Opcodes.PUTFIELD) {
+                    super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                            bridge.owner(), bridge.setterName(), bridge.setterDesc(), false);
+                    LOGGER.trace("Field static bridge: PUTFIELD {}.{} -> {}.{}",
+                            owner, name, bridge.owner(), bridge.setterName());
+                    return;
+                }
+                super.visitFieldInsn(opcode, owner, name, descriptor);
+                return;
+            }
+
             // Check if this field access needs to be redirected
             FieldTarget target = fieldRedirects.get(key);
 
@@ -3111,9 +3431,32 @@ public class RetromodTransformer implements ClassFileTransformer {
      * Target of a converting redirect: retarget plus one optional primitive conversion on the last
      * arg ({@code argConvOpcode}, emitted before the call) and one on the return value
      * ({@code retAdaptOpcode}, emitted after; may be {@code POP}/{@code POP2} to discard). 0 = none.
+     *
+     * <p>{@code unwrapOwner}/{@code unwrapName}/{@code unwrapDesc} (all null, or all set) express a
+     * post-call UNWRAP: a vanilla method whose return type became a WRAPPER gets an
+     * {@code INVOKEVIRTUAL} appended to pull the old type back out, e.g. 26.x
+     * {@code Util.backgroundExecutor()} returns {@code TracingExecutor} (not {@code ExecutorService});
+     * append {@code TracingExecutor.service()} to recover the {@code ExecutorService} the caller
+     * expects. Not expressible as {@code retAdaptOpcode} (that's a single insn, not a call). A
+     * method HANDLE (a {@code ::} reference) can't carry this, so the invokedynamic path skips
+     * unwrap-bearing targets.
      */
     public record ConvertingTarget(String owner, String name, String desc,
-            int argConvOpcode, int retAdaptOpcode) {}
+            int argConvOpcode, int retAdaptOpcode,
+            String unwrapOwner, String unwrapName, String unwrapDesc, boolean unwrapItf) {
+        /** Converting target with no post-call unwrap (the common case). */
+        public ConvertingTarget(String owner, String name, String desc,
+                int argConvOpcode, int retAdaptOpcode) {
+            this(owner, name, desc, argConvOpcode, retAdaptOpcode, null, null, null, false);
+        }
+        /** Converting target with a class-typed (INVOKEVIRTUAL) unwrap. */
+        public ConvertingTarget(String owner, String name, String desc,
+                int argConvOpcode, int retAdaptOpcode,
+                String unwrapOwner, String unwrapName, String unwrapDesc) {
+            this(owner, name, desc, argConvOpcode, retAdaptOpcode,
+                    unwrapOwner, unwrapName, unwrapDesc, false);
+        }
+    }
     /** Target of a singleton-static redirect: {@code singletonOwner.getter():..} then instance call. */
     public record SingletonTarget(String singletonOwner, String getter, String getterDesc,
             String name, String desc) {}
@@ -3125,6 +3468,25 @@ public class RetromodTransformer implements ClassFileTransformer {
     public record FieldAccessorTarget(
         String getterOwner, String getterName, String getterDesc,
         String setterOwner, String setterName, String setterDesc
+    ) {}
+    /**
+     * Target of a field hop accessor: GETFIELD becomes GETFIELD hopField + INVOKEVIRTUAL getter on
+     * the hop's class; PUTFIELD becomes SWAP + GETFIELD hopField + SWAP + INVOKEVIRTUAL setter.
+     * {@code hopClass} is precomputed from {@code hopDesc}. {@code setterName} null = read-only hop.
+     */
+    public record FieldHopAccessor(
+        String hopField, String hopDesc, String hopClass,
+        String getterName, String getterDesc,
+        String setterName, String setterDesc
+    ) {}
+    /**
+     * Target of a field static bridge: GETFIELD becomes INVOKESTATIC getter, PUTFIELD becomes
+     * INVOKESTATIC setter; both descs consume the receiver as their first (ignored) argument.
+     */
+    public record FieldStaticBridge(
+        String owner,
+        String getterName, String getterDesc,
+        String setterName, String setterDesc
     ) {}
     /**
      * A removed static field rewritten to an accessor call. GETSTATIC of the removed

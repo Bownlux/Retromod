@@ -1,0 +1,21 @@
+name: AppleSkin + Chunky (together)
+bundle: true
+badge: borked
+host_mc: 26.1.2
+loader: fabric
+retromod: 1.1.0-snapshot.3
+mods:
+- name: AppleSkin
+  version: 2.5.2
+  source_mc: 1.20.1
+  link: https://modrinth.com/mod/appleskin
+- name: Chunky
+  version: 1.2.164
+  source_mc: 1.18.2
+  link: https://modrinth.com/mod/chunky
+summary: Both load to the title screen together, but the world crashes on load in the server tick loop.
+details: Crash is attributable to Chunky - NoSuchMethodError on TicketType.create(String, Comparator),
+  the 1.18-era chunk-ticket API that 26.1 reworked. AppleSkin alone was not isolated in this run, which
+  is exactly what bundle reports are for. See the single-mod Chunky entry.
+reporter: Bownlux
+date: 2026-06-10

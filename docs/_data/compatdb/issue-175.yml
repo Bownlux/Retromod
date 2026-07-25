@@ -1,0 +1,13 @@
+name: "Farmer's Delight"
+badge: borked
+mod_version: "1.3.2 built-for 1.21.1"
+host_mc: "26.2"
+loader: neoforge
+retromod: "1.3.0-snapshot.2 + 26.2-neoforge"
+links:
+  modrinth: "https://modrinth.com/mod/farmers-delight"
+summary: "Fials to load correctly and game crashes. Java.lang.NoClassDefFoundError"
+details: "-The game immediately sends you to the Error Loading Mods page. [crashlogfarmersdelight.txt](https://github.com/user-attachments/files/30362417/crashlogfarmersdelight.txt)"
+reporter: "lucasperu2002-code"
+date: "2026-07-24"
+issue: 175

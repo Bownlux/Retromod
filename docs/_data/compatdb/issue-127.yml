@@ -1,0 +1,48 @@
+name: The Flying Things
+badge: borked
+mod_version: 1.8.9-1.15.2
+source_mc: 1.15.2
+host_mc: '26.2'
+loader: fabric
+retromod: 1.2.0-snapshot .7+26.2-fabric
+links:
+  curseforge: https://www.curseforge.com/minecraft/mc-mods/the-flying-things/files/2967742
+summary: Does not load; retromod-aot fails
+details: '[04:35:54] [Render thread/INFO]: [STDERR]: [Render thread] INFO retromod - AOT compiling [2/3]:
+  flying_things-1.8.9-1.15.2-original-retromod.jar [04:35:54] [Render thread/INFO]: [STDERR]: [Render
+  thread] INFO retromod-aot - AOT compiling: flying_things-1.8.9-1.15.2-original-retromod.jar [04:35:54]
+  [Render thread/INFO]: [STDERR]: [Render thread] INFO retromod-aot - Created backup: mods\retromod-backups\flying_things-1.8.9-1.15.2-original-retromod.jar
+  [04:35:54] [Render thread/INFO]: [STDERR]: [Render thread] WARN retromod-aot - Hybrid compilation failed
+  for com/retromod/shim/common/embedded/IsOverloadBridge, using simple transform [04:35:54] [Render thread/INFO]:
+  [STDERR]: [Render thread] ERROR retromod-aot - AOT compilation failed: flying_things-1.8.9-1.15.2-original-retromod.jar
+  [04:35:54] [Render thread/INFO]: [STDERR]: java.lang.NegativeArraySizeException: -1 [04:35:54] [Render
+  thread/INFO]: [STDERR]:      at org.objectweb.asm.Frame.merge(Frame.java:1234) [04:35:54] [Render thread/INFO]:
+  [STDERR]:      at org.objectweb.asm.MethodWriter.computeAllFrames(MethodWriter.java:1612) [04:35:54]
+  [Render thread/INFO]: [STDERR]:      at org.objectweb.asm.MethodWriter.visitMaxs(MethodWriter.java:1548)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at org.objectweb.asm.MethodVisitor.visitMaxs(MethodVisitor.java:787)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at org.objectweb.asm.ClassReader.readCode(ClassReader.java:2664)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at org.objectweb.asm.ClassReader.readMethod(ClassReader.java:1512)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at org.objectweb.asm.ClassReader.accept(ClassReader.java:745)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at org.objectweb.asm.ClassReader.accept(ClassReader.java:425)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at knot//com.retromod.aot.AotCompiler.transformClassSimple(AotCompiler.java:475)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at knot//com.retromod.aot.AotCompiler.transformClassAot(AotCompiler.java:462)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at knot//com.retromod.aot.AotCompiler.compileJar(AotCompiler.java:280)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at knot//com.retromod.aot.AotCompiler.compileModAot(AotCompiler.java:142)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at knot//com.retromod.aot.AotCompiler.compileAllModsSync(AotCompiler.java:221)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at knot//com.retromod.core.Retromod.performAotCompilation(Retromod.java:430)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at knot//com.retromod.core.Retromod.onInitialize(Retromod.java:240)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:409)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at net.fabricmc.loader.impl.game.minecraft.Hooks.startClient(Hooks.java:52)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at knot//net.minecraft.client.Minecraft.<init>(Minecraft.java:456)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at knot//net.minecraft.client.main.Main.main(Main.java:278)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at net.fabricmc.loader.impl.game.minecraft.MinecraftGameProvider.launch(MinecraftGameProvider.java:514)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at net.fabricmc.loader.impl.launch.knot.Knot.launch(Knot.java:72)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at net.fabricmc.loader.impl.launch.knot.KnotClient.main(KnotClient.java:23)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at com.modrinth.theseus.MinecraftLaunch.relaunch(MinecraftLaunch.java:61)
+  [04:35:54] [Render thread/INFO]: [STDERR]:      at com.modrinth.theseus.MinecraftLaunch.main(MinecraftLaunch.java:28)
+  Will provide the log soon, as it seems it''s too big to be put into "Details".'
+reporter: andrewharn
+date: '2026-07-04'
+issue: 127

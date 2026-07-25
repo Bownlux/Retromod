@@ -18,6 +18,8 @@ import java.util.zip.*;
  */
 public class ModVersionDetector {
 
+    private static final org.slf4j.Logger LOGGER =
+            org.slf4j.LoggerFactory.getLogger("Retromod-Detector");
     private static final Gson GSON = new GsonBuilder().create();
 
     public ModVersionInfo detectVersion(Path modJarPath) throws IOException {
@@ -254,14 +256,45 @@ public class ModVersionDetector {
         return null;
     }
 
-    /** Lower bound of a Maven range: "[1.21,1.21.1)" -> "1.21", "[1.21.8,)" -> "1.21.8". */
+    /**
+     * Resolve a Maven version range to the mod's effective source MC version.
+     *
+     * <p><b>Host-containment first (#174):</b> a mod declaring a FINITE range that contains the
+     * host (e.g. {@code [1.19,1.20.1]} on a 1.20.1 host) is telling the loader it runs natively
+     * there; taking its LOWER bound made Retromod treat a working multi-version mod as "a 1.19
+     * mod", transform it, and break it alongside everything it dragged down. Such a mod now reads
+     * as host-version (so {@code needsTransformation} skips it everywhere). The upper bound must
+     * be FINITE: an open range like {@code [1.19,)} is mod-author optimism, and on a 26.x host the
+     * 1.19 mod genuinely needs translation, so open ranges keep the old lower-bound behavior.
+     *
+     * <p>Otherwise: the lower bound: "[1.21,1.21.1)" -> "1.21", "[1.21.8,)" -> "1.21.8".
+     */
     private String parseMavenVersionRange(String range) {
-        String clean = range.replaceAll("[\\[\\]()\\s]", "");
-        String[] parts = clean.split(",");
-        if (parts.length > 0 && !parts[0].isEmpty()) {
-            return parts[0];
+        String trimmed = range.trim();
+        String clean = trimmed.replaceAll("[\\[\\]()\\s]", "");
+        String[] parts = clean.split(",", -1);
+        String lower = parts.length > 0 && !parts[0].isEmpty() ? parts[0] : null;
+
+        String host = RetromodVersion.TARGET_MC_VERSION;
+        if (host != null && lower != null && parts.length >= 2 && !parts[1].isEmpty()) {
+            String upper = parts[1];
+            try {
+                boolean lowerOk = trimmed.startsWith("(")
+                        ? RetromodVersion.compareMcVersions(lower, host) < 0
+                        : RetromodVersion.compareMcVersions(lower, host) <= 0;
+                boolean upperOk = trimmed.endsWith(")")
+                        ? RetromodVersion.compareMcVersions(host, upper) < 0
+                        : RetromodVersion.compareMcVersions(host, upper) <= 0;
+                if (lowerOk && upperOk) {
+                    LOGGER.info("Mod declares MC range {} which CONTAINS host {}: treating as "
+                            + "native, no transform (#174)", range, host);
+                    return host;
+                }
+            } catch (Exception e) {
+                // unparseable bound: fall through to the lower-bound behavior
+            }
         }
-        return null;
+        return lower;
     }
 
     private Map<String, String> parseSimpleToml(BufferedReader reader) throws IOException {

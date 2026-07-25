@@ -1,0 +1,16 @@
+name: Earth2Java
+badge: iron
+mod_version: 1.7.0
+source_mc: 1.16.4
+host_mc: 1.21.11
+loader: fabric
+retromod: 1.0.1
+links:
+  modrinth: https://modrinth.com/mod/earth2java
+summary: A 1.16 mod that loads on 1.21.11 after the item-group builder and InteractionResult bridges.
+details: Needed the FabricItemGroupBuilder overload fix (#57) and the pre-1.21.2 InteractionResult field-descriptor
+  bridge. Mobs and items are present; pre-1.17 custom model rendering depends on the model bridge and
+  may show visual gaps.
+reporter: Bownlux
+date: 2026-05-27
+issue: 57

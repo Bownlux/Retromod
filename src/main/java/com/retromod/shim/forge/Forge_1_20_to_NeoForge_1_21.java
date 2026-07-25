@@ -161,15 +161,7 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         // the offline CLI/AOT batch and the live runtime. This migration shim only runs at runtime
         // (ServiceLoader), so the redirect lives there, not here, to keep the two paths consistent.
 
-        // network
-        transformer.registerClassRedirect(
-            "net/minecraftforge/network/NetworkRegistry",
-            "net/neoforged/neoforge/network/registration/PayloadRegistrar"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraftforge/network/simple/SimpleChannel",
-            "net/neoforged/neoforge/network/handling/IPayloadHandler"
-        );
+        registerNetworkBridge(transformer);
         
         // client events
         transformer.registerClassRedirect(
@@ -233,12 +225,75 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         );
     }
 
+    /**
+     * The SimpleChannel surface bridge (#156); package-visible so the transform-shape test
+     * can exercise it without the NeoForge-host gate.
+     */
+    static void registerNetworkBridge(RetromodTransformer transformer) {
+        // network: the old bare class redirects (NetworkRegistry -> PayloadRegistrar, SimpleChannel
+        // -> IPayloadHandler) were actively harmful: NeoForge's PayloadRegistrar has never had
+        // newSimpleChannel, so every MCreator-style 1.20.1 mod died NoSuchMethodError in <clinit>
+        // (#156, Wonderland). Route the whole SimpleChannel surface onto the embedded NetworkShim
+        // instead: the mod LOADS and its packet registrations are collected (soft-fail: cross-side
+        // sync is inert until the replay bridge lands; tracked as 1.3.0 Forge-to-NeoForge work,
+        // together with NetworkHooks/ITeleporter/LivingTickEvent from the same family).
+        String netShim = "com/retromod/shim/forge/embedded/NetworkShim";
+        String wrapper = netShim + "$SimpleChannelWrapper";
+        String builder = netShim + "$MessageBuilder";
+        transformer.registerClassRedirect("net/minecraftforge/network/NetworkRegistry", netShim);
+        transformer.registerClassRedirect("net/minecraftforge/network/simple/SimpleChannel", wrapper);
+        transformer.registerClassRedirect(
+            "net/minecraftforge/network/simple/SimpleChannel$MessageBuilder", builder);
+        // newSimpleChannel: the mod's Forge-typed descriptor must erase to the shim's Object form
+        // (keyed on both the pre- and post-class-redirect spellings; the return CHECKCASTs back).
+        for (String owner : new String[]{"net/minecraftforge/network/NetworkRegistry", netShim}) {
+            for (String ret : new String[]{"Lnet/minecraftforge/network/simple/SimpleChannel;",
+                                           "L" + wrapper + ";"}) {
+                transformer.registerMethodRedirect(
+                    owner, "newSimpleChannel",
+                    "(Lnet/minecraft/resources/ResourceLocation;Ljava/util/function/Supplier;"
+                        + "Ljava/util/function/Predicate;Ljava/util/function/Predicate;)" + ret,
+                    netShim, "newSimpleChannel",
+                    "(Ljava/lang/Object;Ljava/util/function/Supplier;Ljava/util/function/Predicate;"
+                        + "Ljava/util/function/Predicate;)Ljava/lang/Object;");
+            }
+        }
+        // The direction-qualified messageBuilder: NetworkDirection erases to the shim's Object.
+        for (String ret : new String[]{
+                "Lnet/minecraftforge/network/simple/SimpleChannel$MessageBuilder;",
+                "L" + builder + ";"}) {
+            transformer.registerMethodRedirect(
+                wrapper, "messageBuilder",
+                "(Ljava/lang/Class;ILnet/minecraftforge/network/NetworkDirection;)" + ret,
+                wrapper, "messageBuilder",
+                "(Ljava/lang/Class;ILjava/lang/Object;)L" + builder + ";");
+        }
+        // send(PacketTarget, msg): the target erases to Object (delivery is best-effort/no-op
+        // until the replay bridge lands; the call must not throw).
+        transformer.registerMethodRedirect(
+            wrapper, "send",
+            "(Lnet/minecraftforge/network/PacketDistributor$PacketTarget;Ljava/lang/Object;)V",
+            wrapper, "send", "(Ljava/lang/Object;Ljava/lang/Object;)V");
+    }
+
     @Override
     public String[] getShimClasses() {
+        // Inner classes MUST be listed explicitly: the embed loaders resolve exactly these
+        // resource names (no glob), and the SimpleChannel bridge redirects point AT the inners
+        // (NetworkShim$SimpleChannelWrapper etc.), so an outer-only list left them unresolvable
+        // in the mod's module (#156).
         return new String[] {
             "com.retromod.shim.forge.embedded.ForgeRegistriesShim",
             "com.retromod.shim.forge.embedded.CapabilityShim",
-            "com.retromod.shim.forge.embedded.NetworkShim"
+            "com.retromod.shim.forge.embedded.CapabilityShim$LazyOptionalWrapper",
+            "com.retromod.shim.forge.embedded.CapabilityShim$Tokens",
+            "com.retromod.shim.forge.embedded.NetworkShim",
+            "com.retromod.shim.forge.embedded.NetworkShim$SimpleChannelWrapper",
+            "com.retromod.shim.forge.embedded.NetworkShim$MessageBuilder",
+            "com.retromod.shim.forge.embedded.NetworkShim$PacketRegistration",
+            "com.retromod.shim.forge.embedded.NetworkShim$PayloadWrapper",
+            "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor",
+            "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor$PacketTarget"
         };
     }
 }

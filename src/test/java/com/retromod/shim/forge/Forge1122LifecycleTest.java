@@ -109,6 +109,41 @@ class Forge1122LifecycleTest {
                 "value must be the modid so modern Forge reads a real id, not null");
     }
 
+    /**
+     * #140: pass ordering can remap the annotation to the NeoForge spelling BEFORE the upgrade
+     * runs; matching only the Forge desc (and pre-filtering on the Forge string) silently skipped
+     * the value-shape collapse, so the mod was scanned but never registered (Cooking for
+     * Blockheads 1.12.2 on a NeoForge host).
+     */
+    @Test
+    @DisplayName("#140: an already-remapped Lnet/neoforged/fml/common/Mod; legacy annotation still upgrades")
+    void alreadyRemappedNeoForgeAnnotationUpgrades() {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        Forge1122LifecycleSynthetics.register(t);
+
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+        cw.visit(Opcodes.V17, ACC_PUBLIC, "test/CfbMain", null, "java/lang/Object", null);
+        AnnotationVisitor av = cw.visitAnnotation("Lnet/neoforged/fml/common/Mod;", true);
+        av.visit("modid", "cookingforblockheads");
+        av.visit("name", "Cooking for Blockheads");
+        av.visitEnd();
+        MethodVisitor c = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+        c.visitCode(); c.visitVarInsn(ALOAD, 0);
+        c.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        c.visitInsn(RETURN); c.visitMaxs(0, 0); c.visitEnd();
+        cw.visitEnd();
+
+        byte[] out = Forge1122LifecycleSynthetics.upgradeLegacyModClass(cw.toByteArray());
+        ClassNode cn = new ClassNode();
+        new ClassReader(out).accept(cn, 0);
+        AnnotationNode mod = cn.visibleAnnotations.stream()
+                .filter(a -> a.desc.equals("Lnet/neoforged/fml/common/Mod;"))
+                .findFirst().orElseThrow();
+        assertEquals(java.util.List.of("value", "cookingforblockheads"), mod.values,
+                "the post-remap spelling must still collapse to the modern value shape");
+    }
+
     @Test
     @DisplayName("@Mod(modid=...) becomes @Mod(value) and the ctor gains the lifecycle call")
     void modClassIsUpgraded() {

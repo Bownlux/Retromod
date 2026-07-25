@@ -1,0 +1,16 @@
+name: Chunky
+badge: borked
+mod_version: 1.2.164
+source_mc: 1.18.2
+host_mc: 26.1.2
+loader: fabric
+retromod: 1.1.0-snapshot.3
+links:
+  modrinth: https://modrinth.com/mod/chunky
+summary: Loads and registers, but any world crashes on load - its 1.18 chunk-ticket API call no longer
+  exists.
+details: 'NoSuchMethodError in the server tick loop: TicketType.create(String, Comparator). 26.1 reworked
+  TicketType, and Chunky creates its chunk-loading ticket with the old 1.18 signature. Needs a TicketType
+  bridge in Retromod (tracked) or a current Chunky build.'
+reporter: Bownlux
+date: 2026-06-10

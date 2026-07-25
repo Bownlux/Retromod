@@ -1,0 +1,14 @@
+name: Extended Caves
+badge: borked
+mod_version: '2.4'
+source_mc: 1.16.5
+host_mc: '26.2'
+loader: fabric
+retromod: 1.2.0-snapshot .7+26.2-fabric
+links:
+  curseforge: https://www.curseforge.com/minecraft/mc-mods/extended-caves/files/3085297
+summary: Does not load at all; Minecraft acts like it doesn't exist.
+details: Will provide the log soon, as it seems it's too big to be put into "Details".
+reporter: andrewharn
+date: '2026-07-04'
+issue: 123

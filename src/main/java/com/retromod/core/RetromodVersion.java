@@ -22,7 +22,7 @@ public final class RetromodVersion {
      * a cache key (the runtime Forge/NeoForge transform cache mirrors the AOT key:
      * Retromod version + source hash). Keep in sync with the other version refs.
      */
-    public static final String RETROMOD_VERSION = "1.3.0-snapshot.2";
+    public static final String RETROMOD_VERSION = "1.3.0-snapshot.3";
 
     private RetromodVersion() {}
 

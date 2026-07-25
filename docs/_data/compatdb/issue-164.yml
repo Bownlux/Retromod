@@ -1,0 +1,14 @@
+name: "Luminous Wool"
+badge: diamond
+mod_version: "1.2.5"
+source_mc: "1.21.10"
+host_mc: "26.1.2"
+loader: fabric
+retromod: "1.3.0-snapshot.2"
+links:
+  modrinth: "https://modrinth.com/mod/luminous-wool"
+summary: "Loads into the game, all items register, can be crafted and placed, luminating wool and the advancement work"
+details: "This mod transforms nearly perfectly, with the only issue being a Retromod built-in class, which doesn't affect any functionality [(Verification report)](https://github.com/user-attachments/files/30105161/Luminous_Wool.txt). Minecraft loads with the transformed mod and can load into a world. The blocks are registered and can be crafted; luminating the blocks with glow ink sacs (and the advancement \"Glowpunk\") also works. They also luminate light from themselves, which is the point of this mod. <img width=\"1920\" height=\"1080\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/efbcc15d-179c-4a27-96bc-a2e9a5615471\" />"
+reporter: "ttaute"
+date: "2026-07-16"
+issue: 164

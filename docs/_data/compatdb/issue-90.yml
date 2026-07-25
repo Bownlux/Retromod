@@ -1,0 +1,13 @@
+name: Ad Astra
+badge: borked
+mod_version: 1.15.20 (1.20.1)
+host_mc: 1.21.11
+loader: fabric
+retromod: 1.1.0-snapshot.4
+links:
+  modrinth: https://modrinth.com/mod/ad-astra
+summary: Game crash at launch
+details: Logs says that the mods crashed at the minecraft launch
+reporter: redico
+date: '2026-06-12'
+issue: 90

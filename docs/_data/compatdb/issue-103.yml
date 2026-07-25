@@ -1,0 +1,14 @@
+name: 'Metallurgy 4: Reforged'
+badge: borked
+mod_version: 1.12.2
+host_mc: 1.20.1
+loader: forge
+retromod: Retromod 1.1.0+1.20.1
+links:
+  curseforge: https://www.curseforge.com/minecraft/mc-mods/metallurgy-4-reforged
+summary: Does not load mod.
+details: Following instructions on Github, posting the report for this mod. If I did something wrong,
+  I'll gladly be corrected. [Metallurgy-4-Reforged-1.4.1.jar.txt](https://github.com/user-attachments/files/29360773/Metallurgy-4-Reforged-1.4.1.jar.txt)
+reporter: Twilix01
+date: '2026-06-25'
+issue: 103

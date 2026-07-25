@@ -1,0 +1,18 @@
+name: Arcanus Continuum
+badge: borked
+mod_version: 0.112.11
+source_mc: 1.20.1
+host_mc: 1.21.11
+loader: fabric
+retromod: 1.1.0-snapshot.3
+links:
+  modrinth: https://modrinth.com/mod/arcanus
+summary: Retromod no longer corrupts its mixins, but its bundled reach-entity-attributes still can't apply
+  on 1.21.11.
+details: 'snapshot.3 fixed the Retromod-caused failure (the model bridge was rewriting its mixin handler
+  descriptors — #70). What remains is the mod''s own jar-in-jar reach-entity-attributes 2.4.0, whose 1.20.1-era
+  mixins target methods that changed by 1.21.11 (multiple critical injection failures). Needs the mixin-handler
+  re-typing work tracked for a later release, or a 1.21.x build of the mod.'
+reporter: Bownlux
+date: 2026-06-10
+issue: 70

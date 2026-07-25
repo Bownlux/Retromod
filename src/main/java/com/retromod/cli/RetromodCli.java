@@ -24,7 +24,7 @@ import java.util.*;
  */
 public class RetromodCli {
     
-    private static final String VERSION = "1.3.0-snapshot.2";
+    private static final String VERSION = "1.3.0-snapshot.3";
     // Overridable per-invocation via `--target <mc-version>`.
     private static String TARGET_MC_VERSION = "26.1";
     
@@ -468,13 +468,16 @@ public class RetromodCli {
         if (sourceMcVersion == null || sourceMcVersion.isEmpty()) {
             System.err.println("Warning: Could not determine source MC version. Trying all shims...");
             RetromodTransformer transformer = RetromodTransformer.getInstance();
-            for (VersionShim shim : shimRegistry.getAllShims()) {
-                shim.registerRedirects(transformer);
-            }
+            registerAllShimsGated(transformer);
             // Removed-API polyfills (LazyLoadedValue, etc.), mirroring the runtime entrypoints and
             // the analyze/batch paths. Without these the output keeps references to removed vanilla
             // classes that the runtime redirects, so a transform-only pass understates compatibility.
             new com.retromod.polyfill.PolyfillRegistry().loadAndRegister(transformer);
+            // Same 26.1+ class-move / Identifier-ctor / Fabric intermediary->Mojang registration as the
+            // version-detected path: without it this fallback (source MC version unreadable) leaves a
+            // Fabric mod's intermediary names unremapped and it crashes on a 26.1+ host (AppleSkin,
+            // found in-game). The registration self-gates on the 26.1+ target internally.
+            register26xTargetMappings(transformer, info);
             transformJar(modPath, outputPath, transformer, info);
             // Embed referenced deleted-class synthetics: the all-shims pass registers redirects
             // onto them (e.g. the EventBus 7 bridge), so their classes must be copied in too or
@@ -523,53 +526,7 @@ public class RetromodCli {
             }
         }
 
-        // Apply the vanilla 26.1 class-move table when targeting 26.1+ (the runtime entry points
-        // do this via IntermediaryToMojangMapper). Register the moves directly rather than via
-        // applyClassMovesOnly(), which host-gates on the auto-detected TARGET_MC_VERSION.
-        int classMovesApplied = 0;
-        if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)) {
-            try {
-                var moves = com.retromod.mapping.IntermediaryToMojangMapper
-                        .getInstance().getClassMoves();
-                for (var e : moves.entrySet()) {
-                    transformer.registerClassRedirect(e.getKey(), e.getValue());
-                    classMovesApplied++;
-                }
-            } catch (Exception e) {
-                // the chain + API shims still apply without the moves
-            }
-
-            // ResourceLocation/Identifier ctor -> factory, matching an in-game boot (CLI == runtime).
-            com.retromod.mapping.IntermediaryToMojangMapper.registerIdentifierCtorRedirects(transformer);
-
-            // Fabric intermediary->Mojang member mappings; without these a distributed Fabric
-            // mod keeps its intermediary names and registers nothing. Fabric-only: NeoForge/Forge
-            // mods are already Mojang-named, and applying these clobbers their Mojang fields.
-            if ("fabric".equalsIgnoreCase(info.modLoaderType())) {
-                try {
-                    int memberMappings = com.retromod.mapping.IntermediaryToMojangMapper
-                            .applyTo(transformer);
-                    if (memberMappings > 0) {
-                        System.out.println("Applied intermediary->Mojang member mappings ("
-                                + memberMappings + ").");
-                    }
-                } catch (Exception e) {
-                    // class moves already applied above
-                }
-            }
-
-            // Register the NeoForge deleted-class bridges so embedIntoJar (below) can place them
-            // per-mod. NeoForge OR Forge: a cross-loader mod shipping both tomls is detected as
-            // "forge" yet runs on NeoForge; the embed is reference-gated.
-            String synLoaderT = info.modLoaderType();
-            if ("neoforge".equalsIgnoreCase(synLoaderT) || "forge".equalsIgnoreCase(synLoaderT)) {
-                try {
-                    com.retromod.shim.forge.ForgeNeoForgeSynthetics.registerAll(transformer);
-                } catch (Exception e) {
-                    // ignore
-                }
-            }
-        }
+        int classMovesApplied = register26xTargetMappings(transformer, info);
 
         if (chain.isEmpty() && apiApplied == 0 && classMovesApplied == 0) {
             System.out.println("No transformation needed or no shim available.");
@@ -589,7 +546,109 @@ public class RetromodCli {
         System.out.println("✓ Transformation complete: " + outputPath);
         verifyIfRequested(outputPath, modPath.getFileName().toString(), args);
     }
-    
+
+    /**
+     * Register the 26.1+ vanilla class moves, Identifier ctor redirects, Fabric intermediary->Mojang
+     * member mappings, and NeoForge/Forge deleted-class bridges. Shared by both {@link #transformCommand}
+     * paths so the "all shims" fallback (used when a mod's source MC version can't be read) does the
+     * SAME intermediary remap as the version-detected path. Without it a Fabric mod keeps its
+     * intermediary names (class_XXXX) and its mixins/entrypoints fail on a 26.1+ host (found in-game:
+     * AppleSkin, whose version detection fell through, loaded unremapped and crashed). Returns the
+     * class-move count.
+     */
+    /**
+     * The transform command's unreadable-source-version fallback: register every shim, EXCEPT those
+     * targeting a newer MC than the CLI target (pitfall-9 gate, mirrored from the runtime entry
+     * points). Without the gate, a 26.2-epoch shim (e.g. the Mc26_1To26_2CoreMoves screen hop, which
+     * emits 26.2-only {@code Gui.screen()}) rewrote a WORKING public-field read in a 26.1-target
+     * fallback transform into a {@code NoSuchMethodError} (adversarial-review finding, snapshot.3).
+     * Unparseable shim targets (API-versioned shims) return false from mcVersionExceeds and stay
+     * included, as before. Package-visible for the regression test.
+     */
+    static void registerAllShimsGated(RetromodTransformer transformer) {
+        if (shimRegistry == null) {
+            // Direct (test) invocation without main()'s bootstrap.
+            shimRegistry = new ShimRegistry();
+            registerAllShims();
+        }
+        for (VersionShim shim : shimRegistry.getAllShims()) {
+            if (com.retromod.core.RetromodVersion.mcVersionExceeds(
+                    shim.getTargetVersion(), TARGET_MC_VERSION)) {
+                continue;
+            }
+            shim.registerRedirects(transformer);
+        }
+    }
+
+    static int register26xTargetMappings(RetromodTransformer transformer, ModVersionInfo info) {
+        int classMovesApplied = 0;
+        if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)) {
+            try {
+                var moves = com.retromod.mapping.IntermediaryToMojangMapper
+                        .getInstance().getClassMoves();
+                for (var e : moves.entrySet()) {
+                    transformer.registerClassRedirect(e.getKey(), e.getValue());
+                    classMovesApplied++;
+                }
+            } catch (Exception e) {
+                // the chain + API shims still apply without the moves
+            }
+            // Loader-agnostic 26.1 API adaptations from the 1.21.11->26.1 common shim: class moves,
+            // method/ctor renames, descriptor-signature skews (Vec3.<init>(Vector3f)->Vector3fc,
+            // Mth.cos(F)F->(D)F, ...), client accessor renames, RenderSystem neutralizes. These live
+            // on the version-chain shim, but the graph BFS returns an EMPTY chain for the most common
+            // Fabric mods (a 1.21.1 source has no path to 26.1), so without registering them here a
+            // Fabric mod gets its NAMES remapped but none of the 26.x signature/API skews (jade died
+            // NoSuchMethodError Vec3.<init>(Vector3f) for exactly this reason). Idempotent, so
+            // re-registering when the chain DOES include the shim is harmless. Mojang-keyed, so they
+            // fire post-remap for Fabric and natively for NeoForge/Forge.
+            try {
+                com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
+            } catch (Exception e) {
+                // the name remap + class moves above still apply
+            }
+            // The 26.2 core moves suffer the SAME empty-chain gap as the 26.1 shim above (the BFS
+            // finds no path from a 1.21.x source, so Fabric_26_1_to_26_2 never applies offline):
+            // for a 26.2+ target, register them here unconditionally too. Idempotent. At runtime
+            // this is unnecessary (the loaders register every shim whose target <= host).
+            if (!com.retromod.core.RetromodVersion.mcVersionExceeds("26.2", TARGET_MC_VERSION)) {
+                try {
+                    com.retromod.shim.common.Mc26_1To26_2CoreMoves.register(transformer);
+                } catch (Exception e) {
+                    // the 26.1 adaptations above still apply
+                }
+            }
+            // ResourceLocation/Identifier ctor -> factory, matching an in-game boot (CLI == runtime).
+            com.retromod.mapping.IntermediaryToMojangMapper.registerIdentifierCtorRedirects(transformer);
+            // Fabric intermediary->Mojang member mappings; without these a distributed Fabric mod keeps
+            // its intermediary names and registers nothing. Fabric-only: NeoForge/Forge mods are already
+            // Mojang-named, and applying these clobbers their Mojang fields.
+            if ("fabric".equalsIgnoreCase(info.modLoaderType())) {
+                try {
+                    int memberMappings = com.retromod.mapping.IntermediaryToMojangMapper.applyTo(transformer);
+                    if (memberMappings > 0) {
+                        System.out.println("Applied intermediary->Mojang member mappings ("
+                                + memberMappings + ").");
+                    }
+                } catch (Exception e) {
+                    // class moves already applied above
+                }
+            }
+            // NeoForge deleted-class bridges so embedIntoJar can place them per-mod. NeoForge OR Forge:
+            // a cross-loader mod shipping both tomls is detected as "forge" yet runs on NeoForge; the
+            // embed is reference-gated.
+            String synLoaderT = info.modLoaderType();
+            if ("neoforge".equalsIgnoreCase(synLoaderT) || "forge".equalsIgnoreCase(synLoaderT)) {
+                try {
+                    com.retromod.shim.forge.ForgeNeoForgeSynthetics.registerAll(transformer);
+                } catch (Exception e) {
+                    // ignore
+                }
+            }
+        }
+        return classMovesApplied;
+    }
+
     /** Embed removed APIs into a mod JAR. */
     private static void embedCommand(String[] args) throws Exception {
         if (args.length < 2) {
@@ -663,6 +722,24 @@ public class RetromodCli {
                 }
             } catch (Exception e) {
                 // the chain + API shims still apply without the moves
+            }
+            // Loader-agnostic 26.1 API adaptations from the 1.21.11->26.1 common shim (see the same
+            // block in register26xTargetMappings for the rationale): the version-graph BFS returns an
+            // EMPTY chain for the most common Fabric mods, so these 26.x signature/API skews (e.g.
+            // Vec3.<init>(Vector3f)->Vector3fc) never apply without registering them here. Idempotent.
+            try {
+                com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
+            } catch (Exception e) {
+                // the name remap + class moves above still apply
+            }
+            // Same empty-chain gap for the 26.2 core moves (see register26xTargetMappings): a 26.2+
+            // target registers them unconditionally here too. Idempotent.
+            if (!com.retromod.core.RetromodVersion.mcVersionExceeds("26.2", TARGET_MC_VERSION)) {
+                try {
+                    com.retromod.shim.common.Mc26_1To26_2CoreMoves.register(transformer);
+                } catch (Exception e) {
+                    // the 26.1 adaptations above still apply
+                }
             }
             // ResourceLocation/Identifier ctor -> factory, matching an in-game boot so CLI output
             // equals the runtime's (both reach the shared helper). All loaders need it: NeoForge/Forge
@@ -810,19 +887,23 @@ public class RetromodCli {
 
                 if (needs26Patch) {
                     patchModMetadata(outputPath);
-                    // Embed referenced deleted-class synthetics per-mod, whether the mod was
-                    // transformed/AOT-compiled or only metadata-patched: a "compatible by version"
-                    // mod can still reference a class 26.x deleted. Reference-gated.
-                    String embLoader = info.modLoaderType();
-                    if ("neoforge".equalsIgnoreCase(embLoader) || "forge".equalsIgnoreCase(embLoader)) {
-                        try {
-                            RetromodTransformer rt = RetromodTransformer.getInstance();
+                    // Embed referenced synthetics per-mod, whether the mod was transformed/AOT
+                    // -compiled or only metadata-patched (a "compatible by version" mod can still
+                    // reference a deleted/changed class). Reference-gated. On NeoForge/Forge this
+                    // also carries the deleted-class bridges (registerAll). On ALL loaders it carries
+                    // the GENERATED synthetics that aren't compiled into Retromod's jar (e.g.
+                    // RetroSimpleJsonReloadListener) - Fabric can't load those from the classpath, so
+                    // they must travel embedded in the mod jar (no JPMS split-package risk there).
+                    try {
+                        RetromodTransformer rt = RetromodTransformer.getInstance();
+                        String embLoader = info.modLoaderType();
+                        if ("neoforge".equalsIgnoreCase(embLoader) || "forge".equalsIgnoreCase(embLoader)) {
                             com.retromod.shim.forge.ForgeNeoForgeSynthetics.registerAll(rt);
-                            com.retromod.core.SyntheticEmbedder.embedIntoJar(
-                                    outputPath, modFile.getName(), rt);
-                        } catch (Exception e) {
-                            // the mod is otherwise complete
                         }
+                        com.retromod.core.SyntheticEmbedder.embedIntoJar(
+                                outputPath, modFile.getName(), rt);
+                    } catch (Exception e) {
+                        // the mod is otherwise complete
                     }
                 }
 
@@ -1086,6 +1167,14 @@ public class RetromodCli {
                                     data = com.retromod.shim.common.Gui2DTransformMigration.migrate(data);
                                 }
                                 data = transformer.transformClass(data, entry.getName());
+                                // ...and again AFTER the remap: a Fabric mod is intermediary-named
+                                // pre-transform (the pre-filter/pattern above no-op on class_XXXX), so
+                                // its GUI 2D-transform is only reachable once transformClass has renamed
+                                // pose()/GuiGraphics/PoseStack to Mojang. Idempotent on NeoForge (the
+                                // pre-transform pass already migrated, so this finds nothing to do).
+                                if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)) {
+                                    data = com.retromod.shim.common.Gui2DTransformMigration.migrate(data);
+                                }
                             }
                             // neutralize blocklisted mixins; always runs since a mixin can need
                             // it even when its bytecode otherwise needs no transformation

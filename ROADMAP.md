@@ -5,7 +5,7 @@
 > Forward-looking plans only. Anything already shipped lives in the [changelog](CHANGELOG.md), not here.
 > No fixed dates. Retromod ships a release when it's ready, not on a calendar.
 >
-> Last updated: 2026-07-14 · **v1.2.0 shipped** (stable) · **1.3.0-snapshot.2** in development (mixin translation)
+> Last updated: 2026-07-14 · **v1.2.0 shipped** (stable) · **1.3.0-snapshot.3** in development (mixin translation)
 
 ---
 

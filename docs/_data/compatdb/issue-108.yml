@@ -1,0 +1,16 @@
+name: 'Scape and Run: Parasites'
+badge: borked
+mod_version: 1.10.7
+source_mc: 1.12.2
+host_mc: 1.20.1
+loader: forge
+retromod: 1.1.0
+links:
+  modrinth: https://modrinth.com/mod/scapeandrunparasites/version/1.10.7
+summary: The game loads, just without the mod? But retromod did make a SRParasites-1.10.7-retromod.jar
+  in the mod folder.
+details: '- Load game - Retromod and forge loads - No srparasites  Im not completely sure if I followed
+  the steps correctly so take everything here with a grain of salt [SRParasites-1.10.7.jar.txt](https://github.com/user-attachments/files/29431672/SRParasites-1.10.7.jar.txt)'
+reporter: Aud999461
+date: '2026-06-28'
+issue: 108

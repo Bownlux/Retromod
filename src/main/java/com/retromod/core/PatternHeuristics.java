@@ -319,18 +319,23 @@ public class PatternHeuristics {
             return null;
         });
 
-        // Fabric API 26.1 switched networking names from S2C/C2S to Mojang's
-        // Clientbound/Serverbound.
+        // Fabric API's 26.1 networking rename moved the DIRECTION word to the FRONT and the channel
+        // to the back: playS2C -> clientboundPlay, configurationS2C -> clientboundConfiguration (and
+        // ...C2S -> serverbound...). A naive replace("S2C","Clientbound") produced the WRONG spelling
+        // "playClientbound" (which 26.1 does not have), so a mod that fell through the explicit
+        // Fabric_1_21_11_to_26_1 table died NoSuchMethodError at init (AppleSkin's SyncHandler, found
+        // in an in-game 26.2 launch). Reconstruct the actual 26.1 name instead of a token replace.
         rules.add((owner, name, desc) -> {
-            if (owner.contains("networking") && name.contains("S2C")) {
-                return new PatternResult(owner, name.replace("S2C", "Clientbound"), desc,
-                    0.9, "S2C->Clientbound",
-                    "26.1 Fabric API renamed S2C to Clientbound");
+            if (!owner.contains("networking")) return null;
+            if (name.endsWith("S2C") && name.length() > 3) {
+                return new PatternResult(owner, "clientbound" + capitalize(name.substring(0, name.length() - 3)),
+                    desc, 0.9, "<channel>S2C->clientbound<Channel>",
+                    "26.1 Fabric API: <channel>S2C -> clientbound<Channel>");
             }
-            if (owner.contains("networking") && name.contains("C2S")) {
-                return new PatternResult(owner, name.replace("C2S", "Serverbound"), desc,
-                    0.9, "C2S->Serverbound",
-                    "26.1 Fabric API renamed C2S to Serverbound");
+            if (name.endsWith("C2S") && name.length() > 3) {
+                return new PatternResult(owner, "serverbound" + capitalize(name.substring(0, name.length() - 3)),
+                    desc, 0.9, "<channel>C2S->serverbound<Channel>",
+                    "26.1 Fabric API: <channel>C2S -> serverbound<Channel>");
             }
             return null;
         });
@@ -483,6 +488,12 @@ public class PatternHeuristics {
     /** True for GuiGraphics (pre-26.1) and GuiGraphicsExtractor (26.1). */
     private static boolean isGuiGraphics(String owner) {
         return owner.contains("GuiGraphics");
+    }
+
+    /** "play" -> "Play"; used to reorder the Fabric networking S2C/C2S rename. */
+    private static String capitalize(String s) {
+        if (s == null || s.isEmpty()) return s;
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
     /** Method and field pattern rule; returns a match or null. */

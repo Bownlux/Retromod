@@ -1,0 +1,16 @@
+name: Atmospheric Paintings
+badge: diamond
+mod_version: 1.21.4
+source_mc: 1.21.4
+host_mc: 26.1.2
+loader: neoforge
+retromod: 1.2.0-snapshot.4
+links:
+  modrinth: https://modrinth.com/mod/atmospheric-paintings
+summary: Paintings register and are placeable, no artifacts encountered
+details: 'Paintings are registered and can be placed (both the specific painting from the creative inventory
+  and from the random painting item), no errors in the log and no missing classes/methods/etc. Side note:
+  This was transformed with the Retromod CLI.  verification report: [_neoforge-1.21.4_paintings_pack.jar.txt](https://github.com/user-attachments/files/29424133/_neoforge-1.21.4_paintings_pack.jar.txt)'
+reporter: ttaute
+date: '2026-06-27'
+issue: 105

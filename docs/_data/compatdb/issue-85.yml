@@ -1,0 +1,18 @@
+name: Macaw's Bridges
+badge: gold
+mod_version: 3.1.2
+source_mc: 1.21.1
+host_mc: '26.2'
+loader: forge
+retromod: 1.2.0-snapshot.7
+links:
+  modrinth: https://modrinth.com/mod/macaws-bridges
+summary: Loads on Forge 26.2 across the EventBus 7 break; constructs, registers, and reaches the menu.
+details: Forge 26.2 (Forge 65.x) replaced EventBus 6 with EventBus 7, which used to kill every old Forge
+  mod at construction. The snapshot.7 LegacyEventBus bridge maps the old idiom (getModEventBus, DeferredRegister.register(bus),
+  MinecraftForge.EVENT_BUS, @SubscribeEvent, EventPriority) onto BusGroup, and as of snapshot.7 the lambda
+  setup listeners (addListener(this::...)) bind too. Verified in-game to the main menu with content registered;
+  in-world testing was done on the NeoForge host (see the other entry), and the in-world fixes are loader-shared.
+reporter: Bownlux
+date: 2026-07-02
+issue: 85

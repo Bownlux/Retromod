@@ -570,7 +570,6 @@ net/minecraft/world/entity/vehicle/OldMinecartBehavior	net/minecraft/world/entit
 net/minecraft/world/entity/vehicle/OldMinecartBehavior$1	net/minecraft/world/entity/vehicle/minecart/OldMinecartBehavior$1
 net/minecraft/world/entity/vehicle/Raft	net/minecraft/world/entity/vehicle/boat/Raft
 net/minecraft/world/level/BlockAndTintGetter	net/minecraft/client/renderer/block/BlockAndTintGetter
-net/minecraft/world/level/GameRules	net/minecraft/world/level/gamerules/GameRules
 net/minecraft/world/level/GameRules$VisitorCaller	net/minecraft/world/level/gamerules/GameRules$VisitorCaller
 net/minecraft/world/level/biome/AmbientAdditionsSettings	net/minecraft/world/attribute/AmbientAdditionsSettings
 net/minecraft/world/level/biome/AmbientMoodSettings	net/minecraft/world/attribute/AmbientMoodSettings
@@ -997,3 +996,37 @@ net/minecraft/world/entity/npc/VillagerTrades	net/minecraft/world/item/trading/V
 # only on the 26.1+ path (where the real class is gone). Soft-fail — render-layer
 # registration is inert (transparent blocks render solid), but the mod loads.
 net/fabricmc/fabric/api/blockrenderlayer/v1/BlockRenderLayerMap	com/retromod/generated/legacyfabric/BlockRenderLayerMap
+# PlayerSkin moved client/resources -> world/entity/player in the 26.1 restructure
+# (verified absent at the old path on 26.1-snapshot-10); its Model enum became the
+# top-level PlayerModelType (constants SLIM/WIDE unchanged). 7 corpus mods.
+# Member renames (texture->body etc.) are converting redirects in the common shim.
+net/minecraft/client/resources/PlayerSkin	net/minecraft/world/entity/player/PlayerSkin
+net/minecraft/client/resources/PlayerSkin$Model	net/minecraft/world/entity/player/PlayerModelType
+# ReceivingLevelScreen -> LevelLoadingScreen (26.1; the old class is gone on
+# 26.1-snapshot-10). Mods mostly instanceof/reference it for screen detection.
+net/minecraft/client/gui/screens/ReceivingLevelScreen	net/minecraft/client/gui/screens/LevelLoadingScreen
+# Intermediary kept com.mojang.blaze3d OUTER names plain but its inners got
+# class_N ids, so distributed Fabric mods literally contain
+# GlStateManager$class_4534/4535 (10 corpus mods) - a spelling neither the
+# intermediary map (keyed net/minecraft/class_...) nor the SourceFactor/DestFactor
+# inner-move entries above matched. Map the hybrids to the same promoted 26.1
+# top-levels. (On 26.2 those are deleted too; CoreMoves nulls their GETSTATICs
+# and the enum blendFunc overloads are neutralized.)
+com/mojang/blaze3d/platform/GlStateManager$class_4535	com/mojang/blaze3d/platform/SourceFactor
+com/mojang/blaze3d/platform/GlStateManager$class_4534	com/mojang/blaze3d/platform/DestFactor
+# LightTexture deleted in the 26.1 render rewrite (absent on 26.1-snapshot-10):
+# coord math moved to util/LightCoordsUtil (member redirects in the common shim),
+# texture management to renderer/Lightmap (which kept the static getBrightness
+# with the SAME descriptor, so the class move alone fixes that call). 9 corpus mods.
+net/minecraft/client/renderer/LightTexture	net/minecraft/client/renderer/Lightmap
+# RenderType moved to renderer/rendertype/RenderType in the same rewrite (both
+# 26.1 and 26.2). The CompositeState/RenderStateShard builder world is deleted
+# (documented loss); the ubiquitous static getters moved to rendertype/RenderTypes
+# with two cull-naming flips, bridged by member redirects in the common shim.
+# 34 corpus mods reference RenderType.
+net/minecraft/client/renderer/RenderType	net/minecraft/client/renderer/rendertype/RenderType
+# GameRules restructure (26.1): the string-keyed instance became gamerules/GameRules
+# (constants + instance get on one class); Key became the typed GameRule. In the
+# moves tsv (not code registration) so the intermediary composition folds
+# class_1928 -> gamerules/GameRules in ONE remap pass (a code-registered second hop
+# churned extra passes into the cap on real jars). Members bridge via the common shim.

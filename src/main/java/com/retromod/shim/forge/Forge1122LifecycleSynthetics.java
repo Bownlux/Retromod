@@ -306,9 +306,14 @@ public final class Forge1122LifecycleSynthetics {
      */
     public static byte[] upgradeLegacyModClass(byte[] classBytes) {
         if (!active || classBytes == null) return classBytes;
-        // cheap pre-filter before a full parse
-        if (new String(classBytes, java.nio.charset.StandardCharsets.ISO_8859_1)
-                .indexOf("net/minecraftforge/fml/common/Mod") < 0) return classBytes;
+        // cheap pre-filter before a full parse. BOTH spellings: depending on pass ordering the
+        // class may already be remapped to the NeoForge annotation before this runs, and matching
+        // only the Forge spelling silently skipped the value-shape upgrade, so the mod was scanned
+        // but never registered (#140, Cooking for Blockheads 1.12.2 on a NeoForge host). The
+        // modid-element gate below still protects modern value-shaped @Mod classes.
+        String pool = new String(classBytes, java.nio.charset.StandardCharsets.ISO_8859_1);
+        if (pool.indexOf("net/minecraftforge/fml/common/Mod") < 0
+                && pool.indexOf("net/neoforged/fml/common/Mod") < 0) return classBytes;
         try {
             ClassNode cn = new ClassNode();
             new org.objectweb.asm.ClassReader(classBytes).accept(cn, 0);
@@ -317,7 +322,9 @@ public final class Forge1122LifecycleSynthetics {
             AnnotationNode modAnn = null;
             if (cn.visibleAnnotations != null) {
                 for (AnnotationNode ann : cn.visibleAnnotations) {
-                    if (!MOD_ANNOTATION_DESC.equals(ann.desc) || ann.values == null) continue;
+                    boolean modDesc = MOD_ANNOTATION_DESC.equals(ann.desc)
+                            || "Lnet/neoforged/fml/common/Mod;".equals(ann.desc);
+                    if (!modDesc || ann.values == null) continue;
                     for (int i = 0; i + 1 < ann.values.size(); i += 2) {
                         if ("modid".equals(ann.values.get(i))
                                 && ann.values.get(i + 1) instanceof String s) {

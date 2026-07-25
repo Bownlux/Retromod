@@ -34,7 +34,7 @@ public class AotCompiler {
     private static final String AOT_MANIFEST_KEY = "Retromod-AOT-Version";
 
     // bump when shims change (package-visible: AotCacheStamp folds it into the generation stamp)
-    static final String AOT_VERSION = "1.3.0-snapshot.2";
+    static final String AOT_VERSION = "1.3.0-snapshot.3";
 
     // Self-hash of the running Retromod jar, stamped on every cache entry so any change to Retromod's
     // own classes invalidates stale caches (AOT_VERSION alone only catches version bumps). Empty hash
@@ -131,6 +131,23 @@ public class AotCompiler {
                     com.retromod.mapping.IntermediaryToMojangMapper.applyTo(transformer);
                 } catch (Exception e) {
                     LOGGER.warn("Could not register member mappings for AOT", e);
+                }
+            }
+            // Same empty-chain gap as the CLI transform/batch paths (the version-graph BFS returns
+            // an empty chain for 1.21.x sources): without registering the loader-agnostic 26.1
+            // common shim + (for 26.2+ targets) the 26.2 core moves here, an AOT jar missed the
+            // 26.x signature/API skews and the screen/hideGui bridges that a plain transform
+            // applies. Idempotent when the chain DOES include them.
+            try {
+                com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
+            } catch (Exception e) {
+                LOGGER.warn("Could not register 26.1 common adaptations for AOT", e);
+            }
+            if (!RetromodVersion.mcVersionExceeds("26.2", targetMcVersion)) {
+                try {
+                    com.retromod.shim.common.Mc26_1To26_2CoreMoves.register(transformer);
+                } catch (Exception e) {
+                    LOGGER.warn("Could not register 26.2 core moves for AOT", e);
                 }
             }
         }
@@ -440,25 +457,24 @@ public class AotCompiler {
         }
     }
 
-    /** Hybrid AOT/JIT class transform, falling back to {@link #transformClassSimple} on any error. */
+    /**
+     * Full-fidelity AOT class transform: the SAME {@link RetromodTransformer#transformClass} pass
+     * the runtime and the CLI transform/batch paths use, so AOT output carries EVERY mechanism
+     * (field hop accessors, field static bridges, converting/singleton redirects, field accessors,
+     * invokedynamic handle rewrites, ...). The former HybridCompiler primary implemented only
+     * class+method redirects, so AOT jars silently missed the whole rest of the mechanism set
+     * (adversarial-review finding, snapshot.3): a mod reading {@code Minecraft.screen} AOT-compiled
+     * clean but died {@code NoSuchFieldError} in-game, while the identical mod through plain
+     * {@code transform} worked. Its JIT-required markers were never consumed at runtime, so nothing
+     * is lost by the reroute. Falls back to {@link #transformClassSimple} on any throw (which
+     * itself falls back to JIT-then-ship-original), preserving the #125/#127 per-class posture.
+     */
     private byte[] transformClassAot(byte[] classBytes, String className) {
         try {
-            HybridCompiler hybridCompiler = new HybridCompiler(transformer);
-            HybridCompiler.HybridCompilationResult result = hybridCompiler.compileClass(classBytes, className);
-
-            if (result.methodsJitOnly() > 0) {
-                classesObfuscated++;
-            }
-
-            if (result.methodsPartialAot() > 0 || result.methodsJitOnly() > 0) {
-                LOGGER.debug("Class {} compiled: {} full AOT, {} partial, {} JIT-only methods",
-                    className, result.methodsFullyAot(), result.methodsPartialAot(), result.methodsJitOnly());
-            }
-
-            return result.bytecode();
-
+            byte[] out = transformer.transformClass(classBytes, className);
+            return out != null ? out : classBytes;
         } catch (Exception e) {
-            LOGGER.warn("Hybrid compilation failed for {}, using simple transform", className);
+            LOGGER.warn("Full transform failed for {}, using simple transform", className);
             return transformClassSimple(classBytes, className);
         }
     }

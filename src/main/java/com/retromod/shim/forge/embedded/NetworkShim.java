@@ -107,6 +107,21 @@ public final class NetworkShim {
             return new MessageBuilder<>(this, type, id);
         }
 
+        /** The direction-qualified overload (MCreator's addNetworkMessage); direction is ignored
+         *  by the collect-and-replay design, which registers both ways. */
+        public <T> MessageBuilder<T> messageBuilder(Class<T> type, int id, Object direction) {
+            return new MessageBuilder<>(this, type, id);
+        }
+
+        /** The Optional&lt;NetworkDirection&gt; overload of registerMessage; same erasure story. */
+        public <T> void registerMessage(int id, Class<T> messageType,
+                BiConsumer<T, Object> encoder,
+                Function<Object, T> decoder,
+                BiConsumer<T, Object> messageConsumer,
+                java.util.Optional<?> direction) {
+            registerMessage(id, messageType, encoder, decoder, messageConsumer);
+        }
+
         public void sendToServer(Object message) {
             try {
                 Class<?> distributorClass = Class.forName(
@@ -184,6 +199,16 @@ public final class NetworkShim {
         public MessageBuilder<T> consumer(BiConsumer<T, Object> consumer) {
             this.consumer = consumer;
             return this;
+        }
+
+        /** Forge's main-thread variant (the one MCreator's scaffold uses). */
+        public MessageBuilder<T> consumerMainThread(BiConsumer<T, Object> consumer) {
+            return consumer(consumer);
+        }
+
+        /** Forge's network-thread variant. */
+        public MessageBuilder<T> consumerNetworkThread(BiConsumer<T, Object> consumer) {
+            return consumer(consumer);
         }
         
         public void add() {

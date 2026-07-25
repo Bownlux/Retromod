@@ -1,0 +1,39 @@
+name: Chat Bubbles
+badge: borked
+mod_version: 1.0.1_for_1.15.2
+source_mc: 1.15.2
+host_mc: '26.2'
+loader: fabric
+retromod: 1.2.0-snapshot .7+26.2-fabric
+links:
+  curseforge: https://www.curseforge.com/minecraft/mc-mods/chat-bubbles/files/2947570
+summary: Game crashes at initialization stage
+details: "java.lang.RuntimeException: Could not execute entrypoint stage 'client' due to errors, provided\
+  \ by 'chatbubbles' at 'com.mamiyaotaru.chatbubbles.fabricmod.FabricModChatBubbles'! \tat net.fabricmc.loader.impl.FabricLoaderImpl.lambda$invokeEntrypoints$0(FabricLoaderImpl.java:413)\
+  \ \tat net.fabricmc.loader.impl.util.ExceptionUtil.gatherExceptions(ExceptionUtil.java:33) \tat net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:411)\
+  \ \tat net.fabricmc.loader.impl.game.minecraft.Hooks.startClient(Hooks.java:53) \tat knot//net.minecraft.client.Minecraft.<init>(Minecraft.java:456)\
+  \ \tat knot//net.minecraft.client.main.Main.main(Main.java:278) \tat net.fabricmc.loader.impl.game.minecraft.MinecraftGameProvider.launch(MinecraftGameProvider.java:514)\
+  \ \tat net.fabricmc.loader.impl.launch.knot.Knot.launch(Knot.java:72) \tat net.fabricmc.loader.impl.launch.knot.KnotClient.main(KnotClient.java:23)\
+  \ \tat java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104)\
+  \ \tat java.base/java.lang.reflect.Method.invoke(Method.java:565) \tat com.modrinth.theseus.MinecraftLaunch.relaunch(MinecraftLaunch.java:61)\
+  \ \tat com.modrinth.theseus.MinecraftLaunch.main(MinecraftLaunch.java:28) Caused by: java.lang.NoClassDefFoundError:\
+  \ net/fabricmc/fabric/api/event/client/ClientTickCallback \tat java.base/java.lang.ClassLoader.defineClass1(Native\
+  \ Method) \tat java.base/java.lang.ClassLoader.defineClass(ClassLoader.java:962) \tat java.base/java.security.SecureClassLoader.defineClass(SecureClassLoader.java:144)\
+  \ \tat net.fabricmc.loader.impl.launch.knot.KnotClassLoader.defineClassFwd(KnotClassLoader.java:165)\
+  \ \tat net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.tryLoadClass(KnotClassDelegate.java:368)\
+  \ \tat net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.loadClass(KnotClassDelegate.java:231)\
+  \ \tat net.fabricmc.loader.impl.launch.knot.KnotClassLoader.loadClass(KnotClassLoader.java:119) \tat\
+  \ java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:490) \tat java.base/java.lang.Class.forName0(Native\
+  \ Method) \tat java.base/java.lang.Class.forName(Class.java:547) \tat net.fabricmc.loader.impl.util.DefaultLanguageAdapter.create(DefaultLanguageAdapter.java:53)\
+  \ \tat net.fabricmc.loader.impl.entrypoint.EntrypointStorage$NewEntry.getOrCreate(EntrypointStorage.java:124)\
+  \ \tat net.fabricmc.loader.impl.entrypoint.EntrypointContainerImpl.getEntrypoint(EntrypointContainerImpl.java:53)\
+  \ \tat net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:409) \t...\
+  \ 10 more Caused by: java.lang.ClassNotFoundException: net.fabricmc.fabric.api.event.client.ClientTickCallback\
+  \ \tat java.base/jdk.internal.loader.BuiltinClassLoader.loadClass(BuiltinClassLoader.java:580) \tat\
+  \ java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:490) \tat net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.loadClass(KnotClassDelegate.java:239)\
+  \ \tat net.fabricmc.loader.impl.launch.knot.KnotClassLoader.loadClass(KnotClassLoader.java:119) \tat\
+  \ java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:490) \t... 24 more Will provide the log\
+  \ soon, as it seems it's too big to be put into \"Details\"."
+reporter: andrewharn
+date: '2026-07-04'
+issue: 129

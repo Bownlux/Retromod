@@ -1,0 +1,16 @@
+name: YUNG's Better Dungeons
+badge: gold
+mod_version: 5.1.4
+source_mc: 1.21.1
+host_mc: '26.2'
+loader: fabric
+retromod: 1.2.0-snapshot.7
+links:
+  modrinth: https://modrinth.com/mod/yungs-better-dungeons
+summary: Dungeons register and generate in-world on 26.2 (/locate finds them, /place builds them).
+details: Needs YUNG's API (translated, see its entry) and Cloth Config (a native 26.2 build exists on
+  Modrinth). On a 26.2 dedicated server, /locate finds a small_dungeon and /place generates one with zero
+  errors; the jigsaw generation path needed the snapshot.7 JigsawBlockInfo bridges. Verified via server
+  commands; natural exploration in a client session not yet play-tested.
+reporter: Bownlux
+date: 2026-07-02

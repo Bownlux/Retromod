@@ -1,0 +1,27 @@
+name: Macaw's Roofs + Trapdoors + Bridges (together)
+bundle: true
+badge: gold
+host_mc: '26.2'
+loader: neoforge
+retromod: 1.2.0-snapshot.7
+mods:
+- name: Macaw's Roofs
+  version: 2.3.2
+  source_mc: 1.21.1
+  link: https://modrinth.com/mod/macaws-roofs
+- name: Macaw's Trapdoors
+  version: 1.1.5
+  source_mc: 1.21.1
+  link: https://modrinth.com/mod/macaws-trapdoors
+- name: Macaw's Bridges
+  version: 3.1.2
+  source_mc: 1.21.1
+  link: https://modrinth.com/mod/macaws-bridges
+summary: All three Forge 1.21.1 builds load together on NeoForge 26.2 and reach the menu with content
+  registered and textured.
+details: The snapshot.7 acceptance set. All three scan, construct, register their blocks and items, reload
+  resources, and reach the main menu with fully textured creative tabs. In-world placement was verified
+  in depth on Bridges (see its single-mod entry); Roofs and Trapdoors got registration and creative-tab
+  verification.
+reporter: Bownlux
+date: 2026-07-02

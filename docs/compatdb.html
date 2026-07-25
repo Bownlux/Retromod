@@ -102,7 +102,12 @@ details.more p { color:var(--fg2); font-size:.92em; margin:.4em 0 0; }
   </div>
 </div>
 
-{% assign entries = site.data.compatdb | sort: "name" %}
+{% comment %} site.data.compatdb is a data DIRECTORY (one file per entry, so concurrent
+report PRs never conflict); Jekyll exposes it as a filename->entry hash. The README.md inside the
+directory is not a .yml, so the data loader skips it. Collect the hash values into an array. {% endcomment %}
+{% assign entries = "" | split: "" %}
+{% for pair in site.data.compatdb %}{% assign entries = entries | push: pair[1] %}{% endfor %}
+{% assign entries = entries | sort: "name" %}
 {% assign total = entries | size %}
 {% assign nborked = entries | where: "badge", "borked" | size %}
 {% assign ndiamond = entries | where: "badge", "diamond" | size %}
@@ -228,7 +233,7 @@ details.more p { color:var(--fg2); font-size:.92em; margin:.4em 0 0; }
       <div class="full"><label>Details (what works, what doesn't, log snippets)</label><textarea id="s-det"></textarea></div>
     </div>
     <button id="go">Submit via GitHub →</button>
-    <div class="note">Power users: you can also PR <a href="https://github.com/Bownlux/Retromod/blob/main/docs/_data/compatdb.yml">docs/_data/compatdb.yml</a> directly.</div>
+    <div class="note">Power users: you can also PR a new file into <a href="https://github.com/Bownlux/Retromod/tree/main/docs/_data/compatdb">docs/_data/compatdb/</a> directly (one YAML file per entry; see its README).</div>
   </div>
 </main>
 

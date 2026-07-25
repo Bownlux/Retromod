@@ -1,0 +1,19 @@
+name: AsyncParticles
+badge: copper
+mod_version: 5.3.0
+source_mc: 1.21.5
+host_mc: 1.21.11
+loader: fabric
+retromod: 1.0.1
+links:
+  modrinth: https://modrinth.com/mod/asyncparticles
+summary: The game runs with it installed, but the async-particle optimization (and its config) is inert
+  on a non-matching host.
+details: AsyncParticles is coremod-class - it wraps the Mixin service itself and generates conditional
+  mixins at load time. On 1.21.11 its own machinery cancels most of its mixins, and its core @Overwrite
+  targets a ParticleEngine method whose signature changed, so it cannot apply. An @Overwrite body is the
+  replacement code itself; no redirect can rewrite it for a changed method. Listed on Mods That Can't
+  Be Translated. (#63)
+reporter: rorrem09-tech
+date: 2026-05-30
+issue: 63

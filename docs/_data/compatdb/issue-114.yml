@@ -1,0 +1,19 @@
+name: Apollo's Enchantment Rebalance
+badge: gold
+mod_version: 0.1.1
+source_mc: 1.21.11
+host_mc: '26.2'
+loader: fabric
+retromod: 1.2.0-snapshot.7
+links:
+  modrinth: https://modrinth.com/mod/apollos-enchantment-rebalance
+summary: Its enchantment-rework datapack loads cleanly on 26.2 after the snapshot.7 fixes; no more Safe
+  Mode prompt.
+details: 'The #114 report: the mod''s entrypoint died on 26.x API breaks (ConditionalEffect.codec, the
+  deleted loot-type wrappers) before its custom types registered, so its internal datapack looked broken.
+  Also needed entity-predicate key namespacing in the JSON migrator and two new intermediary mappings.
+  Verified on a 26.2 dedicated server: all aer:* types register and the datapack loads with zero errors.
+  Individual enchantment effects not play-tested one by one.'
+reporter: Bownlux
+date: 2026-07-02
+issue: 114

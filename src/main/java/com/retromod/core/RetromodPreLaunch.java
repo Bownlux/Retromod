@@ -65,7 +65,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
     @Override
     public void onPreLaunch() {
         LOGGER.info("╔════════════════════════════════════════════════════════════╗");
-        LOGGER.info("║  Retromod v1.3.0-snapshot.2                                ║");
+        LOGGER.info("║  Retromod v1.3.0-snapshot.3                                ║");
         LOGGER.info("╚════════════════════════════════════════════════════════════╝");
         RetromodVersion.logPresenceBanner(LOGGER);
         
@@ -282,6 +282,16 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                     com.retromod.shim.fabric.Pre1_21_2InteractionResultBridge.register(transformer);
                 } catch (Exception e) {
                     LOGGER.warn("Could not register pre-1.21.2 InteractionResult bridge: {}", e.getMessage());
+                }
+
+                // EntityType$Builder.build(String) -> build(ResourceKey) (the 1.21.2 descriptor
+                // flip, #162): a 1.20.1-1.21.1 mod registering an entity dies NoSuchMethodError
+                // at <clinit> on a 1.21.2-1.21.11 host. Probes the host builder's method_5905
+                // shape, so it no-ops where the String form still exists.
+                try {
+                    com.retromod.shim.fabric.Pre1_21_2EntityTypeBuildBridge.register(transformer);
+                } catch (Exception e) {
+                    LOGGER.warn("Could not register pre-1.21.2 EntityType build bridge: {}", e.getMessage());
                 }
 
                 // Identifier (String)/(String,String) ctors removed in 1.20.5 for static
