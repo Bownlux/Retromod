@@ -1,0 +1,33 @@
+name: "Animania"
+bundle: true
+badge: borked
+host_mc: "1.20.1"
+loader: forge
+retromod: "1.3.0"
+mods:
+  - name: "Animania"
+    version: "2.0.3.28"
+    source_mc: "1.12.2"
+    link: "https://www.curseforge.com/minecraft/mc-mods/animania"
+  - name: "Animania Cats & Dogs"
+    version: "1.0.0.28"
+    source_mc: "1.12.2"
+    link: "https://www.curseforge.com/minecraft/mc-mods/animania-cats-dogs"
+  - name: "Animania Farm"
+    version: "1.0.2.28"
+    source_mc: "1.12.2"
+    link: "https://www.curseforge.com/minecraft/mc-mods/animania-farm"
+  - name: "Animania Extra Animals"
+    version: "1.0.2.28"
+    source_mc: "1.12.2"
+    link: "https://www.curseforge.com/minecraft/mc-mods/animania-extra"
+  - name: "CraftStudio API"
+    version: "1.0.1.95"
+    source_mc: "1.12.2"
+    link: "https://www.curseforge.com/minecraft/mc-mods/craftstudio-api"
+summary: "crashes on load is missing ICommand.class and NetworkProxy.class"
+details: "CraftStudio API (craftstudioapi) has failed to load correctly java.lang.NoClassDefFoundError net/minecraftforge/fml/common/network/NetworkRegistry. Animania (animania) has failed to load correctly java.lang.NoClassDefFoundError: net/minecraft/command/ICommand"
+reporter: "forge-1165"
+date: "2026-07-26"
+issue: 182
+
