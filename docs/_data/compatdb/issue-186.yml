@@ -1,0 +1,36 @@
+name: "Medieval Origins Revival"
+bundle: true
+badge: borked
+host_mc: "26.1.2"
+loader: fabric
+retromod: "1.1.0"
+mods:
+  - name: "ClothConfig"
+    version: "15.0.140+fabric"
+    source_mc: "1.21.1"
+    link: "https://modrinth.com/mod/cloth-config/version/15.0.140+fabric"
+  - name: "Spell Power Attributes"
+    version: "1.5.0+1.21.1-fabric"
+    source_mc: "1.21.1"
+    link: "https://modrinth.com/mod/spell-power"
+  - name: "Trinkets"
+    version: "3.10.0"
+    source_mc: "1.21.1"
+    link: "https://modrinth.com/mod/trinkets"
+  - name: "Fabric API"
+    version: "0.116.15+1.21.1"
+    source_mc: "1.21.1"
+    link: "https://modrinth.com/mod/fabric-api/version/0.116.15+1.21.1"
+  - name: "playerAnimator"
+    version: "2.0.4+1.21.1-fabric"
+    source_mc: "1.21.1"
+    link: "https://modrinth.com/mod/playeranimator/versions?g=1.21.1"
+  - name: "Origins"
+    version: "1.13.0-pre.3+mc.1.21.1"
+    source_mc: "https://modrinth.com/mod/origins/version/1.13.0-pre.3+mc.1.21.1"
+summary: "Refuses to open, dependencies crash"
+details: "Dependencies bork and refuse to load, creates duplicate of Fabric API, which causes any pre-existing mods dependent on Fabric API to fail"
+reporter: "GraysGame"
+date: "2026-07-29"
+issue: 186
+
