@@ -14,5 +14,3 @@ Retromod gives older Minecraft mods a better chance of running on current versio
 It works with Fabric, NeoForge, and Forge. Simple content mods, libraries, and quality-of-life mods are the best fit. Mods that replace large parts of Minecraft's renderer or loader may still need a proper port.
 
 Start with the [installation guide](docs/installation.md), then check the [compatibility database](https://bownlux.github.io/Retromod/compatdb/) or [troubleshooting guide](docs/troubleshooting.md) if a mod needs more work. The full docs cover the [CLI](docs/cli.md), [technical details](docs/technical.md), and [contributing](docs/contributing.md).
-
-PS I changed all the stuff to be in it's own section away from the readme, so the readme is short now.
