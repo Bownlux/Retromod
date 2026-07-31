@@ -1,17 +1,14 @@
 title: Retromod
 description: >-
-  Backwards compatibility layer for Minecraft mods — run older mods on
-  newer versions. Supports Fabric, NeoForge, and Forge.
+  Run older Minecraft mods on current Fabric, NeoForge, and Forge.
 # baseurl must match the GitHub Pages URL exactly. GitHub Pages URLs
 # are case-sensitive and lock in the casing of the repo name as it was
-# when Pages was first set up — so leave this alone unless you also
+# when Pages was first set up, so leave this alone unless you also
 # disable + re-enable Pages in the repo settings.
 baseurl: "/Retromod"
 url: "https://bownlux.github.io"
 
-# Use just-the-docs remote theme — wiki-style sidebar navigation, full-text
-# search, dark/light toggle. Much closer to the Create Wiki look than the
-# default Cayman theme.
+# Use just-the-docs for sidebar navigation, search, and theme controls.
 remote_theme: just-the-docs/just-the-docs@v0.10.1
 
 plugins:

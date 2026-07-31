@@ -103,7 +103,7 @@ class BridgeMethodSynthesizerTest {
                 "com/example/mod/MyEntity", "net/minecraft/Entity",
                 "getWorld", "()Ljava/lang/Object;");
 
-        // modOwnClasses does NOT contain the class, so it's treated as not-mod-owned
+        // modOwnClasses does not contain the class, so it's treated as not-mod-owned
         byte[] result = synthesizer.synthesize(modClass, Set.of("com/example/other/Different"));
         assertSame(modClass, result,
                 "Non-mod class must not be modified");
@@ -157,9 +157,7 @@ class BridgeMethodSynthesizerTest {
         assertSame(modClass, result, "No rename = no modification");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // HELPERS
-    // ═══════════════════════════════════════════════════════════════════════
+    // Test helpers
 
     /**
      * Produce a class that extends {@code superName} and declares one public

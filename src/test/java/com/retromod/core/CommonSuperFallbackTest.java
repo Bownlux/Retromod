@@ -1,8 +1,13 @@
 package com.retromod.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
+import java.util.Map;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
 
 /**
  * Covers the {@code getCommonSuperClass} fallback used when ASM can't resolve a type during
@@ -86,5 +91,48 @@ class CommonSuperFallbackTest {
                 RetromodTransformer.commonSuperFallback("java/lang/String", "com/example/Unknown"));
         assertEquals("java/lang/Object",
                 RetromodTransformer.commonSuperFallback("com/example/UnknownA", "com/example/UnknownB"));
+    }
+
+    private static byte[] classBytes(String name, String superName) {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, name, null, superName, null);
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    @Test
+    void commonSuperViaBytesResolvesTwoModClassesToTheirRealSuper() {
+        Map<String, byte[]> classes = Map.of(
+                "mod/pkg/OldCombat", classBytes("mod/pkg/OldCombat", "java/lang/Object"),
+                "mod/pkg/NewCombat", classBytes("mod/pkg/NewCombat", "mod/pkg/OldCombat"));
+        Function<String, byte[]> provider = classes::get;
+        assertEquals("mod/pkg/OldCombat",
+                RetromodTransformer.commonSuperViaBytes("mod/pkg/NewCombat", "mod/pkg/OldCombat", provider));
+        assertEquals("mod/pkg/OldCombat",
+                RetromodTransformer.commonSuperViaBytes("mod/pkg/OldCombat", "mod/pkg/NewCombat", provider),
+                "order-independent");
+    }
+
+    @Test
+    void commonSuperViaBytesResolvesSiblingsToSharedModBase() {
+        Map<String, byte[]> classes = Map.of(
+                "mod/pkg/BaseScreen", classBytes("mod/pkg/BaseScreen", "java/lang/Object"),
+                "mod/pkg/PageA", classBytes("mod/pkg/PageA", "mod/pkg/BaseScreen"),
+                "mod/pkg/PageB", classBytes("mod/pkg/PageB", "mod/pkg/BaseScreen"));
+        assertEquals("mod/pkg/BaseScreen",
+                RetromodTransformer.commonSuperViaBytes(
+                        "mod/pkg/PageA", "mod/pkg/PageB", classes::get));
+    }
+
+    @Test
+    void commonSuperViaBytesStaysNullWhenItCannotProveAResolvableAncestor() {
+        assertNull(RetromodTransformer.commonSuperViaBytes("mod/a/X", "mod/b/Y", null));
+
+        Map<String, byte[]> classes = Map.of(
+                "mod/pkg/ScreenA", classBytes("mod/pkg/ScreenA", "net/minecraft/class_437"),
+                "mod/pkg/ScreenB", classBytes("mod/pkg/ScreenB", "net/minecraft/class_437"));
+        assertNull(RetromodTransformer.commonSuperViaBytes(
+                        "mod/pkg/ScreenA", "mod/pkg/ScreenB", classes::get),
+                "an unresolvable intermediary common ancestor must not be returned");
     }
 }

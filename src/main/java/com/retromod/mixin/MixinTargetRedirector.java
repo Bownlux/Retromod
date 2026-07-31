@@ -42,9 +42,7 @@ public class MixinTargetRedirector {
     private static final Map<String, String> CLASS_REDIRECTS = new ConcurrentHashMap<>();
     
     static {
-        // ═══════════════════════════════════════════════════════════════
-        // METHOD RENAMES (1.20.x → 1.21.x examples)
-        // ═══════════════════════════════════════════════════════════════
+        // Method renames from 1.20.x to 1.21.x
         
         // Block breaking
         METHOD_REDIRECTS.put("breakBlock", "destroyBlock");
@@ -82,9 +80,7 @@ public class MixinTargetRedirector {
         METHOD_REDIRECTS.put("sendPacket", "send");
         METHOD_REDIRECTS.put("handlePacket", "handle");
         
-        // ═══════════════════════════════════════════════════════════════
-        // CLASS RENAMES/MOVES
-        // ═══════════════════════════════════════════════════════════════
+        // Classes that moved or changed names
         
         CLASS_REDIRECTS.put("net/minecraft/util/math/BlockPos", "net/minecraft/core/BlockPos");
         CLASS_REDIRECTS.put("net/minecraft/util/math/Vec3d", "net/minecraft/world/phys/Vec3");
@@ -96,10 +92,7 @@ public class MixinTargetRedirector {
         CLASS_REDIRECTS.put("net/minecraft/client/renderer/tileentity/TileEntityRenderer", 
                            "net/minecraft/client/renderer/blockentity/BlockEntityRenderer");
         
-        // ═══════════════════════════════════════════════════════════════
-        // METHOD SIGNATURE CHANGES (method name + descriptor)
-        // Format: "methodName|oldDesc" -> "newMethodName|newDesc"
-        // ═══════════════════════════════════════════════════════════════
+        // Signature changes use "methodName|oldDesc" -> "newMethodName|newDesc".
         
         // Example: render method gained a parameter
         METHOD_SIGNATURE_REDIRECTS.put(
@@ -422,9 +415,7 @@ public class MixinTargetRedirector {
         return target;
     }
     
-    // ═══════════════════════════════════════════════════════════════
-    // PUBLIC API FOR ADDING REDIRECTS
-    // ═══════════════════════════════════════════════════════════════
+    // Redirect registration
     
     /**
      * Register a method name redirect.

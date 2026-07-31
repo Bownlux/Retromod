@@ -1,52 +1,5 @@
 /*
- * Retromod - Backwards Compatibility Layer for Minecraft Mods
  * Copyright (c) 2026 Bownlux
- * 
- * LEGACY MOD SUPPORT SYSTEM
- * 
- * This module enables running mods from Minecraft 1.8+ on modern 26.1 clients.
- * 
- * Minecraft Version Epochs:
- * ─────────────────────────────────────────────────────────────────────────────
- * 
- * EPOCH 1: Legacy Era (1.8 - 1.12.2), Java 8
- *   - Forge-only modding
- *   - MCP obfuscation mappings
- *   - Numeric block/item IDs
- *   - Old event system
- *   - Old registry system
- * 
- * EPOCH 2: The Flattening (1.13 - 1.13.2), Java 8
- *   - MASSIVE API changes
- *   - Block states replaced numeric IDs
- *   - All block/item names changed
- *   - New command system
- *   - Very few mods exist for this version
- * 
- * EPOCH 3: Modern Foundation (1.14 - 1.16.5), Java 8/11
- *   - Fabric mod loader appears (1.14)
- *   - Forge modernizes event system
- *   - Mojang mappings become available (1.14.4)
- *   - Dimensions can be added dynamically (1.16)
- * 
- * EPOCH 4: Caves & Cliffs Era (1.17 - 1.18.2), Java 16/17
- *   - Java 16+ required (major bytecode changes)
- *   - World height expanded (-64 to 320)
- *   - New world generation system
- *   - Chunk format changes
- * 
- * EPOCH 5: Data-Driven Era (1.19 - 1.20.4), Java 17
- *   - Data-driven features expand
- *   - Component system introduced
- *   - Registry freeze mechanism
- * 
- * EPOCH 6: Modern Era (1.20.5 - 1.21.x), Java 21
- *   - Java 21 required
- *   - NeoForge splits from Forge
- *   - Component system mandatory
- *   - Full data-driven registries
- * 
- * ─────────────────────────────────────────────────────────────────────────────
  */
 package com.retromod.legacy;
 
@@ -63,8 +16,7 @@ import java.util.jar.*;
 import java.util.zip.*;
 
 /**
- * Main entry point for legacy mod support.
- * Detects mod version, determines transformation path, and applies shims.
+ * Coordinates the larger transform steps needed by mods that cross a Minecraft API era.
  */
 public class LegacyModSupport {
     
@@ -198,29 +150,24 @@ public class LegacyModSupport {
         return analysis;
     }
     
-    /**
-     * Transform a legacy mod to run on the target version.
-     */
+    /** Updates a legacy mod for the configured target version. */
     public Path transformMod(Path modJar, LegacyModAnalysis analysis) throws IOException {
-        System.out.println("╔════════════════════════════════════════════════════════════╗");
-        System.out.println("║         Retromod Legacy Transformation                     ║");
-        System.out.println("╚════════════════════════════════════════════════════════════╝");
-        System.out.println();
+        System.out.println("Retromod legacy transform");
         System.out.println("Source: " + modJar.getFileName());
         System.out.println("From:   " + analysis.targetMcVersion + " (" + analysis.sourceEpoch.name + ")");
         System.out.println("To:     " + targetMcVersion + " (" + targetEpoch.name + ")");
         System.out.println("Loader: " + analysis.modLoader);
-        System.out.println("Java:   " + analysis.sourceJavaVersion + " → 21");
+        System.out.println("Source Java: " + analysis.sourceJavaVersion);
         System.out.println();
         
         if (analysis.epochTransitions.isEmpty()) {
-            System.out.println("✓ No transformation needed - mod is compatible.");
+            System.out.println("No changes are needed.");
             return modJar;
         }
         
-        System.out.println("Epoch transitions required: " + analysis.epochTransitions.size());
+        System.out.println("Transform steps: " + analysis.epochTransitions.size());
         for (EpochTransition t : analysis.epochTransitions) {
-            System.out.println("  • " + t.name());
+            System.out.println("  - " + t.name());
         }
         System.out.println();
         
@@ -329,12 +276,11 @@ public class LegacyModSupport {
             
             long duration = System.currentTimeMillis() - startTime;
             
-            System.out.println("Transformation complete:");
-            System.out.println("  Classes transformed: " + classesTransformed);
+            System.out.println("Legacy transform finished:");
+            System.out.println("  Classes updated:     " + classesTransformed);
             System.out.println("  Classes unchanged:   " + classesSkipped);
             System.out.println("  Time:                " + duration + " ms");
-            System.out.println();
-            System.out.println("✓ Output: " + outputJar.getFileName());
+            System.out.println("  Output:              " + outputJar.getFileName());
         }
         
         return outputJar;

@@ -95,7 +95,7 @@ class PhantomRedirectTargetTest {
             if (SRC.equals(mi.owner) && "toPhantom".equals(mi.name)) phantomLeftOriginal = true;
             if (REAL.equals(mi.owner) && "toReal".equals(mi.name)) realRewritten = true;
             if (SYNTHETIC.equals(mi.owner) && "toSynthetic".equals(mi.name)) syntheticRewritten = true;
-            // the phantom must NOT appear as a call owner anywhere
+            // the phantom must not appear as a call owner anywhere
             assertNotEquals(PHANTOM, mi.owner,
                     "a call to the phantom target survived; it would NoClassDefFoundError at runtime");
         }

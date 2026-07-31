@@ -1,27 +1,17 @@
 @echo off
-REM ============================================================================
-REM Retromod Build Script (Windows)
+REM Retromod build script for Windows
 REM Copyright (c) 2026 RevivalSMP. MIT License.
-REM
-REM Builds all Retromod outputs:
-REM   - CLI tool (standalone, all platforms)
-REM   - Fabric mod (for Fabric Loader)
-REM   - NeoForge mod (for NeoForge Loader)
-REM ============================================================================
+REM Builds the CLI and loader-specific jars.
 
 set VERSION=1.2.0-snapshot.8
 
-echo ============================================
-echo   Retromod Build Script v%VERSION%
-echo   MIT License - RevivalSMP
-echo ============================================
+echo Retromod build %VERSION%
 echo.
 
 REM Check for Maven
 where mvn >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo ERROR: Maven not found!
-    echo Please install Maven: https://maven.apache.org/install.html
+    echo Maven was not found. Install it from https://maven.apache.org/install.html
     exit /b 1
 )
 
@@ -128,9 +118,7 @@ echo java -jar "%%CLI_JAR%%" %%*
 echo   + CLI wrapper: dist\retromod.bat
 
 echo.
-echo ============================================
-echo   Build Complete!
-echo ============================================
+echo Build complete
 echo.
 echo Output files in dist\:
 dir /b dist\

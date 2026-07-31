@@ -255,73 +255,56 @@ public class MemorySafetyMonitor {
         warningShown = true;
 
         StringBuilder message = new StringBuilder();
-        message.append("Retromod Performance Issue Detected!\n\n");
+        message.append("Retromod noticed a performance problem.\n\n");
 
         switch (lastIssue) {
             case MEMORY_CRITICAL, MEMORY_WARNING -> {
-                message.append("Problem: OUT OF MEMORY\n");
+                message.append("Memory pressure\n");
                 message.append(String.format("Memory usage: %.0f%%\n\n", getMemoryUsagePercent() * 100));
-                message.append("Your computer doesn't have enough RAM for all these mods.\n\n");
+                message.append("Minecraft is close to its current memory limit.\n\n");
             }
             case CPU_CRITICAL, CPU_WARNING -> {
-                message.append("Problem: CPU OVERLOADED\n");
+                message.append("High CPU use\n");
                 message.append(String.format("CPU usage: %.0f%%\n\n", getCpuUsagePercent() * 100));
-                message.append("Your processor is struggling to transform all these mods.\n\n");
+                message.append("Transforms and other game work are competing for CPU time.\n\n");
             }
             case TPS_CRITICAL, TPS_WARNING -> {
-                message.append("Problem: GAME LAGGING (Low TPS)\n");
-                message.append(String.format("Current TPS: %d (should be 20)\n\n", currentTps));
-                message.append("The game is running slowly because of mod transformation.\n\n");
+                message.append("Low server tick rate\n");
+                message.append(String.format("Current TPS: %d (normal is 20)\n\n", currentTps));
             }
-            default -> {
-                message.append("Problem: Performance degradation detected.\n\n");
-            }
+            default -> message.append("Minecraft is running more slowly than expected.\n\n");
         }
 
         List<ModPerformanceData> heavyMods = getHeaviestMods(5);
         if (!heavyMods.isEmpty()) {
-            message.append("═══════════════════════════════════════\n");
-            message.append("HEAVIEST MODS (consider removing these):\n");
-            message.append("═══════════════════════════════════════\n\n");
+            message.append("Slowest mod transforms:\n");
             
             for (int i = 0; i < heavyMods.size(); i++) {
                 ModPerformanceData mod = heavyMods.get(i);
-                message.append(String.format("%d. %s\n", i + 1, mod.modName));
-                message.append(String.format("   • Transform time: %dms\n", mod.getTotalTransformTimeMs()));
-                message.append(String.format("   • Classes: %d\n", mod.classesTransformed));
+                message.append(String.format("%d. %s: %d ms, %d classes",
+                    i + 1, mod.modName, mod.getTotalTransformTimeMs(), mod.classesTransformed));
                 if (mod.memoryUsedBytes > 0) {
-                    message.append(String.format("   • Memory: %.1fMB\n", mod.memoryUsedBytes / 1024.0 / 1024.0));
+                    message.append(String.format(", %.1f MB", mod.memoryUsedBytes / 1024.0 / 1024.0));
                 }
                 message.append("\n");
             }
+            message.append("\n");
         }
 
-        message.append("═══════════════════════════════════════\n");
-        message.append("SOLUTIONS:\n");
-        message.append("═══════════════════════════════════════\n\n");
+        message.append("Things to try:\n");
         
         if (lastIssue == PerformanceIssue.MEMORY_CRITICAL || 
             lastIssue == PerformanceIssue.MEMORY_WARNING) {
-            message.append("1. Allocate more RAM:\n");
+            message.append("- Raise Minecraft's memory limit if the computer has memory available.\n");
             if (EnvironmentDetector.isDedicatedServer()) {
-                message.append("   • Edit start.sh/start.bat\n");
-                message.append("   • Change -Xmx2G to -Xmx4G or higher\n\n");
+                message.append("  Edit the server start script and review its -Xmx value.\n");
             } else {
-                message.append("   • Open Minecraft Launcher\n");
-                message.append("   • Installations → Edit → More Options\n");
-                message.append("   • Change -Xmx2G to -Xmx4G or higher\n\n");
+                message.append("  In the launcher, open the installation's Java options and review -Xmx.\n");
             }
         }
         
-        message.append("2. Remove heavy mods listed above\n");
-        message.append("   (especially cosmetic mods like 3D skin layers)\n\n");
-        
-        message.append("3. Close other applications\n");
-        if (EnvironmentDetector.isDedicatedServer()) {
-            message.append("   (other processes using CPU/RAM)\n");
-        } else {
-            message.append("   (browsers, Discord, etc.)\n");
-        }
+        message.append("- Close other CPU or memory-heavy programs.\n");
+        message.append("- Test without the slowest mod transforms listed above.\n");
         
         boolean isCritical = lastIssue == PerformanceIssue.MEMORY_CRITICAL ||
                              lastIssue == PerformanceIssue.CPU_CRITICAL ||
@@ -344,19 +327,19 @@ public class MemorySafetyMonitor {
                 int choice = JOptionPane.showOptionDialog(
                     null,
                     message,
-                    "Retromod - Performance Critical",
+                    "Retromod performance problem",
                     JOptionPane.YES_NO_OPTION,
                     JOptionPane.ERROR_MESSAGE,
                     null,
-                    new String[]{"Exit Game", "Try to Continue"},
-                    "Exit Game"
+                    new String[]{"Exit Minecraft", "Keep Running"},
+                    "Exit Minecraft"
                 );
                 
                 if (choice == 0) {
-                    LOGGER.error("User chose to exit due to performance issues");
+                    LOGGER.error("Exiting after a serious performance warning.");
                     System.exit(1);
                 } else {
-                    LOGGER.warn("User chose to continue despite performance issues");
+                    LOGGER.warn("Continuing after a serious performance warning.");
                     shutdownRequested = false;
                     warningShown = false; // let a later issue prompt again
                 }
@@ -364,7 +347,7 @@ public class MemorySafetyMonitor {
                 JOptionPane.showMessageDialog(
                     null,
                     message,
-                    "Retromod - Performance Warning",
+                    "Retromod performance warning",
                     JOptionPane.WARNING_MESSAGE
                 );
                 warningShown = false;
@@ -374,27 +357,19 @@ public class MemorySafetyMonitor {
     
     private void showConsolePerformanceError(String message, boolean isCritical) {
         if (isCritical) {
-            LOGGER.error("═══════════════════════════════════════════════════════════");
-            LOGGER.error("  RETROMOD CRITICAL PERFORMANCE ERROR");
-            LOGGER.error("═══════════════════════════════════════════════════════════");
+            LOGGER.error("Retromod detected a serious performance problem:");
             for (String line : message.split("\n")) {
-                LOGGER.error("  {}", line);
+                LOGGER.error("{}", line);
             }
-            LOGGER.error("═══════════════════════════════════════════════════════════");
-            LOGGER.error("  Server will continue but may be unstable.");
-            LOGGER.error("  Consider stopping the server and removing heavy mods.");
-            LOGGER.error("═══════════════════════════════════════════════════════════");
+            LOGGER.error("The server will keep running, but you should review the items above.");
         } else {
-            LOGGER.warn("═══════════════════════════════════════════════════════════");
-            LOGGER.warn("  RETROMOD PERFORMANCE WARNING");
-            LOGGER.warn("═══════════════════════════════════════════════════════════");
+            LOGGER.warn("Retromod detected a performance problem:");
             for (String line : message.split("\n")) {
-                LOGGER.warn("  {}", line);
+                LOGGER.warn("{}", line);
             }
-            LOGGER.warn("═══════════════════════════════════════════════════════════");
         }
 
-        warningShown = false; // never exit a server, just warn
+        warningShown = false;
     }
 
     public void requestGarbageCollection() {

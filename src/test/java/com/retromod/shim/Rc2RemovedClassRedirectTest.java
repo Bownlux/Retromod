@@ -40,7 +40,7 @@ class Rc2RemovedClassRedirectTest {
         RetromodTransformer.getInstance().clearRedirectsForTesting();
     }
 
-    // ---- #145: OreBlock -> DropExperienceBlock -------------------------------------------------
+    // #145: OreBlock -> DropExperienceBlock
 
     /** A block class that {@code extends OreBlock}, the shape Isle of Berk's ore blocks use. */
     private static byte[] extendsOreBlock() {
@@ -67,7 +67,7 @@ class Rc2RemovedClassRedirectTest {
                 "OreBlock must be redirected to DropExperienceBlock (removed in 1.19)");
     }
 
-    // ---- #147: nested ExtendedScreenHandlerType$ExtendedFactory --------------------------------
+    // #147: nested ExtendedScreenHandlerType$ExtendedFactory
 
     private static final String OLD_OUTER = "net/fabricmc/fabric/api/screenhandler/v1/ExtendedScreenHandlerType";
     private static final String OLD_NESTED = OLD_OUTER + "$ExtendedFactory";

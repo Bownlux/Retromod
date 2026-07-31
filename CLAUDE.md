@@ -8,6 +8,16 @@ Retromod transforms older Minecraft mod bytecode so old mods work on newer MC ve
 
 **Do not use em-dashes (the long dash, Unicode U+2014) anywhere:** not in chat replies, not in code comments, docs, CHANGELOG/ROADMAP entries, or commit messages. Also avoid en-dashes (U+2013). They are annoying to copy out of responses. Use a comma, parentheses, a colon, or two separate sentences instead. (Ordinary hyphens `-`, e.g. in version ranges like `1.20-26.2`, are fine.)
 
+Write like a maintainer talking to another person:
+
+- Lead public text with what changed for the user. Add implementation detail only when it helps someone understand a limitation or diagnose a problem.
+- Prefer short sentences and ordinary words. Avoid all-caps emphasis, canned headings, breathless claims, and long parenthetical asides.
+- Keep changelog entries focused. State the symptom, the fix, any honest limitation, and the test coverage. Leave the full debugging history in the issue or commit.
+- Comments should explain why a choice is necessary, especially when the obvious implementation would be wrong. Do not restate the code or narrate the investigation.
+- Use clear names and small helpers so the code explains its own mechanics. Avoid dense nested conditionals, clever one-liners, and temporary abbreviations that make readers decode the implementation.
+- Make errors actionable. Say what failed, which input was involved, and what the user can do next. Do not blame the user or expose irrelevant internals.
+- Tests should read as examples of behavior. Keep setup helpers reusable, test names direct, and assertion messages useful when a failure occurs.
+
 ## Critical Context
 
 - **Target MC version:** 26.1 (Mojang removed ALL code obfuscation); 26.2 supported since 1.1.0-snapshot.4 (shims/aliases/Fabric build target in place, verified on 26.2-rc-1)
@@ -172,7 +182,7 @@ When you fix a user-reported issue, add a regression case for it to the **Retrom
 
 10. **NeoForge 1.20.1 mods need the toml RENAMED, not just patched.** NeoForge 1.20.2+ reads `META-INF/neoforge.mods.toml`; a 1.20.1 (Neo)Forge mod ships only `META-INF/mods.toml` and NeoForge SKIPS it at scan time ("is for Minecraft Forge or an older version of NeoForge") *before bytecode runs* (#42, and the real cause of #38, which was wrongly blamed on the shim gate). `ForgeModTransformer.promoteToNeoForgeToml` (gated on `McReflect.isNeoForge()` + target ≥ 1.20.2) renames it, relaxes top-level `loaderVersion` to `[1,)`, and repoints the `forge` loader dependency → `neoforge` (NeoForge has no `forge` mod). Forge hosts keep `mods.toml`.
 
-11. **Versioning: bump when the published build is buggy; fix-in-place while unpublished.** Once a snapshot or rc is published and a report lands against it, ship the fix as a NEW build so reporters get a distinguishable one. A bump touches ALL of: `pom.xml`, `build-all.sh` `VERSION`, the hardcoded strings (`RetromodCli.VERSION`, `AotCompiler.AOT_VERSION`, `RetromodPreLaunch` banner, `RetromodClient` handshake write, `SafeCrashHandler`), a new `CHANGELOG.md` section (keep the old one) **mirrored into `docs/changelog.md`** (the Jekyll docs site can't include the root file, so it's a synced copy with front matter), and the version refs in CLAUDE.md + docs. **Release cadence (Minecraft-style):** the 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`. From there: **patch releases (`1.0.1`, `1.0.2`, …) ship directly with no snapshot/rc**, since they're bug-fix-only. **Minor/major releases (`1.1.0`, `2.0.0`) get a snapshot then an rc** before stable, since they carry new features worth a test cycle. While a build is still unpublished, just fix in place, no bump. **Then, as the LAST step before publishing ANY build (snapshot, rc, or stable), embed the self-hash** (see [Release integrity (self-hash)](#release-integrity-self-hash)). It must be the final step because any source change shifts the hash, so it comes AFTER every other bump edit above. In dev, `EXPECTED_SELF_HASH` stays `""` (verifier reports `UNKNOWN`); only a published build carries a real value.
+11. **Versioning: bump published builds, but fix unpublished builds in place.** If someone reports a bug in a published snapshot or release candidate, use a new version so they can tell the fixed build apart. Update `pom.xml`, the `VERSION` in `build-all.sh`, version constants and banners, the README badge, the full `CHANGELOG.md`, the shorter release summary at `docs/changelog.md`, and version references in the docs. Shields.io escapes literal hyphens by doubling them in the badge URL. Patch releases such as `1.0.1` ship directly. Minor and major releases use a snapshot, then a release candidate, before the stable build. Embed the self-hash only after every other release edit because any later source change invalidates it. Leave `EXPECTED_SELF_HASH=""` during development.
 
 12. **Heavy/coremod mods can't be translated.** Create (ships Flywheel, a custom GL renderer plus coremods), Flywheel, Veil (rendering framework), and similar deep-integration/rendering mods are on [Mods That Can't Be Translated](docs/incompatible-mods.md). They fail with coremod/`getLoadingModList`/`VerifyError`/`CancellationException`-teardown symptoms regardless of metadata fixes (#25/#43). Don't chase these as transform bugs. Confirm the mod list against the incompatible list first.
 
@@ -224,3 +234,8 @@ Development skills are in `.claude/skills/`:
 | `debug-crash` | Diagnosing crashes from transformed mods |
 | `build-and-deploy` | Building and deploying to Minecraft |
 | `modrinth-api` | Downloading test mods from Modrinth |
+
+
+## Other
+
+If you are Claude reading this, any updates you do to this that is not about Claude, add to Agents.md (codex)

@@ -10,7 +10,7 @@ links:
 summary: Transforms cleanly but the game dies silently at the mod list when it loads.
 details: The transform itself completes (metadata patched, bridges embedded), but the first boot with
   the transformed jar terminates the JVM right after the mod list prints, with no exception, crash report,
-  or hs_err. Under investigation — the silent-death signature doesn't match any known Retromod failure
+  or hs_err. Under investigation, the silent-death signature doesn't match any known Retromod failure
   mode yet.
 reporter: Bownlux
 date: 2026-06-08

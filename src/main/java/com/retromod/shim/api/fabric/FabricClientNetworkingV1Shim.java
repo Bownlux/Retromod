@@ -96,9 +96,8 @@ public class FabricClientNetworkingV1Shim implements VersionShim {
             }
         }
 
-        LOGGER.info("[Retromod] Fabric client-networking v1 bridge - kept PlayChannelHandler SAM "
-                + "+ redirected register/send/canSend to reflective raw-bytes bridge "
-                + "(getSender unchanged; STATUS: needs in-game verification)");
+        LOGGER.debug("Installed the Fabric client networking v1 bridge. "
+                + "An in-game verification run is still pending.");
     }
 
     private static void redirect(RetromodTransformer t, String oldName, String oldDesc,

@@ -8,7 +8,7 @@ retromod: 1.1.0-snapshot.2
 links:
   modrinth: https://modrinth.com/mod/rubinated-nether
 summary: Content registers correctly once jar-in-jar libraries get their bytecode remapped.
-details: 'Loaded with no content before snapshot.2 — it registers everything through the bundled Critter
+details: 'Loaded with no content before snapshot.2, it registers everything through the bundled Critter
   library, whose remapped nested bytecode was being discarded. Fixed in snapshot.2 (#71): nested JIJ libraries
   keep their remap now.'
 reporter: Bownlux

@@ -594,7 +594,7 @@ net/minecraft/client/GraphicsStatus	net/minecraft/client/GraphicsPreset
 # FastColor → ARGB
 net/minecraft/util/FastColor	net/minecraft/util/ARGB
 net/minecraft/util/FastColor$ARGB32	net/minecraft/util/ARGB
-# ResourceLocation$Serializer removed in 26.1 — redirect to Retromod polyfill
+# ResourceLocation$Serializer was removed in 26.1. Redirect it to the Retromod polyfill.
 net/minecraft/resources/ResourceLocation$Serializer	com/retromod/polyfill/minecraft/IdentifierSerializer
 # CycleOption → OptionInstance (removed in 1.19, but intermediary refs still exist)
 net/minecraft/client/CycleOption	net/minecraft/client/OptionInstance
@@ -609,7 +609,7 @@ net/minecraft/client/gui/components/Button$OnTooltip	net/minecraft/client/gui/co
 com/mojang/blaze3d/vertex/BufferBuilder$RenderedBuffer	com/mojang/blaze3d/vertex/ByteBufferBuilder$Result
 # Matrix4f moved to JOML
 com/mojang/math/Matrix4f	org/joml/Matrix4f
-# GuiComponent removed — redirect to GuiGraphicsExtractor (closest equivalent)
+# GuiComponent was removed. GuiGraphicsExtractor is the closest equivalent.
 net/minecraft/client/gui/GuiComponent	net/minecraft/client/gui/GuiGraphicsExtractor
 # EnchantedBookItem removed (enchantments now component-based)
 net/minecraft/world/item/EnchantedBookItem	net/minecraft/world/item/Items
@@ -618,7 +618,7 @@ net/minecraft/world/item/RecordItem	net/minecraft/world/item/JukeboxSong
 # DirectionProperty is now just EnumProperty
 net/minecraft/world/level/block/state/properties/DirectionProperty	net/minecraft/world/level/block/state/properties/EnumProperty
 # LazyLoadedValue was deprecated (use Suppliers.memoize), NOT renamed to Unit
-# Keep it as-is — if it doesn't exist in 26.1, a polyfill should handle it
+# Keep it as-is. A polyfill should handle it if it is absent in 26.1.
 # net/minecraft/util/LazyLoadedValue	DO_NOT_REMAP
 # ClickType → ClickAction
 net/minecraft/world/inventory/ClickType	net/minecraft/world/inventory/ClickAction
@@ -636,7 +636,7 @@ net/minecraft/util/random/SimpleWeightedRandomList	net/minecraft/util/random/Wei
 net/minecraft/util/random/SimpleWeightedRandomList$Builder	net/minecraft/util/random/WeightedList$Builder
 
 # =========================================================================
-# HARVESTED MOVES — 1.20.1 → 26.1.2 (added programmatically)
+# Harvested moves from 1.20.1 to 26.1.2, added programmatically.
 # -------------------------------------------------------------------------
 # Composed by diffing this environment's MC 1.20.1 official class names
 # (from Mojang client/server mappings) against the 26.1.2 client jar's
@@ -722,9 +722,9 @@ net/minecraft/world/item/armortrim/TrimPatterns	net/minecraft/world/item/equipme
 net/minecraft/world/level/chunk/ChunkStatus	net/minecraft/world/level/chunk/status/ChunkStatus
 
 # =========================================================================
-# HARVESTED MOVES — 1.16.5 → 26.1.2 (added programmatically)
+# Harvested moves from 1.16.5 to 26.1.2, added programmatically.
 # -------------------------------------------------------------------------
-# Same method as the 1.20.1 block above, but baselined on MC 1.16.5 — the
+# Same method as the 1.20.1 block above, but baselined on MC 1.16.5. The
 # oldest non-experimental version Retromod targets, so 1.16.5-era mods get
 # the same move coverage as newer ones. Diffed 1.16.5 official class names
 # vs the 26.1.2 client jar, matched by simple name, kept only moves confirmed
@@ -834,7 +834,7 @@ net/minecraft/world/level/levelgen/structure/WoodlandMansionPieces$WoodlandMansi
 net/minecraft/world/level/storage/loot/BinomialDistributionGenerator	net/minecraft/world/level/storage/loot/providers/number/BinomialDistributionGenerator
 
 # =========================================================================
-# HARVESTED RENAMES — member-set matched (1.16.5/1.20.1/1.21.1 -> 26.1.2)
+# Harvested renames matched by member set (1.16.5/1.20.1/1.21.1 -> 26.1.2).
 # -------------------------------------------------------------------------
 # Simple-name-CHANGED renames (FarmBlock->FarmlandBlock, MobSpawnType->
 # EntitySpawnReason, FrameType->AdvancementType, ResourceLocation->Identifier,
@@ -984,16 +984,16 @@ com/mojang/blaze3d/platform/GlStateManager$DestFactor	com/mojang/blaze3d/platfor
 # Yarn name Item$Settings → Mojang Item$Properties. A handful of otherwise
 # fully-remapped Fabric content mods (Macaw's furniture family, farmer's knives,
 # runes) carry a stray Yarn *class* reference to Item.Settings while their method
-# calls are intermediary (remapped fine) — so the class rename is the sole gap.
+# calls are intermediary and remap correctly, so the class rename is the sole gap.
 # Top sole-blocker (6+ mods) in the 5000-mod audit.
 net/minecraft/item/Item$Settings	net/minecraft/world/item/Item$Properties
 # VillagerTrades moved world.entity.npc → world.item.trading in 26.1. Outer type
 # resolves; the $ItemListing inner interface was removed (custom-trade mods that
-# implement it need re-authoring — tracked as a known limitation).
+# implement it need re-authoring. This is tracked as a known limitation.
 net/minecraft/world/entity/npc/VillagerTrades	net/minecraft/world/item/trading/VillagerTrades
 # BlockRenderLayerMap removed from the 26.1-era Fabric API → Retromod no-op stand-in
 # (FabricBlockRenderLayerBridge injects the synthetic). Non-vanilla target: applied
-# only on the 26.1+ path (where the real class is gone). Soft-fail — render-layer
+# only on the 26.1+ path, where the real class is gone. Render-layer calls
 # registration is inert (transparent blocks render solid), but the mod loads.
 net/fabricmc/fabric/api/blockrenderlayer/v1/BlockRenderLayerMap	com/retromod/generated/legacyfabric/BlockRenderLayerMap
 # PlayerSkin moved client/resources -> world/entity/player in the 26.1 restructure
@@ -1030,3 +1030,23 @@ net/minecraft/client/renderer/RenderType	net/minecraft/client/renderer/rendertyp
 # moves tsv (not code registration) so the intermediary composition folds
 # class_1928 -> gamerules/GameRules in ONE remap pass (a code-registered second hop
 # churned extra passes into the cap on real jars). Members bridge via the common shim.
+
+# GlStateManager inner state classes + GlConst/GlDebug (blaze3d platform -> opengl,
+# 26.1 GL rewrite). The outer GlStateManager and the $SourceFactor/$DestFactor inners
+# were already listed above, but the sibling state-holder inners and GlConst/GlDebug were
+# missed, leaving that move PARTIAL: a mod (or mixin @At) referencing e.g.
+# GlStateManager$BlendState died NoClassDefFoundError even though the outer was redirected.
+# Harvested + member-overlap-verified by scripts/harvest-class-moves-1211-262.py and
+# confirmed against the 26.2 client jar (each source absent, target present). GlStateManager
+# itself was refactored (members diverge) so it stays a plain class-move, not a member bridge.
+com/mojang/blaze3d/platform/GlConst	com/mojang/blaze3d/opengl/GlConst
+com/mojang/blaze3d/platform/GlDebug	com/mojang/blaze3d/opengl/GlDebug
+com/mojang/blaze3d/platform/GlDebug$LogEntry	com/mojang/blaze3d/opengl/GlDebug$LogEntry
+com/mojang/blaze3d/platform/GlStateManager$BlendState	com/mojang/blaze3d/opengl/GlStateManager$BlendState
+com/mojang/blaze3d/platform/GlStateManager$BooleanState	com/mojang/blaze3d/opengl/GlStateManager$BooleanState
+com/mojang/blaze3d/platform/GlStateManager$ColorLogicState	com/mojang/blaze3d/opengl/GlStateManager$ColorLogicState
+com/mojang/blaze3d/platform/GlStateManager$CullState	com/mojang/blaze3d/opengl/GlStateManager$CullState
+com/mojang/blaze3d/platform/GlStateManager$DepthState	com/mojang/blaze3d/opengl/GlStateManager$DepthState
+com/mojang/blaze3d/platform/GlStateManager$PolygonOffsetState	com/mojang/blaze3d/opengl/GlStateManager$PolygonOffsetState
+com/mojang/blaze3d/platform/GlStateManager$ScissorState	com/mojang/blaze3d/opengl/GlStateManager$ScissorState
+com/mojang/blaze3d/platform/GlStateManager$TextureState	com/mojang/blaze3d/opengl/GlStateManager$TextureState

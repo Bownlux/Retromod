@@ -60,8 +60,8 @@ public class FabricClientTickCallbackShim implements VersionShim {
         transformer.registerSyntheticClass(SYNTH, generateInterface());
         transformer.registerClassRedirect(OLD, SYNTH);
 
-        LOGGER.info("[Retromod] Fabric ClientTickCallback bridge - kept tick(Minecraft) SAM + EVENT "
-                + "wired to ClientTickEvents.END_CLIENT_TICK (STATUS: needs in-game verification)");
+        LOGGER.debug("Installed the Fabric client tick callback bridge. "
+                + "An in-game verification run is still pending.");
     }
 
     static byte[] generateInterface() {

@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * and the injection failed with "Scanned 0 target(s)" (the mod ships no refMap). They are now routed
  * through the same remap as core injectors.
  *
- * <p>Safety invariant: the {@code require=0} soft-fail net is added to a MixinExtras handler ONLY when
+ * <p>Safety invariant: the {@code require=0} soft-fail net is added to a MixinExtras handler only when
  * a selector was actually rewritten, so a working MixinExtras mixin is left byte-identical.
  */
 class MixinExtrasSelectorRemapTest {
@@ -199,7 +199,7 @@ class MixinExtrasSelectorRemapTest {
                     "(Lnet/minecraft/world/entity/Pose;)Lnet/minecraft/world/entity/EntityDimensions;");
             MixinCompatibilityTransformer mt = new MixinCompatibilityTransformer(t);
             // Use the NeoForge/Forge entry point (stripBlocklistedHandlers): Revamped Phantoms is a
-            // NeoForge mod, and this path previously did NOT apply the selector remap, so the #50
+            // NeoForge mod, and this path previously did not apply the selector remap, so the #50
             // owner-alias was dead on its actual loader (the review's dominant finding). It now runs
             // the full pipeline.
             byte[] out = mt.stripBlocklistedHandlers(modifyExprValueMixin(

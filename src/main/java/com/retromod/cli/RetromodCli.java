@@ -8,6 +8,7 @@ import com.retromod.core.*;
 import com.retromod.embedder.*;
 import com.retromod.aot.AotCompiler;
 import com.retromod.archive.ApiArchiveManager;
+import com.retromod.gui.ModComplexityAnalyzer;
 import com.retromod.shim.ShimRegistry;
 import com.retromod.shim.fabric.*;
 import com.retromod.shim.neoforge.*;
@@ -25,7 +26,7 @@ import java.util.*;
 public class RetromodCli {
     
     private static final String VERSION = "1.3.0-snapshot.3";
-    // Overridable per-invocation via `--target <mc-version>`.
+    // Each command can override this with --target.
     private static String TARGET_MC_VERSION = "26.1";
     
     private static ShimRegistry shimRegistry;
@@ -46,44 +47,33 @@ public class RetromodCli {
         try {
             ModHealthChecker.ensureFoldersExist(Path.of("."));
         } catch (Exception e) {
-            // might not have access
+            // Commands that do not write game folders can still run.
         }
 
         String command = args[0].toLowerCase();
 
-        // Keep RetromodVersion in sync with the CLI's default target too - version-gated shims
-        // (the #87 registry-id bridge, KNOWN_INTERFACES_26X, item-defs) read RetromodVersion, and
-        // syncing only inside the --target branch left default runs on the stale "1.21.4"
-        // (review finding).
+        // Version-gated helpers read the shared target, even in CLI mode.
         com.retromod.core.RetromodVersion.TARGET_MC_VERSION = TARGET_MC_VERSION;
 
-        // `--target <mc-version>` overrides the default target.
         for (int i = 1; i < args.length - 1; i++) {
             if ("--target".equals(args[i])) {
                 String v = args[i + 1].trim();
                 if (!v.isEmpty()) {
                     TARGET_MC_VERSION = v;
-                    // Keep RetromodVersion.TARGET_MC_VERSION (used by version-gated shims, e.g. the
-                    // #87 registry-id bridge) consistent with the CLI target on the offline path; at
-                    // runtime it's auto-detected. The CLI's own gating uses this class's field, so
-                    // this only fixes shims that read RetromodVersion directly.
                     com.retromod.core.RetromodVersion.TARGET_MC_VERSION = v;
-                    System.out.println("Target MC version: " + TARGET_MC_VERSION);
+                    System.out.println("Target Minecraft version: " + TARGET_MC_VERSION);
                 }
                 break;
             }
         }
 
-        // `--target-loader neoforge` forces the offline Forge -> NeoForge migration path: the shim
-        // redirects and the mods.toml -> neoforge.mods.toml promotion normally gate on a live
-        // NeoForge runtime (McReflect.isNeoForge()), which the CLI has none of. This lets us drive
-        // and verify the full migration offline. Off unless explicitly requested.
+        // Offline Forge migration needs an explicit target because no loader is running.
         for (int i = 1; i < args.length - 1; i++) {
             if ("--target-loader".equals(args[i])) {
                 String v = args[i + 1].trim();
                 if ("neoforge".equalsIgnoreCase(v)) {
                     com.retromod.util.McReflect.setForceNeoForge(true);
-                    System.out.println("Target loader: NeoForge (offline Forge -> NeoForge migration forced)");
+                    System.out.println("Target loader: NeoForge");
                 }
                 break;
             }
@@ -117,7 +107,7 @@ public class RetromodCli {
                 }
             }
         } catch (Exception e) {
-            System.err.println("Error: " + e.getMessage());
+            System.err.println("Retromod could not finish: " + e.getMessage());
             if (System.getenv("RETROMOD_DEBUG") != null) {
                 e.printStackTrace();
             }
@@ -128,12 +118,7 @@ public class RetromodCli {
     }
     
     private static void registerAllShims() {
-        // Activate the 1.12.2 @Mod(modid=...) modernization for the whole CLI session (#120).
-        // The runtime activates it when the 1.12.2 shim chain registers; the CLI's per-command
-        // flows can call transformJar BEFORE that point, so a 1.12.2 mod's @Mod would keep the
-        // old shape and modern Forge would read a null modid ("mods.toml missing metadata for
-        // modid null"). The pass is self-gating on the old annotation shape, so activating it
-        // globally here is harmless for every other mod.
+        // This helper recognizes the old annotation shape and leaves newer mods alone.
         try {
             com.retromod.shim.forge.Forge1122LifecycleSynthetics.register(
                     RetromodTransformer.getInstance());
@@ -174,7 +159,7 @@ public class RetromodCli {
         shimRegistry.register(new Fabric_1_21_10_to_1_21_11());
         shimRegistry.register(new Fabric_1_21_11_to_26_1());
 
-        // NeoForge shims: complete 1.21 to 26.1 chain (step by step)
+        // NeoForge shims
         shimRegistry.register(new NeoForge_1_21_to_1_21_1());
         shimRegistry.register(new NeoForge_1_21_1_to_1_21_2());
         shimRegistry.register(new NeoForge_1_21_2_to_1_21_3());
@@ -226,52 +211,42 @@ public class RetromodCli {
             System.exit(1);
         }
         
-        System.out.println();
-        System.out.println("╔══════════════════════════════════════════════════════╗");
-        System.out.println("║              Retromod Mod Analysis                   ║");
-        System.out.println("╚══════════════════════════════════════════════════════╝");
-        System.out.println();
+        System.out.println("Retromod analysis");
         System.out.println("File: " + modPath.getFileName());
         System.out.println("Size: " + Files.size(modPath) / 1024 + " KB");
-        System.out.println();
         
         ModVersionInfo info = detector.detectVersion(modPath);
         
         if (info == null) {
-            System.out.println("⚠  Could not detect mod metadata.");
-            System.out.println("   This may not be a valid Fabric/NeoForge mod.");
+            System.out.println();
+            System.out.println("Retromod could not read supported mod metadata from this jar.");
+            System.out.println("Check that it is a Fabric, NeoForge, or Forge mod.");
             return;
         }
         
-        System.out.println("┌─ Mod Information ────────────────────────────────────┐");
-        System.out.printf("│ Mod ID:          %-36s │%n", info.modId());
-        System.out.printf("│ Mod Version:     %-36s │%n", info.modVersion());
-        System.out.printf("│ Target MC:       %-36s │%n", info.targetMcVersion());
-        System.out.printf("│ Mod Loader:      %-36s │%n", info.modLoaderType());
-        System.out.printf("│ Loader Version:  %-36s │%n", 
-            info.modLoaderVersion() != null ? info.modLoaderVersion() : "unknown");
-        System.out.println("└──────────────────────────────────────────────────────┘");
-        
-        System.out.println();
-        System.out.println("┌─ Packages (" + info.modPackages().size() + ") ───────────────────────────────────┐");
+        printSection("Mod");
+        System.out.println("ID: " + info.modId());
+        System.out.println("Version: " + info.modVersion());
+        System.out.println("Built for Minecraft: " + info.targetMcVersion());
+        System.out.println("Loader: " + info.modLoaderType());
+        System.out.println("Loader version: "
+            + (info.modLoaderVersion() != null ? info.modLoaderVersion() : "not declared"));
+
+        printSection("Packages (" + info.modPackages().size() + ")");
         int pkgCount = 0;
         for (String pkg : info.modPackages()) {
             if (pkgCount++ < 10) {
-                System.out.printf("│   %s%n", pkg.replace('/', '.'));
+                System.out.println("  " + pkg.replace('/', '.'));
             }
         }
         if (info.modPackages().size() > 10) {
-            System.out.printf("│   ... and %d more%n", info.modPackages().size() - 10);
+            System.out.println("  and " + (info.modPackages().size() - 10) + " more");
         }
-        System.out.println("└──────────────────────────────────────────────────────┘");
 
-        System.out.println();
-        System.out.println("┌─ Compatibility Analysis ────────────────────────────┐");
+        printSection("Compatibility");
         
         if (info.needsTransformation(TARGET_MC_VERSION)) {
-            System.out.println("│ ⚠  TRANSFORMATION REQUIRED                          │");
-            System.out.printf("│    Built for: %-10s  Current: %-10s       │%n",
-                info.targetMcVersion(), TARGET_MC_VERSION);
+            System.out.println("This mod needs changes for Minecraft " + TARGET_MC_VERSION + ".");
             
             List<VersionShim> chain = shimRegistry.findShimChain(
                 info.modLoaderType(),
@@ -280,58 +255,47 @@ public class RetromodCli {
             );
             
             if (chain.isEmpty()) {
-                System.out.println("│                                                      │");
-                System.out.println("│ ❌ No shim chain available for this transition!     │");
-                System.out.println("│    The mod cannot be automatically transformed.      │");
+                System.out.println("Retromod does not have a complete version path for this combination.");
             } else {
-                System.out.println("│                                                      │");
-                System.out.println("│ ✓  Shim chain available:                            │");
+                System.out.println("Version path:");
                 for (VersionShim shim : chain) {
-                    System.out.printf("│    → %s%n", shim.getShimName());
+                    System.out.println("  " + shim.getShimName());
                 }
             }
         } else {
-            System.out.println("│ ✓  COMPATIBLE - No transformation needed            │");
+            System.out.println("No version change is needed.");
         }
-        
-        System.out.println("└──────────────────────────────────────────────────────┘");
 
-        System.out.println();
-        System.out.println("┌─ Complexity Analysis ───────────────────────────────┐");
+        ModComplexityAnalyzer.ComplexityReport complexityReport =
+            new ModComplexityAnalyzer().analyze(modPath);
 
-        com.retromod.gui.ModComplexityAnalyzer complexityAnalyzer =
-            new com.retromod.gui.ModComplexityAnalyzer();
-        com.retromod.gui.ModComplexityAnalyzer.ComplexityReport complexityReport =
-            complexityAnalyzer.analyze(modPath);
-
-        System.out.printf("│ Complexity Score: %-36d │%n", complexityReport.score());
-
+        printSection("Compatibility risk");
+        System.out.println("Score: " + complexityReport.score() + "/100");
+        System.out.println(complexityReport.isUnlikelyToWork()
+            ? "Retromod expects this mod to need manual work."
+            : "This mod looks like a reasonable transform candidate.");
+        printRiskFactors(complexityReport.riskFactors());
         if (complexityReport.isUnlikelyToWork()) {
-            System.out.println("│                                                      │");
-            System.out.println("│ ⚠  WARNING: This mod is UNLIKELY TO WORK            │");
-            System.out.println("│    after transformation. Risk factors:                │");
-            for (String factor : complexityReport.riskFactors()) {
-                String truncated = factor.length() > 50 ? factor.substring(0, 47) + "..." : factor;
-                System.out.printf("│    • %-50s │%n", truncated);
-            }
-            System.out.println("│                                                      │");
-            System.out.println("│    You can still try with: aot --force <mod.jar>     │");
-        } else {
-            System.out.println("│ ✓  Mod appears suitable for transformation          │");
-            if (!complexityReport.riskFactors().isEmpty()) {
-                System.out.println("│    Minor risk factors:                                │");
-                for (String factor : complexityReport.riskFactors()) {
-                    String truncated = factor.length() > 50 ? factor.substring(0, 47) + "..." : factor;
-                    System.out.printf("│    • %-50s │%n", truncated);
-                }
-            }
+            System.out.println("To test it anyway: retromod aot --force " + modPath.getFileName());
         }
-
-        System.out.println("└──────────────────────────────────────────────────────┘");
-        System.out.println();
     }
 
-    /** AOT compile a mod (the preferred transformation method). */
+    private static void printSection(String title) {
+        System.out.println();
+        System.out.println(title);
+    }
+
+    private static void printRiskFactors(List<String> riskFactors) {
+        if (riskFactors.isEmpty()) {
+            return;
+        }
+        System.out.println("Reasons:");
+        for (String factor : riskFactors) {
+            System.out.println("  - " + factor);
+        }
+    }
+
+    /** Prepares a mod with the AOT compiler. */
     private static void aotCommand(String[] args) throws Exception {
         if (args.length < 2) {
             System.err.println("Usage: aot [--force] <mod.jar> [--output <output.jar>]");
@@ -357,84 +321,58 @@ public class RetromodCli {
             System.exit(1);
         }
 
-        System.out.println();
-        System.out.println("╔══════════════════════════════════════════════════════╗");
-        System.out.println("║           Retromod AOT Compilation                   ║");
-        System.out.println("╚══════════════════════════════════════════════════════╝");
-        System.out.println();
+        System.out.println("Preparing " + modPath.getFileName());
 
-        // complexity check before transforming
-        com.retromod.gui.ModComplexityAnalyzer complexityAnalyzer =
-            new com.retromod.gui.ModComplexityAnalyzer();
-        com.retromod.gui.ModComplexityAnalyzer.ComplexityReport complexityReport =
-            complexityAnalyzer.analyze(modPath);
+        ModComplexityAnalyzer.ComplexityReport complexityReport =
+            new ModComplexityAnalyzer().analyze(modPath);
 
         if (complexityReport.isUnlikelyToWork() && !forceTranslate) {
-            System.out.println("⚠  WARNING: This mod is UNLIKELY TO WORK after transformation.");
             System.out.println();
-            System.out.println("Risk factors:");
-            for (String factor : complexityReport.riskFactors()) {
-                System.out.println("  • " + factor);
-            }
-            System.out.println();
-            System.out.println("Complexity score: " + complexityReport.score() + "/100");
-            System.out.println();
-            System.out.println("The mod uses features that Retromod cannot fully transform.");
-            System.out.println("It will likely crash or behave incorrectly.");
-            System.out.println();
-            System.out.println("To try anyway, use:  aot --force " + modPath.getFileName());
-            System.out.println();
+            System.out.println("Retromod skipped this mod because its compatibility risk is high.");
+            System.out.println("Score: " + complexityReport.score() + "/100");
+            printRiskFactors(complexityReport.riskFactors());
+            System.out.println("To test it anyway: retromod aot --force " + modPath.getFileName());
             return;
         }
 
         if (complexityReport.isUnlikelyToWork() && forceTranslate) {
-            System.out.println("⚠  Force mode: proceeding despite high complexity score ("
-                + complexityReport.score() + ")");
-            System.out.println();
+            System.out.println("Trying the mod despite its risk score of "
+                + complexityReport.score() + "/100.");
         }
 
         AotCompiler compiler = new AotCompiler(shimRegistry, TARGET_MC_VERSION);
 
-        System.out.println("Input:  " + modPath.getFileName());
-
-        // Register the Forge->NeoForge deleted-class bridges (#52) before compiling so the AOT
-        // transform rewrites references to them; embedIntoJar (below) places them per-mod.
+        // These bridges must be registered before compilation so their rewritten
+        // references can be embedded in the output jar.
         try {
             com.retromod.shim.forge.ForgeNeoForgeSynthetics.registerAll(
                     RetromodTransformer.getInstance());
         } catch (Exception e) {
-            // AOT compilation continues without the bridges
+            // Other AOT repairs can still produce a useful result.
         }
 
         long startTime = System.currentTimeMillis();
         Path result = compiler.compileModAot(modPath);
         long duration = System.currentTimeMillis() - startTime;
 
-        // Embed referenced synthetics only when a new jar was produced; never touch the input jar.
+        // Only the generated jar may receive embedded classes.
         if (!result.equals(modPath)) {
             try {
                 com.retromod.core.SyntheticEmbedder.embedIntoJar(
                         result, modPath.getFileName().toString(), RetromodTransformer.getInstance());
             } catch (Exception e) {
-                // the AOT jar is otherwise complete
+                // The transformed classes are still usable without optional bridges.
             }
         }
 
         System.out.println("Output: " + result.getFileName());
-        System.out.printf("Time:   %d ms%n", duration);
-        System.out.println();
+        System.out.println("Time: " + duration + " ms");
         
         if (result.equals(modPath)) {
-            System.out.println("✓ Mod is already compatible or was skipped.");
+            System.out.println("No new jar was needed.");
         } else {
-            System.out.println("✓ AOT compilation complete!");
-            System.out.println();
-            System.out.println("The compiled mod includes:");
-            System.out.println("  • Pre-transformed bytecode (fast loading)");
-            System.out.println("  • Embedded API shims for removed functionality");
-            System.out.println("  • JIT fallback markers for obfuscated code");
+            System.out.println("The prepared jar includes transformed bytecode and any required compatibility classes.");
         }
-        System.out.println();
     }
     
     /** Transform a mod using JIT-style transformation (writes to a new JAR). */
@@ -455,37 +393,28 @@ public class RetromodCli {
             }
         }
         
-        System.out.println("Transforming: " + modPath.getFileName());
+        System.out.println("Updating " + modPath.getFileName() + " for Minecraft " + TARGET_MC_VERSION);
         System.out.println("Output: " + outputPath.getFileName());
         
         ModVersionInfo info = detector.detectVersion(modPath);
         if (info == null) {
-            System.err.println("Could not analyze mod.");
+            System.err.println("Retromod could not read supported mod metadata from this jar.");
             System.exit(1);
         }
 
         String sourceMcVersion = info.targetMcVersion();
         if (sourceMcVersion == null || sourceMcVersion.isEmpty()) {
-            System.err.println("Warning: Could not determine source MC version. Trying all shims...");
+            System.err.println("Retromod could not determine the source Minecraft version.");
+            System.err.println("It will try every shim that applies to the target.");
             RetromodTransformer transformer = RetromodTransformer.getInstance();
             registerAllShimsGated(transformer);
-            // Removed-API polyfills (LazyLoadedValue, etc.), mirroring the runtime entrypoints and
-            // the analyze/batch paths. Without these the output keeps references to removed vanilla
-            // classes that the runtime redirects, so a transform-only pass understates compatibility.
+            // Offline output needs the same removed API replacements as a normal launch.
             new com.retromod.polyfill.PolyfillRegistry().loadAndRegister(transformer);
-            // Same 26.1+ class-move / Identifier-ctor / Fabric intermediary->Mojang registration as the
-            // version-detected path: without it this fallback (source MC version unreadable) leaves a
-            // Fabric mod's intermediary names unremapped and it crashes on a 26.1+ host (AppleSkin,
-            // found in-game). The registration self-gates on the 26.1+ target internally.
             register26xTargetMappings(transformer, info);
             transformJar(modPath, outputPath, transformer, info);
-            // Embed referenced deleted-class synthetics: the all-shims pass registers redirects
-            // onto them (e.g. the EventBus 7 bridge), so their classes must be copied in too or
-            // the rewritten references dangle (NoClassDefFoundError). Matches the version-detected
-            // path below.
             com.retromod.core.SyntheticEmbedder.embedIntoJar(
                     outputPath, modPath.getFileName().toString(), transformer);
-            System.out.println("✓ Transformation complete (all shims applied): " + outputPath);
+            System.out.println("Updated: " + outputPath);
             verifyIfRequested(outputPath, modPath.getFileName().toString(), args);
             return;
         }
@@ -502,13 +431,10 @@ public class RetromodCli {
             shim.registerRedirects(transformer);
         }
 
-        // Removed-API polyfills (LazyLoadedValue, etc.), mirroring the runtime entrypoints and the
-        // analyze/batch paths. Without these the output keeps references to removed vanilla classes
-        // that the runtime redirects, so a transform-only pass understates compatibility.
+        // Offline output needs the same removed API replacements as a normal launch.
         new com.retromod.polyfill.PolyfillRegistry().loadAndRegister(transformer);
 
-        // API shims are keyed on Fabric API release numbers, not MC versions, so the MC
-        // version-graph BFS never reaches them. Mirror what RetromodPreLaunch does at runtime.
+        // API shims have their own versions and sit outside the Minecraft version path.
         java.util.Set<VersionShim> chainSet = new java.util.HashSet<>(chain);
         int apiApplied = 0;
         for (VersionShim shim : shimRegistry.getAllShims()) {
@@ -522,52 +448,34 @@ public class RetromodCli {
                 shim.registerRedirects(transformer);
                 apiApplied++;
             } catch (Exception e) {
-                // one bad API shim shouldn't kill the rest
+                // One optional API shim should not block the others.
             }
         }
 
         int classMovesApplied = register26xTargetMappings(transformer, info);
 
         if (chain.isEmpty() && apiApplied == 0 && classMovesApplied == 0) {
-            System.out.println("No transformation needed or no shim available.");
+            System.out.println("No applicable changes were found.");
             return;
         }
         if (apiApplied > 0) {
-            System.out.println("Applied " + apiApplied + " API shim(s) alongside the version chain.");
+            System.out.println("Applied " + apiApplied + " API shim(s).");
         }
         if (classMovesApplied > 0) {
             System.out.println("Applied " + classMovesApplied + " vanilla 26.1 class move(s).");
         }
 
         transformJar(modPath, outputPath, transformer, info);
-        // embed referenced deleted-class synthetics per-mod
         com.retromod.core.SyntheticEmbedder.embedIntoJar(
                 outputPath, modPath.getFileName().toString(), transformer);
-        System.out.println("✓ Transformation complete: " + outputPath);
+        System.out.println("Updated: " + outputPath);
         verifyIfRequested(outputPath, modPath.getFileName().toString(), args);
     }
 
-    /**
-     * Register the 26.1+ vanilla class moves, Identifier ctor redirects, Fabric intermediary->Mojang
-     * member mappings, and NeoForge/Forge deleted-class bridges. Shared by both {@link #transformCommand}
-     * paths so the "all shims" fallback (used when a mod's source MC version can't be read) does the
-     * SAME intermediary remap as the version-detected path. Without it a Fabric mod keeps its
-     * intermediary names (class_XXXX) and its mixins/entrypoints fail on a 26.1+ host (found in-game:
-     * AppleSkin, whose version detection fell through, loaded unremapped and crashed). Returns the
-     * class-move count.
-     */
-    /**
-     * The transform command's unreadable-source-version fallback: register every shim, EXCEPT those
-     * targeting a newer MC than the CLI target (pitfall-9 gate, mirrored from the runtime entry
-     * points). Without the gate, a 26.2-epoch shim (e.g. the Mc26_1To26_2CoreMoves screen hop, which
-     * emits 26.2-only {@code Gui.screen()}) rewrote a WORKING public-field read in a 26.1-target
-     * fallback transform into a {@code NoSuchMethodError} (adversarial-review finding, snapshot.3).
-     * Unparseable shim targets (API-versioned shims) return false from mcVersionExceeds and stay
-     * included, as before. Package-visible for the regression test.
-     */
+    /** Registers every shim whose target is not newer than the requested host. */
     static void registerAllShimsGated(RetromodTransformer transformer) {
         if (shimRegistry == null) {
-            // Direct (test) invocation without main()'s bootstrap.
+            // Tests can call this helper without running main().
             shimRegistry = new ShimRegistry();
             registerAllShims();
         }
@@ -580,6 +488,7 @@ public class RetromodCli {
         }
     }
 
+    /** Registers the extra mappings and bridges required by unobfuscated hosts. */
     static int register26xTargetMappings(RetromodTransformer transformer, ModVersionInfo info) {
         int classMovesApplied = 0;
         if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)) {
@@ -591,38 +500,25 @@ public class RetromodCli {
                     classMovesApplied++;
                 }
             } catch (Exception e) {
-                // the chain + API shims still apply without the moves
+                // Other registered changes can still produce a useful result.
             }
-            // Loader-agnostic 26.1 API adaptations from the 1.21.11->26.1 common shim: class moves,
-            // method/ctor renames, descriptor-signature skews (Vec3.<init>(Vector3f)->Vector3fc,
-            // Mth.cos(F)F->(D)F, ...), client accessor renames, RenderSystem neutralizes. These live
-            // on the version-chain shim, but the graph BFS returns an EMPTY chain for the most common
-            // Fabric mods (a 1.21.1 source has no path to 26.1), so without registering them here a
-            // Fabric mod gets its NAMES remapped but none of the 26.x signature/API skews (jade died
-            // NoSuchMethodError Vec3.<init>(Vector3f) for exactly this reason). Idempotent, so
-            // re-registering when the chain DOES include the shim is harmless. Mojang-keyed, so they
-            // fire post-remap for Fabric and natively for NeoForge/Forge.
+            // A missing graph path must not skip the shared 26.1 adaptations.
             try {
                 com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
             } catch (Exception e) {
-                // the name remap + class moves above still apply
+                // The name remap and class moves above still apply.
             }
-            // The 26.2 core moves suffer the SAME empty-chain gap as the 26.1 shim above (the BFS
-            // finds no path from a 1.21.x source, so Fabric_26_1_to_26_2 never applies offline):
-            // for a 26.2+ target, register them here unconditionally too. Idempotent. At runtime
-            // this is unnecessary (the loaders register every shim whose target <= host).
+            // Offline 26.2 output needs the core moves even without a graph edge.
             if (!com.retromod.core.RetromodVersion.mcVersionExceeds("26.2", TARGET_MC_VERSION)) {
                 try {
                     com.retromod.shim.common.Mc26_1To26_2CoreMoves.register(transformer);
                 } catch (Exception e) {
-                    // the 26.1 adaptations above still apply
+                    // The 26.1 adaptations above still apply.
                 }
             }
-            // ResourceLocation/Identifier ctor -> factory, matching an in-game boot (CLI == runtime).
+            // Keep constructor handling consistent with a normal game launch.
             com.retromod.mapping.IntermediaryToMojangMapper.registerIdentifierCtorRedirects(transformer);
-            // Fabric intermediary->Mojang member mappings; without these a distributed Fabric mod keeps
-            // its intermediary names and registers nothing. Fabric-only: NeoForge/Forge mods are already
-            // Mojang-named, and applying these clobbers their Mojang fields.
+            // Only distributed Fabric mods carry intermediary member names.
             if ("fabric".equalsIgnoreCase(info.modLoaderType())) {
                 try {
                     int memberMappings = com.retromod.mapping.IntermediaryToMojangMapper.applyTo(transformer);
@@ -631,25 +527,24 @@ public class RetromodCli {
                                 + memberMappings + ").");
                     }
                 } catch (Exception e) {
-                    // class moves already applied above
+                    // Class moves above still apply.
                 }
             }
-            // NeoForge deleted-class bridges so embedIntoJar can place them per-mod. NeoForge OR Forge:
-            // a cross-loader mod shipping both tomls is detected as "forge" yet runs on NeoForge; the
-            // embed is reference-gated.
+            // A cross-loader jar can be detected as Forge and later run on NeoForge.
+            // Reference scanning decides whether these bridges are embedded.
             String synLoaderT = info.modLoaderType();
             if ("neoforge".equalsIgnoreCase(synLoaderT) || "forge".equalsIgnoreCase(synLoaderT)) {
                 try {
                     com.retromod.shim.forge.ForgeNeoForgeSynthetics.registerAll(transformer);
                 } catch (Exception e) {
-                    // ignore
+                    // Optional bridges should not discard the transformed jar.
                 }
             }
         }
         return classMovesApplied;
     }
 
-    /** Embed removed APIs into a mod JAR. */
+    /** Adds the replacement APIs required by a mod. */
     private static void embedCommand(String[] args) throws Exception {
         if (args.length < 2) {
             System.err.println("Usage: embed <mod.jar>");
@@ -658,40 +553,31 @@ public class RetromodCli {
         
         Path modPath = Path.of(args[1]);
         
-        System.out.println("Embedding APIs into: " + modPath.getFileName());
+        System.out.println("Adding replacement APIs to " + modPath.getFileName());
         
         ModVersionInfo info = detector.detectVersion(modPath);
         if (info == null) {
-            System.err.println("Could not analyze mod.");
+            System.err.println("Retromod could not read supported mod metadata from this jar.");
             System.exit(1);
         }
         
         ApiEmbedder embedder = new ApiEmbedder();
         embedder.embedRequiredShims(modPath, info);
         
-        System.out.println("✓ API embedding complete");
+        System.out.println("Replacement APIs added.");
     }
     
     /**
-     * Register the auxiliary redirects an in-game boot applies on top of the version chain:
-     * loader-matched API shims, the vanilla 26.1 class-move table, and the Fabric
-     * intermediary->Mojang member mappings. Keep in sync with the inline block in
-     * {@link #transformCommand}.
-     *
-     * @return a one-line summary of what was applied, or null if nothing extra applied
+     * Adds loader API shims and unobfuscated-host mappings after the version
+     * chain. Returns a short summary when anything was added.
      */
-    // Package-private for RetromodCliAuxRedirectsTest (loader-gating regression).
     static String registerAuxiliaryRedirects(
             RetromodTransformer transformer, ModVersionInfo info, List<VersionShim> chain) {
-        // Removed-API polyfills (Tuple, LazyLoadedValue, ...). The single-mod `transform` path loads
-        // these itself; `batch` (and AOT) reach the transformer ONLY through this shared step, so
-        // without this a batch-transformed mod that references a removed-vanilla class is left
-        // dangling (batch is the recommended offline flow; parity with the transform-polyfill fix).
-        // PolyfillRegistry version-gates each provider internally.
+        // Batch and ahead-of-time paths both reach polyfills through this helper.
         new com.retromod.polyfill.PolyfillRegistry().loadAndRegister(transformer);
         java.util.Set<VersionShim> chainSet = new java.util.HashSet<>(chain);
         int apiApplied = 0;
-        // shimRegistry is null only in unit tests exercising the gating directly.
+        // Unit tests can exercise this helper without starting the CLI.
         java.util.List<VersionShim> allShims =
                 (shimRegistry != null) ? shimRegistry.getAllShims() : java.util.List.of();
         for (VersionShim shim : allShims) {
@@ -704,15 +590,14 @@ public class RetromodCli {
                 shim.registerRedirects(transformer);
                 apiApplied++;
             } catch (Exception e) {
-                // one bad API shim shouldn't kill the rest
+                // One optional API shim should not block the others.
             }
         }
 
         int classMovesApplied = 0;
         int memberMappings = 0;
         if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)) {
-            // class relocations apply to every loader; NeoForge/Forge mods reference these
-            // by their Mojang names too
+            // Vanilla class moves apply to every loader.
             try {
                 var moves = com.retromod.mapping.IntermediaryToMojangMapper
                         .getInstance().getClassMoves();
@@ -721,48 +606,39 @@ public class RetromodCli {
                     classMovesApplied++;
                 }
             } catch (Exception e) {
-                // the chain + API shims still apply without the moves
+                // Other registered changes can still produce a useful result.
             }
-            // Loader-agnostic 26.1 API adaptations from the 1.21.11->26.1 common shim (see the same
-            // block in register26xTargetMappings for the rationale): the version-graph BFS returns an
-            // EMPTY chain for the most common Fabric mods, so these 26.x signature/API skews (e.g.
-            // Vec3.<init>(Vector3f)->Vector3fc) never apply without registering them here. Idempotent.
+            // A missing graph path must not skip the shared 26.1 adaptations.
             try {
                 com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
             } catch (Exception e) {
-                // the name remap + class moves above still apply
+                // The name remap and class moves above still apply.
             }
-            // Same empty-chain gap for the 26.2 core moves (see register26xTargetMappings): a 26.2+
-            // target registers them unconditionally here too. Idempotent.
+            // The same rule applies to core moves on a 26.2 target.
             if (!com.retromod.core.RetromodVersion.mcVersionExceeds("26.2", TARGET_MC_VERSION)) {
                 try {
                     com.retromod.shim.common.Mc26_1To26_2CoreMoves.register(transformer);
                 } catch (Exception e) {
-                    // the 26.1 adaptations above still apply
+                    // The 26.1 adaptations above still apply.
                 }
             }
-            // ResourceLocation/Identifier ctor -> factory, matching an in-game boot so CLI output
-            // equals the runtime's (both reach the shared helper). All loaders need it: NeoForge/Forge
-            // mods construct ResourceLocation too, and the class move rewrites it to Identifier.
+            // Every loader can construct ResourceLocation, so keep this shared.
             com.retromod.mapping.IntermediaryToMojangMapper.registerIdentifierCtorRedirects(transformer);
-            // Member mappings are Fabric-only: NeoForge/Forge mods are already Mojang-named,
-            // and applying these clobbers their Mojang field refs.
+            // NeoForge and Forge already use Mojang member names.
             if ("fabric".equalsIgnoreCase(info.modLoaderType())) {
                 try {
                     memberMappings = com.retromod.mapping.IntermediaryToMojangMapper.applyTo(transformer);
                 } catch (Exception e) {
-                    // class moves already applied above
+                    // Class moves above still apply.
                 }
             }
-            // Register the NeoForge deleted-class bridges so SyntheticEmbedder can place them
-            // per-mod after transformJar. NeoForge OR Forge: a cross-loader mod shipping both
-            // tomls is detected as "forge" yet loads on NeoForge.
+            // Reference scanning keeps these cross-loader bridges out of pure Forge mods.
             String synLoader = info.modLoaderType();
             if ("neoforge".equalsIgnoreCase(synLoader) || "forge".equalsIgnoreCase(synLoader)) {
                 try {
                     com.retromod.shim.forge.ForgeNeoForgeSynthetics.registerAll(transformer);
                 } catch (Exception e) {
-                    // ignore
+                    // Optional bridges should not discard the transformed jar.
                 }
             }
         }
@@ -794,14 +670,10 @@ public class RetromodCli {
         
         Files.createDirectories(outputFolder);
         
-        System.out.println();
-        System.out.println("╔══════════════════════════════════════════════════════╗");
-        System.out.println("║           Retromod Batch Processing                  ║");
-        System.out.println("╚══════════════════════════════════════════════════════╝");
-        System.out.println();
+        System.out.println("Retromod batch");
         System.out.println("Input:  " + modsFolder);
         System.out.println("Output: " + outputFolder);
-        System.out.println("Mode:   " + (useAot ? "AOT Compilation" : "JIT Transform"));
+        System.out.println("Mode:   " + (useAot ? "precompile" : "transform"));
         System.out.println();
         
         File[] modFiles = modsFolder.toFile().listFiles(
@@ -827,18 +699,15 @@ public class RetromodCli {
                 
                 ModVersionInfo info = detector.detectVersion(modFile.toPath());
                 if (info == null) {
-                    System.out.println("SKIPPED (not a mod)");
+                    System.out.println("skipped: no supported mod metadata");
                     skipped++;
                     continue;
                 }
                 
-                // For 26.1+, all mods get metadata patching whether or not bytecode needs it.
+                // Current unobfuscated hosts still need relaxed loader metadata.
                 boolean needs26Patch = TARGET_MC_VERSION.startsWith("26.");
                 boolean needsBytecodeTransform = info.needsTransformation(TARGET_MC_VERSION);
-                // For a 26.x target, force the full bytecode transform on a mod whose own MC
-                // version we can't read (null / unparseable / literal ${placeholder} metadata):
-                // can't confirm it's 26.x-native, and a pre-26 mod needs the class moves /
-                // polyfills / bridges the metadata-only branch skips.
+                // Unknown source versions cannot safely take the metadata-only path.
                 if (!needsBytecodeTransform && needs26Patch) {
                     String mv = info.targetMcVersion();
                     boolean readable = mv != null && !mv.isBlank() && !mv.contains("$")
@@ -854,7 +723,7 @@ public class RetromodCli {
                 if (needsBytecodeTransform) {
                     if (useAot) {
                         Path result = aotCompiler.compileModAot(modFile.toPath());
-                        // copy the AOT result; post-process for metadata below
+                        // Copy the prepared jar before the shared metadata pass.
                         outputPath = outputFolder.resolve(
                             modFile.getName().replace(".jar", "-aot.jar"));
                         Files.copy(result, outputPath,
@@ -866,34 +735,26 @@ public class RetromodCli {
                         for (VersionShim shim : chain) {
                             shim.registerRedirects(transformer);
                         }
-                        // Same class moves + API shims + member mappings the single-mod
-                        // `transform` layers on the chain.
+                        // Match the extra mappings used by the single-mod command.
                         registerAuxiliaryRedirects(transformer, info, chain);
                         transformJar(modFile.toPath(), outputPath, transformer, info);
                     }
-                    status = "OK";
+                    status = "updated";
                 } else if (!needs26Patch) {
                     Files.copy(modFile.toPath(), outputPath,
                         StandardCopyOption.REPLACE_EXISTING);
-                    System.out.println("COPIED (already compatible)");
+                    System.out.println("copied: no changes needed");
                     skipped++;
                     continue;
                 } else {
-                    // copy first, then patch metadata
                     Files.copy(modFile.toPath(), outputPath,
                         StandardCopyOption.REPLACE_EXISTING);
-                    status = "PATCHED (version constraints)";
+                    status = "metadata updated";
                 }
 
                 if (needs26Patch) {
                     patchModMetadata(outputPath);
-                    // Embed referenced synthetics per-mod, whether the mod was transformed/AOT
-                    // -compiled or only metadata-patched (a "compatible by version" mod can still
-                    // reference a deleted/changed class). Reference-gated. On NeoForge/Forge this
-                    // also carries the deleted-class bridges (registerAll). On ALL loaders it carries
-                    // the GENERATED synthetics that aren't compiled into Retromod's jar (e.g.
-                    // RetroSimpleJsonReloadListener) - Fabric can't load those from the classpath, so
-                    // they must travel embedded in the mod jar (no JPMS split-package risk there).
+                    // Reference scanning embeds only the replacement classes this jar uses.
                     try {
                         RetromodTransformer rt = RetromodTransformer.getInstance();
                         String embLoader = info.modLoaderType();
@@ -903,7 +764,7 @@ public class RetromodCli {
                         com.retromod.core.SyntheticEmbedder.embedIntoJar(
                                 outputPath, modFile.getName(), rt);
                     } catch (Exception e) {
-                        // the mod is otherwise complete
+                        // The rest of the updated jar is still usable.
                     }
                 }
 
@@ -913,13 +774,12 @@ public class RetromodCli {
                 processed++;
                 
             } catch (Exception e) {
-                System.out.println("FAILED: " + e.getMessage());
+                System.out.println("failed: " + e.getMessage());
                 failed++;
             }
         }
         
         System.out.println();
-        System.out.println("════════════════════════════════════════════════════════");
         System.out.printf("Summary: %d processed, %d skipped, %d failed%n", processed, skipped, failed);
         System.out.printf("Total time: %d ms (avg: %d ms/mod)%n", 
             totalTime, processed > 0 ? totalTime / processed : 0);
@@ -937,10 +797,7 @@ public class RetromodCli {
         String v1 = args[2];
         String v2 = args.length > 3 ? args[3] : TARGET_MC_VERSION;
         
-        System.out.println();
-        System.out.println("API Differences: " + loader + " " + v1 + " → " + v2);
-        System.out.println("════════════════════════════════════════════════════════");
-        System.out.println();
+        System.out.println("API differences: " + loader + " " + v1 + " -> " + v2);
 
         List<VersionShim> chain = shimRegistry.findShimChain(loader, v1, v2);
 
@@ -950,23 +807,22 @@ public class RetromodCli {
         }
         
         for (VersionShim shim : chain) {
-            System.out.println("┌─ " + shim.getShimName() + " ─────────────────────────────");
+            System.out.println();
+            System.out.println(shim.getShimName());
             
             RetromodTransformer temp = RetromodTransformer.getInstance();
             shim.registerRedirects(temp);
             
-            System.out.println("│ Method redirects: " + temp.getMethodRedirectCount());
-            System.out.println("│ Class redirects:  " + temp.getClassRedirectCount());
+            System.out.println("Method redirects: " + temp.getMethodRedirectCount());
+            System.out.println("Class redirects: " + temp.getClassRedirectCount());
             
             String[] shimClasses = shim.getShimClasses();
             if (shimClasses.length > 0) {
-                System.out.println("│ Embedded shims:");
+                System.out.println("Embedded classes:");
                 for (String cls : shimClasses) {
-                    System.out.println("│   • " + cls);
+                    System.out.println("  - " + cls);
                 }
             }
-            System.out.println("└──────────────────────────────────────────────────────");
-            System.out.println();
         }
     }
     
@@ -999,9 +855,9 @@ public class RetromodCli {
                     loader, version,
                     () -> promptForDownloadConsent(loader, version, autoYes));
                 if (downloaded) {
-                    System.out.println("✓ Download complete");
+                    System.out.println("Download complete");
                 } else {
-                    System.out.println("Skipped - no download performed.");
+                    System.out.println("Skipped: no download was made.");
                 }
             }
             case "list" -> {
@@ -1018,11 +874,11 @@ public class RetromodCli {
             case "preload" -> {
                 boolean autoYes = args.length > 2 && "--yes".equalsIgnoreCase(args[2]);
                 archiveManager.preloadAllArchives(() -> promptForPreloadConsent(autoYes)).join();
-                System.out.println("✓ Preload complete (or skipped on user decline)");
+                System.out.println("Archive preload finished");
             }
             case "clear" -> {
                 archiveManager.clearCache();
-                System.out.println("✓ Cache cleared");
+                System.out.println("Archive cache cleared");
             }
             default -> System.err.println("Unknown action: " + action);
         }
@@ -1031,20 +887,14 @@ public class RetromodCli {
     /** Consent prompt for a single archive download; --yes skips it for scripted/CI use. */
     private static boolean promptForDownloadConsent(String loader, String version, boolean autoYes) {
         System.out.println();
-        System.out.println("────────────────────────────────────────────────────");
-        System.out.println("  Retromod is about to download a file from the");
-        System.out.println("  internet. This is the only network operation");
-        System.out.println("  Retromod will perform; it does not initiate any");
-        System.out.println("  other downloads without explicit consent.");
+        System.out.println("Retromod needs to download one API archive.");
         System.out.println();
-        System.out.println("  Loader:  " + loader);
-        System.out.println("  MC ver:  " + version);
-        System.out.println("  Source:  Maven (fabricmc.net / neoforged.net /");
-        System.out.println("           minecraftforge.net depending on loader)");
-        System.out.println("────────────────────────────────────────────────────");
+        System.out.println("Loader: " + loader);
+        System.out.println("Minecraft: " + version);
+        System.out.println("Source: the loader's official Maven repository");
 
         if (autoYes) {
-            System.out.println("  --yes flag passed: proceeding without prompt.");
+            System.out.println("--yes was provided, continuing without a prompt.");
             return true;
         }
 
@@ -1054,7 +904,7 @@ public class RetromodCli {
                 new java.io.InputStreamReader(System.in)).readLine();
             return line != null && (line.equalsIgnoreCase("y") || line.equalsIgnoreCase("yes"));
         } catch (java.io.IOException e) {
-            System.err.println("Could not read response - treating as 'no'.");
+            System.err.println("Could not read a response, so the download was cancelled.");
             return false;
         }
     }
@@ -1062,15 +912,11 @@ public class RetromodCli {
     /** Consent prompt for the bulk preload action; --yes skips it for scripted/CI use. */
     private static boolean promptForPreloadConsent(boolean autoYes) {
         System.out.println();
-        System.out.println("────────────────────────────────────────────────────");
-        System.out.println("  Retromod is about to bulk-download API archives");
-        System.out.println("  for every known MC version (~22 JARs total,");
-        System.out.println("  several MB each). All come from official Maven");
-        System.out.println("  repositories (fabricmc.net / neoforged.net).");
-        System.out.println("────────────────────────────────────────────────────");
+        System.out.println("Retromod will download API archives for every known Minecraft version.");
+        System.out.println("This is about 22 jars from the loaders' official Maven repositories.");
 
         if (autoYes) {
-            System.out.println("  --yes flag passed: proceeding without prompt.");
+            System.out.println("--yes was provided, continuing without a prompt.");
             return true;
         }
 
@@ -1080,17 +926,14 @@ public class RetromodCli {
                 new java.io.InputStreamReader(System.in)).readLine();
             return line != null && (line.equalsIgnoreCase("y") || line.equalsIgnoreCase("yes"));
         } catch (java.io.IOException e) {
-            System.err.println("Could not read response - treating as 'no'.");
+            System.err.println("Could not read a response, so the download was cancelled.");
             return false;
         }
     }
     
     /** List all registered shims. */
     private static void shimsCommand(String[] args) {
-        System.out.println();
-        System.out.println("Registered Version Shims");
-        System.out.println("════════════════════════════════════════════════════════");
-        System.out.println();
+        System.out.println("Registered version shims");
         
         List<VersionShim> allShims = shimRegistry.getAllShims();
         
@@ -1098,16 +941,16 @@ public class RetromodCli {
         for (VersionShim shim : allShims) {
             if (!shim.getModLoaderType().equals(currentLoader)) {
                 currentLoader = shim.getModLoaderType();
-                System.out.println("┌─ " + currentLoader.toUpperCase() + " ────────────────────────────────────────");
+                System.out.println();
+                System.out.println(currentLoader);
             }
-            System.out.printf("│  %s → %s  (%s)%n",
+            System.out.printf("  %s -> %s (%s)%n",
                 shim.getSourceVersion(),
                 shim.getTargetVersion(),
                 shim.getShimName());
         }
-        System.out.println("└──────────────────────────────────────────────────────");
         System.out.println();
-        System.out.println("Total: " + allShims.size() + " shims registered");
+        System.out.println("Total: " + allShims.size());
     }
     
     /** Transform a JAR file using the configured transformer. */
@@ -1151,7 +994,7 @@ public class RetromodCli {
 
                 if (!entry.isDirectory()) {
                     try (var is = inJar.getInputStream(entry)) {
-                        // bounded read against falsified-size entries
+                        // Trust bytes read, not the size declared by the zip entry.
                         byte[] data = com.retromod.util.ZipSecurity.safeReadAllBytes(is);
                         totalRead += data.length;
                         if (totalRead > com.retromod.util.ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
@@ -1160,35 +1003,23 @@ public class RetromodCli {
 
                         if (entry.getName().endsWith(".class")) {
                             if (shouldTransformClass(entry.getName(), info)) {
-                                // 26.x GUI 2D-transform migration (peephole), before the class redirect
-                                // renames GuiGraphics -> GuiGraphicsExtractor. NeoForge/Forge (Mojang-
-                                // named); the string pre-filter no-ops on intermediary Fabric bytecode.
+                                // Mojang-named jars need GUI migration before the owner redirect.
                                 if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)) {
                                     data = com.retromod.shim.common.Gui2DTransformMigration.migrate(data);
                                 }
                                 data = transformer.transformClass(data, entry.getName());
-                                // ...and again AFTER the remap: a Fabric mod is intermediary-named
-                                // pre-transform (the pre-filter/pattern above no-op on class_XXXX), so
-                                // its GUI 2D-transform is only reachable once transformClass has renamed
-                                // pose()/GuiGraphics/PoseStack to Mojang. Idempotent on NeoForge (the
-                                // pre-transform pass already migrated, so this finds nothing to do).
+                                // Fabric only matches after its intermediary names are remapped.
                                 if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)) {
                                     data = com.retromod.shim.common.Gui2DTransformMigration.migrate(data);
                                 }
                             }
-                            // neutralize blocklisted mixins; always runs since a mixin can need
-                            // it even when its bytecode otherwise needs no transformation
+                            // A mixin can need a safety repair even when its other bytecode does not.
                             data = mixinStripper.stripBlocklistedHandlers(data);
-                            // Phase 4 (#48): ValueIO save-data adapter, POST-remap (params are Mojang
-                            // after transformClass above). Self-registers its runtime bridge into
-                            // `transformer`, which the embedIntoJar step relocates per-mod (#48 review).
+                            // ValueIO matching needs the Mojang parameter names produced above.
                             data = mixinStripper.adaptValueIoHandlers(data);
-                            // Forge 26.2 only (self-gating): strip @Mod.EventBusSubscriber
-                            // where EventBus 7's auto-subscriber would throw (#85)
+                            // These helpers inspect the class and ignore unrelated versions.
                             data = com.retromod.shim.forge.ForgeEventBusSynthetics
                                     .stripLenientAutoSubscriber(data);
-                            // 1.12.2 only (self-gating): modernize @Mod(modid=...) and wire
-                            // the @Mod.EventHandler lifecycle (#103/#108/#117)
                             data = com.retromod.shim.forge.Forge1122LifecycleSynthetics
                                     .upgradeLegacyModClass(data);
                         } else if (entry.getName().equals("fabric.mod.json")) {
@@ -1279,9 +1110,9 @@ public class RetromodCli {
 
         var result = TransformVerifier.verifyAndReport(outputJar, modName, TARGET_MC_VERSION);
         if (result.passed()) {
-            System.out.println("✓ Verification passed");
+            System.out.println("Verification passed.");
         } else {
-            System.out.println("✗ Verification found " + result.issueCount() + " issue(s)");
+            System.out.println("Verification found " + result.issueCount() + " issue(s).");
             for (var issue : result.issues()) {
                 System.out.println("  - " + issue.toReadableString(TARGET_MC_VERSION));
             }
@@ -1545,7 +1376,7 @@ public class RetromodCli {
         return info.modPackages().contains(pkg);
     }
     
-    /** Transform a legacy mod (1.8-1.20.x) to run on modern 26.1. */
+    /** Transform a legacy mod for the current target version. */
     private static void legacyCommand(String[] args) throws Exception {
         if (args.length < 2) {
             System.err.println("Usage: legacy <mod.jar> [--output <output.jar>]");
@@ -1561,11 +1392,8 @@ public class RetromodCli {
             }
         }
         
-        System.out.println();
-        System.out.println("=================================================================");
-        System.out.println("         Retromod LEGACY Transformation");
-        System.out.println("   Transform mods from MC 1.8+ to run on 26.1");
-        System.out.println("=================================================================");
+        System.out.println("Retromod legacy transform");
+        System.out.println("Target: Minecraft " + TARGET_MC_VERSION);
         System.out.println();
 
         LegacyModSupport legacySupport = new LegacyModSupport(
@@ -1576,23 +1404,23 @@ public class RetromodCli {
         LegacyModAnalysis analysis = legacySupport.analyzeMod(modPath);
         
         System.out.println();
-        System.out.println("Analysis Results:");
-        System.out.println("  Mod Loader:      " + analysis.modLoader);
-        System.out.println("  Target MC:       " + analysis.targetMcVersion);
-        System.out.println("  Source Epoch:    " + analysis.sourceEpoch.name);
-        System.out.println("  Java Version:    " + analysis.sourceJavaVersion);
-        System.out.println("  Class File Ver:  " + analysis.classFileVersion);
-        System.out.println("  Complexity:      " + analysis.complexity);
-        System.out.println("  Virtual Loader:  " + (analysis.needsVirtualLoader ? "Required" : "Not needed"));
-        System.out.println("  Transformations: " + analysis.epochTransitions.size());
+        System.out.println("Analysis");
+        System.out.println("Loader: " + analysis.modLoader);
+        System.out.println("Built for Minecraft: " + analysis.targetMcVersion);
+        System.out.println("Source era: " + analysis.sourceEpoch.name);
+        System.out.println("Java version: " + analysis.sourceJavaVersion);
+        System.out.println("Class file version: " + analysis.classFileVersion);
+        System.out.println("Complexity: " + analysis.complexity);
+        System.out.println("Virtual loader: " + (analysis.needsVirtualLoader ? "required" : "not needed"));
+        System.out.println("Version steps: " + analysis.epochTransitions.size());
         System.out.println();
         
         if (analysis.epochTransitions.isEmpty()) {
-            System.out.println("Mod appears to be compatible - no transformation needed.");
+            System.out.println("This mod does not need any version changes.");
             return;
         }
         
-        System.out.println("Transformation Plan:");
+        System.out.println("Changes");
         for (EpochTransition t : analysis.epochTransitions) {
             System.out.println("  -> " + t.name());
         }
@@ -1606,17 +1434,9 @@ public class RetromodCli {
         }
         
         System.out.println();
-        System.out.println("=================================================================");
-        System.out.println("                    Transformation Complete");
-        System.out.println("=================================================================");
-        System.out.println();
+        System.out.println("Updated mod");
         System.out.println("Output: " + result);
-        System.out.println();
-        System.out.println("Notes:");
-        System.out.println("  - The transformed mod may require additional testing");
-        System.out.println("  - Some features may not work if APIs were removed entirely");
-        System.out.println("  - Check the log output above for any warnings");
-        System.out.println();
+        System.out.println("Test the result in game and review any warnings above.");
     }
     
     /**
@@ -1635,7 +1455,7 @@ public class RetromodCli {
         String targetVersion = args.length > 2 ? args[2] : TARGET_MC_VERSION;
         
         if (!Files.isDirectory(minecraftDir)) {
-            System.err.println("Error: Not a valid directory: " + minecraftDir);
+            System.err.println("This is not a directory: " + minecraftDir);
             return;
         }
         
@@ -1643,16 +1463,13 @@ public class RetromodCli {
         Path configDir = minecraftDir.resolve("config");
         
         if (!Files.isDirectory(modsDir)) {
-            System.err.println("Error: No mods folder found in: " + minecraftDir);
+            System.err.println("No mods folder was found in " + minecraftDir);
             return;
         }
         
         Files.createDirectories(configDir);
         
-        System.out.println("=================================================================");
-        System.out.println("       Retromod Dependency Override Generator");
-        System.out.println("=================================================================");
-        System.out.println();
+        System.out.println("Retromod dependency overrides");
         System.out.println("Scanning mods folder: " + modsDir);
         System.out.println("Target Minecraft version: " + targetVersion);
         System.out.println();
@@ -1722,43 +1539,34 @@ public class RetromodCli {
         
         Files.writeString(overridesFile, json.toString());
         
-        System.out.println();
-        System.out.println("=================================================================");
         System.out.println("Generated dependency overrides for " + modIds.size() + " mods");
         System.out.println("File: " + overridesFile);
-        System.out.println("=================================================================");
         System.out.println();
-        System.out.println("IMPORTANT:");
-        System.out.println("  This bypasses Fabric's version check so mods can LOAD.");
-        System.out.println("  However, mods may still CRASH if APIs are incompatible.");
-        System.out.println("  Use 'retromod prepare' to also transform the mods.");
-        System.out.println();
+        System.out.println("These overrides only let Fabric inspect the mods. They do not repair");
+        System.out.println("incompatible APIs. Use `retromod prepare` to update the jars too.");
     }
     
-    /** Full preparation: generate overrides + transform all mods. */
+    /** Generate dependency overrides and transform all mods in an instance. */
     private static void prepareCommand(String[] args) throws Exception {
         if (args.length < 2) {
             System.err.println("Usage: retromod prepare <minecraft-dir> [--aot]");
             System.err.println("  minecraft-dir: Path to .minecraft folder");
-            System.err.println("  --aot: Use AOT compilation (recommended)");
+            System.err.println("  --aot: Prepare mods ahead of launch (recommended)");
             return;
         }
         
         Path minecraftDir = Paths.get(args[1]);
         boolean useAot = Arrays.asList(args).contains("--aot");
         
-        System.out.println("=================================================================");
-        System.out.println("         Retromod Full Preparation");
-        System.out.println("=================================================================");
-        System.out.println();
+        System.out.println("Preparing this Minecraft instance");
         System.out.println("Minecraft directory: " + minecraftDir);
-        System.out.println("Mode: " + (useAot ? "AOT Compilation" : "JIT Transform"));
+        System.out.println("Mode: " + (useAot ? "ahead-of-time" : "at launch"));
         System.out.println();
         
-        System.out.println("Step 1: Generating dependency overrides...");
+        System.out.println("Generating dependency overrides...");
         overridesCommand(new String[]{"overrides", args[1], TARGET_MC_VERSION});
 
-        System.out.println("Step 2: Transforming mods...");
+        System.out.println("Updating mods...");
         Path modsDir = minecraftDir.resolve("mods");
         
         if (useAot) {
@@ -1768,15 +1576,8 @@ public class RetromodCli {
         }
         
         System.out.println();
-        System.out.println("=================================================================");
-        System.out.println("                    Preparation Complete");
-        System.out.println("=================================================================");
-        System.out.println();
-        System.out.println("Your mods folder has been prepared for " + TARGET_MC_VERSION);
-        System.out.println();
-        System.out.println("Note: Some mods may still have runtime issues if they use");
-        System.out.println("      APIs that have changed significantly.");
-        System.out.println();
+        System.out.println("The mods folder is ready for Minecraft " + TARGET_MC_VERSION + ".");
+        System.out.println("Some mods may still need manual work for APIs that changed substantially.");
     }
     
     /**
@@ -1787,12 +1588,11 @@ public class RetromodCli {
         if (args.length < 2) {
             System.err.println("Usage: devhelp <mod.jar> [--to <version>]");
             System.err.println();
-            System.err.println("Scans your mod and tells you exactly what needs to change");
-            System.err.println("to update it to a newer Minecraft version.");
+            System.err.println("Scans a mod and reports source changes for a newer Minecraft version.");
             System.err.println();
             System.err.println("Examples:");
             System.err.println("  retromod devhelp mymod-1.21.4.jar");
-            System.err.println("  retromod devhelp mymod-1.21.4.jar --to 26.1");
+            System.err.println("  retromod devhelp mymod.jar --to " + TARGET_MC_VERSION);
             System.exit(1);
         }
 
@@ -1810,10 +1610,7 @@ public class RetromodCli {
         }
 
         System.out.println();
-        System.out.println("=================================================================");
-        System.out.println("  Retromod Developer Migration Helper");
-        System.out.println("=================================================================");
-        System.out.println();
+        System.out.println("Retromod source migration guide");
 
         ModVersionInfo info = detector.detectVersion(modPath);
         if (info == null) {
@@ -1829,7 +1626,7 @@ public class RetromodCli {
         System.out.println();
 
         if (sourceVersion.equals(targetVersion)) {
-            System.out.println("  Your mod already targets " + targetVersion + ". Nothing to do!");
+            System.out.println("This mod already targets " + targetVersion + ".");
             return;
         }
 
@@ -1837,14 +1634,11 @@ public class RetromodCli {
             info.modLoaderType(), sourceVersion, targetVersion);
 
         if (chain.isEmpty()) {
-            System.out.println("  No migration data available for " + sourceVersion + " -> " + targetVersion);
+            System.out.println("No migration data is available for " + sourceVersion + " -> " + targetVersion + ".");
             return;
         }
 
-        System.out.println("=================================================================");
-        System.out.println("  MIGRATION GUIDE: " + sourceVersion + " -> " + targetVersion);
-        System.out.println("=================================================================");
-        System.out.println();
+        printSection("Changes from " + sourceVersion + " to " + targetVersion);
 
         int totalMethods = 0;
         int totalClasses = 0;
@@ -1896,20 +1690,15 @@ public class RetromodCli {
             }
         }
 
-        System.out.println("=================================================================");
-        System.out.println("  SUMMARY");
-        System.out.println("=================================================================");
+        printSection("Summary");
+        System.out.println(chain.size() + " version steps");
+        System.out.println(totalClasses + " class renames");
+        System.out.println(totalMethods + " method changes");
         System.out.println();
-        System.out.println("  " + chain.size() + " version steps");
-        System.out.println("  " + totalClasses + " class renames");
-        System.out.println("  " + totalMethods + " method changes");
-        System.out.println();
-        System.out.println("  To update your mod:");
-        System.out.println("  1. Apply the class/method renames above to your source code");
-        System.out.println("  2. Update your fabric.mod.json / mods.toml version targets");
-        System.out.println("  3. Rebuild against the new Minecraft version");
-        System.out.println();
-        System.out.println("  Or just use Retromod and skip the manual work :)");
+        System.out.println("To update the source:");
+        System.out.println("1. Apply the class and method changes above.");
+        System.out.println("2. Update the Minecraft version in the mod metadata.");
+        System.out.println("3. Rebuild against the target Minecraft version.");
         System.out.println();
     }
 
@@ -1986,8 +1775,7 @@ public class RetromodCli {
             scorer.loadFabricApiJar(fabricApiPath);
         }
 
-        // Directory (corpus) mode: score every jar reusing the loaded index, dump residual
-        // missing members as JSON for aggregation. One JVM for the whole corpus.
+        // Reuse the loaded index for every jar so large corpus scans stay fast.
         if (Files.isDirectory(modPath)) {
             scoreDirectory(scorer, modPath, jsonOut);
             return;
@@ -2005,39 +1793,31 @@ public class RetromodCli {
                 ? info.modLoaderType() + " " + info.targetMcVersion()
                 : "unknown";
 
-        int W = 60; // box width
         System.out.println();
-        printBoxTop(W);
-        printBoxLine(W, "  Retromod Compatibility Score");
-        printBoxSep(W);
-        printBoxLine(W, "  Mod: " + modName.trim());
-        printBoxLine(W, "  Source: " + sourceLine);
-        printBoxLine(W, "  Target: MC " + TARGET_MC_VERSION);
-        printBoxSep(W);
-        printBoxLine(W, "  Overall Score: " + result.overallScore + "/100");
-        printBoxLine(W, "");
-
-        String clsIcon = result.classScore >= 75 ? "OK" : (result.classScore >= 50 ? "!!" : "XX");
-        String mtdIcon = result.methodScore >= 75 ? "OK" : (result.methodScore >= 50 ? "!!" : "XX");
-        String fldIcon = result.fieldScore >= 75 ? "OK" : (result.fieldScore >= 50 ? "!!" : "XX");
-        String mixIcon = result.mixinScore >= 75 ? "OK" : (result.mixinScore >= 50 ? "!!" : "XX");
-
-        printBoxLine(W, String.format("  [%s] Class references:  %d/%d resolvable (%d%%)",
-                clsIcon, result.resolvableClasses, result.totalClasses, result.classScore));
-        printBoxLine(W, String.format("  [%s] Method calls:      %d/%d redirectable (%d%%)",
-                mtdIcon, result.resolvableMethods + result.redirectedMethods, result.totalMethods, result.methodScore));
-        printBoxLine(W, String.format("  [%s] Field accesses:    %d/%d resolvable (%d%%)",
-                fldIcon, result.resolvableFields + result.redirectedFields, result.totalFields, result.fieldScore));
-        printBoxLine(W, String.format("  [%s] Mixin targets:     %d/%d valid (%d%%)",
-                mixIcon, result.validMixins, result.totalMixins, result.mixinScore));
-        printBoxLine(W, "");
-        printBoxLine(W, "  Estimated: " + result.getVerdict());
-        printBoxBottom(W);
+        System.out.println("Retromod compatibility score");
+        System.out.println("Mod: " + modName.trim());
+        System.out.println("Source: " + sourceLine);
+        System.out.println("Target: Minecraft " + TARGET_MC_VERSION);
+        System.out.println("Overall: " + result.overallScore + "/100");
+        System.out.println();
+        System.out.printf("Class references: %d/%d resolvable, %d%% (%s)%n",
+                result.resolvableClasses, result.totalClasses, result.classScore,
+                scoreStatus(result.classScore));
+        System.out.printf("Method calls: %d/%d redirectable, %d%% (%s)%n",
+                result.resolvableMethods + result.redirectedMethods, result.totalMethods, result.methodScore,
+                scoreStatus(result.methodScore));
+        System.out.printf("Field accesses: %d/%d resolvable, %d%% (%s)%n",
+                result.resolvableFields + result.redirectedFields, result.totalFields, result.fieldScore,
+                scoreStatus(result.fieldScore));
+        System.out.printf("Mixin targets: %d/%d valid, %d%% (%s)%n",
+                result.validMixins, result.totalMixins, result.mixinScore,
+                scoreStatus(result.mixinScore));
+        System.out.println("Estimate: " + result.getVerdict());
         System.out.println();
 
         if (verbose) {
             if (!result.missingClasses.isEmpty()) {
-                System.out.println("Missing Classes (" + result.missingClasses.size() + "):");
+                System.out.println("Missing classes (" + result.missingClasses.size() + "):");
                 for (String cls : result.missingClasses) {
                     System.out.println("  - " + cls.replace('/', '.'));
                 }
@@ -2045,7 +1825,7 @@ public class RetromodCli {
             }
 
             if (!result.missingMethods.isEmpty()) {
-                System.out.println("Unresolvable Method Calls (" + result.missingMethods.size() + "):");
+                System.out.println("Unresolvable method calls (" + result.missingMethods.size() + "):");
                 int shown = 0;
                 for (String m : result.missingMethods) {
                     System.out.println("  - " + m);
@@ -2058,7 +1838,7 @@ public class RetromodCli {
             }
 
             if (!result.missingFields.isEmpty()) {
-                System.out.println("Unresolvable Field Accesses (" + result.missingFields.size() + "):");
+                System.out.println("Unresolvable field accesses (" + result.missingFields.size() + "):");
                 for (String f : result.missingFields) {
                     System.out.println("  - " + f);
                 }
@@ -2066,7 +1846,7 @@ public class RetromodCli {
             }
 
             if (!result.brokenMixins.isEmpty()) {
-                System.out.println("Broken Mixin Targets (" + result.brokenMixins.size() + "):");
+                System.out.println("Broken Mixin targets (" + result.brokenMixins.size() + "):");
                 for (String m : result.brokenMixins) {
                     System.out.println("  - " + m);
                 }
@@ -2099,12 +1879,7 @@ public class RetromodCli {
         }
     }
 
-    /**
-     * Corpus mode for {@code score <dir>}: score every jar in the directory reusing the already-loaded
-     * MC/Fabric index (one JVM for the whole corpus), and dump each jar's residual missing members as
-     * JSON for aggregation. Score a directory of ALREADY-TRANSFORMED jars against the host jar to get
-     * the breaks Retromod does NOT yet cover.
-     */
+    /** Score every transformed jar in a directory and optionally write missing references as JSON. */
     private static void scoreDirectory(ModScorer scorer, Path dir, Path jsonOut) throws Exception {
         java.util.List<Path> jars = new ArrayList<>();
         try (var s = Files.list(dir)) {
@@ -2142,27 +1917,14 @@ public class RetromodCli {
         return a;
     }
 
-    private static void printBoxTop(int w) {
-        System.out.print("+");
-        System.out.print("=".repeat(w));
-        System.out.println("+");
-    }
-
-    private static void printBoxSep(int w) {
-        System.out.print("+");
-        System.out.print("-".repeat(w));
-        System.out.println("+");
-    }
-
-    private static void printBoxBottom(int w) {
-        System.out.print("+");
-        System.out.print("=".repeat(w));
-        System.out.println("+");
-    }
-
-    private static void printBoxLine(int w, String text) {
-        if (text.length() > w - 2) text = text.substring(0, w - 2);
-        System.out.printf("| %-" + (w - 2) + "s |%n", text);
+    private static String scoreStatus(int score) {
+        if (score >= 75) {
+            return "good";
+        }
+        if (score >= 50) {
+            return "needs review";
+        }
+        return "poor";
     }
 
     /** Analyze a crash log or game log and report (or, with --apply, apply) auto-fixes. */
@@ -2188,25 +1950,22 @@ public class RetromodCli {
         }
 
         System.out.println();
-        System.out.println("=================================================================");
-        System.out.println("           Retromod Auto-Fix Analysis");
-        System.out.println("=================================================================");
-        System.out.println();
+        System.out.println("Retromod log analysis");
         System.out.println("Log file: " + logFile);
-        System.out.println("Mode:     " + (apply ? "APPLY (registering fixes)" : "ANALYZE (dry run)"));
+        System.out.println("Mode: " + (apply ? "apply fixes" : "dry run"));
         System.out.println();
 
         com.retromod.core.AutoFixEngine engine = new com.retromod.core.AutoFixEngine();
 
         List<com.retromod.core.AutoFixEngine.AppliedFix> fixes;
         if (apply) {
-            // register all shims first so the transformer has context
+            // The fix engine needs the same redirect context as a normal transform.
             RetromodTransformer transformer = RetromodTransformer.getInstance();
             for (VersionShim shim : shimRegistry.getAllShims()) {
                 try {
                     shim.registerRedirects(transformer);
                 } catch (Exception e) {
-                    // ignore shim errors in CLI mode
+                    // A broken optional shim should not stop log analysis.
                 }
             }
             fixes = engine.analyzeAndFix(logFile, transformer);
@@ -2227,105 +1986,74 @@ public class RetromodCli {
         System.out.println("Found " + fixes.size() + " actionable error(s):");
         System.out.println();
 
-        // group fixes by error type for cleaner output
+        // Group related fixes so repeated errors are easier to scan.
         Map<String, List<com.retromod.core.AutoFixEngine.AppliedFix>> byType = new LinkedHashMap<>();
         for (com.retromod.core.AutoFixEngine.AppliedFix fix : fixes) {
             byType.computeIfAbsent(fix.errorType(), k -> new ArrayList<>()).add(fix);
         }
 
         for (Map.Entry<String, List<com.retromod.core.AutoFixEngine.AppliedFix>> entry : byType.entrySet()) {
-            System.out.println("-----------------------------------------------------------------");
-            System.out.println("  " + entry.getKey() + " (" + entry.getValue().size() + " occurrence(s))");
-            System.out.println("-----------------------------------------------------------------");
+            printSection(entry.getKey() + " (" + entry.getValue().size() + " occurrence(s))");
 
             for (com.retromod.core.AutoFixEngine.AppliedFix fix : entry.getValue()) {
-                System.out.println("  Error:  " + fix.description());
+                System.out.println("  Problem: " + fix.description());
                 System.out.println("  " + (apply ? "Action:" : "Suggestion:") + " " + fix.action());
                 System.out.println();
             }
         }
 
-        System.out.println("=================================================================");
         if (apply) {
-            System.out.println("  " + fixes.size() + " fix(es) applied.");
-            System.out.println("  Retransform your mods to incorporate the fixes:");
-            System.out.println("    retromod batch <mods-folder> --aot");
+            System.out.println(fixes.size() + " fix(es) applied.");
+            System.out.println("Run this to rebuild the affected mods:");
+            System.out.println("  retromod batch <mods-folder> --aot");
         } else {
-            System.out.println("  " + fixes.size() + " fix(es) suggested.");
-            System.out.println("  To apply fixes, re-run with --apply:");
-            System.out.println("    retromod autofix " + logFile + " --apply");
+            System.out.println(fixes.size() + " fix(es) suggested.");
+            System.out.println("To apply them, run:");
+            System.out.println("  retromod autofix " + logFile + " --apply");
         }
-        System.out.println("=================================================================");
         System.out.println();
     }
 
     private static void printUsage() {
-        System.out.println();
-        System.out.println("=================================================================");
-        System.out.println("           Retromod CLI v" + VERSION);
-        System.out.println("   Backwards Compatibility Layer for Minecraft Mods");
-        System.out.println("");
-        System.out.println("   Supports: Fabric, Forge, NeoForge");
-        System.out.println("   Versions: 1.8 -> 26.1");
-        System.out.println("=================================================================");
+        System.out.println("Retromod CLI " + VERSION);
+        System.out.println("Update older Fabric, NeoForge, and Forge mods for newer Minecraft versions.");
+        System.out.println("Default target: Minecraft " + TARGET_MC_VERSION);
         System.out.println();
         System.out.println("Usage: retromod <command> [options]");
         System.out.println();
-        System.out.println("Modern Commands (1.21.x):");
-        System.out.println("  analyze <mod.jar>              Analyze a mod's compatibility");
-        System.out.println("  aot <mod.jar>                  AOT compile (recommended)");
-        System.out.println("  transform <mod.jar>            JIT-style transformation");
-        System.out.println("  embed <mod.jar>                Embed removed APIs only");
-        System.out.println("  batch <folder> [--aot]         Process all mods in folder");
-        System.out.println();
-        System.out.println("Preparation Commands (IMPORTANT for cross-version):");
-        System.out.println("  prepare <mc-dir> [--aot]       Full prep: overrides + transform");
-        System.out.println("  overrides <mc-dir>             Generate dependency overrides only");
-        System.out.println();
-        System.out.println("Legacy Commands (1.8-1.20.x -> 26.1):");
-        System.out.println("  legacy <mod.jar>               Transform legacy mod to 26.1");
-        System.out.println();
-        System.out.println("Developer Commands:");
-        System.out.println("  devhelp <mod.jar> [target]     Show what to change when updating your mod");
-        System.out.println("  migrate <mod.jar> [target]     Alias for devhelp");
-        System.out.println();
-        System.out.println("Analysis Commands:");
-        System.out.println("  score <mod.jar> [options]      Score mod compatibility with 26.1");
-        System.out.println("  autofix <log-file> [--apply]   Analyze crash log, suggest/apply fixes");
-        System.out.println("  mixin-scan <dir-or-jar>...     Inventory mixin injectors (JSON via --json)");
-        System.out.println();
-        System.out.println("Utility Commands:");
-        System.out.println("  diff <loader> <v1> <v2>        Show API differences");
-        System.out.println("  archive <action>               Manage API archives");
+        System.out.println("Commands:");
+        System.out.println("  analyze <mod.jar>              Inspect metadata and compatibility risk");
+        System.out.println("  transform <mod.jar>            Update one mod");
+        System.out.println("  aot <mod.jar>                  Prepare one mod ahead of launch");
+        System.out.println("  batch <folder>                 Update every mod in a folder");
+        System.out.println("  prepare <game-dir>             Prepare a Minecraft instance");
+        System.out.println("  legacy <mod.jar>               Use the legacy transform path");
+        System.out.println("  embed <mod.jar>                Add required replacement APIs");
+        System.out.println("  score <path>                   Score one mod or a mod folder");
+        System.out.println("  gaps <folder>                  Report unresolved references");
+        System.out.println("  mixin-scan <path>...           Inventory mixin targets");
+        System.out.println("  devhelp <mod.jar> [target]     Show source changes a mod may need");
+        System.out.println("  autofix <log-file>             Suggest fixes from a crash log");
+        System.out.println("  diff <loader> <v1> <v2>        Compare two version points");
         System.out.println("  shims                          List registered shims");
+        System.out.println("  overrides <game-dir>           Write Fabric dependency overrides");
+        System.out.println("  archive <action>               Manage API archives");
         System.out.println("  help                           Show this help");
-        System.out.println("  version                        Show version");
+        System.out.println("  version                        Show the CLI version");
         System.out.println();
         System.out.println("Options:");
-        System.out.println("  --output <path>                Specify output file/folder");
-        System.out.println("  --aot                          Use AOT compilation in batch");
+        System.out.println("  --target <version>             Choose the target Minecraft version");
+        System.out.println("  --target-loader <loader>       Choose an offline loader migration");
+        System.out.println("  --output <path>                Choose the output file or folder");
+        System.out.println("  --aot                          Prepare bytecode ahead of launch");
+        System.out.println("  --verify                       Check unresolved references");
+        System.out.println("  --force                        Continue despite a high risk score");
         System.out.println();
         System.out.println("Examples:");
-        System.out.println("  # RECOMMENDED: Full preparation for running old mods");
         System.out.println("  retromod prepare ~/.minecraft --aot");
-        System.out.println();
-        System.out.println("  # Transform a 1.21.8 Fabric mod to 26.1");
-        System.out.println("  retromod aot mymod-1.21.8.jar");
-        System.out.println();
-        System.out.println("  # Transform a legacy 1.12.2 Forge mod to 26.1");
-        System.out.println("  retromod legacy oldmod-1.12.2.jar");
-        System.out.println();
-        System.out.println("  # Batch process all mods");
-        System.out.println("  retromod batch ./mods --aot");
-        System.out.println();
-        System.out.println("  # See what API changes you need for updating your own mod");
-        System.out.println("  retromod devhelp mymod-1.21.4.jar 26.1");
-        System.out.println();
-        System.out.println("  # Cross-mod gap report - what's missing across a whole mods folder");
-        System.out.println("  retromod gaps ./mods --mc-jar minecraft-26.1.jar");
-        System.out.println();
-        System.out.println("Target Minecraft version: " + TARGET_MC_VERSION);
-        System.out.println();
+        System.out.println("  retromod batch ./mods --aot --verify");
+        System.out.println("  retromod transform oldmod.jar --target " + TARGET_MC_VERSION);
+        System.out.println("  retromod devhelp mymod.jar " + TARGET_MC_VERSION);
     }
 
     /**
@@ -2414,9 +2142,9 @@ public class RetromodCli {
         // The transformer reads the verify flag at class-init time, so the property must be
         // set before launch; bail with instructions otherwise.
         if (!RetromodTransformer.isVerificationEnabled()) {
-            System.err.println("NOTE: verification is not enabled.");
+            System.err.println("Reference verification is not enabled.");
             System.err.println("Re-run with: -Dretromod.verifyTransforms=true");
-            System.err.println("  (e.g. mvn exec:java -Dexec.mainClass=... -Dretromod.verifyTransforms=true ...)");
+            System.err.println("For Maven, add the same property to the exec command.");
             System.exit(2);
         }
 
@@ -2460,7 +2188,7 @@ public class RetromodCli {
                         modsProcessed++;
                     }
                 } catch (Exception e) {
-                    System.err.println("  FAILED: " + e.getMessage());
+                    System.err.println("  failed: " + e.getMessage());
                     modsFailed++;
                 }
             }

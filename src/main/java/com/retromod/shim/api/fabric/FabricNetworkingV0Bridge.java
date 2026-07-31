@@ -68,8 +68,8 @@ public class FabricNetworkingV0Bridge implements VersionShim {
         transformer.registerClassRedirect(OLD_SERVER_REGISTRY, NEW_SERVER_REGISTRY);
         transformer.registerClassRedirect(OLD_CLIENT_REGISTRY, NEW_CLIENT_REGISTRY);
 
-        LOGGER.info("[Retromod] Fabric networking V0 bridge - injected 6 synthetic types "
-                + "+ 4 class redirects (soft-fail: mods load, custom packets silently dropped)");
+        LOGGER.warn("Loaded support for Fabric networking v0. Mods can start, but packets sent "
+                + "through that removed API will be ignored.");
     }
 
     private static byte[] generatePacketConsumerInterface() {

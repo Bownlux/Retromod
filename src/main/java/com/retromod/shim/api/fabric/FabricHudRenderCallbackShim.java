@@ -58,9 +58,8 @@ public class FabricHudRenderCallbackShim implements VersionShim {
         transformer.registerSyntheticClass(SYNTH, generateInterface());
         transformer.registerClassRedirect(OLD, SYNTH);
 
-        LOGGER.info("[Retromod] Fabric HudRenderCallback bridge - kept onHudRender SAM "
-                + "(extends HudElement, default extractRenderState forwards) + EVENT attached to "
-                + "HudElementRegistry (STATUS: needs in-game verification)");
+        LOGGER.debug("Installed the Fabric HUD render callback bridge. "
+                + "An in-game verification run is still pending.");
     }
 
     static byte[] generateInterface() {

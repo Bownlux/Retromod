@@ -40,7 +40,7 @@ class ResourceLocationCtorRedirectTest {
         RetromodTransformer.getInstance().clearRedirectsForTesting();
     }
 
-    /** A static factory `return new ResourceLocation("modid", arg)` — the canonical 1.12.2 idiom. */
+    /** A static factory using `return new ResourceLocation("modid", arg)`, the usual 1.12.2 form. */
     private static byte[] callerWithNewResourceLocation() {
         ClassWriter cw = new ClassWriter(0);
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/mod/Res", null, "java/lang/Object", null);

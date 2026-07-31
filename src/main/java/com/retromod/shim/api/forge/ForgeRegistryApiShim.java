@@ -127,7 +127,7 @@ public class ForgeRegistryApiShim implements VersionShim {
                 B, "itemProps", RegistryIdBridgeSynthetic.ITEM_PROPS_DESC);
         }
 
-        // Do NOT class-redirect ForgeRegistries: a class redirect rewrites the GETSTATIC owner before
+        // Do not class-redirect ForgeRegistries: a class redirect rewrites the GETSTATIC owner before
         // the field redirects below can match, and NeoForgeRegistries has no BLOCKS/ITEMS/... so the
         // mod's <clinit> hits NoSuchFieldError. ForgeRegistries and IForgeRegistry are gone on
         // NeoForge; the field reads below carry a registry instance into create() above and the

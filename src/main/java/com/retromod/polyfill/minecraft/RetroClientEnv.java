@@ -30,7 +30,7 @@ package com.retromod.polyfill.minecraft;
  * latches and reads as {@code false} / writes as a no-op, the standard soft-fail posture. A
  * too-early call (before the client is FULLY constructed: the singleton publishes early in
  * {@code Minecraft.<init>} while {@code gui} is assigned much later, and mod init runs in between)
- * does NOT latch and is retried on the next call.
+ * does not latch and is retried on the next call.
  */
 public final class RetroClientEnv {
 

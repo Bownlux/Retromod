@@ -1,12 +1,10 @@
 Mixin corpus rank
-=================
-scanned jars ......... 8
-records .............. 99
-distinct mixin classes 70
-injector handlers .... 97
+Scanned jars: 8
+Records: 99
+Distinct mixin classes: 70
+Injector handlers: 97
 
 Top 25 targets by (targetClass :: method), ranked by distinct jars
-------------------------------------------------------------------------------
  jars  hdlr  injector    target
     2     2  WrapWithCondition net/minecraft/client/multiplayer/ClientPacketListener :: handleSetEntityPassengersPacket
     2     2  WrapOperation net/minecraft/world/entity/monster/Phantom$PhantomSweepAttackGoal :: tick
@@ -35,7 +33,6 @@ Top 25 targets by (targetClass :: method), ranked by distinct jars
     1     1  ModifyExpressionValue net/minecraft/class_1593 :: method_55694
 
 Top 25 target classes, ranked by distinct jars
-------------------------------------------------------------------------------
  jars  hdlr  targetClass
     5     5  net/minecraft/world/entity/player/Player
     3     2  net/minecraft/server/network/ServerGamePacketListenerImpl
@@ -64,7 +61,6 @@ Top 25 target classes, ranked by distinct jars
     1     1  net/minecraft/class_1297
 
 Injector histogram
-------------------------------------------------------------------------------
     44  Inject
     14  Accessor
     11  ModifyExpressionValue
@@ -76,4 +72,3 @@ Injector histogram
      2  (none)
      2  ModifyVariable
      1  Invoker
-

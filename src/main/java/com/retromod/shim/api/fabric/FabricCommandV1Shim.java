@@ -52,20 +52,17 @@ public class FabricCommandV1Shim implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
-        // Not host-gated (#9): command/v1 was removed in the 1.19 era so the old class is
-        // gone on every modern host, command/v2 exists since 1.19.1, and the synthetic +
-        // bridge use only brigadier + Fabric Event types resolved by Fabric API name, so
-        // this is namespace-agnostic and covers pre-26.1 hosts too.
+        // Command v1 is absent on every supported host, while the bridge only
+        // depends on stable Brigadier and Fabric event types.
 
-        // embed first so the synthetic <clinit> can resolve the bridge
+        // Embed first so the synthetic static initializer can resolve the bridge.
         transformer.registerEmbeddedShim(BRIDGE.replace('/', '.'));
 
         transformer.registerSyntheticClass(NEW_SAM, generateSamInterface());
         transformer.registerClassRedirect(OLD_V1, NEW_SAM);
 
-        LOGGER.info("[Retromod] Fabric command v1 bridge - kept CommandRegistrationCallback "
-                + "register(dispatcher, dedicated) SAM + EVENT wired to command/v2 "
-                + "(STATUS: needs in-game verification)");
+        LOGGER.debug("Installed the Fabric command v1 callback bridge. "
+                + "An in-game verification run is still pending.");
     }
 
     /** Synthetic v1 {@code CommandRegistrationCallback}: 2-arg {@code register} SAM, static {@code EVENT}, and a {@code <clinit>} that fills {@code EVENT} from the bridge. */

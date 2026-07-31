@@ -20,7 +20,7 @@ public class Fabric_1_20_6_to_1_21 implements VersionShim {
         // NOTE: this shim previously redirected Enchantment.getRarity/getMaxLevel/getMinLevel
         // and EnchantmentHelper.getLevel to a "com/retromod/shim/fabric/embedded/EnchantmentShim"
         // that was never written (a phantom target). Those redirects were removed (#119):
-        //   - getMaxLevel()I and getMinLevel()I NEVER left the API (present 1.21 through 26.2,
+        //   - getMaxLevel()I and getMinLevel()I never left the API (present 1.21 through 26.2,
         //     backed by the data-driven definition), so redirecting them is wrong regardless.
         //   - the keys are Yarn class names (net/minecraft/enchantment/Enchantment), which never
         //     appear in distributed intermediary Fabric mods nor the Mojang runtime (pitfall 17),

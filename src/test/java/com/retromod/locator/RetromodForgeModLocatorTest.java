@@ -45,7 +45,7 @@ class RetromodForgeModLocatorTest {
     @Test
     void forgeIModLocatorServiceMustNotBeRegistered() {
         // #102 (Forge) + #90 (NeoForge): a mods/ jar declaring a locator SPI gets claimed onto the
-        // early-service layer, where it is NOT scanned as a @Mod. On Forge that stopped Retromod
+        // early-service layer, where it is not scanned as a @Mod. On Forge that stopped Retromod
         // initializing at all (#102); NeoForge 26.2's IModFileCandidateLocator was found to have the
         // SAME trap in-game (#90, RetromodNeoForge never constructed). So NEITHER service is registered
         // in the main jar; the locator classes stay (com/retromod/** uniform for the self-hash), and

@@ -220,13 +220,13 @@ public final class RegistryRefLookup {
         String cacheKey = registryName + ":" + entryName;
         Object cached = CACHE.get(cacheKey);
         if (cached == NULL_SENTINEL) {
-            LOGGER.debug("[diag {}.{}] CACHE HIT (null sentinel)", registryName, entryName);
+            LOGGER.debug("[diag {}.{}] Cached result is empty", registryName, entryName);
             return null;
         }
         if (cached != null) {
             return cached;
         }
-        LOGGER.debug("[diag {}.{}] CACHE MISS, calling doLookup", registryName, entryName);
+        LOGGER.debug("[diag {}.{}] No cached result, running lookup", registryName, entryName);
 
         Object value = doLookup(registryName, entryName);
         CACHE.put(cacheKey, value != null ? value : NULL_SENTINEL);
@@ -251,7 +251,7 @@ public final class RegistryRefLookup {
                 resourceLocationClass = rl;
             }
         } catch (Throwable t) {
-            LOGGER.debug("[diag {}.{}] Class.forName(ResourceLocation) THREW {}: {}",
+            LOGGER.debug("[diag {}.{}] ResourceLocation lookup failed with {}: {}",
                     registryName, entryName, t.getClass().getSimpleName(), t.getMessage());
             return null;
         }

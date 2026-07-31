@@ -274,24 +274,13 @@ public class ModrinthVersionChecker {
         }
         
         String message = String.format("""
-            Good news! There's a newer version of this mod
-            that works with your Minecraft version natively!
-            
-            ═══════════════════════════════════════
-            
-            Mod: %s
-            File: %s
-            
-            Native version available: %s
-            
-            ═══════════════════════════════════════
-            
-            You can download the native version from Modrinth
-            instead of using Retromod to transform it.
-            
-            Native versions usually work better than transformed ones!
-            
-            What would you like to do?
+            %s has a release made for this Minecraft version.
+
+            Current file: %s
+            Available version: %s
+
+            Using the native release is usually more reliable than transforming
+            an older one.
             """,
             result.projectName(),
             modFileName,
@@ -301,11 +290,11 @@ public class ModrinthVersionChecker {
         int choice = JOptionPane.showOptionDialog(
             null,
             message,
-            "Retromod - Native Version Available!",
+            "A native mod version is available",
             JOptionPane.YES_NO_CANCEL_OPTION,
             JOptionPane.INFORMATION_MESSAGE,
             null,
-            new String[]{"Open Modrinth", "Transform Anyway", "Skip This Mod"},
+            new String[]{"Open Modrinth", "Update This Copy", "Skip This Mod"},
             "Open Modrinth"
         );
         
@@ -345,17 +334,8 @@ public class ModrinthVersionChecker {
     public static void logNativeVersionAvailable(ModrinthResult result, String modFileName) {
         if (!result.found()) return;
         
-        LOGGER.warn("═══════════════════════════════════════════════════════════");
-        LOGGER.warn("  NATIVE VERSION AVAILABLE!");
-        LOGGER.warn("═══════════════════════════════════════════════════════════");
-        LOGGER.warn("  Mod: {}", result.projectName());
-        LOGGER.warn("  File: {}", modFileName);
-        LOGGER.warn("  Native version: {}", result.versionNumber());
-        LOGGER.warn("");
-        LOGGER.warn("  Download from: {}", result.pageUrl());
-        LOGGER.warn("");
-        LOGGER.warn("  Native versions work better than transformed ones!");
-        LOGGER.warn("═══════════════════════════════════════════════════════════");
+        LOGGER.warn("{} ({}) has a native release, version {}: {}",
+            result.projectName(), modFileName, result.versionNumber(), result.pageUrl());
     }
     
     private record ModInfo(String modId, String modName, String loader) {}

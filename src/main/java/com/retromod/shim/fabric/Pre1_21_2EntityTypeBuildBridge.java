@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory;
  * {@code (Lclass_5321;)Lclass_1299;}; a 1.20.1-1.21.1 mod registering an entity dies
  * {@code NoSuchMethodError} at {@code <clinit>} on a 1.21.2-1.21.11 host (ENGRAM 0.8.0-beta).
  *
- * <p>Host-probing (pitfall 9 in spirit): registers ONLY when the host's
+ * <p>Host-probing (pitfall 9 in spirit): registers only when the host's
  * {@code class_1299$class_1300.method_5905} takes {@code class_5321}. On a &le;1.21.1 host the
  * String form still exists and the bridge must not fire; on a 26.1+ host the classes are
  * Mojang-named and the intermediary remap handles the mod instead. The rewritten call goes
@@ -48,18 +48,16 @@ public final class Pre1_21_2EntityTypeBuildBridge {
                 if (m.getParameterTypes()[0] == String.class) takesString = true;
             }
             if (!takesKey || takesString) {
-                LOGGER.debug("[Retromod] EntityType.Builder.build bridge - host still has the "
-                        + "String form (or none), skipping");
+                LOGGER.debug("The host still supports EntityType.Builder.build(String)");
                 return;
             }
         } catch (Throwable t) {
-            LOGGER.debug("[Retromod] EntityType.Builder.build bridge - no intermediary host "
-                    + "classes, skipping ({})", t.getClass().getSimpleName());
+            LOGGER.debug("EntityType.Builder support is not needed because intermediary host "
+                    + "classes are unavailable ({})", t.getClass().getSimpleName());
             return;
         }
         registerRedirects(transformer);
-        LOGGER.info("[Retromod] EntityType.Builder.build(String) bridged to the ResourceKey form "
-                + "(1.21.2 descriptor flip, #162)");
+        LOGGER.debug("Added support for the old EntityType.Builder.build(String) method");
     }
 
     /** The unconditional registration (package-visible for the transform-shape test). */

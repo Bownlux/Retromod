@@ -8,19 +8,8 @@ modId = "retromod"
 version = "${version}"
 displayName = "Retromod"
 description = '''
-Backwards compatibility layer for Minecraft mods.
-Run older mods on newer Minecraft versions automatically!
-
-Supports:
-- Minecraft 26.1+ (deobfuscated Mojang official names)
-- Forge cross-version compatibility
-- Legacy mod translation (1.8+ through full shim chain)
-
-Just drop your old mods in retromod-input/ - Retromod transforms them!
-
-Bug reports: github.com/Bownlux/Retromod/issues
-
-Made by the Developers of revivalsmp.net.
+Retromod helps older Minecraft mods run on newer versions. It updates bytecode,
+mixins, and loader metadata, then keeps a backup of the original mod.
 '''
 authors = "Bownlux"
 logoFile = "assets/retromod/icon.png"

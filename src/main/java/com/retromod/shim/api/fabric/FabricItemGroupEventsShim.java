@@ -104,15 +104,14 @@ public class FabricItemGroupEventsShim implements VersionShim {
             transformer.registerClassRedirect(outer + "$ModifyEntriesAll", MODIFY_ENTRIES_ALL);
         }
 
-        // addAfter -> insertAfter, addBefore -> insertBefore on the class-redirected output, per overload.
+        // Register each overload after the output class has been redirected.
         for (String desc : INSERT_DESCS) {
             transformer.registerMethodRedirect(OUTPUT, "addAfter", desc, OUTPUT, "insertAfter", desc);
             transformer.registerMethodRedirect(OUTPUT, "addBefore", desc, OUTPUT, "insertBefore", desc);
         }
 
-        LOGGER.info("[Retromod] Fabric item-group events v1 bridge - kept ItemGroupEvents holder + "
-                + "ModifyEntries/ModifyEntriesAll SAMs wired to creativetab/v1, renamed "
-                + "addAfter/addBefore→insertAfter/insertBefore (STATUS: needs in-game verification)");
+        LOGGER.debug("Installed the Fabric item group events v1 bridge. "
+                + "An in-game verification run is still pending.");
     }
 
     /** Synthetic holder: {@code modifyEntriesEvent} forwards to the bridge, {@code MODIFY_ENTRIES_ALL} set in {@code <clinit>}. */

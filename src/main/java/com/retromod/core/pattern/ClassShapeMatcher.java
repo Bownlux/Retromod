@@ -81,7 +81,7 @@ public final class ClassShapeMatcher {
 
         ClassNode cls = new ClassNode();
         try {
-            // NOTE: we intentionally do NOT pass SKIP_CODE, because the
+            // NOTE: we intentionally do not pass SKIP_CODE, because the
             // ApiUsageFingerprintPattern (and any future pattern that
             // inspects method bodies) needs the instruction stream.
             // SKIP_DEBUG + SKIP_FRAMES are still set because patterns don't

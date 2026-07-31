@@ -13,9 +13,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-/**
- * Headless dedicated-server entry point: no Swing/AWT, console warnings, crash-time world save.
- */
+/** Fabric entry point for a headless dedicated server. */
 @Environment(EnvType.SERVER)
 public class RetromodServer implements DedicatedServerModInitializer {
 
@@ -23,36 +21,28 @@ public class RetromodServer implements DedicatedServerModInitializer {
 
     @Override
     public void onInitializeServer() {
-        LOGGER.info("Retromod dedicated server initialization...");
+        LOGGER.info("Starting Retromod on the dedicated server.");
 
         EnvironmentDetector.setEnvironment(false, true);
 
         initializeServerFeatures();
         registerServerCrashHandler();
 
-        LOGGER.info("=======================================================");
-        LOGGER.info("  Retromod: Server Mode Active");
-        LOGGER.info("=======================================================");
-        LOGGER.info("  • Bytecode transformation: ENABLED");
-        LOGGER.info("  • AOT compilation: ENABLED");
-        LOGGER.info("  • GUI features: DISABLED (headless)");
-        LOGGER.info("  • Console warnings: ENABLED");
-        LOGGER.info("=======================================================");
-        
-        LOGGER.info("Retromod server initialization complete!");
+        LOGGER.info("Server mode is ready. Bytecode transforms and ahead-of-time compilation are enabled.");
+        LOGGER.info("GUI features are unavailable on a headless server, so warnings will appear here.");
     }
 
     private void initializeServerFeatures() {
         Path gameDir = Paths.get(".").toAbsolutePath().normalize();
         Path modsFolder = gameDir.resolve("mods");
 
-        // backup in case PreLaunch missed
+        // Keep the server folders usable even when the pre-launch entry point did not run.
         ModHealthChecker.ensureFoldersExist(gameDir);
 
         try {
             HybridTransformationEngine hybrid = HybridTransformationEngine.getInstance();
-            hybrid.initialize(modsFolder, "26.1");
-            LOGGER.info("Hybrid AOT/JIT engine initialized for server");
+            hybrid.initialize(modsFolder, RetromodVersion.TARGET_MC_VERSION);
+            LOGGER.info("The server transform engine is ready.");
         } catch (Exception e) {
             LOGGER.warn("Could not initialize hybrid engine: {}", e.getMessage());
         }
@@ -69,36 +59,33 @@ public class RetromodServer implements DedicatedServerModInitializer {
 
     private void registerServerCrashHandler() {
         try {
-            SafeCrashHandler crashHandler = SafeCrashHandler.getInstance();
-
-            // reflective probe avoids a compile-time MC dependency; instance is registered later
-            try {
-                Class<?> serverClass = Class.forName("net.minecraft.server.MinecraftServer");
-                LOGGER.debug("Server crash handler ready (will register instance when available)");
-            } catch (Exception e) {
-                LOGGER.debug("Could not prepare server crash handler");
+            SafeCrashHandler.getInstance();
+            if (EnvironmentDetector.classExists("net.minecraft.server.MinecraftServer")) {
+                LOGGER.debug("The crash handler is ready for the server instance.");
+            } else {
+                LOGGER.debug("MinecraftServer is not available yet. Crash registration will wait.");
             }
         } catch (Exception e) {
             LOGGER.debug("Crash handler not available: {}", e.getMessage());
         }
     }
 
-    /** Registers the running server instance with the crash handler once it's started. */
+    /** Registers the server with the crash handler after startup. */
     public static void onServerStarted(Object server) {
         try {
             SafeCrashHandler.getInstance().registerServer(server);
-            LOGGER.info("Registered crash handler with Minecraft server");
+            LOGGER.info("The crash handler is attached to the Minecraft server.");
         } catch (Exception e) {
             LOGGER.debug("Could not register server with crash handler");
         }
     }
 
-    /** Per-tick TPS monitoring hook. */
+    /** Updates server performance monitoring once per tick. */
     public static void onServerTick() {
         try {
             MemorySafetyMonitor.getInstance().onServerTick();
         } catch (Exception e) {
-            // ignore tick errors
+            // Monitoring must never interrupt the server tick.
         }
     }
 }

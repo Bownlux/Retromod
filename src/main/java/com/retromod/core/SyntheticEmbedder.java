@@ -129,11 +129,10 @@ public final class SyntheticEmbedder {
                 java.util.zip.ZipEntry e;
                 while ((e = zis.getNextEntry()) != null) {
                     // Bound per-entry (50MB) and aggregate (500MB) like the other extract paths:
-                    // this reads an UNTRUSTED jar fully into memory, so an unbounded read is a
-                    // decompression-bomb DoS (many-entry variant, since upstream passes stream one
-                    // entry at a time and enforce no total). On overflow, bail: the outer catch
-                    // returns 0 and the jar is written only via the temp-then-move below, so the
-                    // original is left untouched.
+                    // this reads an untrusted jar fully into memory, and the per-entry cap alone
+                    // doesn't stop a many-entry decompression bomb. On overflow, bail: the outer
+                    // catch returns 0 and the original jar is untouched, since writes go through
+                    // the temp-then-move below.
                     byte[] data = e.isDirectory() ? new byte[0]
                             : com.retromod.util.ZipSecurity.safeReadAllBytes(zis);
                     total += data.length;

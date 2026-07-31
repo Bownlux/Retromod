@@ -214,4 +214,66 @@ class MixinSelectorRemapRegressionTest {
         assertEquals("test", indyName,
                 "the SAM name must remap so LambdaMetafactory resolves against the renamed interface");
     }
+
+    private static byte[] injectMixin(String[] targetOwners, String selector) {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/mixin/RenameMixin", null, "java/lang/Object", null);
+        AnnotationVisitor ma = cw.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        AnnotationVisitor mav = ma.visitArray("value");
+        for (String o : targetOwners) mav.visit(null, Type.getObjectType(o));
+        mav.visitEnd();
+        ma.visitEnd();
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE, "handler",
+                "(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V", null, null);
+        AnnotationVisitor av = mv.visitAnnotation("Lorg/spongepowered/asm/mixin/injection/Inject;", false);
+        AnnotationVisitor arr = av.visitArray("method");
+        arr.visit(null, selector);
+        arr.visitEnd();
+        av.visitEnd();
+        mv.visitCode();
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 2);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    private static String injectSelector(byte[] classBytes) {
+        AnnotationNode ann = handlerAnnotation(classBytes, "Lorg/spongepowered/asm/mixin/injection/Inject;");
+        Object method = annVal(ann, "method");
+        return method instanceof List<?> l ? String.valueOf(l.get(0)) : String.valueOf(method);
+    }
+
+    private static final String INV = "net/minecraft/world/entity/player/Inventory";
+    private static final String PICK_DESC = "(Lnet/minecraft/world/item/ItemStack;)V";
+
+    @Test
+    @DisplayName("renames a bare selector for its single mixin target")
+    void bareNameRenamedForSingleTarget() {
+        transformer.registerMethodRedirect(INV, "setPickedItem", PICK_DESC, INV, "addAndPickItem", PICK_DESC);
+        byte[] out = new MixinCompatibilityTransformer(transformer)
+                .transformMixinClass(injectMixin(new String[]{INV}, "setPickedItem" + PICK_DESC));
+        assertEquals("addAndPickItem" + PICK_DESC, injectSelector(out),
+                "the bare-name selector must rename on the mixin's own target class");
+    }
+
+    @Test
+    @DisplayName("leaves a bare selector unchanged when the mixin has multiple targets")
+    void bareNameNotRenamedForMultiTarget() {
+        transformer.registerMethodRedirect(INV, "setPickedItem", PICK_DESC, INV, "addAndPickItem", PICK_DESC);
+        byte[] out = new MixinCompatibilityTransformer(transformer).transformMixinClass(
+                injectMixin(new String[]{INV, "net/minecraft/world/entity/player/Player"}, "setPickedItem" + PICK_DESC));
+        assertEquals("setPickedItem" + PICK_DESC, injectSelector(out),
+                "a multi-target mixin must be left alone (the owner is ambiguous)");
+    }
+
+    @Test
+    @DisplayName("does not apply a rename from another owner")
+    void bareNameRenameIsOwnerScoped() {
+        transformer.registerMethodRedirect(INV, "setPickedItem", PICK_DESC, INV, "addAndPickItem", PICK_DESC);
+        byte[] out = new MixinCompatibilityTransformer(transformer).transformMixinClass(
+                injectMixin(new String[]{"net/minecraft/world/entity/player/Player"}, "setPickedItem" + PICK_DESC));
+        assertEquals("setPickedItem" + PICK_DESC, injectSelector(out),
+                "a selector on a class with no such rename must not be rewritten");
+    }
 }

@@ -14,14 +14,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 
-/**
- * Detects whether a mod is server-only, client-only, or both. A server-only mod transformed on
- * the server lets clients join without Retromod, so server admins can run old mods without
- * requiring players to install anything.
- */
-public class ModEnvironmentDetector {
+/** Reads loader metadata to determine which side should install a mod. */
+public final class ModEnvironmentDetector {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-EnvDetect");
+
+    private ModEnvironmentDetector() {}
 
     public enum ModEnvironment {
         /** Runs on both client and server */
@@ -136,28 +134,29 @@ public class ModEnvironmentDetector {
 
         switch (env) {
             case SERVER -> {
-                LOGGER.info("  {} is SERVER-ONLY", fileName);
-                LOGGER.info("    → Clients don't need Retromod installed!");
+                LOGGER.info("{} is server-only. Joining clients do not need Retromod for it.",
+                    fileName);
             }
             case CLIENT -> {
-                LOGGER.info("  {} is CLIENT-ONLY", fileName);
-                LOGGER.info("    → Server doesn't need this mod");
+                LOGGER.info("{} is client-only. It does not need to be installed on the server.",
+                    fileName);
             }
             case BOTH -> {
-                LOGGER.info("  {} runs on BOTH sides", fileName);
+                LOGGER.info("{} runs on both client and server", fileName);
             }
             default -> {
-                LOGGER.debug("  {} has unknown environment (treating as BOTH)", fileName);
+                LOGGER.debug("{} does not declare a side, so Retromod will treat it as both.",
+                    fileName);
             }
         }
     }
 
     public static String getEnvironmentDescription(ModEnvironment env) {
         return switch (env) {
-            case SERVER -> "Server-only mod - clients don't need Retromod!";
-            case CLIENT -> "Client-only mod - only install on your client";
-            case BOTH -> "Runs on both sides";
-            case UNKNOWN -> "Unknown (treating as both sides)";
+            case SERVER -> "Server-only. Joining clients do not need Retromod for this mod.";
+            case CLIENT -> "Client-only. Install it on the client.";
+            case BOTH -> "Install on both the client and server.";
+            case UNKNOWN -> "No side declared. Retromod will treat it as both.";
         };
     }
 }

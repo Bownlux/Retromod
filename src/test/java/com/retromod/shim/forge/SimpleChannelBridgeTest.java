@@ -93,6 +93,47 @@ class SimpleChannelBridgeTest {
     }
 
     @Test
+    @DisplayName("#184: newSimpleChannel accepts the post-remap Identifier descriptor")
+    void newSimpleChannelIdentifierSpelling() {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(Opcodes.V17, ACC_PUBLIC, "test/S33RMod", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "boot",
+                "(Lnet/minecraft/resources/Identifier;Ljava/util/function/Supplier;"
+                        + "Ljava/util/function/Predicate;Ljava/util/function/Predicate;)"
+                        + "Lnet/minecraftforge/network/simple/SimpleChannel;", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0); mv.visitVarInsn(ALOAD, 1);
+        mv.visitVarInsn(ALOAD, 2); mv.visitVarInsn(ALOAD, 3);
+        mv.visitMethodInsn(INVOKESTATIC, "net/minecraftforge/network/NetworkRegistry",
+                "newSimpleChannel",
+                "(Lnet/minecraft/resources/Identifier;Ljava/util/function/Supplier;"
+                        + "Ljava/util/function/Predicate;Ljava/util/function/Predicate;)"
+                        + "Lnet/minecraftforge/network/simple/SimpleChannel;", false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        byte[] out = transformer.transformClass(cw.toByteArray(), "test/S33RMod");
+        ClassNode cn = new ClassNode();
+        assertDoesNotThrow(() -> new ClassReader(out).accept(cn, 0));
+        boolean bridged = false;
+        for (MethodNode m : cn.methods) {
+            for (var i : m.instructions.toArray()) {
+                if (i instanceof MethodInsnNode mi && mi.owner.equals(SHIM)
+                        && mi.name.equals("newSimpleChannel")) {
+                    bridged = true;
+                    assertEquals("(Ljava/lang/Object;Ljava/util/function/Supplier;"
+                            + "Ljava/util/function/Predicate;Ljava/util/function/Predicate;)"
+                            + "Ljava/lang/Object;", mi.desc,
+                            "the Identifier-first call must still erase to the shim's Object descriptor");
+                }
+            }
+        }
+        assertTrue(bridged, "newSimpleChannel(Identifier,...) must route to the embedded NetworkShim");
+    }
+
+    @Test
     @DisplayName("the MCreator messageBuilder chain retypes onto the shim wrapper/builder")
     void messageBuilderChainBridged() {
         // channel.messageBuilder(C.class, 0, NetworkDirection.PLAY_TO_SERVER)

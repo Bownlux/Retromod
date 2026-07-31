@@ -5,169 +5,47 @@ nav_order: 14
 
 # Mods That Can't Be Translated
 
-Retromod can shim a renamed method, redirect a moved class, polyfill a removed API, and patch a mod's metadata so a stricter loader stops rejecting it. What it can't do is rewrite something that isn't there to be rewritten, or run a translation pass on bytes that aren't Java bytecode in the first place.
+Retromod can redirect renamed bytecode and provide small compatibility bridges. It cannot recreate a subsystem that Minecraft or a loader completely redesigned.
 
-This page is the "no" list. If your mod is here, or matches one of the general patterns at the bottom, Retromod is not the right tool, and only the mod's original author can ship a working port.
+## Usually Out of Scope
 
-## The general rule
+- Native JNI or JNA code tied to a specific game ABI
+- Custom rendering engines and shader pipelines
+- Coremods with their own bytecode transformers
+- Modified or proprietary mixin frameworks
+- Direct GPU buffer and command manipulation
+- Features built around deleted worldgen, registry, or rendering models
 
-If a mod uses any of the following, **no automated bytecode tool can translate it** (Retromod or otherwise). There's no realistic path to making it work without the mod author writing a manual port:
+These need a manual port from the mod author.
 
-- **Native code.** JNI/JNA bindings, `.so` / `.dll` / `.dylib` files bundled in the JAR, or shared libraries downloaded on first launch. Bytecode translation can't touch native binaries; they target a fixed ABI built against a fixed C/C++/Rust API on the other side.
-- **A custom rendering pipeline.** Mods that replace MC's renderer with their own (Flywheel, Iris's shader pipeline, mods that ship custom Vulkan/Metal/OpenGL code). The rendering surface changes shape between MC versions in ways that aren't expressible as a redirect, with entire pipeline stages getting rewritten.
-- **Their own bytecode transformer.** Coremods that ship an ASM transformer of their own, applied at class-load time, against bytecode positions in MC that have since moved. Retromod can't second-guess another transformer's intent, and even if it could, the moved positions wouldn't match anymore.
-- **A custom or modified Mixin framework.** Standard Mixin we can work with. Forks of Mixin, or proprietary mixin-like systems, depend on private internals that aren't part of any compatibility surface.
-- **Direct GPU buffer manipulation tied to a specific MC version.** Mods that reach into MC's vertex buffers, command queues, or shader programs at byte-level offsets. Any of those that change between versions break in ways no transformer can patch.
-- **Closed-source / proprietary distribution.** Mods that ship obfuscated and forbid redistribution (OptiFine being the canonical example) can't be transformed without violating their license. Most of them are also coremods, so even setting the license aside, see point 3.
+## Common Examples
 
-If a mod hits any of those, you need the original author to port it. There is no faster path.
-
-## Mixins into reworked vanilla methods (feature won't work, but the mod loads)
-
-This one isn't really a property of the mod, it's a property of the gap you're crossing, and it's a *degraded-feature* problem rather than a hard incompatibility. A mod that uses `@Inject` / `@Redirect` / `@ModifyArg` to hook a **vanilla** Minecraft method only works if that method still has the shape the mod compiled against. Retromod can rename a method and move a class, but it can't re-point an injector when Mojang reworked the method itself (changed its parameter count, reordered its arguments, or swapped a parameter type), because the injection target the mod describes no longer exists to be matched.
-
-When this happens the loader reports `InvalidInjectionException: Invalid descriptor` and skips that one injection. Retromod treats these as non-fatal, so the mod still loads and only the specific feature that mixin implemented stops working.
-
-26.1 reworked a lot of these. Some real examples from a single mod (Caverns & Chasms, 1.21.1 → 26.1, [#24](https://github.com/Bownlux/Retromod/issues/24)):
-
-- `AbstractFurnaceBlockEntity.burn` gained `RegistryAccess`, a `RecipeHolder`, and the block-entity itself as parameters.
-- `BlockBehaviour.updateShape` had its arguments reordered and `LevelReader` / `ScheduledTickAccess` / `RandomSource` inserted.
-- The player NBT-save hook now writes to a `ValueOutput` instead of a `CompoundTag`.
-- The `FallingBlockEntity` fall-damage hook changed a `float` parameter to a `double`.
-
-There's no general fix for the injection itself: the mod's injector was written for a method body 26.1 deleted, so that hook stays inactive. The shorter the version jump, the less often this bites (1.21.1 → 1.21.8 reworks far fewer methods than 1.21.1 → 26.1).
-
-What hard-crashes, and what Retromod fixes, is when the same mod also references a **removed class**. Caverns & Chasms pulled the deleted `DirectionProperty` into `Blocks.<clinit>` during bootstrap, and that `NoClassDefFoundError` killed the game before any of the soft-failed mixins mattered. Retromod polyfills `DirectionProperty` (redirecting it to the surviving `EnumProperty`), so the mod now boots. The reworked-method mixins above still soft-fail, so those particular tweaks won't apply, but the game runs.
-
-A 26.2-specific example where even fixing the injection wouldn't help: **YUNG's Better End Island** (1.21.4 → 26.2). Its `ServerLevel.<init>` `@Inject` hits the descriptor change (26.2 dropped the `ChunkProgressListener` and `RandomSequences` constructor parameters), but the handler *body* reconstructs the End dragon fight the pre-26.2 way, and 26.2 redesigned `EnderDragonFight` wholesale (a new record-style constructor, with `WorldData.endDragonFightData()` and the `EndDragonFight$Data` holder both removed). The feature is tied to a model 26.2 deleted, so it can't be redirected or re-signatured, only re-authored. It loads and runs on **26.1**, where that model still exists. (YUNG's API and YUNG's Extras transform cleanly onto 26.2. Extras needed the new per-color block-field → `ColorCollection` polyfill, since 26.2 deleted `Blocks.WHITE_CANDLE` and friends.)
-
-A structurally-incompatible case (investigated in 1.3.0-snapshot.2): **YUNG's Better Strongholds** (NeoForge 1.21.1 → 26.2) now **constructs and applies its mixins** on a 26.2 dedicated server (snapshot.2 fixed the `Registry.get(Identifier)` → `getValue` rename that crashed construction, and re-signatured its `DisableVanillaStrongholdsMixin`), but its structure-processor registration **can't be mechanically translated** onto 26.2. 26.2 deleted the `StructureProcessorType`-as-SAM model the mod is built on, and a bridge attempt (against the NeoForge 26.2-beta server jars) hit three stacked blockers: (1) `StructureProcessorType` lost its `codec()` abstract method — it's now a non-functional marker interface and `Registries.STRUCTURE_PROCESSOR` holds a `MapCodec` directly, so the mod's SAM lambdas reach the `MapCodec` registry unconverted (`ClassCastException: …$$Lambda cannot be cast to MapCodec` → unbound `processor_list` → `FatalStartupException`); (2) `StructureProcessor.getType():StructureProcessorType` was renamed to `codec():MapCodec`, so the mod's processor subclasses (which override `getType()` and return their `StructureProcessorType` field) don't implement 26.2's abstract `codec()` and are un-instantiable at decode, with no mechanical way to recover the `StructureProcessorType`→`MapCodec` relationship the deleted SAM expressed; and (3) the mod builds those SAMs via `invokedynamic` against the now-methodless interface. Converting only the `DeferredRegister` registration (blocker 1) leaves 2 and 3, so no redirect makes the mod actually generate — it's a re-authoring job, like the render/worldgen redesigns above. (The mixin fixes shipped in snapshot.2 still help other mods; only the `StructureProcessorType` registration is the wall here.)
-
-### MixinExtras `@Local` captures, and the mixin blocklist
-
-A nastier variant: MixinExtras' `@WrapOperation` / `@ModifyExpressionValue` with a `@Local` capture. Standard Mixin's `@Inject` can be downgraded to fail-soft, but a `@Local` that no longer binds (because the vanilla method's local-variable layout changed) makes MixinExtras emit an **invalid bridge method**, which the JVM rejects with `VerifyError: Bad local variable type` *at class-load*. That's fatal, before any soft-fail can run. Deeper & Darker's `PaintingItemMixin` hit this on 26.1: it wraps `ItemStack.shrink` inside `HangingEntityItem.useOn` and captures the `Level` local, which moved when 26.1 restructured `useOn` ([#28](https://github.com/Bownlux/Retromod/issues/28)).
-
-This can't be auto-detected safely. The local usually still exists, just at a different slot, so a heuristic would strip working mixins too. Instead Retromod ships a curated **mixin blocklist** (`retromod/mixin-blocklist.json`) that surgically removes the specific crashing handler so the framework never processes it: the mod boots and only that one feature is inert. You can extend it for your own mods via `config/retromod/mixin-blocklist.json`:
-
-```json
-{
-  "blocked": [
-    { "mixin": "com/example/mod/mixin/SomeMixin", "methods": ["handlerThatCrashes"] }
-  ]
-}
-```
-
-Omit `methods` to disable every injector on the class. If a mod crashes with `VerifyError: Bad local variable type` pointing at a `wrapOperation$…$mixinextras$bridge` method, that mixin handler is the culprit. Add it here (and please file an issue so it can join the curated list).
-
-## Specific mods that will never work
-
-This is the obvious list. Everything here matches one or more of the general rules above. Other mods that match those rules belong here too; these are just the ones people ask about most.
-
-### Deep-integration / coremod-class
-
-| Mod | Why |
+| Mod or family | Main reason |
 |---|---|
-| **Create** *(and its add-ons)* | Ships [Flywheel](https://github.com/Jozufozu/Flywheel), its own GL-level rendering library, and replaces large parts of MC's animation, networking, and contraption simulation. Internal API surface is also rewritten between MC versions, not renamed. Add-ons (**Create Aeronautics**, Create: Offroad, Create: Simulated, Ponder, …) build directly on Create's contraption/rendering internals and inherit the same incompatibility. |
-| **Applied Energistics 2 (AE2)** | Decades of deep MC integration, custom networking protocol, historically a coremod, and the channel/quantum systems get re-architected between versions. |
-| **Tinkers' Construct** | Replaces the tool and material system at the JSON-schema level *and* the bytecode level. The schema changes between versions are larger than any redirect table can cover. |
-| **IndustrialCraft / IC2** | Very deep MC integration, coremod heritage, energy network internals are tied to MC's tick scheduler in ways that break on every major MC update. |
-| **Thaumcraft** | Magic systems tied to MC's internal aspect/research data structures, which change between versions. The mod has been redesigned multiple times and its older incarnations are tied to specific MC internals. |
-| **Botania** *(deep mixin variants)* | Heavily mixin-based with injection points tied to specific bytecode offsets. Some Botania features may load, but full-functionality compatibility is the same problem as Sodium/Iris below, only worse. |
-| **AsyncParticles** | Wraps the Mixin *service itself* (a custom `IClassBytecodeProvider` redirect plus a class-adjuster that generates conditional mixins at load time) and `@Overwrite`s particle-engine internals whose signatures shift between MC versions. The game runs with it installed, but its own machinery cancels most of its mixins on a non-matching host and the core `@Overwrite` can't find its target, so the optimization (and its config) is inert. An `@Overwrite` body *is* the replacement code; no redirect table can rewrite it for a changed method. (#63) |
+| Create and Flywheel | Custom rendering, contraption internals, and deep loader integration |
+| OptiFine | Proprietary coremod and renderer replacement |
+| Veil and Veil-based mods | Custom rendering and post-processing pipeline |
+| Sodium, Iris, Embeddium | Version-specific renderer mixins; partial loading may still happen |
+| Applied Energistics 2 | Broad networking, storage, and platform integration |
+| Tinkers' Construct | Version-specific material, data, and rendering systems |
+| IndustrialCraft and older Thaumcraft | Deep integration with deleted game systems |
 
-### Pre-1.13 mods (the 1.13 "flattening" wall)
+This list describes broad compatibility, not a judgment about those projects.
 
-A mod built for **MC 1.12.2 or earlier** references Minecraft APIs that the 1.13 update ("the Flattening") deleted or restructured wholesale, not renamed. Retromod's redirect tables can't bridge a redesign this large: the block-state and material system (`block.material.Material`, `IBlockAccess`, `block.properties.IProperty`, `StateContainer`), the command system (`net.minecraft.command.CommandException` / `WrongUsageException`, replaced by Brigadier), `net.minecraft.util.ResourceLocation` (moved to `net.minecraft.resources`), `JsonUtils`, `EntityEquipmentSlot`, and the pre-flattening numeric block/item IDs all changed at once. Translating a 1.12.2 mod to 1.20.1+ is the entire 1.13→1.20 migration, larger than any redirect table (it's deeper than the Forge→NeoForge case below).
+## Large Version Jumps
 
-| Mod | Source | Why |
-|---|---|---|
-| **Metallurgy 4: Reforged** | 1.12.2 | The gap report is wall-to-wall pre-1.13 names: `block.material.Material`, `IBlockAccess`, `block.properties.IProperty`, `StateContainer`, `util.ResourceLocation`, `util.JsonUtils`, `EntityEquipmentSlot`. (#103) |
-| **Scape and Run: Parasites** | 1.12.2 | Transforms and even produces a `-retromod.jar`, but references `net.minecraft.command.CommandException` / `WrongUsageException`, removed in the 1.13 Brigadier command rewrite. (#108) |
+Minecraft 1.13's flattening replaced major block, item, command, and registry APIs. Forge 1.12.2 mods may transform far enough to be discovered, but many still require a real port.
 
-**The tell:** the mod targets 1.12.2 (or older) and the gap report lists `net.minecraft.util.ResourceLocation`, `block.material.Material`, `IBlockAccess`, or `net.minecraft.command.*` as missing. Run these on a 1.12.2 host, or use a modern fork of the mod if one exists; the flattening is not something a bytecode redirect can undo.
+Old Forge mods on modern NeoForge face another large API migration. Retromod bridges common registration and event paths, but a Forge host remains more reliable when a mod depends heavily on Forge internals.
 
-### Rendering replacement / shader
+## Mixins
 
-| Mod | Why |
-|---|---|
-| **OptiFine** | Proprietary, closed-source, ships as a Forge coremod. Even ignoring the license, the coremod transforms wouldn't survive translation. |
-| **Sodium**, **Iris Shaders**, **Embeddium** | These technically *load* via Retromod (they appear on [COMPATIBILITY.md](../COMPATIBILITY.md) with the `*` caveat), but their mixin injections target specific bytecode offsets in MC's renderer. When those offsets move between versions, no transformer can synthesize an injection point that wasn't there. Expect partial functionality at best. |
-| **Flywheel** | The rendering library Create depends on. Same shape problem as above: a custom GL pipeline. |
-| **Veil** | A rendering framework (custom render pipeline, shaders, post-processing) that other mods build on. Same shape problem as the GL pipelines above, where the render surface it hooks is rewritten between MC versions, not renamed. |
-| **Sable** *(and Sable Companion)* | Built on top of **Veil**, so it inherits Veil's custom-pipeline incompatibility. |
-| **ImmediatelyFast** and similar rendering-pipeline replacements | Same pattern: they wrap MC's rendering at a level that doesn't translate. |
+A mixin can survive a class or method rename. It usually cannot survive a target method whose body, parameters, or local-variable layout was redesigned.
 
-### Loaders (these aren't mods, but people ask)
+Retromod may disable one known-broken handler so the rest of a mod can load. That means the mod is usable with a missing feature, not fully compatible.
 
-Forge, NeoForge, Fabric Loader, and Quilt Loader are **mod loaders**, not mods. Retromod runs *on top of* them; it doesn't translate them. If you want a different loader, install that loader directly.
+## Check Before Deciding
 
-## Old Forge mods on modern hosts (NeoForge, or Forge 26.2): content mods work as of 1.2.0, older eras still ahead
+Look in the [compatibility database]({{ '/compatdb' | relative_url }}) and test the exact mod version. Some lighter addons work even when their larger ecosystem does not.
 
-As of 1.2.0, recent Forge *content* mods (1.20.x through 1.21.x) load on a modern **NeoForge** host and on a **Forge 26.2** host (verified in-game: Macaw's Roofs / Trapdoors / Bridges, built for Forge 1.21.1, scan, construct, register their content, and reach the main menu on NeoForge 26.2; Macaw's Bridges does the same on Forge 26.2). Older Forge mods (1.16.5 and earlier) still don't fully load, and the remaining gap differs by era.
-
-**On NeoForge.** NeoForge 1.20.1 was its very first release, forked from Forge and still sharing essentially all of Forge's API: `ForgeRegistries` / `IForgeRegistry`, the `DeferredRegister.create(IForgeRegistry, …)` signature, `FMLJavaModLoadingContext.get().getModEventBus()`, the `net.minecraftforge.*` package names, and so on. NeoForge then **replaced all of that** in 1.20.2+: renamed packages, restructured the registry system (vanilla registries moved to `BuiltInRegistries`, `IForgeRegistry` removed), made the mod event bus a constructor parameter, and reworked events and data generation. So translating a Forge mod onto NeoForge 26.x means redoing the entire Forge→NeoForge migration, not a handful of class renames. Retromod 1.2.0 now carries a Forge content mod across the spine of this migration: scanned (the metadata promotion, #42), constructed (the `FMLJavaModLoadingContext` / mod-event-bus bridge), and registered (the registry redirects), verified in-game on NeoForge 26.2 with Macaw's Roofs / Trapdoors / Bridges reaching the main menu. The deeper Forge API surface (events, data generation) is still being filled in.
-
-**On Forge 26.2 (the EventBus 7 wall).** Forge 26.2 (Forge 65.x) upgraded to **EventBus 7**, which removed `net.minecraftforge.eventbus.api.IEventBus` entirely (it is replaced by `BusGroup` plus per-type `EventBus<T>`). Every old Forge mod calls `FMLJavaModLoadingContext.get().getModEventBus()` (which returned `IEventBus`) in its `@Mod` constructor, then `IEventBus.addListener(…)`, `DeferredRegister.register(IEventBus)`, and `MinecraftForge.EVENT_BUS.register(…)`, all of which are gone. Retromod 1.2.0 bridges this: a synthetic `LegacyEventBus` maps the old idiom onto `BusGroup` (`getModEventBus()`, `DeferredRegister.register(bus)`, `MinecraftForge.EVENT_BUS`, `@SubscribeEvent`, `EventPriority` and the priority-carrying `addListener` overloads, and lambda setup listeners like `bus.addListener(this::onSetup)`), so an old Forge mod constructs on Forge 26.2 again. Verified in-game: Macaw's Bridges 1.21.1 constructs, registers its content, and reaches the menu on Forge 26.2. Fixed in 1.2.0 (#85, #101).
-
-**The older the mod, the more layers stack.** A 1.16.5 (or 1.12.2) Forge mod onto a modern host is the hardest case, because it needs all of: (1) the MC **version jump** across every redesign from its era to 26.x (the 1.17 repackaging, the 1.18 worldgen rework, the 1.20.5 item-component overhaul, …); (2) the **SRG member layer**, because distributed Forge mods from that era reference Minecraft *members* by SRG names (`func_70071_h_`, `field_*`) that need an SRG→Mojang map for which there is no authoritative source (official Mojang names only start at 1.14.4); and (3) the **loader migration** (Forge→NeoForge, or EventBus 6→7 if the target is Forge 26.2). Layer (3) landed in 1.2.0 (the EventBus 6→7 bridge and the Forge→NeoForge spine); simple content mods (blocks, items, recipes) now mostly wait on layer (2), the SRG member map; complex entity / render / networking mods (large boss, dragon, or storm mods) are the long tail and may never be fully automatable. Getting real 1.12.2 mods to fully *run* (not just scan and construct) is a per-mod chase through a decade of removed systems, so it gets its own dedicated release, [1.4.0, "The 1.12.2 update"](https://github.com/Bownlux/Retromod/blob/main/ROADMAP.md). 1.2.0 lays the groundwork (the class-move tables, the SRG member namespace, the pre-1.13 FML lifecycle idiom, `mcmod.info` to `mods.toml` generation, and load stubs for the removed Forge API classes and registration events), which gets a 1.12.2 mod scanned, constructed, and past the first wall of removed classes; 1.4.0 clears the removed-system buckets behind that wall.
-
-**What to do today:** for an old Forge mod, the most likely-to-load target is a host that still exposes the old `IEventBus`-style bus and the Forge registry surface. On **Forge 26.1.x** those APIs still exist natively (EventBus 6), so it is a within-loader version bump, which Retromod handles, rather than a cross-loader or EventBus-7 rewrite. As of 1.2.0, **Forge 26.2 works as a host too** (the EventBus 6→7 bridge translates the old bus idiom, verified in-game), and 1.20.1+ Forge content mods also construct and register on NeoForge 26.2 via the migration spine. Forge 26.1.x remains the most conservative target for anything the bridges don't cover yet. NeoForge mods translate to NeoForge fine; this limitation is specifically *old Forge mod → modern host*.
-
-## Mods built on structurally redesigned APIs: not yet (planned for 1.2.0)
-
-Some mods now **construct and load much further** than the old missing-class crash (Retromod's renames carry them past startup and several render layers) but their *core feature* is built on a Minecraft or loader API that a later version didn't *rename*, it **redesigned or deleted**. Retromod can rename a class or remap a method; it can't reshape a mod's calls onto a differently shaped API. These need hand-written **polyfills** (reimplement the old API on top of the new one), which is **1.2.0** work.
-
-| Mod | Where it hits the wall |
-|---|---|
-| **Illagers Wear Armor** (#51) | Loads past construction and several render layers, then fails on `ArmorMaterial$Layer`, which 1.21.x removed in favor of `EquipmentClientInfo` (a *different* API, not a rename). It also calls `AnimationUtils.swingWeaponDown(…, Mob, …)`, which became `(…, HumanoidArm, …)`; Retromod now leaves that call alone rather than emit a `VerifyError`, so it degrades to a broken attack animation instead of a crash. |
-| **Luminous: Nether** (#52) | An MCreator mod that registers spawn eggs via NeoForge's `DeferredSpawnEggItem`, which NeoForge **deleted** in 21.11. Retromod 1.2.0 embeds a per-mod synthetic bridge (a real `SpawnEggItem` subclass whose old constructor sets the entity type on the modern item properties), verified at the transform level on this mod targeted to 26.2; in-game verification of the eggs is the remaining step. |
-| **Island Generator** (#62) | A 1.15.2 custom-world-generation mod that registers a world type through `net.minecraft.world.WorldType`, which Mojang **deleted in 1.16** when world generation was rewritten (custom world types became the registry/preset system, then fully data-driven in 1.18). It fails at mod construction with `NoClassDefFoundError: net/minecraft/world/WorldType`. There's no class to redirect to, and the mod's *entire* feature is that world type, so even a soft-fail stub wouldn't make the island generation actually work. Custom worldgen from ≤1.15.2 is the deepest version of this case. (The "Missing License Information" error originally reported in #62 is a separate bug that *is* fixed.) |
-| **Rings of Ascension** (#98) | A 1.20.4 NeoForge mod that builds a **custom enchantment-glint render type** from `RenderStateShard.RENDERTYPE_GLINT_DIRECT_SHADER` (a `RenderStateShard$ShaderStateShard`). The 1.21 shader rework **removed the entire `ShaderStateShard` system** (replaced by the new `RenderPipeline`/`ShaderProgram` model), so on a 1.21.1 host it dies at client render-init with `NoSuchFieldError: …RENDERTYPE_GLINT_DIRECT_SHADER`. Not a rename (the field's *type* is gone), so no redirect is possible, and a soft-fail stub is pointless because the custom glint *is* the mod's whole feature. (Earlier reported under #92 as a `ResourceLocation` constructor crash, which **is** fixed in 1.1.0: the mod now gets all the way to rendering before hitting this.) Needs the glint hand-ported to the new render pipeline, or a 1.21.1-native build of the mod. |
-
-**The tell:** the crash is a `NoClassDefFoundError` / `VerifyError` on a vanilla or loader class whose replacement has a *different shape*: `EquipmentClientInfo` vs `ArmorMaterial$Layer`, `HumanoidArm` vs `Mob`, or simply gone (`DeferredSpawnEggItem`). If the replacement were just a rename, Retromod would already handle it (it now maps ~900 vanilla renames per host). This is distinct from the deep-integration mods above: these are otherwise-simple content mods that happen to touch one redesigned API.
-
-## Architectury mods: load, but content silently doesn't register (#71)
-
-Architectury-API mods (the ones with a `common` module plus `.fabric`/`.neoforge` platform packages, and an `architectury.common.json`) register their blocks/items/etc. through Architectury's `DeferredRegister` / `RegistrySupplier`, with platform-specific glue injected at build time (`architectury_inject_*`). Architectury's API and that injected glue are **redesigned between Architectury versions**, and Architectury is tightly bound to the host MC version (you install the 26.1 Architectury on a 26.1 host, etc.).
-
-So a mod built against, say, 1.20.1 Architectury, translated onto a host running 1.21.1+ Architectury, **loads without crashing** (the `dev/architectury/*` classes are present) but its registration calls land on a differently shaped registrar. The items register to nothing, and in-game it looks like the mod isn't installed at all (the #71 symptom: *"the game launches correctly, but there is no items in game, like it isn't installed"*). This is the same class of problem as the deep-integration frameworks above, where the registration surface is reshaped rather than renamed, except the mod fails *quietly* instead of crashing.
-
-**The tell:** the mod is an Architectury mod (check for `architectury.common.json` in the jar, or a `dev.architectury` dependency), it boots with no errors, and its content is simply absent. Retromod can't bridge this today; the fix would be a version-spanning Architectury registration shim, which is framework-scale work. Rubinated Nether (#71) is the canonical report.
-
-## Old Fabric mods on a pre-26.1 host: most work, some don't (bridging since 1.1.0)
-
-This one is **loader- and host-specific**: it applies only to **Fabric** mods running on a **pre-26.1** host (e.g. a 1.16.5 mod on a 1.20.1 Fabric server). On a 26.1+ host it doesn't apply, since there the full intermediary→Mojang translation runs and old Fabric mods are handled normally.
-
-Fabric mods ship in **intermediary** names (`class_1297`, `method_5773`), which Mojang keeps *stable across versions*. On a pre-26.1 host Retromod (correctly) leaves those names as-is, so a mod works as long as the APIs it touches **didn't change** between its version and the host. In practice **most simple content mods work untouched**: register a few items/blocks/entities, call common methods, and the names still resolve.
-
-Where it breaks is a mod that uses an API the game **changed or removed** in between: a method whose signature changed, a deleted class, or a **redesigned** subsystem. The clearest example is a mod with a **custom entity renderer/model written for 1.16.x or earlier**. Minecraft reworked the entire entity model/render system in 1.17 (the old `EntityModel`/`ModelPart` constructors gave way to the layer / `TexturedModelData` system), so that client code references APIs that no longer exist on a 1.20.1 runtime. That's a structural redesign, not a rename, and name-mapping alone can't fix it. Retromod instead reconstructs the pre-1.17 model system as a synthetic bridge (shipped in 1.1.0, completed in 1.2.0 with the removed abstract model bases), so these mods now load; other redesigned subsystems from that era can still crash.
-
-**What to do today:** run old Fabric mods on a **26.1 host** (the maintained path), where Retromod's full translation applies. **Targeted bridging for pre-26.1 Fabric hosts landed in 1.1.0** and keeps expanding: the pre-1.17 entity model system is reimplemented as a synthetic bridge (the 1.2.0 snapshots added the removed abstract model bases like `AnimalModel`), with more redesigned subsystems to follow.
-
-## Mods that load but are likely broken in-game
-
-A separate category from the "never works" list above. These mods get through Retromod's pipeline and the loader accepts them, but their actual gameplay features depend on bytecode positions that have moved. They're worth listing because people see them on the [COMPATIBILITY.md](../COMPATIBILITY.md) success list and assume they fully work:
-
-- **Sodium / Iris / Embeddium / other heavy mixin mods.** Load fine, render features may glitch, crash on specific scene complexity, or silently no-op.
-- **Mods with `@Inject` on local-variable captures** (`LocalCapture.CAPTURE_FAILHARD` patterns). Standard Mixin will refuse the injection if local types changed; Retromod downgrades these to soft-fail so you don't crash, but the feature the mixin was implementing won't run.
-- **Mods whose mixins target a Minecraft method whose *signature* changed.** For example, `Entity.addAdditionalSaveData(CompoundTag)` → `(ValueOutput)` in the 1.21.5 serialization refactor. Mixin refuses the injection (`InvalidInjectionException: Invalid descriptor … Expected … but found …`) and the mod fails to construct. Retromod rewrites the mixin *target* but not the handler's captured parameter types/body, and these aren't renames, so it isn't auto-translated yet. Watch out: it usually surfaces as a *misleading* downstream `NullPointerException` (e.g. in `ModelManager.reload`) after the loader enters a "broken mod state", when the real error is the earlier `InvalidInjectionException`. Blocklisting the offending handler lets the mod load with that one feature inert.
-- **Mods that hardcode network packet IDs.** Retromod can rewrite class references but not protocol numbers, so version-specific packet handlers usually need an actual port.
-
-If a mod from this category is critical to your setup, file an issue describing what specifically isn't working. That's the kind of feedback that drives the next round of shim/polyfill work.
-
-## "But X works for me!"
-
-Possible. The lines above are about reliability, not impossibility in every individual case. Some Create features have loaded for individual users, some Sodium configurations work on some hardware, and some AE2 networks function until the first quantum bridge. None of those mean the mod is *generally* compatible. They mean you got lucky with the specific subset of the mod you exercised.
-
-So if you depend on one of these mods working correctly across a long play session with friends, treat it as broken until the mod ships a real port for your MC version. Retromod is not going to close that gap.
-
-## Reporting and disagreements
-
-If you think something on the "never works" list does work cleanly with Retromod, please [file an issue](https://github.com/Bownlux/Retromod/issues) with:
-
-- The mod name and exact version
-- The MC version you transformed *from* and the MC version you transformed *to*
-- Your `latest.log` from a launch where the mod loaded successfully
-- A short description of which features you exercised in-game (not "it loaded", but what did you click, place, or see render correctly?)
-
-Conversely, if a mod *not* on this list keeps failing for you and you suspect it should be, file an issue. Adding more mods to this page based on real reports is one of the better forms of contribution.
+If a listed mod works for you, submit a compatibility report with the versions, loader, and features tested.

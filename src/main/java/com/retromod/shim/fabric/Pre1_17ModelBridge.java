@@ -13,27 +13,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Pre-1.17 entity-model bridge for Fabric mods on pre-26.1 (intermediary) hosts.
+ * Lets pre-1.17 Fabric entity models use the model system introduced in Minecraft 1.17.
  *
- * <p>1.17 rebuilt the entity-model system. A &le;1.16 mod builds models with the old mutable
- * idiom (new ModelPart(model, u, v); addBox; setRotationPoint), but in 1.17+ ModelPart's only
- * ctor is (List&lt;Cube&gt;, Map&lt;String,ModelPart&gt;) and box-building moved to
- * CubeListBuilder. Intermediary names survive; the signatures and owners changed.
+ * <p>The bridge records calls from the old mutable ModelPart API and renders them through a
+ * generated subclass of the modern intermediary class. Generated base classes also connect old
+ * {@code super()} calls to modern model constructors.
  *
- * <p>We inject a synthetic LegacyModelPart extends class_630 and de-virtualize the old
- * construction calls to its static recorders (which store cubes/transforms); the synthetic
- * overrides method_22699 (int-color render) to draw the recorded cubes through the
- * VertexConsumer chain. Per-base LegacyModelBase_* synthetics bridge each vanilla base's
- * super() onto its modern (ModelPart) ctor with EMPTY_ROOT.
- *
- * <p>Retromod doesn't compile against Minecraft, so every class extending class_630 is
- * ASM-emitted, using COMPUTE_FRAMES with a getCommonSuperClass override that falls back to
- * Object for unresolvable types (so the generator runs in unit tests without MC on the
- * classpath).
- *
- * <p>Registered only from the Fabric pre-launch path on a pre-26.1 host. On 26.x the runtime
- * is Mojang-named, class_630 is gone, and the intermediary remap rewrites these calls first;
- * a Mojang-namespace variant is future work.
+ * <p>Retromod generates these classes with ASM because Minecraft is not on its compile classpath.
+ * This bridge is only registered on intermediary-named Fabric hosts before 26.1.
  */
 public final class Pre1_17ModelBridge {
 
@@ -140,7 +127,8 @@ public final class Pre1_17ModelBridge {
                 "render",
                 "(" + L_MP + L_POSE + L_VC + "IIFFFF)V");
 
-        // Layer 3: super() bridges for concrete vanilla bases.
+        // Rebase only the inheritance edge. A full class redirect would also rewrite unrelated
+        // method parameters and break modern mixins that still use the base class.
         for (String[] spec : CONCRETE_BASES) {
             String base = spec[0];
             String[] oldDescs = new String[spec.length - 1];
@@ -148,18 +136,11 @@ public final class Pre1_17ModelBridge {
             String legacy = "com/retromod/generated/LegacyModelBase_"
                     + base.substring(base.lastIndexOf('_') + 1);
             transformer.registerSyntheticClass(legacy, generateLegacyBase(legacy, base, oldDescs));
-            // #70: rebase the extends + super(...) edge only, not a global class redirect. A
-            // class redirect would rewrite every reference to the base, including a modern mod's
-            // mixin @Inject handler that captures it as a parameter (Arcanus: "Expected
-            // (class_583) but found (LegacyModelBase_583)"). LegacyModelBase_<N> is a subtype
-            // of the base, so untouched references stay valid.
             transformer.registerSuperclassRebase(base, legacy);
         }
 
-        // Layer 4: AgeableListModel-family abstract bases, absent on the host. These classes are
-        // gone (not just renamed), so a superclass rebase would leave every field type/cast/param
-        // dangling on a missing class; here a full class redirect works since there's no
-        // surviving class to mismatch against.
+        // These abstract bases were removed entirely, so all references must follow the generated
+        // replacement class.
         transformer.registerSyntheticClass(GEN_ANIMAL, generateAgeableBase(GEN_ANIMAL,
                 new String[]{"()V", "(ZFF)V", "(ZFFFFF)V", "(" + FUNCTION_DESC + "ZFFFFF)V"},
                 new String[]{M_HEAD_PARTS, M_BODY_PARTS}, Opcodes.ACC_PROTECTED));
@@ -215,9 +196,13 @@ public final class Pre1_17ModelBridge {
     };
 
     private static void probeHostModelApi() {
+        if (!LOGGER.isDebugEnabled()) {
+            return;
+        }
+
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
         if (cl == null) cl = Pre1_17ModelBridge.class.getClassLoader();
-        LOGGER.info("[Retromod] pre-1.17 model bridge - host model-API probe (layer-3 planning):");
+        LOGGER.debug("Checking host classes used by the pre-1.17 model bridge");
         for (String internal : PROBE_CLASSES) {
             try {
                 Class<?> c = Class.forName(internal.replace('/', '.'), false, cl);
@@ -225,8 +210,8 @@ public final class Pre1_17ModelBridge {
                 for (java.lang.reflect.Constructor<?> ctor : c.getDeclaredConstructors()) {
                     sb.append("\n      <init>").append(descriptorOf(ctor.getParameterTypes(), void.class));
                 }
-                LOGGER.info("    {} ({}){}", internal, c.getName(),
-                        sb.length() == 0 ? " - no declared ctors" : sb);
+                LOGGER.debug("{} ({}){}", internal, c.getName(),
+                        sb.length() == 0 ? " has no declared constructors" : sb);
                 if (internal.equals(MODEL_PART)) {
                     for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
                         Class<?>[] p = m.getParameterTypes();
@@ -235,13 +220,13 @@ public final class Pre1_17ModelBridge {
                         boolean takesString = p.length == 1 && p[0] == String.class;
                         boolean rendersLike = p.length >= 2 && p[0].getName().contains("class_4587");
                         if (returnsSelf || takesString || rendersLike) {
-                            LOGGER.info("      method {}{}", m.getName(),
+                            LOGGER.debug("  method {}{}", m.getName(),
                                     descriptorOf(p, r));
                         }
                     }
                 }
             } catch (Throwable t) {
-                LOGGER.info("    {} - NOT PRESENT ({})", internal, t.getClass().getSimpleName());
+                logUnavailableClass(internal, t);
             }
         }
         for (String internal : new String[]{VERTEX_CONSUMER, POSE_STACK, "net/minecraft/class_4597"}) {
@@ -254,21 +239,19 @@ public final class Pre1_17ModelBridge {
                           .append(descriptorOf(m.getParameterTypes(), m.getReturnType()));
                     }
                 }
-                LOGGER.info("    {} ({}){}", internal, c.getName(),
-                        sb.length() == 0 ? " - no public methods" : sb);
+                LOGGER.debug("{} ({}){}", internal, c.getName(),
+                        sb.length() == 0 ? " has no public methods" : sb);
             } catch (Throwable t) {
-                LOGGER.info("    {} - NOT PRESENT ({})", internal, t.getClass().getSimpleName());
+                logUnavailableClass(internal, t);
             }
         }
-        // InteractionResult restructure probe: class_1269.field_5811 (old enum constant PASS)
-        // is gone on 1.21.11, breaking pre-1.17 mods that return InteractionResult from
-        // interaction handlers (AutoConfig hit it on Earth2Java). Dump the current shape so a
-        // bridge can be built against it.
+        // The old PASS enum constant disappeared in 1.21.11. This shape helps diagnose mods that
+        // still return the old InteractionResult from an interaction handler.
         try {
             Class<?> c = Class.forName("net.minecraft.class_1269", false, cl);
-            LOGGER.info("    net/minecraft/class_1269 ({}) - InteractionResult shape probe:",
+            LOGGER.debug("net/minecraft/class_1269 ({}) InteractionResult details:",
                     c.getName());
-            LOGGER.info("      isEnum={} isInterface={} isSealed={} superclass={}",
+            LOGGER.debug("  enum={}, interface={}, sealed={}, superclass={}",
                     c.isEnum(), c.isInterface(), c.isSealed(),
                     c.getSuperclass() == null ? "none" : c.getSuperclass().getName());
             Class<?>[] ifaces = c.getInterfaces();
@@ -278,18 +261,18 @@ public final class Pre1_17ModelBridge {
                     if (sb.length() > 0) sb.append(", ");
                     sb.append(i.getName());
                 }
-                LOGGER.info("      interfaces: {}", sb);
+                LOGGER.debug("  interfaces: {}", sb);
             }
             for (java.lang.reflect.Field f : c.getDeclaredFields()) {
                 if (java.lang.reflect.Modifier.isPublic(f.getModifiers())) {
-                    LOGGER.info("      field {} {} {}",
+                    LOGGER.debug("  field {} {} {}",
                             java.lang.reflect.Modifier.toString(f.getModifiers()),
                             f.getName(), typeDesc(f.getType()));
                 }
             }
             for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
                 if (java.lang.reflect.Modifier.isPublic(m.getModifiers())) {
-                    LOGGER.info("      method {} {}{}",
+                    LOGGER.debug("  method {} {}{}",
                             java.lang.reflect.Modifier.toString(m.getModifiers()),
                             m.getName(),
                             descriptorOf(m.getParameterTypes(), m.getReturnType()));
@@ -302,13 +285,16 @@ public final class Pre1_17ModelBridge {
                     if (sb.length() > 0) sb.append(", ");
                     sb.append(n.getName());
                 }
-                LOGGER.info("      nested classes: {}", sb);
+                LOGGER.debug("  nested classes: {}", sb);
             }
         } catch (Throwable t) {
-            LOGGER.info("    net/minecraft/class_1269 - NOT PRESENT ({})",
-                    t.getClass().getSimpleName());
+            logUnavailableClass("net/minecraft/class_1269", t);
         }
-        LOGGER.info("[Retromod] (end model-API probe)");
+    }
+
+    private static void logUnavailableClass(String internalName, Throwable error) {
+        LOGGER.debug("Host class {} is unavailable ({})",
+                internalName, error.getClass().getSimpleName());
     }
 
     private static String descriptorOf(Class<?>[] params, Class<?> ret) {

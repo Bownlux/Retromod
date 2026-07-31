@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Union srg->mojang across the whole Forge SRG era (1.16.5 .. 1.20.6).
+"""Union srg->mojang across the whole Forge SRG era (1.16.5 .. 1.21.8).
 
 For each version: join MCPConfig joined.tsrg (obf<->srg) with Mojang official
 client+server mappings (official<->obf) on obf names, within each obf class:
@@ -18,7 +18,8 @@ os.makedirs(W, exist_ok=True)
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # SRG-era versions worth harvesting (stable modding targets).
-VERSIONS = ["1.16.5", "1.17.1", "1.18.2", "1.19.2", "1.19.4", "1.20.1", "1.20.4", "1.20.6"]
+VERSIONS = ["1.16.5", "1.17.1", "1.18.2", "1.19.2", "1.19.4", "1.20.1", "1.20.4", "1.20.6",
+            "1.21.1", "1.21.3", "1.21.4", "1.21.5", "1.21.6", "1.21.7", "1.21.8"]
 
 _UA = {"User-Agent": "Mozilla/5.0 (retromod-srg-harvest)"}
 

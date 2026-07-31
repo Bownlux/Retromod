@@ -238,7 +238,7 @@ public class Forge_1_21_11_to_26_1 implements VersionShim {
             true
         );
 
-        // ForgeRegistries is NOT class-redirected here. Its field reads are migrated to
+        // ForgeRegistries is not class-redirected here. Its field reads are migrated to
         // vanilla Registries ResourceKeys by ForgeRegistryApiShim via field redirects;
         // a class redirect would rewrite the GETSTATIC owner first (ClassRemapper runs
         // before field redirects) and re-break them.

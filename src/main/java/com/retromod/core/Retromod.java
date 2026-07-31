@@ -109,7 +109,7 @@ public class Retromod implements ModInitializer {
     public static final String[] SUPPORTED_TARGET_VERSIONS = {
         "1.21", "1.21.1", "1.21.2", "1.21.3", "1.21.4", "1.21.5",
         "1.21.6", "1.21.7", "1.21.8", "1.21.9", "1.21.10", "1.21.11",
-        // 26.1: first unobfuscated MC version
+        // Minecraft stopped obfuscating production names in 26.1.
         "26.1", "26.1-pre.1", "26.1-pre.2", "26.1-pre-1", "26.1-pre-2",
         "26.1.0", "26.1.1", "26.1.2",
         "26.2", "26.2.0", "26.2.1"
@@ -119,7 +119,7 @@ public class Retromod implements ModInitializer {
     public void onInitialize() {
         instance = this;
         RetromodVersion.logPresenceBanner(LOGGER);
-        LOGGER.info("Retromod initializing - Target MC version: {}", TARGET_MC_VERSION);
+        LOGGER.info("Starting Retromod on Fabric for Minecraft {}", TARGET_MC_VERSION);
 
         EnvironmentDetector.logEnvironment();
 
@@ -292,7 +292,7 @@ public class Retromod implements ModInitializer {
                     + "(see security notes in Retromod.java).");
         }
 
-        LOGGER.info("Retromod initialized - {} method redirects, {} class redirects registered",
+        LOGGER.info("Retromod is ready with {} method redirects and {} class redirects",
                 RetromodTransformer.getInstance().getMethodRedirectCount(),
                 RetromodTransformer.getInstance().getClassRedirectCount());
     }
@@ -301,7 +301,9 @@ public class Retromod implements ModInitializer {
     private void scheduleRestartScreen() {
         List<String> mods = RetromodPreLaunch.getTransformedMods();
         if (!mods.isEmpty()) {
-            LOGGER.info("Transformed {} mod(s) - restart to load them", mods.size());
+            LOGGER.info("Updated {} {}. Restart Minecraft to load {}.",
+                    mods.size(), mods.size() == 1 ? "mod" : "mods",
+                    mods.size() == 1 ? "it" : "them");
         }
     }
 
@@ -335,30 +337,16 @@ public class Retromod implements ModInitializer {
 
     private String getReadmeContent() {
         return """
-            ═══════════════════════════════════════════════════════════════
-            RETROMOD INPUT FOLDER
-            ═══════════════════════════════════════════════════════════════
-            
-            Put your OLD mods here (NOT in the mods/ folder!)
-            
-            Retromod will automatically:
-            1. Transform them to work with your Minecraft version
-            2. Copy the transformed versions to mods/
-            3. Move the originals to processed/
-            
-            IMPORTANT: Mods that are ALREADY for your Minecraft version
-            do NOT need to go here - put them directly in mods/
-            
-            Retromod will NOT transform native mods - they pass through!
-            
-            ═══════════════════════════════════════════════════════════════
-            NEED HELP? FOUND A BUG?
-            ═══════════════════════════════════════════════════════════════
-            
-            Report bugs on GitHub:
+            Retromod input folder
+
+            Put old mod jars directly in this folder. Retromod will update them
+            for this Minecraft version, install the results in mods/, and move
+            the originals to processed/.
+
+            Mods already made for this Minecraft version can go straight in mods/.
+
+            Help and bug reports:
             https://github.com/Bownlux/Retromod/issues
-            
-            ═══════════════════════════════════════════════════════════════
             """;
     }
     
@@ -424,13 +412,13 @@ public class Retromod implements ModInitializer {
 
         createBackupFolder();
 
-        LOGGER.info("Starting AOT compilation of legacy mods...");
-        LOGGER.info("Backups will be stored in: {}", BACKUP_FOLDER);
+        LOGGER.info("Preparing legacy mods ahead of launch");
+        LOGGER.info("Original mod backups will be kept in {}", BACKUP_FOLDER);
 
         List<AotCompiler.AotResult> results = aotCompiler.compileAllModsSync(
             modsFolder,
             (current, total, name) -> {
-                LOGGER.info("AOT compiling [{}/{}]: {}", current, total, name);
+                LOGGER.info("Preparing mod {} of {}: {}", current, total, name);
             }
         );
 

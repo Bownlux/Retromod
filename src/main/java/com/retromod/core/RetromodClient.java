@@ -17,10 +17,7 @@ import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-/**
- * Client-side initialization: GUI file picker, performance warnings, title screen button.
- * Server-side code must not import this class.
- */
+/** Fabric client setup for the title-screen tools and crash handler. */
 @Environment(EnvType.CLIENT)
 public class RetromodClient implements ClientModInitializer {
 
@@ -28,27 +25,27 @@ public class RetromodClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        LOGGER.info("Retromod client-side initialization...");
+        LOGGER.info("Starting Retromod on the client.");
 
         EnvironmentDetector.setEnvironment(true, false);
 
         Path gameDir = Paths.get(".").toAbsolutePath().normalize();
 
-        // backstop in case PreLaunch didn't create them
+        // Keep setup usable even when the pre-launch entry point did not run.
         ModHealthChecker.ensureFoldersExist(gameDir);
 
-        initializeGui(gameDir);
+        initializeGui();
         registerClientCrashHandler();
         registerRetromodPresenceChannel();
 
-        LOGGER.info("Retromod client initialization complete!");
+        LOGGER.info("Retromod client setup is ready.");
     }
     
     /** Adds the title screen button (loader auto-detected); needs Fabric API on Fabric. */
-    private void initializeGui(Path gameDir) {
+    private void initializeGui() {
         try {
             TitleScreenButtonInjector.register();
-            LOGGER.info("Retromod GUI available via title screen button");
+            LOGGER.info("Retromod is available from the title screen.");
         } catch (Exception e) {
             LOGGER.warn("Could not register title screen button: {}", e.getMessage());
             LOGGER.info("Use the CLI instead: retromod <command>");
@@ -70,7 +67,7 @@ public class RetromodClient implements ClientModInitializer {
                 if (getInstance != null) {
                     Object mcInstance = getInstance.invoke(null);
                     crashHandler.registerClient(mcInstance);
-                    LOGGER.debug("Registered crash handler with Minecraft client");
+                    LOGGER.debug("The crash handler is attached to the Minecraft client.");
                 }
             } else {
                 LOGGER.debug("Could not find Minecraft client class for crash handler");

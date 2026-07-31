@@ -170,14 +170,12 @@ def emit_human(out, scanned_total, records, member_rows, class_rows, hist, top):
     w = out.write
 
     w("Mixin corpus rank\n")
-    w("=================\n")
-    w("scanned jars ......... %d\n" % scanned_total)
-    w("records .............. %d\n" % len(records))
-    w("distinct mixin classes %d\n" % len(mixin_classes))
-    w("injector handlers .... %d\n\n" % handlers)
+    w("Scanned jars: %d\n" % scanned_total)
+    w("Records: %d\n" % len(records))
+    w("Distinct mixin classes: %d\n" % len(mixin_classes))
+    w("Injector handlers: %d\n\n" % handlers)
 
     w("Top %d targets by (targetClass :: method), ranked by distinct jars\n" % top)
-    w("-" * 78 + "\n")
     w("%5s %5s  %-11s %s\n" % ("jars", "hdlr", "injector", "target"))
     for r in member_rows[:top]:
         w("%5d %5d  %-11s %s :: %s\n" % (
@@ -186,14 +184,12 @@ def emit_human(out, scanned_total, records, member_rows, class_rows, hist, top):
     w("\n")
 
     w("Top %d target classes, ranked by distinct jars\n" % top)
-    w("-" * 78 + "\n")
     w("%5s %5s  %s\n" % ("jars", "hdlr", "targetClass"))
     for r in class_rows[:top]:
         w("%5d %5d  %s\n" % (r["jarCount"], r["handlerCount"], r["targetClass"]))
     w("\n")
 
     w("Injector histogram\n")
-    w("-" * 78 + "\n")
     for name, count in hist.most_common():
         w("%6d  %s\n" % (count, name))
     w("\n")

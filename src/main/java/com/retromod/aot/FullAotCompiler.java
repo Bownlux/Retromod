@@ -344,13 +344,13 @@ public class FullAotCompiler {
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             } catch (Exception ignored) {}
             
-            JDialog dialog = new JDialog((Frame) null, "Retromod - Full AOT Compilation", true);
+            JDialog dialog = new JDialog((Frame) null, "Retromod: preparing mods", true);
             dialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
             
             JPanel panel = new JPanel(new BorderLayout(10, 10));
             panel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
 
-            JLabel titleLabel = new JLabel("Pre-compiling mods for maximum performance...");
+            JLabel titleLabel = new JLabel("Preparing mods for quicker launches...");
             titleLabel.setFont(titleLabel.getFont().deriveFont(Font.BOLD, 14f));
             panel.add(titleLabel, BorderLayout.NORTH);
 
@@ -367,7 +367,7 @@ public class FullAotCompiler {
             classLabel.setFont(classLabel.getFont().deriveFont(Font.PLAIN, 11f));
             progressPanel.add(classLabel);
             
-            JLabel statsLabel = new JLabel("0 / 0 classes compiled");
+            JLabel statsLabel = new JLabel("0 / 0 classes prepared");
             progressPanel.add(statsLabel);
             
             panel.add(progressPanel, BorderLayout.CENTER);
@@ -396,7 +396,7 @@ public class FullAotCompiler {
                         progressBar.setString(percent + "%");
                         modLabel.setText("Mod: " + mod);
                         classLabel.setText("Class: " + truncate(className, 50));
-                        statsLabel.setText(compiled + " / " + total + " classes compiled");
+                        statsLabel.setText(compiled + " / " + total + " classes prepared");
                     });
                 }
                 
@@ -408,20 +408,14 @@ public class FullAotCompiler {
                         JOptionPane.showMessageDialog(
                             null,
                             String.format("""
-                                Full AOT Compilation Complete!
-                                
-                                ═══════════════════════════════════════
-                                
-                                Classes compiled: %d
+                                Retromod finished precompiling your mods.
+
+                                Classes prepared: %d
                                 Time: %.1f seconds
-                                
-                                ═══════════════════════════════════════
-                                
-                                Future game launches will be MUCH faster!
-                                The compiled bytecode is cached and will
-                                be reused automatically.
+
+                                Later launches can reuse this cache.
                                 """, totalCompiled, timeMs / 1000.0),
-                            "Compilation Complete!",
+                            "Precompile finished",
                             JOptionPane.INFORMATION_MESSAGE
                         );
                     });
@@ -429,7 +423,7 @@ public class FullAotCompiler {
                 
                 @Override
                 public void onError(String mod, String className, String error) {
-                    LOGGER.debug("Error compiling {}: {}", className, error);
+                    LOGGER.debug("Could not prepare {}: {}", className, error);
                 }
                 
                 private String truncate(String s, int max) {

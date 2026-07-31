@@ -83,12 +83,12 @@ class TransformFallbackParityTest {
     void noOpBelow26() {
         RetromodTransformer t = RetromodTransformer.getInstance();
         t.clearRedirectsForTesting();
-        // A pre-26.1 target is still obfuscated (intermediary runtime); the remap must NOT run there.
+        // A pre-26.1 target is still obfuscated (intermediary runtime); the remap must not run there.
         // register26xTargetMappings gates on TARGET_MC_VERSION (26.1 in tests), so we assert the
         // Fabric-loader gate at least: a non-fabric info doesn't install the member map.
         RetromodCli.register26xTargetMappings(t, new ModVersionInfo("m", "1", null, "neoforge", "1",
                 Set.of(), Set.of(), false));
-        // NeoForge mods are Mojang-named; the member map must NOT be applied (would clobber fields).
+        // NeoForge mods are Mojang-named; the member map must not be applied (would clobber fields).
         byte[] cw;
         ClassWriter w = new ClassWriter(0);
         w.visit(Opcodes.V17, ACC_PUBLIC, "test/N", null, "java/lang/Object", null);

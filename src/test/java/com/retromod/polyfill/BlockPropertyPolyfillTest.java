@@ -114,7 +114,7 @@ class BlockPropertyPolyfillTest {
         RetromodTransformer t = RetromodTransformer.getInstance();
         BlockPropertyPolyfill p = new BlockPropertyPolyfill();
 
-        // 1.21.1: DirectionProperty is alive; the type/factory redirects must NOT fire,
+        // 1.21.1: DirectionProperty is alive; the type/factory redirects must not fire,
         // or a NeoForge mod's working DirectionProperty references get hijacked.
         RetromodVersion.TARGET_MC_VERSION = "1.21.1";
         p.registerPolyfills(t);

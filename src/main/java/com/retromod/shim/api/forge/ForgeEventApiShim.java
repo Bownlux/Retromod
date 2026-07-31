@@ -302,7 +302,7 @@ public class ForgeEventApiShim implements VersionShim {
     /**
      * Forge {@code fml/**} classes NeoForge kept under the same name in {@code net/neoforged/fml/**}
      * (the {@code @Mod} lifecycle: FMLCommonSetupEvent, ModConfigEvent, ...). FMLJavaModLoadingContext
-     * is NOT in this table because NeoForge deleted it; {@link #registerRedirects} redirects it to the
+     * is not in this table because NeoForge deleted it; {@link #registerRedirects} redirects it to the
      * B4 bridge synthetic's name explicitly (a same-name bulk entry would point at a class that
      * doesn't exist on NeoForge).
      */

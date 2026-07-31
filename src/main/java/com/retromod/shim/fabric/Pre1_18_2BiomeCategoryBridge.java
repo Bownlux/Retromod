@@ -67,7 +67,8 @@ public final class Pre1_18_2BiomeCategoryBridge {
             Class.forName("net." + "minecraft.class_1959", false,
                     Pre1_18_2BiomeCategoryBridge.class.getClassLoader());
         } catch (Throwable t) {
-            LOGGER.debug("[Retromod] Biome.Category bridge - class_1959 not on classpath, skipping ({})",
+            LOGGER.debug("Biome.Category support is not needed because class_1959 is "
+                            + "unavailable ({})",
                     t.getClass().getSimpleName());
             return;
         }
@@ -83,9 +84,8 @@ public final class Pre1_18_2BiomeCategoryBridge {
                 SELF, "getCategory", "(" + L_BIOME + ")" + L_SELF,
                 true);
 
-        LOGGER.info("[Retromod] Biome.Category bridge - injected stand-in enum {} ({} constants), "
-                + "class-redirected class_1959$class_1961, and rewrote Biome.method_8688() → getCategory()",
-                SELF, CATEGORY_FIELDS.length);
+        LOGGER.debug("Added a {}-value replacement for the removed Biome.Category enum",
+                CATEGORY_FIELDS.length);
     }
 
     /**

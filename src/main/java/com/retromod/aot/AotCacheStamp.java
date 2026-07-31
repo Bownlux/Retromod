@@ -16,22 +16,10 @@ import java.nio.file.Path;
 import java.util.Comparator;
 
 /**
- * Generation marker for {@code config/retromod/aot-cache}. Cached AOT output encodes the
- * transform logic of the Retromod build that wrote it, so after a Retromod update every entry
- * is stale. The per-jar entries carried version + self-hash headers already (checked on cache
- * hits), but stale files were never deleted, and the Hybrid engine's per-CLASS preload read the
- * directory with no validation at all, so an updated Retromod could keep serving a previous
- * build's transforms until the user manually deleted the cache (the old CLAUDE.md pitfall #4).
- *
- * <p>{@link #ensureCurrent} fixes that at the directory level: a {@code .cache-stamp} file
- * records {@code AOT_VERSION | self-hash} of the build that owns the cache. When the running
- * build's stamp differs (version bump, or ANY change to Retromod's own classes via the
- * self-hash), the whole cache directory is wiped and re-stamped. A missing stamp (caches
- * written by pre-stamp builds) also wipes, which is correct.
- *
- * <p>Residual caveat: on an unpackaged dev classpath (IDE / {@code mvn exec}) the verifier has
- * no jar to hash, so the stamp degrades to version-only and same-version dev iterations still
- * need a manual clear. Packaged builds (everything users run) always carry the self-hash.
+ * Keeps ahead-of-time cache entries tied to the Retromod build that created
+ * them. Packaged builds use both the version and self-hash. An unpackaged
+ * development run can only use the version, so same-version experiments may
+ * still require a manual cache clear.
  */
 public final class AotCacheStamp {
 
@@ -62,11 +50,7 @@ public final class AotCacheStamp {
         return AotCompiler.AOT_VERSION + "|" + currentSelfHash();
     }
 
-    /**
-     * Ensure {@code cacheDir} belongs to the running Retromod build: create it if absent,
-     * and wipe + re-stamp it when the recorded generation differs. Never throws; a cache
-     * problem must not break a launch.
-     */
+    /** Creates the cache or clears it when it belongs to another Retromod build. */
     public static void ensureCurrent(Path cacheDir) {
         ensureCurrent(cacheDir, expectedStamp());
     }
@@ -80,7 +64,7 @@ public final class AotCacheStamp {
                     ? Files.readString(stampFile, StandardCharsets.UTF_8).trim()
                     : null;
                 if (stamp.equals(recorded)) {
-                    return; // same build owns the cache
+                    return;
                 }
                 boolean empty;
                 try (var s = Files.list(cacheDir)) {
@@ -91,16 +75,13 @@ public final class AotCacheStamp {
                             + "(recorded: {}), clearing {}",
                             recorded == null ? "no stamp" : recorded, cacheDir);
                     wipe(cacheDir);
-                    // wipe() swallows per-file delete failures (read-only file, lock, permission);
-                    // if any stale entry survived, do NOT write the fresh stamp - stamping a dir that
-                    // still holds a previous build's transforms would bless them as current and the
-                    // Hybrid preload (which validates only the dir stamp) would serve them. Leaving
-                    // the stamp stale makes the next run retry the wipe.
+                    // A failed delete must leave the old stamp in place. Otherwise the
+                    // next launch could trust a stale file as current.
                     if (Files.isDirectory(cacheDir)) {
                         try (var s = Files.list(cacheDir)) {
                             if (s.findFirst().isPresent()) {
-                                LOGGER.warn("AOT cache wipe incomplete for {}; not re-stamping so "
-                                        + "surviving stale entries are not served as current", cacheDir);
+                                LOGGER.warn("Could not fully clear the AOT cache at {}. "
+                                        + "It will be checked again next launch.", cacheDir);
                                 return;
                             }
                         }
@@ -110,7 +91,7 @@ public final class AotCacheStamp {
             Files.createDirectories(cacheDir);
             Files.writeString(stampFile, stamp + "\n", StandardCharsets.UTF_8);
         } catch (IOException e) {
-            LOGGER.warn("Could not validate AOT cache generation for {}: {}",
+            LOGGER.warn("Could not validate the AOT cache at {}: {}",
                     cacheDir, e.toString());
         }
     }

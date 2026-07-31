@@ -112,8 +112,6 @@ public final class ScreenClassGenerator {
         }
     }
 
-    // CLASS GENERATION
-
     private static Class<?> getOrGenerate() {
         Class<?> local = generatedClass;
         if (local != null) return local;
@@ -130,23 +128,22 @@ public final class ScreenClassGenerator {
                 "net.minecraft.network.chat.Component"
             );
             if (screenBase == null || textClass == null) {
-                LOGGER.warn("Cannot generate screen class - MC Screen/Component not found");
+                LOGGER.warn("Retromod cannot open its screen because Minecraft's Screen or "
+                        + "Component class was not found");
                 return null;
             }
 
             byte[] bytecode = generateBytecode(screenBase, textClass);
 
-            // Define the class using a ClassLoader that has Screen's ClassLoader
-            // as its parent. Our class can see Screen; MC can dispatch virtual
-            // methods on our class because polymorphism ignores ClassLoader
-            // hierarchy for method dispatch.
+            // The generated class must share Screen's class loader parent so both sides resolve
+            // the same Minecraft types.
             try {
                 BytecodeClassLoader loader = new BytecodeClassLoader(screenBase.getClassLoader());
                 generatedClass = loader.define(GEN_CLASS_NAME, bytecode);
-                LOGGER.info("[Retromod] Generated screen class {} (extends {})",
+                LOGGER.debug("Generated {} as a subclass of {}",
                         GEN_CLASS_NAME, screenBase.getName());
             } catch (Throwable e) {
-                LOGGER.warn("[Retromod] Could not define generated screen class: {}",
+                LOGGER.warn("Could not create the Retromod screen class: {}",
                         e.getMessage(), e);
                 return null;
             }
@@ -154,10 +151,7 @@ public final class ScreenClassGenerator {
         }
     }
 
-    /**
-     * Emit the bytecode for a Screen subclass that delegates init()/onClose()
-     * to static methods on this class.
-     */
+    /** Emits a Screen subclass that delegates its lifecycle callbacks to this class. */
     private static byte[] generateBytecode(Class<?> screenBase, Class<?> textClass) {
         String superName = Type.getInternalName(screenBase);
         String textInternal = Type.getInternalName(textClass);

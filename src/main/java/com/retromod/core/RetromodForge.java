@@ -30,29 +30,23 @@ public class RetromodForge {
 
     public RetromodForge() {
         RetromodVersion.logPresenceBanner(LOGGER);
-        // Retromod.<clinit> normally detects the MC version, but Retromod is a
-        // Fabric ModInitializer and never loads on Forge, so do it ourselves.
+        // Forge does not load the Fabric entry point that normally records this version.
         detectMcVersionForForge();
 
-        LOGGER.info("Retromod initializing on Forge (target MC: {})...",
+        LOGGER.info("Starting Retromod on Forge for Minecraft {}",
                 RetromodVersion.TARGET_MC_VERSION);
 
-        // Write the default config.json if missing; only Fabric did this before (#74).
+        // First-time users need a real file they can edit.
         RetromodConfig.ensureDefaultConfig();
 
         boolean isServer = EnvironmentDetector.isDedicatedServer();
-        LOGGER.info("Environment: {}", isServer ? "Dedicated Server" : "Client");
+        LOGGER.info("Running on a {}", isServer ? "dedicated server" : "client");
 
         RetromodTransformer transformer = RetromodTransformer.getInstance();
 
         loadForgeShims(transformer);
 
-        // Load the PolyfillProviders. This was MISSING on the Forge entry point (Fabric, NeoForge,
-        // and the CLI all load them), so removed-API polyfills like DirectionPropertyLookup (#24)
-        // never applied on a Forge host - hit in-game on Forge 26.2 as
-        // NoSuchMethodError: EnumProperty.create(String, Direction[]) killing block <clinit>s.
-        // Same category exclusion as NeoForge: the "neoforge" category re-implements the NeoForge
-        // transfer-API rework and would be wrong on a Forge runtime.
+        // NeoForge transfer polyfills target a different runtime and must stay disabled here.
         try {
             com.retromod.polyfill.PolyfillRegistry polyfillRegistry =
                     new com.retromod.polyfill.PolyfillRegistry();
@@ -62,10 +56,7 @@ public class RetromodForge {
             LOGGER.warn("Could not load polyfills", e);
         }
 
-        // Forge mods built with ForgeGradle's reobfJar carry SRG names
-        // (Blocks.f_50069_, ...); Forge 64.x dropped its SRG remap for MC 26.1+,
-        // so reobf'd mods crash with NoSuchFieldError without this. Forge is the
-        // primary loader for the SRG remap.
+        // Forge 64.x no longer remaps the SRG names produced by older ForgeGradle builds.
         try {
             int srgEntries = com.retromod.mapping.SrgToMojangMapper.getInstance()
                     .applyTo(transformer);
@@ -145,9 +136,11 @@ public class RetromodForge {
                 initializeClientGui();
             }
         } else {
-            LOGGER.info("Server mode - GUI disabled");
+            LOGGER.info("Running without the in-game interface on this server");
             if (transformed > 0) {
-                LOGGER.info("Transformed {} mod(s) - please restart for changes to take effect", transformed);
+                LOGGER.info("Updated {} {}. Restart the server to load {}.",
+                        transformed, transformed == 1 ? "mod" : "mods",
+                        transformed == 1 ? "it" : "them");
             }
         }
 
@@ -166,8 +159,8 @@ public class RetromodForge {
                     java.util.List<AutoFixEngine.AppliedFix> fixes =
                         autoFixEngine.analyzeAndFix(logFile, transformer);
                     if (!fixes.isEmpty()) {
-                        LOGGER.warn("AutoFix: registered {} redirect(s) from previous log (opt-in feature). "
-                                + "Review each one - log lines are an attacker-writable surface:",
+                        LOGGER.warn("Auto-fix registered {} redirect(s) from the previous log. "
+                                + "Review each one because log content is untrusted:",
                                 fixes.size());
                         for (AutoFixEngine.AppliedFix fix : fixes) {
                             LOGGER.warn("  AutoFix [{}] {} => {}",
@@ -179,20 +172,16 @@ public class RetromodForge {
                 LOGGER.warn("Could not run auto-fix analysis: {}", e.getMessage());
             }
         } else {
-            LOGGER.debug("AutoFix disabled by default. Enable with -Dretromod.autoFix=true "
+            LOGGER.debug("Auto-fix is disabled. Enable it with -Dretromod.autoFix=true "
                     + "(see security notes in Retromod.java).");
         }
 
-        LOGGER.info("Retromod initialized!");
+        LOGGER.info("Retromod initialized.");
         
         if (isServer) {
-            LOGGER.info("=======================================================");
-            LOGGER.info("  Retromod: Server Mode Active");
-            LOGGER.info("=======================================================");
-            LOGGER.info("  • Bytecode transformation: ENABLED");
-            LOGGER.info("  • AOT compilation: ENABLED");
-            LOGGER.info("  • GUI features: DISABLED (headless)");
-            LOGGER.info("=======================================================");
+            LOGGER.info("Retromod is running in server mode.");
+            LOGGER.info("Bytecode transforms and ahead-of-time compilation are enabled.");
+            LOGGER.info("GUI features are unavailable on a headless server.");
         }
     }
     
@@ -221,11 +210,10 @@ public class RetromodForge {
             }
         } catch (Throwable ignored) {}
 
-        // No detection means the shim gate skips every newer-MC shim and mods
-        // mistranslate silently, so fail loudly.
-        LOGGER.error("Retromod could NOT detect the Forge host MC version - "
-                + "falling back to {}. Version shims for newer MC will be SKIPPED, "
-                + "so mods may fail to translate. Please report your Forge/FML version.",
+        // The shim gate needs the host version to decide which API changes are safe to apply.
+        LOGGER.error("Retromod could not detect the Forge Minecraft version. It will use {} "
+                + "and skip shims for newer versions, so some mods may not work. Please report "
+                + "your Forge and FML versions.",
                 RetromodVersion.TARGET_MC_VERSION);
     }
 
@@ -261,7 +249,7 @@ public class RetromodForge {
             RetromodGui gui = new RetromodGui(gameDir);
 
             if (gui.isFirstRun()) {
-                LOGGER.info("First run detected - showing setup dialog");
+                LOGGER.info("Opening the Retromod setup dialog for the first run");
                 gui.showFirstRunDialog();
             } else {
                 gui.showAddModsButton();

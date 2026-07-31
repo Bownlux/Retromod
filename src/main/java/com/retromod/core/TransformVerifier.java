@@ -137,7 +137,7 @@ public final class TransformVerifier {
             // verifier is a diagnostic and must never abort a transform; catch Errors too
             // (a transformer-layer LinkageError can surface through a probe) and return
             // whatever we gathered (#102).
-            LOGGER.warn("[Retromod] Transform verification failed for {}: {}", modName, t.toString());
+            LOGGER.warn("Could not verify the transformed mod {}: {}", modName, t.toString());
         }
 
         return new VerifyResult(modName, targetVersion, issues);
@@ -148,26 +148,26 @@ public final class TransformVerifier {
      * Logs a summary to the console.
      */
     public static VerifyResult verifyAndReport(Path transformedJar, String modName, String targetVersion) {
-        LOGGER.info("[Retromod] Verifying transformed bytecode: {}", modName);
+        LOGGER.info("Checking transformed bytecode for {}", modName);
         long start = System.currentTimeMillis();
 
         VerifyResult result = verify(transformedJar, modName, targetVersion);
         long elapsed = System.currentTimeMillis() - start;
 
         if (result.passed()) {
-            LOGGER.info("[Retromod] ✓ Verification passed for {} ({} refs checked, {}ms)",
+            LOGGER.info("Verification passed for {}: {} references checked in {} ms",
                     modName, result.totalChecked(), elapsed);
         } else {
-            LOGGER.warn("[Retromod] ✗ Verification found {} issue(s) for {} ({}ms)",
+            LOGGER.warn("Verification found {} issue(s) for {} in {} ms",
                     result.issueCount(), modName, elapsed);
             int logged = 0;
             for (Issue issue : result.issues()) {
                 if (logged++ >= 10) {
-                    LOGGER.warn("[Retromod]   ... and {} more (see report file)",
+                    LOGGER.warn("... and {} more. See the report file.",
                             result.issueCount() - 10);
                     break;
                 }
-                LOGGER.warn("[Retromod]   {}", issue.toReadableString(targetVersion));
+                LOGGER.warn("{}", issue.toReadableString(targetVersion));
             }
         }
 
@@ -387,18 +387,17 @@ public final class TransformVerifier {
             Path reportFile = reportDir.resolve(safeName + ".txt");
 
             StringBuilder sb = new StringBuilder();
-            sb.append("Retromod Transform Verification Report\n");
-            sb.append("═══════════════════════════════════════\n");
+            sb.append("Retromod transform check\n\n");
             sb.append("Mod:     ").append(result.modName()).append('\n');
             sb.append("Target:  MC ").append(result.targetVersion()).append('\n');
             sb.append("Time:    ").append(
                     LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
             ).append('\n');
-            sb.append("Result:  ").append(result.passed() ? "PASSED" : "FAILED").append('\n');
+            sb.append("Result:  ").append(result.passed() ? "passed" : "needs review").append('\n');
             sb.append('\n');
 
             if (result.passed()) {
-                sb.append("No issues found. All bytecode references resolve correctly.\n");
+                sb.append("No unresolved bytecode references were found.\n");
             } else {
                 sb.append("Found ").append(result.issueCount()).append(" issue(s):\n\n");
 
@@ -408,9 +407,9 @@ public final class TransformVerifier {
                 }
 
                 for (var entry : byType.entrySet()) {
-                    sb.append("── ").append(entry.getKey().label).append(" ──\n");
+                    sb.append(entry.getKey().label).append('\n');
                     for (Issue issue : entry.getValue()) {
-                        sb.append("  ✗ ").append(issue.toReadableString(result.targetVersion()))
+                        sb.append("  - ").append(issue.toReadableString(result.targetVersion()))
                           .append('\n');
                     }
                     sb.append('\n');
@@ -418,10 +417,10 @@ public final class TransformVerifier {
             }
 
             Files.writeString(reportFile, sb.toString());
-            LOGGER.info("[Retromod] Verification report written to {}", reportFile);
+            LOGGER.info("Wrote the transformation report to {}", reportFile);
 
         } catch (Exception e) {
-            LOGGER.debug("[Retromod] Could not write verification report: {}", e.getMessage());
+            LOGGER.debug("Could not write the transformation report: {}", e.getMessage());
         }
     }
 

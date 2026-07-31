@@ -130,9 +130,7 @@ public final class SrgToMojangMapper {
         return methodMap.size() + fieldMap.size();
     }
 
-    // ═════════════════════════════════════════════════════════════════════
-    // LOADING
-    // ═════════════════════════════════════════════════════════════════════
+    // Mapping data
 
     /**
      * The 1.12.2-era SRG dictionary ({@code func_NNN_x}/{@code field_NNN_x} -> readable names,
@@ -149,11 +147,12 @@ public final class SrgToMojangMapper {
         boolean any = loadOne(RESOURCE_PATH, methods, fields);
         any |= loadOne(RESOURCE_PATH_1122, methods, fields);
         if (!any) {
-            LOGGER.warn("SRG → Mojang mapping data not found ({} / {}) - SRG remap disabled",
+            LOGGER.warn("Could not find SRG to Mojang mapping data at {} or {}. "
+                            + "SRG name remapping is unavailable.",
                     RESOURCE_PATH, RESOURCE_PATH_1122);
             return EMPTY;
         }
-        LOGGER.info("Loaded SRG → Mojang mappings: {} methods, {} fields",
+        LOGGER.info("Loaded SRG to Mojang mappings for {} methods and {} fields",
                 methods.size(), fields.size());
         return new SrgToMojangMapper(Map.copyOf(methods), Map.copyOf(fields));
     }
@@ -196,7 +195,7 @@ public final class SrgToMojangMapper {
                         case "FIELD" -> { fields.put(srgName, mojangName); parsed++; }
                         case "METHOD" -> { methods.put(srgName, mojangName); parsed++; }
                         default -> {
-                            // Unknown kind: log once-per-line at debug, don't spam
+                            // Unknown rows should not prevent valid mappings from loading.
                             LOGGER.debug("Skipping unknown SRG mapping kind '{}' at line {}",
                                     kind, lineNumber);
                             skipped++;
@@ -207,7 +206,8 @@ public final class SrgToMojangMapper {
                 return parsed > 0;
             }
         } catch (IOException e) {
-            LOGGER.warn("Failed to read SRG → Mojang mapping data {}: {}", resource, e.getMessage());
+            LOGGER.warn("Could not read SRG to Mojang mapping data from {}: {}",
+                    resource, e.getMessage());
             return false;
         }
     }

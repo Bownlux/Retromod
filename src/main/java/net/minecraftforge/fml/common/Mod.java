@@ -2,7 +2,7 @@
  * Retromod - compile-time stub of net.minecraftforge.fml.common.Mod
  * Copyright (c) 2026 Bownlux. MIT License.
  *
- * This is NOT a copy of Forge's Mod annotation. It exists only so that
+ * This is not a copy of Forge's Mod annotation. It exists only so that
  * com.retromod.core.RetromodForge compiles without Forge on the build
  * classpath. Retromod is a multi-loader mod (Fabric / NeoForge / Forge)
  * that ships as a single artifact; pulling in the full Forge dep tree

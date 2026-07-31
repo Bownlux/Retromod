@@ -73,7 +73,7 @@ class SinytraTierATest {
     void ensureDisplayTestIgnoresDependencyScopedSide() {
         // side= inside a [[dependencies.*]] block describes where a DEPENDENCY is needed,
         // not the mod's own side, so a genuinely both-sided mod with a client-only
-        // dependency must NOT get a displayTest (regression for the dependency-side misread).
+        // dependency must not get a displayTest (regression for the dependency-side misread).
         String depOnlySide = "modLoader=\"javafml\"\nloaderVersion=\"[1,)\"\n\n"
                 + "[[mods]]\nmodId=\"foo\"\nversion=\"1.0\"\n\n"
                 + "[[dependencies.foo]]\nmodId=\"minecraft\"\nside=\"CLIENT\"\n";

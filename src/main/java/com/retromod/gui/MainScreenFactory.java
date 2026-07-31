@@ -15,21 +15,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * The main Retromod in-game screen, the one that opens when you click the
- * Retromod logo on the title screen. Has:
- *
- * <ul>
- *   <li>A "settings" gear button at top-right that opens the toggle screen</li>
- *   <li>"Add Mods": opens the OS native file picker (with macOS workarounds)</li>
- *   <li>"Open Mods Folder": opens the {@code retromod-input/} folder in the
- *       OS file manager. Reliable cross-platform fallback when the file
- *       picker has issues.</li>
- *   <li>"Done" at the bottom to return to the parent screen</li>
- * </ul>
- *
- * Built on the same {@link ScreenClassGenerator} infrastructure as
- * {@link ConfigScreenFactory} so the layout stays clean and there's no
- * conflict with a parent screen's widgets.
+ * Builds the Retromod screen opened from the title menu.
+ * It provides shortcuts for adding mods, opening the input folder, and changing settings.
  */
 public final class MainScreenFactory {
 
@@ -44,41 +31,31 @@ public final class MainScreenFactory {
 
     private MainScreenFactory() {}
 
-    // PUBLIC API
-
     public static void open(Object parentScreen) {
-        LOGGER.info("[Retromod] MainScreenFactory.open() entered");
+        LOGGER.debug("Opening the Retromod main screen");
         if (!resolveClasses()) {
-            LOGGER.warn("[Retromod] Cannot open main screen - MC classes not available");
+            LOGGER.warn("Cannot open the Retromod screen because the required Minecraft "
+                    + "GUI classes are unavailable");
             return;
         }
 
         Object title = McI18n.translatable("retromod.main.title");
         if (title == null) {
-            LOGGER.warn("[Retromod] Could not create title text - McI18n returned null");
+            LOGGER.warn("Could not create the Retromod screen title");
             return;
         }
 
-        LOGGER.info("[Retromod] Generating main screen via ScreenClassGenerator");
         Object screen = ScreenClassGenerator.createScreen(
                 title,
-                /* initCallback  */ s -> {
-                    LOGGER.info("[Retromod] Main screen init() invoked, adding widgets");
-                    addAllWidgets(s, parentScreen);
-                },
-                /* closeCallback */ () -> {
-                    LOGGER.info("[Retromod] Main screen onClose() invoked");
-                }
+                s -> addAllWidgets(s, parentScreen),
+                () -> LOGGER.debug("Closing the Retromod main screen")
         );
         if (screen == null) {
-            LOGGER.warn("[Retromod] ScreenClassGenerator returned null - cannot open main screen");
+            LOGGER.warn("Could not create the Retromod main screen");
             return;
         }
-        LOGGER.info("[Retromod] Calling setScreen() with generated main screen");
         setScreen(screen);
     }
-
-    // LAYOUT
 
     private static void addAllWidgets(Object screen, Object parentScreen) {
         try {

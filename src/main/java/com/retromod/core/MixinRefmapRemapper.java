@@ -13,15 +13,14 @@ import com.retromod.mapping.IntermediaryToMojangMapper;
 /**
  * Remaps a Fabric mixin refmap JSON from the {@code intermediary} namespace to Mojang names and adds
  * an {@code official} data section, so a mod's {@code @Inject}/{@code @At} selectors resolve on a
- * 26.1+ (official-namespace) host. Single source of truth shared by the runtime
- * ({@link FabricModTransformer}) and offline ({@code RetromodCli} batch / AOT / nested-jar) paths.
+ * 26.1+ (official-namespace) host. Shared by the runtime path ({@link FabricModTransformer}) and the
+ * offline {@code RetromodCli} batch / AOT / nested-jar paths.
  *
- * <p><b>Why it matters:</b> refmaps are in nearly every Fabric mod. Without remapping, an {@code
- * @Inject} whose selector names an intermediary target ({@code net/minecraft/class_310}) fails on
- * 26.1+ with {@code InvalidInjectionException: … specifies a target class 'net/minecraft/class_310',
- * which is not supported}, breaking that mixin (and often the mod's construction). Found via an
- * in-game 26.2 Fabric launch: the offline batch path (unlike the runtime path) left refmaps
- * unremapped.
+ * <p>Nearly every Fabric mod ships a refmap. Unremapped, an {@code @Inject} targeting an
+ * intermediary class like {@code net/minecraft/class_310} fails on 26.1+ with
+ * {@code InvalidInjectionException: ... target class ... not supported}, usually killing the mod's
+ * construction. Found on an in-game 26.2 Fabric launch, where the offline batch path had left
+ * refmaps unremapped while the runtime path handled them.
  */
 public final class MixinRefmapRemapper {
 

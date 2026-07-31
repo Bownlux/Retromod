@@ -224,7 +224,7 @@ public final class ModDataMigrator {
      * @return the number of files rewritten.
      */
     public static int migrateTree(Path root, String targetMcVersion) {
-        // NOT gated on 26.x as a whole: the client item-definition split below applies from
+        // not gated on 26.x as a whole: the client item-definition split below applies from
         // 1.21.4 (review finding - a 1.21.1 -> 1.21.11 translation also needs the definitions).
         if (root == null || !Files.isDirectory(root)) return 0;
         boolean is26x = RetromodVersion.isUnobfuscatedTarget(targetMcVersion);

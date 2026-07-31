@@ -49,7 +49,8 @@ public final class Pre1_21_2InteractionResultBridge {
             ir = Class.forName(INTERACTION_RESULT_FQN, false,
                     Pre1_21_2InteractionResultBridge.class.getClassLoader());
         } catch (Throwable t) {
-            LOGGER.debug("[Retromod] InteractionResult bridge - class_1269 not on classpath, skipping ({})",
+            LOGGER.debug("InteractionResult support is not needed because class_1269 is "
+                            + "unavailable ({})",
                     t.getClass().getSimpleName());
             return;
         }
@@ -77,10 +78,9 @@ public final class Pre1_21_2InteractionResultBridge {
         }
 
         if (registered == 0) {
-            LOGGER.info("[Retromod] InteractionResult bridge - host's class_1269 has the legacy "
-                    + "shape (all constants typed Lclass_1269;), nothing to rewrite");
+            LOGGER.debug("The host still uses the old InteractionResult shape");
         } else {
-            LOGGER.info("[Retromod] InteractionResult bridge - registered {} descriptor rewrite(s): {}",
+            LOGGER.debug("Added {} InteractionResult descriptor changes: {}",
                     registered, summary);
         }
     }

@@ -10,7 +10,7 @@
  *
  * Mods referencing net/minecraft/util/Tuple (or intermediary class_3545) are
  * redirected here by Minecraft26_2RemovedPolyfill, gated to 26.2+ hosts (Tuple
- * still exists on 26.1 and earlier, so the redirect must NOT fire there).
+ * still exists on 26.1 and earlier, so the redirect must not fire there).
  */
 package com.retromod.polyfill.minecraft.embedded;
 

@@ -32,7 +32,7 @@
   "retromod.settings.log_transformations": "Umwandlungen protokollieren",
   "retromod.settings.debug": "Debug-Modus",
 
-  "retromod.filepicker.title": "Retromod \u2014 Mod-JARs zum Umwandeln ausw\u00e4hlen",
+  "retromod.filepicker.title": "Retromod: Mod-JARs zum Umwandeln ausw\u00e4hlen",
 
   "retromod.result.success": "Umgewandelt",
   "retromod.result.skipped": "Bereits kompatibel",

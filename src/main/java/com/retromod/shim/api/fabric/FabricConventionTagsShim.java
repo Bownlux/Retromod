@@ -73,7 +73,7 @@ public class FabricConventionTagsShim implements VersionShim {
                 || EnvironmentDetector.hostClassExists(
                         "net.fabricmc.fabric.api.tag.convention.v2.ConventionalItemTags");
         if (!v2Present) {
-            LOGGER.debug("[Retromod] convention tags v1→v2 skipped (no v2 on this host)");
+            LOGGER.debug("Fabric convention tag v2 is unavailable, so the v1 bridge is not needed");
             return;
         }
 
@@ -86,7 +86,8 @@ public class FabricConventionTagsShim implements VersionShim {
             transformer.registerFieldRedirect(itemOwner, r[0], itemOwner, r[1]);
         }
 
-        LOGGER.info("[Retromod] Fabric convention tags v1→v2 - {} holder redirects + {} field renames "
-                + "(same-named fields ride the class redirect)", HOLDERS.length, ITEM_FIELD_RENAMES.length);
+        LOGGER.debug("Added Fabric convention tag v1 support with {} holder redirects and "
+                        + "{} field renames",
+                HOLDERS.length, ITEM_FIELD_RENAMES.length);
     }
 }

@@ -9,7 +9,7 @@ links:
   modrinth: https://modrinth.com/mod/true-darkness-refabricated
 summary: Loads and plays after whole-class mixin stripping; the darkened-light rendering itself is inert.
 details: Crashed on world create before snapshot.1 (ClassCastException in its LightTexture mixin). The
-  render mixins are whole-class-stripped now (#68), so worlds load — but that means the actual darkness
+  render mixins are whole-class-stripped now (#68), so worlds load, but that means the actual darkness
   effect doesn't apply.
 reporter: Bownlux
 date: 2026-05-29

@@ -64,9 +64,8 @@ public class FabricEntityModelLayerShim implements VersionShim {
         transformer.registerClassRedirect(OLD, HOLDER);
         transformer.registerClassRedirect(OLD + "$TexturedModelDataProvider", PROVIDER);
 
-        LOGGER.info("[Retromod] Fabric EntityModelLayerRegistry bridge - kept registerModelLayer + "
-                + "TexturedModelDataProvider SAM (createModelData) wired to ModelLayerRegistry "
-                + "(STATUS: needs in-game verification)");
+        LOGGER.debug("Installed the Fabric entity model layer bridge. "
+                + "An in-game verification run is still pending.");
     }
 
     /** Holder whose static {@code registerModelLayer} forwards to the bridge. */

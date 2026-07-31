@@ -17,10 +17,9 @@ import java.util.concurrent.*;
 import java.util.jar.*;
 
 /**
- * Detects mods that launch but misbehave after transformation, then offers to
- * restore the original from backup.
+ * Watches transformed mods for repeated errors and keeps their backups easy to restore.
  */
-public class ModHealthChecker {
+public final class ModHealthChecker {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Health");
 
@@ -31,6 +30,9 @@ public class ModHealthChecker {
     private static final Map<String, List<String>> modErrors = new ConcurrentHashMap<>();
 
     private static final int ERROR_THRESHOLD = 3;
+
+    private ModHealthChecker() {
+    }
     
     public record ModHealthInfo(
         String modId,
@@ -71,53 +73,16 @@ public class ModHealthChecker {
         try {
             Path readme = inputFolder.resolve("README.txt");
             Files.writeString(readme, """
-                ═══════════════════════════════════════════════════════════════
-                RETROMOD INPUT FOLDER
-                ═══════════════════════════════════════════════════════════════
-                
-                Put your OLD mods here (NOT in the mods/ folder!)
-                
-                Retromod will automatically:
-                1. Transform them to work with your Minecraft version
-                2. Copy the transformed versions to mods/
-                3. Move the originals to processed/
-                
-                STEPS:
-                1. Download old mods (e.g., from Modrinth or CurseForge)
-                2. Put the .jar files in THIS folder
-                3. Start Minecraft
-                4. Done! The mods will be transformed automatically.
-                
-                WHY NOT PUT DIRECTLY IN MODS FOLDER?
-                
-                Fabric checks mod versions BEFORE Retromod can help.
-                If you put old mods directly in mods/, Fabric will crash!
-                
-                By using this folder, Retromod transforms mods first.
-                
-                ═══════════════════════════════════════════════════════════════
-                SERVER-ONLY MODS
-                ═══════════════════════════════════════════════════════════════
-                
-                If a mod is server-only (like Lithium), then:
-                - Only the SERVER needs Retromod installed
-                - Players can join WITHOUT having Retromod!
-                - The transformed mod just works on the server
-                
-                Retromod will tell you if a mod is server-only.
-                
-                ═══════════════════════════════════════════════════════════════
-                NEED HELP? FOUND A BUG?
-                ═══════════════════════════════════════════════════════════════
-                
-                Report bugs on GitHub:
-                https://github.com/Bownlux/Retromod/issues
+                Retromod input folder
 
-                - Open an issue for bug reports
-                - Ask questions
-                - Share mod compatibility info
-                
-                ═══════════════════════════════════════════════════════════════
+                Put old mod jars directly in this folder. Retromod updates them,
+                installs the results in mods/, and keeps the originals in processed/.
+
+                On Fabric, do not put an old mod straight in mods/. Fabric may reject
+                its version before Retromod gets a chance to update it.
+
+                Help and bug reports:
+                https://github.com/Bownlux/Retromod/issues
                 """);
         } catch (IOException e) {
             LOGGER.debug("Could not create README", e);
@@ -196,22 +161,13 @@ public class ModHealthChecker {
             info.backupPath(), info.transformTime(), false
         ));
         
-        LOGGER.error("═══════════════════════════════════════════════════════════");
-        LOGGER.error("  MOD BROKEN AFTER TRANSFORMATION!");
-        LOGGER.error("═══════════════════════════════════════════════════════════");
-        LOGGER.error("  Mod: {} ({})", info.modName(), modId);
-        LOGGER.error("");
-        LOGGER.error("  The game launched but this mod isn't working properly.");
-        LOGGER.error("  This might be a Retromod compatibility issue.");
-        LOGGER.error("");
-        LOGGER.error("  PLEASE REPORT THIS BUG:");
-        LOGGER.error("  → https://github.com/Bownlux/Retromod/issues");
-        LOGGER.error("");
-        LOGGER.error("  Recent errors:");
+        LOGGER.error("Retromod saw repeated errors from {} ({}). This may be a compatibility issue.",
+            info.modName(), modId);
+        LOGGER.error("Recent errors:");
         for (String err : errors) {
-            LOGGER.error("    • {}", err);
+            LOGGER.error("  - {}", err);
         }
-        LOGGER.error("═══════════════════════════════════════════════════════════");
+        LOGGER.error("Report the issue at https://github.com/Bownlux/Retromod/issues");
 
         if (EnvironmentDetector.canShowGui()) {
             showBrokenModDialog(info, errors);
@@ -225,29 +181,24 @@ public class ModHealthChecker {
             } catch (Exception ignored) {}
             
             StringBuilder message = new StringBuilder();
-            message.append("⚠️ Mod Not Working Properly!\n\n");
-            message.append("═══════════════════════════════════════\n\n");
-            message.append("Mod: ").append(info.modName()).append("\n\n");
-            message.append("The game launched but this mod isn't\n");
-            message.append("working correctly after transformation.\n\n");
-            message.append("═══════════════════════════════════════\n\n");
-            message.append("Please report this bug on GitHub:\n");
-            message.append("→ github.com/Bownlux/Retromod/issues\n\n");
-            message.append("═══════════════════════════════════════\n\n");
+            message.append("Retromod saw repeated errors from ")
+                .append(info.modName()).append(".\n\n")
+                .append("The game launched, but this mod may not be working correctly.\n")
+                .append("You can report the issue or restore its backup.\n\n");
             message.append("Recent errors:\n");
             for (int i = 0; i < Math.min(3, errors.size()); i++) {
-                message.append("• ").append(truncate(errors.get(i), 50)).append("\n");
+                message.append("- ").append(truncate(errors.get(i), 80)).append("\n");
             }
             
             int choice = JOptionPane.showOptionDialog(
                 null,
                 message.toString(),
-                "Retromod - Mod Issue Detected",
+                "Retromod found repeated mod errors",
                 JOptionPane.YES_NO_CANCEL_OPTION,
                 JOptionPane.WARNING_MESSAGE,
                 null,
-                new String[]{"Open GitHub Issues", "Restore Original", "Ignore"},
-                "Open GitHub Issues"
+                new String[]{"Report Issue", "Restore Original", "Ignore"},
+                "Report Issue"
             );
             
             if (choice == 0) {
@@ -268,7 +219,8 @@ public class ModHealthChecker {
         try {
             if (Files.exists(info.transformedPath())) {
                 Files.delete(info.transformedPath());
-                LOGGER.info("Deleted broken transformed mod: {}", info.transformedPath().getFileName());
+                LOGGER.info("Removed the broken transformed copy: {}",
+                    info.transformedPath().getFileName());
             }
 
             Path inputFolder = info.transformedPath().getParent().getParent().resolve("retromod-input");
@@ -277,16 +229,14 @@ public class ModHealthChecker {
             );
 
             Files.copy(info.backupPath(), destination, StandardCopyOption.REPLACE_EXISTING);
-            LOGGER.info("Restored original to retromod-input/: {}", destination.getFileName());
+            LOGGER.info("Restored the original to retromod-input: {}", destination.getFileName());
             
             JOptionPane.showMessageDialog(
                 null,
-                "Original mod restored!\n\n" +
-                "The broken transformed version has been deleted.\n" +
-                "The original has been placed back in retromod-input/\n\n" +
-                "Please restart Minecraft to try again.\n" +
-                "If it still doesn't work, report on GitHub Issues",
-                "Mod Restored",
+                "The transformed jar was removed and the original was copied to retromod-input/.\n\n" +
+                "Restart Minecraft to let Retromod try it again. If it still fails, attach\n" +
+                "logs/latest.log to a GitHub issue.",
+                "Backup restored",
                 JOptionPane.INFORMATION_MESSAGE
             );
             
@@ -339,13 +289,13 @@ public class ModHealthChecker {
         try {
             try (JarFile jar = new JarFile(transformedJar.toFile())) {
                 if (!jar.entries().hasMoreElements()) {
-                    LOGGER.warn("Transformed JAR is empty!");
+                    LOGGER.warn("The transformed jar is empty");
                     return false;
                 }
 
                 if (jar.getEntry("fabric.mod.json") == null &&
                     jar.getEntry("META-INF/mods.toml") == null) {
-                    LOGGER.warn("Transformed JAR missing mod metadata!");
+                    LOGGER.warn("The transformed jar has no supported mod metadata");
                     return false;
                 }
             }

@@ -349,7 +349,7 @@ public class ApiEmbedder {
     private boolean downloadArchive(String version, Path targetPath) {
         // In a real implementation, this would download from Maven Central
         // or a Retromod archive server
-        LOGGER.info("Archive not found locally: {}. Please download manually.", version);
+        LOGGER.info("No local archive was found for {}. Download it before retrying.", version);
         LOGGER.info("Expected location: {}", targetPath);
         return false;
     }

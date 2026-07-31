@@ -5,8 +5,6 @@
 package com.retromod.gui;
 
 import com.retromod.core.*;
-import com.retromod.aot.AotCompiler;
-import com.retromod.shim.ShimRegistry;
 import com.retromod.util.McReflect;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,68 +12,56 @@ import org.slf4j.LoggerFactory;
 import java.awt.FileDialog;
 import java.awt.Frame;
 import java.io.File;
-import java.io.FilenameFilter;
-import java.lang.reflect.Method;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Reflection-based mod manager screen, reached from the title screen via the injected Retromod button.
- *
- * <p>Opens the native OS file picker (java.awt.FileDialog) to select mods, transforms them, and shows
- * the results as an in-game screen. All Minecraft interaction goes through reflection because the build
- * has no Minecraft classes on the compile classpath; they exist at runtime.
+ * Opens the native file picker from Minecraft and reports the update results
+ * back in game. Minecraft UI calls use reflection because it is not on the
+ * compile classpath.
  */
 public class RetromodScreen {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Screen");
 
-    private final Object minecraftClient; // MinecraftClient
-    private final Object parentScreen;    // TitleScreen
+    private final Object minecraftClient;
 
-    public record TransformResult(String modName, Status status, String message) {
-        public enum Status { SUCCESS, SKIPPED, FAILED, COMPLEX_WARNING }
+    public record ModResult(String modName, Status status, String message) {
+        public enum Status { UPDATED, UNCHANGED, FAILED, RISKY }
     }
 
-    public RetromodScreen(Object client, Object parent) {
+    public RetromodScreen(Object client) {
         this.minecraftClient = client;
-        this.parentScreen = parent;
     }
 
-    /**
-     * Open the Retromod manager: shows a file picker and transforms the chosen mods.
-     */
+    /** Opens the picker and updates the chosen mods. */
     public void open() {
-        // background thread so the picker doesn't freeze Minecraft
+        // The native picker must not pause Minecraft's render thread.
         CompletableFuture.runAsync(() -> {
             try {
                 File[] selectedFiles = showNativeFilePicker();
 
                 if (selectedFiles != null && selectedFiles.length > 0) {
-                    List<TransformResult> results = transformMods(selectedFiles);
+                    List<ModResult> results = updateMods(selectedFiles);
                     showResults(results);
                 }
             } catch (Exception e) {
-                LOGGER.error("Retromod manager error", e);
+                LOGGER.error("Could not update the selected mods", e);
             }
         });
     }
 
-    /**
-     * Show the native OS file picker (Finder / Explorer) via java.awt.FileDialog.
-     */
+    /** Shows the operating system's file picker. */
     private File[] showNativeFilePicker() throws Exception {
         final File[][] result = {null};
 
-        // FileDialog must be created on the AWT event thread
         java.awt.EventQueue.invokeAndWait(() -> {
             Frame frame = new Frame();
             frame.setUndecorated(true);
             frame.setVisible(false);
 
-            FileDialog dialog = new FileDialog(frame, "Retromod - Select Mod JARs to Transform", FileDialog.LOAD);
+            FileDialog dialog = new FileDialog(frame, "Retromod: choose mod jars", FileDialog.LOAD);
             dialog.setDirectory(System.getProperty("user.home"));
             dialog.setMultipleMode(true);
 
@@ -95,21 +81,26 @@ public class RetromodScreen {
         return result[0];
     }
 
-    /**
-     * Transform selected mod files.
-     */
-    private List<TransformResult> transformMods(File[] modFiles) {
-        List<TransformResult> results = new CopyOnWriteArrayList<>();
-
+    /** Updates the selected mods and installs the resulting jars. */
+    private List<ModResult> updateMods(File[] modFiles) {
+        List<ModResult> results = new ArrayList<>();
         Path gameDir = getGameDir();
         Path modsFolder = gameDir.resolve("mods");
         ModCompatibilityChecker checker = new ModCompatibilityChecker(gameDir);
         ModComplexityAnalyzer complexityAnalyzer = new ModComplexityAnalyzer();
-        boolean forceComplex = isForceTranslateEnabled();
+        boolean forceComplex = isForceTranslateEnabled(gameDir);
+
+        try {
+            Files.createDirectories(modsFolder);
+        } catch (Exception e) {
+            LOGGER.error("Could not create the mods folder at {}", modsFolder, e);
+            return List.of(new ModResult(
+                modsFolder.toString(), ModResult.Status.FAILED, e.getMessage()));
+        }
 
         for (File modFile : modFiles) {
             String name = modFile.getName();
-            LOGGER.info("Processing: {}", name);
+            LOGGER.info("Checking {}", name);
 
             try {
                 Path modPath = modFile.toPath();
@@ -117,13 +108,13 @@ public class RetromodScreen {
                 ModComplexityAnalyzer.ComplexityReport report = complexityAnalyzer.analyze(modPath);
 
                 if (report.isUnlikelyToWork() && !forceComplex) {
-                    LOGGER.warn("Skipped {} - complexity score {} (unlikely to work: {})",
+                    LOGGER.warn("Skipped {} because its compatibility score is {}: {}",
                         name, report.score(), report.reason());
-                    results.add(new TransformResult(
+                    results.add(new ModResult(
                         name,
-                        TransformResult.Status.COMPLEX_WARNING,
-                        "Unlikely to work: " + report.reason() +
-                            ". Enable \"force_translate_complex\" in config to try anyway."
+                        ModResult.Status.RISKY,
+                        "High compatibility risk: " + report.reason() +
+                            ". Turn on \"Try unlikely mods\" in Settings to test it anyway."
                     ));
                     continue;
                 }
@@ -132,66 +123,61 @@ public class RetromodScreen {
 
                 if (analysis != null) {
                     Path transformed = checker.transformAndInstall(modPath);
-                    results.add(new TransformResult(name, TransformResult.Status.SUCCESS,
-                        "Transformed to " + transformed.getFileName()));
-                    LOGGER.info("Transformed: {} -> {}", name, transformed.getFileName());
+                    results.add(new ModResult(name, ModResult.Status.UPDATED,
+                        "Updated as " + transformed.getFileName()));
+                    LOGGER.info("Updated {} as {}", name, transformed.getFileName());
                 } else {
                     Files.copy(modPath, modsFolder.resolve(name), StandardCopyOption.REPLACE_EXISTING);
-                    results.add(new TransformResult(name, TransformResult.Status.SKIPPED,
-                        "Already compatible, copied"));
+                    results.add(new ModResult(name, ModResult.Status.UNCHANGED,
+                        "No changes needed"));
                 }
 
             } catch (Exception e) {
-                LOGGER.error("Failed to transform {}", name, e);
-                results.add(new TransformResult(name, TransformResult.Status.FAILED,
+                LOGGER.error("Could not update {}", name, e);
+                results.add(new ModResult(name, ModResult.Status.FAILED,
                     e.getClass().getSimpleName() + ": " +
-                        (e.getMessage() != null ? e.getMessage() : "Unknown error")));
+                        (e.getMessage() != null ? e.getMessage() : "unknown error")));
             }
         }
 
         return results;
     }
 
-    /**
-     * Show transformation results as an in-game Minecraft screen.
-     */
-    private void showResults(List<TransformResult> results) {
-        long success = results.stream().filter(r -> r.status() == TransformResult.Status.SUCCESS).count();
-        long failed = results.stream().filter(r -> r.status() == TransformResult.Status.FAILED).count();
-        long skipped = results.stream().filter(r -> r.status() == TransformResult.Status.SKIPPED).count();
-        long complex = results.stream().filter(r -> r.status() == TransformResult.Status.COMPLEX_WARNING).count();
+    /** Shows a short result summary inside Minecraft. */
+    private void showResults(List<ModResult> results) {
+        long updated = results.stream().filter(r -> r.status() == ModResult.Status.UPDATED).count();
+        long failed = results.stream().filter(r -> r.status() == ModResult.Status.FAILED).count();
+        long unchanged = results.stream().filter(r -> r.status() == ModResult.Status.UNCHANGED).count();
+        long risky = results.stream().filter(r -> r.status() == ModResult.Status.RISKY).count();
 
         List<String> resultLines = new ArrayList<>();
 
-        if (success > 0) resultLines.add(success + " mod(s) transformed successfully");
-        if (skipped > 0) resultLines.add(skipped + " mod(s) already compatible");
-        if (complex > 0) resultLines.add(complex + " mod(s) skipped (too complex)");
-        if (failed > 0) resultLines.add(failed + " mod(s) failed");
+        if (updated > 0) resultLines.add("Updated: " + updated);
+        if (unchanged > 0) resultLines.add("No changes needed: " + unchanged);
+        if (risky > 0) resultLines.add("Skipped for review: " + risky);
+        if (failed > 0) resultLines.add("Failed: " + failed);
 
         resultLines.add("");
 
-        for (TransformResult r : results) {
+        for (ModResult r : results) {
             String prefix = switch (r.status()) {
-                case SUCCESS -> "[OK]";
-                case SKIPPED -> "[SKIP]";
-                case FAILED -> "[FAIL]";
-                case COMPLEX_WARNING -> "[WARN]";
+                case UPDATED -> "Updated:";
+                case UNCHANGED -> "Unchanged:";
+                case FAILED -> "Failed:";
+                case RISKY -> "Review:";
             };
             resultLines.add(prefix + " " + r.modName());
-            if (r.status() == TransformResult.Status.COMPLEX_WARNING) {
+            if (r.status() == ModResult.Status.RISKY) {
                 resultLines.add("  " + r.message());
             }
         }
 
-        InGameScreenFactory.showTransformResults(resultLines, success > 0);
+        InGameScreenFactory.showUpdateResults(resultLines, updated > 0);
     }
 
-    /**
-     * Get the game directory.
-     * Tries multiple approaches to find the game dir across all loaders.
-     */
+    /** Finds the game directory through the active loader or client. */
     private Path getGameDir() {
-        // Try MC client field (yarn: runDirectory, mojang: gameDirectory)
+        // Prefer the client because it works without linking a loader API.
         java.lang.reflect.Field dirField = McReflect.findField(
             minecraftClient.getClass(),
             "runDirectory", "gameDirectory"
@@ -204,14 +190,12 @@ public class RetromodScreen {
             } catch (Exception ignored) {}
         }
 
-        // Try FabricLoader.getInstance().getGameDir()
         try {
             Class<?> fabricLoader = Class.forName("net.fabricmc.loader.api.FabricLoader");
             Object instance = fabricLoader.getMethod("getInstance").invoke(null);
             return (Path) fabricLoader.getMethod("getGameDir").invoke(instance);
         } catch (Exception ignored) {}
 
-        // Try NeoForge FMLPaths
         try {
             Class<?> fmlPaths = Class.forName("net.neoforged.fml.loading.FMLPaths");
             Object gameDirPath = fmlPaths.getMethod("getOrCreateGameRelativePath",
@@ -219,24 +203,19 @@ public class RetromodScreen {
             if (gameDirPath instanceof Path p) return p;
         } catch (Exception ignored) {}
 
-        // Fallback
         return Path.of(".").toAbsolutePath().normalize();
     }
 
-    /**
-     * Check if force_translate_complex is enabled in config.
-     */
-    private boolean isForceTranslateEnabled() {
+    /** Reads the opt-in setting for high-risk mods. */
+    private boolean isForceTranslateEnabled(Path gameDir) {
         try {
-            Path configPath = Path.of("config/retromod/config.json");
+            Path configPath = gameDir.resolve("config/retromod/config.json");
             if (Files.exists(configPath)) {
                 String json = Files.readString(configPath);
                 return json.contains("\"force_translate_complex\": true") ||
                        json.contains("\"force_translate_complex\":true");
             }
-        } catch (Exception e) {
-            // Default to false
-        }
+        } catch (Exception ignored) {}
         return false;
     }
 }

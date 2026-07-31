@@ -67,7 +67,7 @@ public class PlacementModifierGetPositionsRemapTest {
 
         Map<String, String> defs = methodDefsByName(out);
 
-        // The Stream-returning method_14452 override must become getPositions, NOT count.
+        // The Stream-returning method_14452 override must become getPositions, not count.
         assertTrue(defs.containsKey("getPositions"),
                 "the Stream-returning method_14452 override must remap to getPositions "
                         + "(the bug renamed it to count -> AbstractMethodError)");

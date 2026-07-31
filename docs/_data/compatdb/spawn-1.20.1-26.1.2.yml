@@ -7,10 +7,10 @@ loader: fabric
 retromod: 1.1.0-snapshot.3
 links:
   modrinth: https://modrinth.com/mod/spawn-mod
-summary: Loads to the title screen, but its 1.20.1 worldgen datapack can't parse on 26.1 — worlds won't
+summary: Loads to the title screen, but its 1.20.1 worldgen datapack can't parse on 26.1, worlds won't
   load or create while it's installed.
 details: 'The bytecode side mostly works (the game reaches the title screen), but the mod ships datapack
-  worldgen — biomes, configured/placed features, carvers — in 1.20.1 JSON formats that 26.1 can''t parse
+  worldgen, biomes, configured/placed features, carvers, in 1.20.1 JSON formats that 26.1 can''t parse
   (schema changes plus renamed c: tag conventions). Registry loading fails, which blocks entering or creating
   ANY world while the mod is present. Migrating datapack data across MC versions is a separate subsystem
   Retromod doesn''t have yet. Its entity registration also trips a FabricEntityTypeBuilder inner-class

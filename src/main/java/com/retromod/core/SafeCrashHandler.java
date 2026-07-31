@@ -14,10 +14,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Catches errors from transformed mods during gameplay, pauses, saves the world,
- * shows a quit-only dialog, and exits so players don't lose worlds to mod incompatibilities.
+ * Stops the game after a critical transformed-mod error and tries to save first.
  */
-public class SafeCrashHandler {
+public final class SafeCrashHandler {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-SafeCrash");
 
@@ -129,7 +128,7 @@ public class SafeCrashHandler {
             sb.append("\nJava: ").append(System.getProperty("java.version")).append("\n");
             sb.append("OS: ").append(System.getProperty("os.name")).append(" ")
               .append(System.getProperty("os.version")).append("\n");
-            sb.append("Retromod: 1.3.0-snapshot.3\n");
+            sb.append("Retromod: ").append(RetromodVersion.RETROMOD_VERSION).append("\n");
             sb.append("\nPlease report this at: https://github.com/Bownlux/Retromod/issues\n");
 
             java.nio.file.Files.writeString(crashLog, sb.toString());
@@ -228,12 +227,8 @@ public class SafeCrashHandler {
             return;
         }
 
-        LOGGER.error("=======================================================");
-        LOGGER.error("  SAFE CRASH TRIGGERED");
-        LOGGER.error("  Mod: {}", modId);
-        LOGGER.error("  Class: {}", className != null ? className : "unknown");
-        LOGGER.error("  Error: {}", error.getMessage());
-        LOGGER.error("=======================================================");
+        LOGGER.error("Stopping after a critical error from transformed mod {} in {}: {}",
+            modId, className != null ? className : "an unknown class", error.getMessage());
 
         pauseGame();
         boolean worldSaved = saveWorld();
@@ -327,66 +322,40 @@ public class SafeCrashHandler {
         return null;
     }
     
-    // Show the crash dialog with options, or log it to console on servers.
+    // Show the crash details in game, or write them to the server log.
     private void showCrashDialog(String modId, Throwable error, boolean worldSaved) {
-        StringBuilder message = new StringBuilder();
-        message.append("Retromod encountered an error!\n\n");
-        
-        message.append("═══════════════════════════════════════\n");
-        message.append("THE PROBLEM:\n");
-        message.append("═══════════════════════════════════════\n\n");
-        
-        message.append("The mod \"").append(modId).append("\" does not work\n");
-        message.append("correctly with Retromod.\n\n");
-        
-        message.append("Error: ").append(error.getClass().getSimpleName()).append("\n");
-        if (error.getMessage() != null) {
-            String msg = error.getMessage();
-            if (msg.length() > 100) {
-                msg = msg.substring(0, 100) + "...";
-            }
-            message.append("Details: ").append(msg).append("\n");
-        }
-        message.append("\n");
+        String detail = error.getMessage() == null
+            ? "No error message was provided."
+            : truncate(error.getMessage(), 160);
+        String saveStatus = worldSaved
+            ? "Retromod saved the world before stopping."
+            : "Retromod could not confirm that the world was saved. Recent progress may be lost.";
+        String message = """
+            A transformed mod caused a critical error.
 
-        if (worldSaved) {
-            message.append("✓ Your world has been SAVED automatically.\n\n");
-        } else {
-            message.append("⚠ Could not save world automatically.\n");
-            message.append("  (Your recent progress may be lost)\n\n");
-        }
-        
-        message.append("═══════════════════════════════════════\n");
-        message.append("WHAT YOU CAN DO:\n");
-        message.append("═══════════════════════════════════════\n\n");
-        
-        message.append("1. UNINSTALL \"").append(modId).append("\"\n");
-        message.append("   Remove this mod and continue using Retromod\n");
-        message.append("   with your other mods.\n\n");
-        
-        message.append("2. FIND AN ALTERNATIVE\n");
-        message.append("   Look for a similar mod that works with your\n");
-        message.append("   Minecraft version, or has been tested with\n");
-        message.append("   Retromod.\n\n");
-        
-        message.append("3. USE THE ORIGINAL VERSION\n");
-        message.append("   Play on the Minecraft version that\n");
-        message.append("   \"").append(modId).append("\" was designed for.\n\n");
-        
-        message.append("═══════════════════════════════════════\n");
+            Mod: %s
+            Error: %s
+            Details: %s
+
+            %s
+
+            Before the next launch, remove this mod or use a version made for
+            your current Minecraft version. Attach logs/latest.log when you
+            report the problem.
+            """.formatted(modId, error.getClass().getSimpleName(), detail, saveStatus);
 
         if (EnvironmentDetector.canShowGui()) {
-            showGuiCrashDialog(message.toString());
+            showGuiCrashDialog(message);
         } else {
-            showConsoleCrashMessage(modId, message.toString());
+            showConsoleCrashMessage(modId, message);
         }
     }
 
     // Render the crash as a Minecraft screen (client only) rather than a Swing popup.
     private void showGuiCrashDialog(String message) {
         try {
-            InGameScreenFactory.showCrashScreen("Transformed Mod", message, () -> {
-                LOGGER.info("User acknowledged crash - exiting Minecraft");
+            InGameScreenFactory.showCrashScreen("Mod compatibility error", message, () -> {
+                LOGGER.info("Closing Minecraft after the compatibility error");
                 System.exit(1);
             });
         } catch (Exception e) {
@@ -405,34 +374,26 @@ public class SafeCrashHandler {
     }
 
     private void showConsoleCrashMessage(String modId, String message) {
-        LOGGER.error("");
-        LOGGER.error("╔═══════════════════════════════════════════════════════════╗");
-        LOGGER.error("║           RETROMOD - MOD COMPATIBILITY ERROR              ║");
-        LOGGER.error("╠═══════════════════════════════════════════════════════════╣");
-        
+        LOGGER.error("Retromod is stopping the server after a mod compatibility error.");
         for (String line : message.split("\n")) {
-            LOGGER.error("║  {}", padRight(line, 56) + "║");
+            LOGGER.error("{}", line);
         }
-        
-        LOGGER.error("╠═══════════════════════════════════════════════════════════╣");
-        LOGGER.error("║  Server will shut down to prevent data corruption.        ║");
-        LOGGER.error("║  Remove the mod \"{}\" and restart.{}", modId, padRight("", 56 - 24 - modId.length()) + "║");
-        LOGGER.error("╚═══════════════════════════════════════════════════════════╝");
-        LOGGER.error("");
+        LOGGER.error("Remove {} or replace it with a compatible version before restarting.", modId);
 
-        // give logs time to flush
+        // Give appenders a moment to flush before the process exits.
         try {
             Thread.sleep(1000);
         } catch (InterruptedException ignored) {}
 
-        LOGGER.error("Shutting down server...");
+        LOGGER.error("Shutting down the server");
         System.exit(1);
     }
 
-    // Pad a string to length n, truncating if longer.
-    private String padRight(String s, int n) {
-        if (s.length() >= n) return s.substring(0, n);
-        return s + " ".repeat(n - s.length());
+    private String truncate(String value, int maxLength) {
+        if (value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength) + "...";
     }
 
     /** Returns the number of errors recorded for the given mod. */

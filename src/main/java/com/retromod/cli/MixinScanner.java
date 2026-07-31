@@ -362,7 +362,7 @@ public final class MixinScanner {
                 || (desc != null && desc.startsWith(MIXINEXTRAS_PREFIX) && desc.endsWith("/Local;"));
     }
 
-    // ---- ASM visitors -------------------------------------------------------------------------
+    // ASM visitors
 
     private static final class InjectorInfo {
         String injector;
@@ -615,7 +615,7 @@ public final class MixinScanner {
         }
     }
 
-    // ---- JSON + summary output ----------------------------------------------------------------
+    // JSON and summary output
 
     /** Serialize a scan result to the frozen JSON schema the Python tools consume verbatim. */
     public static String toJson(ScanResult result) {
@@ -662,7 +662,7 @@ public final class MixinScanner {
         return arr;
     }
 
-    /** Print a human summary plus a top-N table of the most-referenced targets and injectors. */
+    /** Print a summary and the most common targets and injectors. */
     public static void printSummary(ScanResult result, int topN, PrintStream out) {
         java.util.Set<String> mixinClasses = new java.util.HashSet<>();
         int handlers = 0;
@@ -685,7 +685,6 @@ public final class MixinScanner {
 
         out.println();
         out.println("Mixin scan summary");
-        out.println("==================");
         out.println("Jars scanned:   " + result.scannedJars
                 + (result.skippedJars > 0 ? " (" + result.skippedJars + " skipped)" : ""));
         out.println("Mixin classes:  " + mixinClasses.size());

@@ -167,10 +167,10 @@ public final class SignatureVerifier {
         }
     }
 
-    // A fork can change this text (MIT). The deterrent is social: a build silently missing it is the red flag.
+    // This is an informational notice, not a security boundary.
     private static final String FORK_NOTICE_TEMPLATE =
-        "You are using a %s Fork. If this was advertised as the official %s, "
-        + "this is NOT official! Check github.com/Bownlux/%s for the real thing.";
+        "This appears to be a modified %s build. If you expected the published %s, "
+        + "compare it with the files at github.com/Bownlux/%s.";
 
     private static String forkNotice() {
         return String.format(FORK_NOTICE_TEMPLATE,
@@ -183,29 +183,28 @@ public final class SignatureVerifier {
      */
     @Deprecated
     public static void logForkNotice() {
-        LOGGER.warn("[Retromod] {}", forkNotice());
+        LOGGER.warn("{}", forkNotice());
     }
 
     private static void logResult(VerificationResult result) {
         switch (result.status()) {
-            case VERIFIED -> LOGGER.info("[Retromod] ✓ Authenticity: VERIFIED - {}",
+            case VERIFIED -> LOGGER.info("Build integrity check passed: {}",
                     result.detail());
             case MODIFIED -> {
-                LOGGER.warn("[Retromod] ⚠ Authenticity: MODIFIED build - {}",
+                LOGGER.warn("This build differs from its embedded class hash: {}",
                         result.detail());
-                LOGGER.warn("[Retromod] {}", forkNotice());
+                LOGGER.warn("{}", forkNotice());
             }
             case IMPOSTOR -> {
-                LOGGER.error("[Retromod] ✗ Authenticity: IMPOSTOR - {}",
+                LOGGER.error("This jar does not identify itself as Retromod: {}",
                         result.detail());
-                LOGGER.error("[Retromod] {}", forkNotice());
+                LOGGER.error("{}", forkNotice());
             }
             case UNKNOWN -> {
-                LOGGER.debug("[Retromod] Authenticity: unknown - {}", result.detail());
-                // dev build with no embedded hash: log the computed value to embed in EXPECTED_SELF_HASH
+                LOGGER.debug("Build integrity was not checked: {}", result.detail());
                 if (result.selfHash() != null
                         && "Self-hash not embedded in this build".equals(result.detail())) {
-                    LOGGER.info("[Retromod] Computed self-hash (embed in EXPECTED_SELF_HASH "
+                    LOGGER.info("Computed self-hash (embed in EXPECTED_SELF_HASH "
                             + "for release): {}", result.selfHash());
                 }
             }

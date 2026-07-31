@@ -1,31 +1,25 @@
 #!/bin/bash
-# ============================================================================
-# Retromod Multi-Version Build Script
+# Retromod multi-version build script
 # Copyright (c) 2026 RevivalSMP. MIT License.
 #
-# Builds Retromod for ALL loaders and supported MC versions (1.20+):
+# Builds Retromod for each supported host:
 #   - Fabric (1.20 through 26.2)
 #   - Forge (1.20 through 26.1)
 #   - NeoForge (1.20.1 through 26.2)
-#   - CLI tool (standalone)
-# Older versions (1.12-1.19) are translated BY Retromod, not hosted separately.
-# ============================================================================
+#   - Standalone CLI
+# Older mods are translated at runtime and do not need separate host jars.
 
-# Don't exit on error - we'll handle errors ourselves
+# Keep building after one target fails so the final report can list every failure.
 # set -e
 
 VERSION="1.3.0-snapshot.3"
-# Only build for 1.20+ - older mods are translated BY Retromod, not hosted separately.
+# Older mods are translated at runtime, so only 1.20 and newer need host jars.
 # Security-only updates for versions before 26.1.
 MC_VERSIONS=("1.20" "1.20.1" "1.20.2" "1.20.3" "1.20.4" "1.20.5" "1.20.6" "1.21" "1.21.1" "1.21.2" "1.21.3" "1.21.4" "1.21.5" "1.21.6" "1.21.7" "1.21.8" "1.21.9" "1.21.10" "1.21.11" "26.1" "26.1.1" "26.1.2" "26.2")
 LOADERS=("fabric" "forge" "neoforge")
 
-echo "============================================"
-echo "  Retromod Multi-Version Build Script"
-echo "  Version: ${VERSION}"
-echo "  MIT License - RevivalSMP"
-echo "============================================"
-echo ""
+echo "Retromod multi-version build ${VERSION}"
+echo
 echo "Building for:"
 echo "  - ${#MC_VERSIONS[@]} Minecraft versions (1.20 - 26.2)"
 echo "  - ${#LOADERS[@]} mod loaders (Fabric, Forge, NeoForge)"
@@ -434,10 +428,8 @@ modId = "retromod"
 version = "${VERSION}"
 displayName = "Retromod"
 description = '''
-Backwards compatibility layer for Minecraft mods.
-Run older Forge mods on Minecraft ${MC_VERSION}!
-
-Made by the Developers of revivalsmp.net.
+Retromod helps older Forge mods run on Minecraft ${MC_VERSION}. It updates
+bytecode, mixins, and loader metadata, then keeps a backup of the original mod.
 '''
 authors = "Bownlux"
 logoFile = "assets/retromod/icon.png"
@@ -463,17 +455,10 @@ TOML
             rm -f "$TEMP_DIR/META-INF/mods.toml" 2>/dev/null
             # Create NeoForge mods.toml
             mkdir -p "$TEMP_DIR/META-INF"
-            # NeoForge: loaderVersion is the FancyModLoader version, NOT the
-            # NeoForge version. FML versions don't align with MC versions in
-            # any obvious way (FML 1.x for MC 1.20.2, FML 4.x for MC 1.20.6,
-            # FML 11.x for MC 26.1.x - and the numbers drift across each
-            # NeoForge release). Setting it to a low permissive value lets
-            # any current FML accept the mod; the actual NeoForge version
-            # gating is in the [[dependencies.retromod]] modId="neoforge"
-            # block further down, which uses NEOFORGE_LV.
-            # Without this, users hit "needs language provider java:X or
-            # above to load, we have found Y" where X is our MC-version-based
-            # number and Y is the FML version they have. Reported on beta.2.
+            # loaderVersion tracks FancyModLoader, not NeoForge or Minecraft.
+            # Their version numbers do not move together, so keep this range
+            # permissive and enforce the real requirement in the neoforge
+            # dependency below.
             cat > "$TEMP_DIR/META-INF/neoforge.mods.toml" << TOML
 modLoader = "javafml"
 loaderVersion = "[1,)"
@@ -485,10 +470,8 @@ modId = "retromod"
 version = "${VERSION}"
 displayName = "Retromod"
 description = '''
-Backwards compatibility layer for Minecraft mods.
-Run older NeoForge mods on Minecraft ${MC_VERSION}!
-
-Made by the Developers of revivalsmp.net.
+Retromod helps older NeoForge mods run on Minecraft ${MC_VERSION}. It updates
+bytecode, mixins, and loader metadata, then keeps a backup of the original mod.
 '''
 authors = "Bownlux"
 logoFile = "assets/retromod/icon.png"
@@ -574,61 +557,50 @@ NEOFORGE_COUNT=$(find dist/NeoForge -name "*.jar" 2>/dev/null | wc -l | tr -d ' 
 CLI_COUNT=$(find dist/CLI -name "*.jar" 2>/dev/null | wc -l | tr -d ' ')
 TOTAL_COUNT=$((FABRIC_COUNT + FORGE_COUNT + NEOFORGE_COUNT + CLI_COUNT))
 
-echo ""
-echo "============================================"
-echo "  Build Complete!"
-echo "============================================"
-echo ""
+echo
+echo "Build complete"
+echo
 echo "Output structure:"
-echo "  dist/"
-echo "  ├── Fabric/        (host: 1.20 - 26.2, translates mods from 1.14.4+)"
-echo "  ├── Forge/         (host: 1.20 - 26.1.2, translates mods from 1.12.2+)"
-echo "  ├── NeoForge/      (host: 1.20.1 - 26.2, translates mods from 1.20.1+)"
-echo "  └── CLI/"
-echo "      └── retromod-${VERSION}-cli.jar"
+echo "  dist/Fabric/     hosts 1.20 through 26.2"
+echo "  dist/Forge/      hosts 1.20 through 26.1.2"
+echo "  dist/NeoForge/   hosts 1.20.1 through 26.2"
+echo "  dist/CLI/        retromod-${VERSION}-cli.jar"
 echo ""
 echo "Summary:"
 echo "  Fabric:   ${FABRIC_COUNT} JARs"
 echo "  Forge:    ${FORGE_COUNT} JARs"
 echo "  NeoForge: ${NEOFORGE_COUNT} JARs"
 echo "  CLI:      ${CLI_COUNT} JAR"
-echo "  ─────────────────────"
+echo
 echo "  Total:    ${TOTAL_COUNT} JARs"
 
 if [ $FAILED -gt 0 ]; then
     echo ""
-    echo "  WARNING: ${FAILED} JAR(s) failed to build"
+    echo "  ${FAILED} JAR(s) failed to build."
 fi
 
-# ---- Release-integrity gate ----------------------------------------------
-# The per-loader counts above are computed from `find` on the real output, so
-# they can't over-report. But two silent-partial failures still need catching:
-#   (1) create_mod_jar returning 0 while emitting nothing (e.g. a cwd/path bug
-#       that makes every `mv` miss) - FAILED stays 0 but TOTAL collapses.
-#   (2) a whole loader producing zero jars.
-# Guard with an expected floor + a hard non-zero exit so CI and the release
-# flow actually fail instead of shipping an empty/partial dist/.
+# A successful command can still produce no jar, so verify the output itself.
 EXPECTED_MIN=${EXPECTED_MIN:-60}   # 22 Fabric + 22 Forge + 19 NeoForge + 1 CLI = 64; floor leaves slack
 RELEASE_OK=1
 if [ "$TOTAL_COUNT" -lt "$EXPECTED_MIN" ]; then
     echo ""
-    echo "  ERROR: produced ${TOTAL_COUNT} JARs, expected at least ${EXPECTED_MIN}."
-    echo "         dist/ is INCOMPLETE - do not publish this build."
+    echo "  The build produced ${TOTAL_COUNT} JARs, but at least ${EXPECTED_MIN} were expected."
+    echo "  Do not publish this incomplete dist folder."
     RELEASE_OK=0
 fi
 for pair in "Fabric:${FABRIC_COUNT}" "Forge:${FORGE_COUNT}" "NeoForge:${NEOFORGE_COUNT}" "CLI:${CLI_COUNT}"; do
     name=${pair%%:*}; n=${pair##*:}
     if [ "$n" -eq 0 ]; then
-        echo "  ERROR: ${name} produced 0 JARs - a whole loader is missing."
+        echo "  ${name} produced no JARs, so that loader is missing."
         RELEASE_OK=0
     fi
 done
 
 echo ""
 if [ "$RELEASE_OK" -eq 1 ] && [ "$FAILED" -eq 0 ]; then
-    echo "  ✓ dist/ looks complete (${TOTAL_COUNT} JARs, no failures)."
+    echo "  dist looks complete: ${TOTAL_COUNT} JARs with no failures."
 else
-    echo "  ✗ Build did NOT pass the release-integrity gate. See errors above."
+    echo "  The build is incomplete. Review the errors above."
     exit 1
 fi
 

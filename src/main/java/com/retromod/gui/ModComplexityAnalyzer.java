@@ -22,7 +22,7 @@ import java.util.jar.*;
  * are "unlikely to work" because Retromod cannot remap all of their
  * internal dependencies.
  *
- * The complexity score is a heuristic. It does NOT guarantee failure,
+ * The complexity score is a heuristic. It does not guarantee failure,
  * but gives users a heads-up before wasting time on a mod that will crash.
  *
  * Scoring:

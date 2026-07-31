@@ -66,9 +66,8 @@ public class FabricServerWorldEventsShim implements VersionShim {
         transformer.registerClassRedirect(OLD + "$Load", LOAD);
         transformer.registerClassRedirect(OLD + "$Unload", UNLOAD);
 
-        LOGGER.info("[Retromod] Fabric ServerWorldEvents bridge - kept LOAD/UNLOAD + "
-                + "onWorldLoad/onWorldUnload SAMs wired to ServerLevelEvents "
-                + "(STATUS: needs in-game verification)");
+        LOGGER.debug("Installed the Fabric server world event bridge. "
+                + "An in-game verification run is still pending.");
     }
 
     /** Holder with {@code LOAD}/{@code UNLOAD} fields wired in {@code <clinit>}. */

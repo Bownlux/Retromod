@@ -83,7 +83,7 @@ public class RetromodTest {
             classRedirects.get("net/minecraft/resources/ResourceLocation"));
 
         // #51: LootContextParamSet (singular) renamed + moved to util/context/ContextKeySet
-        // by 1.21.11. The plural LootContextParamSets is unchanged and must NOT be redirected.
+        // by 1.21.11. The plural LootContextParamSets is unchanged and must not be redirected.
         assertEquals("net/minecraft/util/context/ContextKeySet",
             classRedirects.get("net/minecraft/world/level/storage/loot/parameters/LootContextParamSet"));
         assertEquals("net/minecraft/util/context/ContextKeySet$Builder",

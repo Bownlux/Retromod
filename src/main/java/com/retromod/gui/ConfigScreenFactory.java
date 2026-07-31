@@ -60,14 +60,11 @@ public final class ConfigScreenFactory {
 
     private ConfigScreenFactory() {}
 
-    // PUBLIC API
-
-    /**
-     * Open the config editor in-game. Returns to {@code parentScreen} on close.
-     */
+    /** Opens the in-game settings screen and returns to {@code parentScreen} on close. */
     public static void open(Object parentScreen) {
         if (!resolveClasses()) {
-            LOGGER.warn("Cannot open config screen - MC classes not available");
+            LOGGER.warn("Cannot open Retromod settings because the required Minecraft GUI "
+                    + "classes are unavailable");
             return;
         }
 
@@ -76,11 +73,11 @@ public final class ConfigScreenFactory {
         Object title = McI18n.translatable("retromod.settings.title");
         if (title == null) return;
 
-        // Build the screen; widgets are added from init() on the render thread.
+        // Minecraft invokes the setup callback on its render thread.
         Object screen = ScreenClassGenerator.createScreen(
                 title,
-                /* initCallback  */ s -> addAllWidgets(s, config, parentScreen),
-                /* closeCallback */ () -> saveConfig(config)
+                s -> addAllWidgets(s, config, parentScreen),
+                () -> saveConfig(config)
         );
 
         if (screen != null) {

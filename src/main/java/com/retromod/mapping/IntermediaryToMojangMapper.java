@@ -58,7 +58,8 @@ public class IntermediaryToMojangMapper {
 
         try (InputStream is = getClass().getResourceAsStream(MAPPING_RESOURCE)) {
             if (is == null) {
-                LOGGER.warn("Intermediary→Mojang mapping file not found: {}", MAPPING_RESOURCE);
+                LOGGER.warn("Could not find the intermediary to Mojang mapping file at {}. "
+                        + "Fabric name remapping is unavailable.", MAPPING_RESOURCE);
                 return;
             }
 
@@ -79,11 +80,12 @@ public class IntermediaryToMojangMapper {
             }
 
             long elapsed = System.currentTimeMillis() - start;
-            LOGGER.info("Loaded intermediary→Mojang mappings: {} classes, {} fields, {} methods ({}ms)",
-                classMap.size(), fieldMap.size(), methodMap.size(), elapsed);
+            LOGGER.info("Loaded intermediary to Mojang mappings for {} classes, {} fields, "
+                            + "and {} methods in {} ms",
+                    classMap.size(), fieldMap.size(), methodMap.size(), elapsed);
 
         } catch (IOException e) {
-            LOGGER.error("Failed to load intermediary→Mojang mappings: {}", e.getMessage());
+            LOGGER.error("Could not load intermediary to Mojang mappings: {}", e.getMessage());
         }
     }
 
@@ -290,7 +292,8 @@ public class IntermediaryToMojangMapper {
             classMoves++;
         }
 
-        LOGGER.info("IntermediaryToMojangMapper.applyTo: {} intermediary→Mojang class redirects ({} composed), {} methods, {} fields, {} additional class-moves",
+        LOGGER.info("Registered {} intermediary to Mojang class redirects ({} composed), "
+                        + "{} method names, {} field names, and {} class moves",
                 classRedirects, composed, mapper.getMethodMap().size(),
                 mapper.getFieldMap().size(), classMoves);
         return classRedirects;
@@ -326,7 +329,7 @@ public class IntermediaryToMojangMapper {
         transformer.registerIntermediaryMemberMapping("method_14452",
                 "(Lnet/minecraft/class_5444;Lnet/minecraft/class_5819;Lnet/minecraft/class_2338;)Ljava/util/stream/Stream;",
                 "getPositions", false); // 1.19+
-        // getCount(random, BlockPos) -> int  (Mojang: count) — the variant the tsv already keeps,
+        // getCount(random, BlockPos) -> int (Mojang: count) is already kept by the TSV,
         // registered explicitly so method_14452 is fully descriptor-resolved even if the flat tsv changes.
         transformer.registerIntermediaryMemberMapping("method_14452",
                 "(Ljava/util/Random;Lnet/minecraft/class_2338;)I", "count", false); // 1.18.x
@@ -407,8 +410,9 @@ public class IntermediaryToMojangMapper {
                 com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
                         com.retromod.core.RetromodVersion.TARGET_MC_VERSION);
         if (!haveHost) {
-            LOGGER.warn("applyClassMovesOnly: could not query host classes - falling back to the "
-                    + "coarse 26.1 gate (apply-all={})", unobfFallback);
+            LOGGER.warn("Could not inspect host classes while applying class moves. "
+                    + "Using the broader 26.1 version check instead (apply all: {}).",
+                    unobfFallback);
         }
 
         int applied = 0, skippedNewMissing = 0, skippedOldPresent = 0;

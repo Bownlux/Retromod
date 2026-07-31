@@ -9,7 +9,7 @@ permalink: /compatdb/
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Retromod DB — mod compatibility reports</title>
+<title>Retromod DB: mod compatibility reports</title>
 <meta name="description" content="Community-reported mod compatibility for Retromod, ProtonDB-style: badges, versions, bundles, and details.">
 <style>
 :root {
@@ -114,8 +114,8 @@ directory is not a .yml, so the data loader skips it. Collect the hash values in
 {% assign ngold = entries | where: "badge", "gold" | size %}
 
 <div class="hero">
-  <h1>Does it run through Retromod?</h1>
-  <p>Community reports of real mods run through Retromod — the exact versions used and how well it actually went. Honest beats optimistic: <i>"loads but X is broken"</i> is the most useful report there is.</p>
+  <h1>Retromod compatibility reports</h1>
+  <p>Real test results with exact mod, loader, Minecraft, and Retromod versions. Specific limitations are more useful than a simple "works."</p>
   <div class="stats">
     <div><b>{{ total }}</b> reports</div>
     <div><b>{{ ndiamond | plus: ngold }}</b> gold or better</div>
@@ -124,7 +124,7 @@ directory is not a .yml, so the data loader skips it. Collect the hash values in
   <div class="searchwrap"><input id="q" type="search" placeholder="Search mods…" autocomplete="off"></div>
   <div class="modes">
     <button class="mode active" data-mode="community">💬 Community reports</button>
-    <button class="mode" data-mode="audit">🔬 Audit — top 5,000 Modrinth mods</button>
+    <button class="mode" data-mode="audit">🔬 Audit: top 5,000 Modrinth mods</button>
   </div>
   <div class="filters" id="f-badge">
     <button class="chip active" data-filter="all">All</button>
@@ -185,24 +185,24 @@ directory is not a .yml, so the data loader skips it. Collect the hash values in
   </div>
   {% endfor %}
   </div>
-  <p id="empty">No reports match. Be the first — add yours below. 👇</p>
+  <p id="empty">No reports match these filters. You can add one below.</p>
 
   <div id="audit">
     <div class="banner">
       🔬 <b>Static audit, not gameplay.</b> The top 5,000 Modrinth mods were run through Retromod
       1.1.0-snapshot.2's transform (target MC 26.1.2, May 30 2026) and checked for unresolved
-      Minecraft/Fabric-API references — <b>Clean = transforms with zero unresolved references</b>,
+      Minecraft/Fabric-API references. <b>Clean means zero unresolved references</b>,
       which is necessary but not sufficient for "works in game" (runtime behavior, datapacks, and
       bridge-backed APIs aren't measured; bridge fixes since the audit aren't reflected). Treat
       Gaps as "needs Retromod work or a port", not as a verdict on the mod. Community reports
-      above are the ground truth — <a href="#add">add yours</a>.
+      above are the ground truth. <a href="#add">Add yours</a>.
     </div>
     <div class="filters" id="f-verdict">
       <button class="chip active" data-verdict="all">All</button>
-      <button class="chip" data-verdict="clean">✅ Clean transform</button>
-      <button class="chip" data-verdict="gaps">⚠️ API gaps</button>
+      <button class="chip" data-verdict="clean">Clean transform</button>
+      <button class="chip" data-verdict="gaps">API gaps</button>
       <button class="chip" data-verdict="fail">✖ Transform failed</button>
-      <button class="chip" data-verdict="skip">⏭ Skipped</button>
+      <button class="chip" data-verdict="skip">Skipped</button>
     </div>
     <div class="count" id="acount"></div>
     <div id="alist"></div>
@@ -211,24 +211,24 @@ directory is not a .yml, so the data loader skips it. Collect the hash values in
 
   <div class="submit" id="add">
     <h2>Add your report</h2>
-    <p>Fill this in and hit submit — it opens a <b>pre-filled</b> GitHub report (you just press one button there). A bot then turns it into a pull request against the database automatically; once a maintainer merges, your report is live. No YAML, no manual issue writing. <span style="opacity:.8">(A GitHub account is the only requirement — it's what keeps spam out.)</span></p>
+    <p>Fill in the form to open a pre-filled GitHub report. After review, an automated pull request adds it to the database. A GitHub account is required to limit spam.</p>
     <div class="grid">
       <div><label>Report type</label><select id="s-type"><option value="Single mod">Single mod</option><option value="Bundle (multiple mods together)">Bundle (mods together)</option></select></div>
-      <div><label>Mod name (or bundle label)</label><input id="s-name" placeholder="AppleSkin — or 'My QoL pack'"></div>
+      <div><label>Mod name (or bundle label)</label><input id="s-name" placeholder="AppleSkin or 'My QoL pack'"></div>
       <div><label>Mod link</label><input id="s-link" placeholder="https://modrinth.com/mod/…"></div>
       <div><label>Mod version + built-for MC</label><input id="s-ver" placeholder="2.5.2, built for 1.20.1"></div>
       <div><label>Host MC you ran it on</label><input id="s-host" placeholder="26.1.2"></div>
       <div><label>Loader</label><select id="s-loader"><option>Fabric</option><option>NeoForge</option><option>Forge</option></select></div>
       <div><label>Retromod version</label><input id="s-rm" placeholder="1.1.0"></div>
       <div><label>Badge</label><select id="s-badge">
-        <option>Diamond — indistinguishable from native; everything works</option>
-        <option>Gold — fully playable; minor or cosmetic quirks only</option>
-        <option>Iron — core features work; something noticeable is broken</option>
-        <option>Copper — loads and runs, but major features are missing/inert</option>
-        <option>Borked — crashes or unusable</option>
+        <option>Diamond: indistinguishable from native; everything works</option>
+        <option>Gold: fully playable; minor or cosmetic quirks only</option>
+        <option>Iron: core features work; something noticeable is broken</option>
+        <option>Copper: loads and runs, but major features are missing/inert</option>
+        <option>Borked: crashes or unusable</option>
       </select></div>
       <div class="full"><label>One-line summary</label><input id="s-sum" placeholder="Hunger overlay works; tooltip values slightly off"></div>
-      <div class="full" id="bundlebox"><label>Bundle mods — one per line: name | version | built-for MC | link</label>
+      <div class="full" id="bundlebox"><label>Bundle mods, one per line: name | version | built-for MC | link</label>
         <textarea id="s-bundle" placeholder="AppleSkin | 2.5.2 | 1.20.1 | https://modrinth.com/mod/appleskin&#10;Chunky | 1.2.164 | 1.18.2 | https://modrinth.com/mod/chunky"></textarea></div>
       <div class="full"><label>Details (what works, what doesn't, log snippets)</label><textarea id="s-det"></textarea></div>
     </div>

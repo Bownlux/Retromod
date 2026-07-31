@@ -53,9 +53,9 @@ public final class RetromodLoaderPreLaunch implements PreLaunchEntrypoint {
             if (!Files.isDirectory(folder)) {
                 return;
             }
-            // -Dfabric.addMods already points here: Fabric loaded the jars in place, don't move them.
+            // Fabric can load this folder directly when fabric.addMods points to it.
             if (addModsCovers(gameDir, folder)) {
-                LOGGER.info("[Retromod-Loader] mods/Retromod/ is on -Dfabric.addMods - loaded in place; nothing to drain");
+                LOGGER.info("Fabric is loading transformed mods directly from {}", folder);
                 return;
             }
             List<Path> jars = listJars(folder);
@@ -69,15 +69,17 @@ public final class RetromodLoaderPreLaunch implements PreLaunchEntrypoint {
                             StandardCopyOption.REPLACE_EXISTING);
                     moved++;
                 } catch (IOException e) {
-                    LOGGER.error("[Retromod-Loader] could not move {}: {}", jar.getFileName(), e.toString());
+                    LOGGER.error("Could not move {} into the mods folder: {}",
+                            jar.getFileName(), e.toString());
                 }
             }
             if (moved > 0) {
-                LOGGER.info("[Retromod-Loader] moved {} jar(s) from mods/Retromod/ into mods/ - "
-                        + "RESTART Minecraft once for them to load", moved);
+                LOGGER.info("Moved {} transformed mod {} into the mods folder. Restart "
+                                + "Minecraft to load {}.",
+                        moved, moved == 1 ? "jar" : "jars", moved == 1 ? "it" : "them");
             }
         } catch (Exception e) {
-            LOGGER.error("[Retromod-Loader] pre-launch error: {}", e.toString());
+            LOGGER.error("Could not prepare transformed mods before launch: {}", e.toString());
         }
     }
 
@@ -105,7 +107,7 @@ public final class RetromodLoaderPreLaunch implements PreLaunchEntrypoint {
                     return true;
                 }
             } catch (Exception ignored) {
-                // malformed entry: ignore
+                // One malformed path should not hide the other configured folders.
             }
         }
         return false;
@@ -119,7 +121,7 @@ public final class RetromodLoaderPreLaunch implements PreLaunchEntrypoint {
              .sorted()
              .forEach(out::add);
         } catch (IOException e) {
-            LOGGER.error("[Retromod-Loader] could not list {}: {}", folder, e.toString());
+            LOGGER.error("Could not list transformed mods in {}: {}", folder, e.toString());
         }
         return out;
     }

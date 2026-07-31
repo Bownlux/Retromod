@@ -42,7 +42,8 @@ public final class Pre1_20_5IdentifierCtorBridge {
             identifier = Class.forName(IDENTIFIER_FQN, false,
                     Pre1_20_5IdentifierCtorBridge.class.getClassLoader());
         } catch (Throwable t) {
-            LOGGER.debug("[Retromod] Identifier ctor bridge - class_2960 not on classpath, skipping ({})",
+            LOGGER.debug("Identifier constructor support is not needed because class_2960 "
+                            + "is unavailable ({})",
                     t.getClass().getSimpleName());
             return;
         }
@@ -67,15 +68,10 @@ public final class Pre1_20_5IdentifierCtorBridge {
         }
 
         if (registered == 0) {
-            LOGGER.info("[Retromod] Identifier ctor bridge - no static (String)→Identifier "
-                    + "or (String,String)→Identifier factory on class_2960; host likely still "
-                    + "has the public ctors, nothing to redirect");
+            LOGGER.debug("The host still appears to support the old Identifier constructors");
         } else {
-            LOGGER.info("[Retromod] Identifier ctor bridge - wired {} redirect(s): "
-                    + "new class_2960({}) → class_2960.{}(...)",
-                    registered,
-                    fromNsPathName != null ? "(String[,String])" : "String",
-                    parseName != null ? parseName : "?");
+            LOGGER.debug("Added {} Identifier constructor {}", registered,
+                    registered == 1 ? "redirect" : "redirects");
         }
     }
 
@@ -97,9 +93,8 @@ public final class Pre1_20_5IdentifierCtorBridge {
             }
             if (!ok) continue;
             if (match != null) {
-                LOGGER.warn("[Retromod] Identifier ctor bridge - multiple static factories with the "
-                        + "expected signature on class_2960 ({} and {}), refusing to guess - "
-                        + "this Identifier ctor will stay broken",
+                LOGGER.warn("Found two possible Identifier factories, {} and {}. Retromod will "
+                                + "leave this constructor unchanged because it cannot choose safely.",
                         match, m.getName());
                 return null;
             }

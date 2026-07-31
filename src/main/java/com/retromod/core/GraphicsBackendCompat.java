@@ -83,7 +83,7 @@ public final class GraphicsBackendCompat {
         try {
             return apply(gameDir.resolve(OPTIONS_FILE));
         } catch (IOException e) {
-            LOGGER.warn("[Retromod] Could not set graphics backend preference in options.txt: {}",
+            LOGGER.warn("Could not update the graphics setting in options.txt: {}",
                     e.getMessage());
             return Result.IO_ERROR;
         }
@@ -91,9 +91,8 @@ public final class GraphicsBackendCompat {
 
     /** options.txt read/modify/write; package-private for tests. */
     static Result apply(Path optionsTxt) throws IOException {
-        // On a fresh instance options.txt doesn't exist yet (MC creates it after our
-        // pre-launch runs). Pre-create it with just our key; MC fills in the rest on
-        // first save, so the very first launch comes up on OpenGL.
+        // Minecraft creates this file after pre-launch. Writing the one needed setting now makes
+        // the first launch use OpenGL, and Minecraft fills in the rest when it saves.
         if (!Files.exists(optionsTxt)) {
             Files.writeString(optionsTxt, OPENGL_LINE + System.lineSeparator(),
                     StandardCharsets.UTF_8);
@@ -120,10 +119,9 @@ public final class GraphicsBackendCompat {
                 return Result.ALREADY_OPENGL;
             }
             if (v.equals(VULKAN)) {
-                // Explicit user choice: keep it, but make the trade-off visible.
-                LOGGER.warn("[Retromod] options.txt has preferredGraphicsBackend:\"vulkan\". "
-                        + "Translated old mods may render incorrectly or crash on the Vulkan "
-                        + "backend - set Graphics API to OpenGL in Video Settings if you hit "
+                // Keep an explicit choice, but explain why old rendering code may struggle.
+                LOGGER.warn("Your Graphics API is set to Vulkan. Translated old mods may render "
+                        + "incorrectly or crash. Switch to OpenGL in Video Settings if you see "
                         + "rendering issues.");
                 return Result.RESPECTED_VULKAN;
             }
@@ -146,9 +144,8 @@ public final class GraphicsBackendCompat {
     }
 
     private static void logSet(boolean created) {
-        LOGGER.info("[Retromod] Set {} in options.txt{} so translated mods' OpenGL rendering "
-                + "works on MC 26.2+ (Vulkan is the new default). To use Vulkan, change "
-                + "Graphics API in Video Settings (disable with -D{}=true).",
-                OPENGL_LINE, created ? " (created)" : "", OPT_OUT_PROPERTY);
+        LOGGER.info("Set the Graphics API to OpenGL in options.txt{} for older mods. "
+                        + "You can change it in Video Settings or disable this update with -D{}=true.",
+                created ? " after creating the file" : "", OPT_OUT_PROPERTY);
     }
 }

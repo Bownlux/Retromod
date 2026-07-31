@@ -10,30 +10,28 @@ import org.slf4j.LoggerFactory;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Handles transformation errors and directs users to report bugs on GitHub.
- *
- * When a mod fails to transform, this class:
- * 1. Logs the detailed error
- * 2. Shows a user-friendly message
- * 3. Provides a link to GitHub Issues for bug reports
- * 4. Generates a bug report template the user can copy
+ * Reports transform failures without hiding the original exception.
  */
-public class TransformationErrorHandler {
+public final class TransformationErrorHandler {
     
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Error");
     
-    // GitHub for bug reports
     public static final String GITHUB_URL = "https://github.com/Bownlux/Retromod";
     public static final String GITHUB_ISSUES_URL = "https://github.com/Bownlux/Retromod/issues/new?title=Bug%20Report";
     
-    // Track failed mods for summary
-    private static final List<FailedMod> failedMods = new ArrayList<>();
+    private static final List<FailedMod> failedMods = new CopyOnWriteArrayList<>();
+
+    private TransformationErrorHandler() {
+    }
     
     public record FailedMod(
         String modName,
@@ -45,15 +43,7 @@ public class TransformationErrorHandler {
         String stackTrace
     ) {}
     
-    /**
-     * Handle a transformation error.
-     * 
-     * @param modPath Path to the mod JAR that failed
-     * @param error The exception that occurred
-     * @param modId Mod ID if known
-     * @param modLoader Mod loader type (fabric, forge, neoforge)
-     * @param sourceVersion Source Minecraft version
-     */
+    /** Records a failed transform and tells the user how to report it. */
     public static void handleError(Path modPath, Throwable error, String modId, 
                                    String modLoader, String sourceVersion) {
         
@@ -62,39 +52,22 @@ public class TransformationErrorHandler {
         String errorMessage = error.getMessage() != null ? error.getMessage() : "Unknown error";
         String stackTrace = getStackTraceString(error);
         
-        // Record the failure
         FailedMod failed = new FailedMod(
             modName, modId, modLoader, sourceVersion, errorType, errorMessage, stackTrace
         );
         failedMods.add(failed);
         
-        // Log detailed error
-        LOGGER.error("═══════════════════════════════════════════════════════════");
-        LOGGER.error("  TRANSFORMATION FAILED!");
-        LOGGER.error("═══════════════════════════════════════════════════════════");
-        LOGGER.error("  Mod: {}", modName);
-        LOGGER.error("  Mod ID: {}", modId != null ? modId : "Unknown");
-        LOGGER.error("  Loader: {}", modLoader);
-        LOGGER.error("  Source Version: {}", sourceVersion);
-        LOGGER.error("");
-        LOGGER.error("  Error: {} - {}", errorType, errorMessage);
-        LOGGER.error("");
-        LOGGER.error("  This mod does NOT work with Retromod.");
-        LOGGER.error("");
-        LOGGER.error("  PLEASE REPORT THIS BUG:");
-        LOGGER.error("  → GitHub: {}", GITHUB_ISSUES_URL);
-        LOGGER.error("═══════════════════════════════════════════════════════════");
-        LOGGER.debug("Stack trace:", error);
+        LOGGER.error("Retromod could not update {} ({}): {}", modName, errorType, errorMessage);
+        LOGGER.error("Loader: {}, source Minecraft: {}, mod ID: {}",
+            known(modLoader), known(sourceVersion), known(modId));
+        LOGGER.error("Report this failure at {} and attach logs/latest.log", GITHUB_ISSUES_URL);
+        LOGGER.debug("Full transform failure for " + modName, error);
         
-        // Show GUI if on client
         if (EnvironmentDetector.canShowGui()) {
             showErrorDialog(failed);
         }
     }
     
-    /**
-     * Show error dialog with bug report option.
-     */
     private static void showErrorDialog(FailedMod failed) {
         SwingUtilities.invokeLater(() -> {
             try {
@@ -102,25 +75,12 @@ public class TransformationErrorHandler {
             } catch (Exception ignored) {}
             
             String message = String.format("""
-                ❌ Mod Transformation Failed!
-                
-                ═══════════════════════════════════════
-                
-                Mod: %s
-                Error: %s
-                
-                ═══════════════════════════════════════
-                
-                This mod does NOT work with Retromod.
-                
-                Please report this bug so we can fix it!
-                
-                → GitHub: github.com/Bownlux/Retromod/issues
+                Retromod could not update %s.
 
-                Click "Copy Bug Report" to copy a template,
-                then paste it when creating a new issue on GitHub.
-                
-                ═══════════════════════════════════════
+                Error: %s
+
+                The original mod has not been replaced. You can copy a report
+                template or open GitHub Issues to tell us what happened.
                 """,
                 failed.modName(),
                 failed.errorType() + ": " + truncate(failed.errorMessage(), 50)
@@ -129,32 +89,25 @@ public class TransformationErrorHandler {
             int choice = JOptionPane.showOptionDialog(
                 null,
                 message,
-                "Retromod - Transformation Failed",
+                "Retromod could not update a mod",
                 JOptionPane.YES_NO_CANCEL_OPTION,
                 JOptionPane.ERROR_MESSAGE,
                 null,
-                new String[]{"Open GitHub Issues", "Copy Bug Report", "OK"},
+                new String[]{"Open GitHub Issues", "Copy Report", "Close"},
                 "Open GitHub Issues"
             );
             
             if (choice == 0) {
-                // Open GitHub Issues
                 openGitHub();
             } else if (choice == 1) {
-                // Copy bug report to clipboard
                 copyBugReport(failed);
             }
         });
     }
     
     /**
-     * Open GitHub Issues in browser. If the JVM's Desktop API isn't
-     * available (rare on a system that's running Minecraft with a window),
-     * fall through to a dialog that shows the URL for the user to copy.
-     * We intentionally don't shell out to {@code xdg-open} as a fallback -
-     * the user-facing dialog is a better UX than a process exec, and
-     * avoiding {@code Runtime.exec} entirely keeps the mod's behavior
-     * easier to audit.
+     * Opens GitHub through the desktop API. If that is unavailable, shows a
+     * copyable URL instead of starting a platform-specific process.
      */
     private static void openGitHub() {
         try {
@@ -173,9 +126,6 @@ public class TransformationErrorHandler {
         );
     }
     
-    /**
-     * Copy bug report template to clipboard.
-     */
     private static void copyBugReport(FailedMod failed) {
         String report = generateBugReport(failed);
         
@@ -185,12 +135,11 @@ public class TransformationErrorHandler {
             
             JOptionPane.showMessageDialog(
                 null,
-                "Bug report copied to clipboard!\n\nGo to GitHub Issues and paste it in a new issue.",
-                "Copied!",
+                "The report is on your clipboard. Paste it into a new GitHub issue and attach logs/latest.log.",
+                "Report copied",
                 JOptionPane.INFORMATION_MESSAGE
             );
         } catch (Exception e) {
-            // Show the report in a dialog if clipboard fails
             JTextArea textArea = new JTextArea(report);
             textArea.setEditable(false);
             textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
@@ -206,9 +155,7 @@ public class TransformationErrorHandler {
         }
     }
     
-    /**
-     * Generate a bug report template.
-     */
+    /** Builds the report shown in the dialog and server log. */
     public static String generateBugReport(FailedMod failed) {
         return String.format("""
             # Retromod Bug Report
@@ -218,7 +165,7 @@ public class TransformationErrorHandler {
             - **Mod ID:** %s
             - **Mod Loader:** %s
             - **Source MC Version:** %s
-            - **Target MC Version:** 1.21.1
+            - **Target MC Version:** %s
             
             ## Error
             - **Type:** %s
@@ -230,111 +177,70 @@ public class TransformationErrorHandler {
             ```
             
             ## System Info
-            - **Retromod Version:** 1.0.0
+            - **Retromod Version:** %s
             - **Java Version:** %s
             - **OS:** %s
             
-            ## Additional Info
-            (Please add any additional information here, such as other mods installed)
-            
-            ---
-            *Generated by Retromod Error Handler*
+            ## What I Was Doing
+            Describe the setup and attach `logs/latest.log`.
             """,
             failed.modName(),
-            failed.modId() != null ? failed.modId() : "Unknown",
-            failed.modLoader(),
-            failed.sourceVersion() != null ? failed.sourceVersion() : "Unknown",
+            known(failed.modId()),
+            known(failed.modLoader()),
+            known(failed.sourceVersion()),
+            RetromodVersion.TARGET_MC_VERSION,
             failed.errorType(),
             failed.errorMessage(),
             truncate(failed.stackTrace(), 2000),
+            RetromodVersion.RETROMOD_VERSION,
             System.getProperty("java.version"),
             System.getProperty("os.name") + " " + System.getProperty("os.version")
         );
     }
     
-    /**
-     * Log bug report template to console (for servers).
-     */
+    /** Prints a report template for headless servers. */
     public static void logBugReportToConsole(FailedMod failed) {
         String report = generateBugReport(failed);
         
-        LOGGER.error("");
-        LOGGER.error("╔══════════════════════════════════════════════════════════╗");
-        LOGGER.error("║          PLEASE REPORT THIS BUG ON GITHUB!               ║");
-        LOGGER.error("╠══════════════════════════════════════════════════════════╣");
-        LOGGER.error("║  → github.com/Bownlux/Retromod/issues                ║");
-        LOGGER.error("╠══════════════════════════════════════════════════════════╣");
-        LOGGER.error("║  Copy this bug report:                                   ║");
-        LOGGER.error("╚══════════════════════════════════════════════════════════╝");
-        LOGGER.error("");
+        LOGGER.error("Report this failure at {}", GITHUB_ISSUES_URL);
+        LOGGER.error("Copy the report below and attach logs/latest.log:");
         for (String line : report.split("\n")) {
-            LOGGER.error("  {}", line);
+            LOGGER.error("{}", line);
         }
-        LOGGER.error("");
     }
     
-    /**
-     * Get stack trace as string.
-     */
     private static String getStackTraceString(Throwable error) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(error.toString()).append("\n");
-        for (StackTraceElement element : error.getStackTrace()) {
-            sb.append("  at ").append(element.toString()).append("\n");
-        }
-        if (error.getCause() != null) {
-            sb.append("Caused by: ").append(error.getCause().toString()).append("\n");
-            for (StackTraceElement element : error.getCause().getStackTrace()) {
-                sb.append("  at ").append(element.toString()).append("\n");
-                if (sb.length() > 3000) break; // Limit size
-            }
-        }
-        return sb.toString();
+        StringWriter output = new StringWriter();
+        error.printStackTrace(new PrintWriter(output));
+        return output.toString();
     }
     
-    /**
-     * Truncate string to max length.
-     */
     private static String truncate(String s, int maxLen) {
         if (s == null) return "null";
         if (s.length() <= maxLen) return s;
         return s.substring(0, maxLen) + "...";
     }
+
+    private static String known(String value) {
+        return value == null || value.isBlank() ? "Unknown" : value;
+    }
     
-    /**
-     * Get list of all failed mods.
-     */
     public static List<FailedMod> getFailedMods() {
         return new ArrayList<>(failedMods);
     }
     
-    /**
-     * Check if any mods failed.
-     */
     public static boolean hasFailures() {
         return !failedMods.isEmpty();
     }
     
-    /**
-     * Show summary of all failed mods at end of transformation.
-     */
+    /** Logs a compact summary after a batch. */
     public static void showFailureSummary() {
         if (failedMods.isEmpty()) return;
         
-        LOGGER.error("");
-        LOGGER.error("╔══════════════════════════════════════════════════════════╗");
-        LOGGER.error("║          {} MOD(S) FAILED TO TRANSFORM                   ║", failedMods.size());
-        LOGGER.error("╠══════════════════════════════════════════════════════════╣");
-        
+        LOGGER.error("Retromod could not update {} mod(s):", failedMods.size());
         for (FailedMod mod : failedMods) {
-            LOGGER.error("║  ✗ {}", mod.modName());
-            LOGGER.error("║    Error: {}", mod.errorType());
+            LOGGER.error("  - {}: {}", mod.modName(), mod.errorType());
         }
-        
-        LOGGER.error("╠══════════════════════════════════════════════════════════╣");
-        LOGGER.error("║  Please report these bugs on GitHub so we can fix them!   ║");
-        LOGGER.error("║  → github.com/Bownlux/Retromod/issues                ║");
-        LOGGER.error("╚══════════════════════════════════════════════════════════╝");
-        LOGGER.error("");
+        LOGGER.error("Report them at {} and attach logs/latest.log", GITHUB_ISSUES_URL);
     }
 }

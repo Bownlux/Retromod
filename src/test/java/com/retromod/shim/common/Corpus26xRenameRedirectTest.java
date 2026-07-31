@@ -120,4 +120,23 @@ public class Corpus26xRenameRedirectTest {
                 "net/minecraft/client/renderer/GameRenderer");
         assertNotNull(c); assertEquals("mainCamera", c.name);
     }
+
+    @Test
+    @DisplayName("Inventory.setPickedItem -> addAndPickItem (26.1 pick-block rename)")
+    void inventorySetPickedItemRename() {
+        Common_1_21_11_to_26_1_ClassMoves.registerCorpus26xDescriptorAdaptations(transformer);
+        MethodInsnNode c = redirectedCall(caller(INVOKEVIRTUAL, "net/minecraft/world/entity/player/Inventory",
+                "setPickedItem", "(Lnet/minecraft/world/item/ItemStack;)V"),
+                "net/minecraft/world/entity/player/Inventory");
+        assertNotNull(c); assertEquals("addAndPickItem", c.name);
+    }
+
+    @Test
+    @DisplayName("InstantenousMobEffect -> InstantaneousMobEffect spelling fix (26.2)")
+    void instantaneousMobEffectRename26_2() {
+        Mc26_1To26_2CoreMoves.register(transformer);
+        assertEquals("net/minecraft/world/effect/InstantaneousMobEffect",
+                transformer.getClassRedirects().get("net/minecraft/world/effect/InstantenousMobEffect"),
+                "a custom-instant-potion mod's `extends InstantenousMobEffect` must retarget the corrected spelling");
+    }
 }

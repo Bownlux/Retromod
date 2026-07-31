@@ -33,21 +33,32 @@ class Tuple26_2PolyfillTest {
     }
 
     @Test
+    void flyingAnimalStubIsImplementableSingleMethod() {
+        com.retromod.polyfill.minecraft.embedded.FlyingAnimal flyer = () -> true;
+        assertTrue(flyer.isFlying());
+        assertEquals(1, com.retromod.polyfill.minecraft.embedded.FlyingAnimal.class.getMethods().length,
+                "must stay a single-method (functional) interface matching MC's FlyingAnimal");
+        assertTrue(com.retromod.polyfill.minecraft.embedded.FlyingAnimal.class.isInterface());
+    }
+
+    @Test
     void redirectGatedToHost() {
         RetromodTransformer t = RetromodTransformer.getInstance();
         String saved = RetromodVersion.TARGET_MC_VERSION;
         Minecraft26_2RemovedPolyfill p = new Minecraft26_2RemovedPolyfill();
         try {
-            // 26.1.2: Tuple is alive, must NOT redirect (the third component
+            // 26.1.2: Tuple is alive, must not redirect (the third component
             // must not fool the comparison into "26.1.2 > 26.2").
             t.clearRedirectsForTesting();
             RetromodVersion.TARGET_MC_VERSION = "26.1.2";
             p.registerPolyfills(t);
             assertFalse(t.getClassRedirects().containsKey("net/minecraft/util/Tuple"),
                     "Tuple still exists on 26.1.2 - must not be redirected");
-            assertEquals(0, p.getRemovedClasses().length, "manifest must not claim Tuple bridged on 26.1.2");
+            assertFalse(t.getClassRedirects().containsKey("net/minecraft/world/entity/animal/FlyingAnimal"),
+                    "FlyingAnimal still exists on 26.1.2 - must not be redirected");
+            assertEquals(0, p.getRemovedClasses().length, "manifest must not claim classes bridged on 26.1.2");
 
-            // 1.21.11: also alive, far below, must NOT redirect.
+            // 1.21.11: also alive, far below, must not redirect.
             t.clearRedirectsForTesting();
             RetromodVersion.TARGET_MC_VERSION = "1.21.11";
             p.registerPolyfills(t);
@@ -61,7 +72,11 @@ class Tuple26_2PolyfillTest {
                     t.getClassRedirects().get("net/minecraft/util/Tuple"));
             assertEquals("com/retromod/polyfill/minecraft/embedded/Tuple",
                     t.getClassRedirects().get("net/minecraft/class_3545"));
-            assertEquals(2, p.getRemovedClasses().length);
+            assertEquals("com/retromod/polyfill/minecraft/embedded/FlyingAnimal",
+                    t.getClassRedirects().get("net/minecraft/world/entity/animal/FlyingAnimal"));
+            assertEquals("com/retromod/polyfill/minecraft/embedded/FlyingAnimal",
+                    t.getClassRedirects().get("net/minecraft/class_1432"));
+            assertEquals(4, p.getRemovedClasses().length);
 
             // 26.2-rc-1: the raw host string a Prism rc instance reports, still 26.2.
             t.clearRedirectsForTesting();

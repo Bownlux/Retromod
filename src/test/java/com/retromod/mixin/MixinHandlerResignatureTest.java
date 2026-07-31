@@ -202,7 +202,7 @@ class MixinHandlerResignatureTest {
     void localAfterCallbackInfoDeclined() {
         // The realistic modern @Inject idiom captures locals AFTER the CallbackInfo trailer:
         // (Entity, CIR, @Local Object). The @Local sits at param index 2 (> cbIndex=1), so a guard
-        // bounded at cbIndex never saw it; insertRawParams shifts slots/LVT but NOT the parameter-
+        // bounded at cbIndex never saw it; insertRawParams shifts slots/LVT but not the parameter-
         // annotation arrays, so a ServerLevel insert would leave the @Local pinned to the CIR and
         // Mixin would throw InvalidInjectionException (a hard crash COMPUTE_FRAMES cannot catch). The
         // full-width guard must DECLINE and keep the soft-fail intact.
@@ -288,6 +288,29 @@ class MixinHandlerResignatureTest {
     }
 
     @Test
+    @DisplayName("MobEffect handlers gain ServerLevel only with the LivingEntity guard")
+    void mobEffectEntriesResolve() {
+        for (String target : new String[]{"applyEffectTick", "onMobHurt", "onMobRemoved"}) {
+            MethodNode m = new MethodNode(ACC_PRIVATE, "h", "()V", null, null);
+            AnnotationNodeStub.addInject(m, target);
+            List<ParamInsert> ins = MixinHandlerResignature.injectSignatureChange(m);
+            assertNotNull(ins, target + " should be a known signature change");
+            assertEquals("Lnet/minecraft/server/level/ServerLevel;", ins.get(0).typeDescriptor(), target);
+            assertEquals(0, ins.get(0).paramIndex(), target);
+        }
+        MethodNode ok = new MethodNode(ACC_PRIVATE, "h",
+                "(Lnet/minecraft/world/entity/LivingEntity;ILorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V", null, null);
+        AnnotationNodeStub.addInject(ok, "applyEffectTick");
+        assertNotNull(MixinHandlerResignature.injectSignatureChange(ok),
+                "LivingEntity handlers should be updated");
+        MethodNode wrong = new MethodNode(ACC_PRIVATE, "h",
+                "(Lnet/minecraft/world/item/ItemStack;ILorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V", null, null);
+        AnnotationNodeStub.addInject(wrong, "applyEffectTick");
+        assertNull(MixinHandlerResignature.injectSignatureChange(wrong),
+                "same-named handlers with another owner type must stay unchanged");
+    }
+
+    @Test
     @DisplayName("rewriteSelectorDescriptor inserts the new param into a desc-qualified selector")
     void selectorDescriptorRewrite() {
         assertEquals("doHurtTarget(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/entity/Entity;)Z",
@@ -346,7 +369,7 @@ class MixinHandlerResignatureTest {
         // tick()V has no drifted name: untouched
         assertEquals("tick()V", ((List<?>) inject.values.get(1)).get(0));
 
-        // Idempotence: running the pass again must NOT double-insert the ServerLevel.
+        // Idempotence: running the pass again must not double-insert the ServerLevel.
         assertFalse(MixinHandlerResignature.rewriteAnnotationDrift(m), "already-new descriptors are left alone");
         assertEquals("Lnet/minecraft/world/entity/monster/Phantom;doHurtTarget(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/entity/Entity;)Z",
                 at.values.get(3));
@@ -358,7 +381,7 @@ class MixinHandlerResignatureTest {
     void atDriftDefersCapturedParamInjectSelector() {
         // The handler CAPTURES a target param (Entity) before the CallbackInfo, so insertParams will
         // re-signature it and rewrite the desc-qualified method= selector itself (coupled to success).
-        // rewriteAnnotationDrift must therefore NOT rewrite the top-level method= here (if it did and
+        // rewriteAnnotationDrift must therefore not rewrite the top-level method= here (if it did and
         // insertParams later declined on a @Local, the fallback would ship a new-form selector on an
         // un-re-signatured handler). The @At injection-point target (independent of the handler) still moves.
         MethodNode m = new MethodNode(ACC_PRIVATE, "h",
@@ -390,7 +413,7 @@ class MixinHandlerResignatureTest {
         // insertParams declines (nothing to insert) and never rewrites the selector. If
         // rewriteAnnotationDrift also skipped it (the over-broad F2), the desc-qualified method=
         // would stay old-form, resolve 0 targets on 26.x, and the HEAD injection would silently go
-        // inert. So the zero-capture case MUST rewrite the selector here.
+        // inert. So the zero-capture case must rewrite the selector here.
         MethodNode m = new MethodNode(ACC_PRIVATE, "h", "(" + CIR + ")V", null, null);
         var inject = new org.objectweb.asm.tree.AnnotationNode("Lorg/spongepowered/asm/mixin/injection/Inject;");
         var at = new org.objectweb.asm.tree.AnnotationNode("Lorg/spongepowered/asm/mixin/injection/At;");

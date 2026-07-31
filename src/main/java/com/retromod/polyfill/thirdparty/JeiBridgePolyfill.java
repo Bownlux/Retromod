@@ -22,7 +22,7 @@ import com.retromod.polyfill.PolyfillProvider;
  *   <li>{@code mezz.jei.api.recipe.IRecipeWrapper} -> removed (recipes used directly)</li>
  * </ul>
  *
- * This bridge does NOT bundle JEI. The user installs current JEI normally;
+ * This bridge does not bundle JEI. The user installs current JEI normally;
  * Retromod only redirects old API references to their new locations.
  */
 public class JeiBridgePolyfill implements PolyfillProvider {

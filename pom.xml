@@ -10,7 +10,7 @@
     <packaging>jar</packaging>
 
     <name>Retromod</name>
-    <description>Backwards compatibility layer for Minecraft mods - run older mods on newer versions</description>
+    <description>Helps older Minecraft mods run on newer versions</description>
     
     <developers>
         <developer>

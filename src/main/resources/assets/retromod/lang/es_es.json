@@ -32,7 +32,7 @@
   "retromod.settings.log_transformations": "Registrar transformaciones",
   "retromod.settings.debug": "Modo de depuraci\u00f3n",
 
-  "retromod.filepicker.title": "Retromod \u2014 Selecciona los JARs de mods a transformar",
+  "retromod.filepicker.title": "Retromod: Selecciona los JARs de mods a transformar",
 
   "retromod.result.success": "Transformado",
   "retromod.result.skipped": "Ya es compatible",

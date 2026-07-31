@@ -13,16 +13,12 @@ import org.slf4j.LoggerFactory;
 import java.util.*;
 import java.util.regex.*;
 
-/**
- * Rewrites Mixin annotation targets so mixins keep resolving after Minecraft renames
- * their target methods (getWorld -> getEntityWorld). Covers @Inject/@Redirect/@ModifyArg/
- * @ModifyVariable, @At descriptors, mixin config JSON, and refmap.json.
- */
-public class MixinCompatibilityTransformer {
+/** Updates Mixin annotations and handlers after their Minecraft targets change. */
+public final class MixinCompatibilityTransformer {
     
     private static final Logger LOGGER = LoggerFactory.getLogger("retromod-mixin");
 
-    // mixin annotation descriptors
+    // Mixin annotation descriptors
     private static final String INJECT_DESC = "Lorg/spongepowered/asm/mixin/injection/Inject;";
     private static final String REDIRECT_DESC = "Lorg/spongepowered/asm/mixin/injection/Redirect;";
     private static final String MODIFY_ARG_DESC = "Lorg/spongepowered/asm/mixin/injection/ModifyArg;";
@@ -33,20 +29,28 @@ public class MixinCompatibilityTransformer {
     private static final String OVERWRITE_DESC = "Lorg/spongepowered/asm/mixin/Overwrite;";
     private static final String ACCESSOR_DESC = "Lorg/spongepowered/asm/mixin/gen/Accessor;";
     private static final String INVOKER_DESC = "Lorg/spongepowered/asm/mixin/gen/Invoker;";
-    /** MixinExtras injector annotations live under this package (incl. the wrapoperation subpackage). */
+    private static final String AMBIGUOUS_RENAME = "\0AMBIGUOUS";
+    /** MixinExtras keeps injector annotations under this package. */
     private static final String MIXINEXTRAS_INJECTOR_PREFIX = "Lcom/llamalad7/mixinextras/injector/";
     
     private final RetromodTransformer transformer;
 
-    // old method reference -> new method reference for mixin targets
+    // Old target reference to new target reference.
     private final Map<String, String> methodTargetRedirects = new HashMap<>();
-    
+
+    // Same-owner Mojang renames used when a bare mixin selector omits its owner.
+    private final Map<String, Map<String, String>> ownerScopedRenames = new HashMap<>();
+
+    // Fabric transforms mixin classes in parallel, so this per-class scratch state cannot be shared.
+    private final ThreadLocal<Set<String>> currentTargetOwners =
+            ThreadLocal.withInitial(HashSet::new);
+
     public MixinCompatibilityTransformer(RetromodTransformer transformer) {
         this.transformer = transformer;
         buildMixinRedirects();
     }
     
-    // Convert the transformer's method redirects into mixin target format.
+    // Convert bytecode redirects into the string format used by Mixin.
     private void buildMixinRedirects() {
         for (var entry : transformer.getMethodRedirects().entrySet()) {
             var key = entry.getKey();
@@ -55,13 +59,8 @@ public class MixinCompatibilityTransformer {
             String oldRef = key.name();
             String newRef = target.name();
 
-            // Owner-qualified form matches a target naming this exact owner. Add it for an OWNER or
-            // NAME change - an OWNER-ONLY change still needs the mixin @At/method target re-owned
-            // (the former "name changed" guard silently dropped owner-only redirects like
-            // FlyingMob.getDefaultDimensions -> Mob.getDefaultDimensions, the deleted-superclass alias,
-            // #50). A DESCRIPTOR-ONLY change is deliberately excluded: those are overload/codec-shape
-            // bridges (same owner+name, different signature), and rewriting a mixin @At target that
-            // legitimately names the old overload would break a working injection.
+            // An owner or name change is safe to apply to a fully qualified target.
+            // Descriptor-only bridges may refer to a real overload and stay untouched.
             String oldFull = "L" + key.owner() + ";" + key.name() + key.desc();
             String newFull = "L" + target.owner() + ";" + target.name() + target.desc();
             boolean ownerOrNameChanged = !key.owner().equals(target.owner()) || !oldRef.equals(newRef);
@@ -69,18 +68,19 @@ public class MixinCompatibilityTransformer {
                 methodTargetRedirects.put(oldFull, newFull);
             }
 
-            // Bare-name form is owner-agnostic, so restrict it to a genuine NAME change on a
-            // globally-unique obfuscated name. A plain name like "register" is ambiguous: a
-            // mod-API redirect (AutoRegLib NetworkHandler.register -> registerPacket) would
-            // otherwise rename every @Invoker/@At resolving to "register", including a vanilla
-            // BlockEntityType invoker (#66). An owner-only change (oldRef == newRef) never adds a
-            // bare-name entry (it would be a no-op name->same-name mapping anyway).
+            // Bare selectors can use same-owner renames when the target class is known.
+            if (!oldRef.equals(newRef) && key.owner().equals(target.owner())) {
+                ownerScopedRenames.computeIfAbsent(key.owner(), k -> new HashMap<>())
+                        .merge(oldRef, newRef, (a, b) -> a.equals(b) ? a : AMBIGUOUS_RENAME);
+            }
+
+            // Owner-free names are safe only when the mapping name is globally unique.
             if (!oldRef.equals(newRef) && isGloballyUniqueName(oldRef)) {
                 methodTargetRedirects.put(oldRef, newRef);
             }
         }
 
-        LOGGER.info("Built {} Mixin target redirects", methodTargetRedirects.size());
+        LOGGER.debug("Prepared {} Mixin target redirects", methodTargetRedirects.size());
     }
 
     /** A globally-unique obfuscated name ({@code method_XXXX} / SRG {@code m_NNNNN_}), safe as an owner-agnostic redirect key. */
@@ -89,9 +89,7 @@ public class MixinCompatibilityTransformer {
                 || (name.startsWith("m_") && name.endsWith("_") && name.length() > 3);
     }
     
-    /**
-     * Transform a Mixin class to update its target references.
-     */
+    /** Updates one Mixin class and returns the original bytes when nothing changed. */
     public byte[] transformMixinClass(byte[] classBytes) {
         ClassReader reader = new ClassReader(classBytes);
         ClassNode classNode = new ClassNode();
@@ -103,51 +101,39 @@ public class MixinCompatibilityTransformer {
             return classBytes;
         }
 
+        currentTargetOwners.get().clear();
+
         LOGGER.debug("Transforming Mixin class: {}", classNode.name);
 
-        // Whole-class neutralization takes precedence over handler stripping. For
-        // mixins that add an interface to their target (#68) or have an interdependent
-        // critical @Inject failure (#69), removing handlers isn't enough: the mixin
-        // must not apply at all. Repoint its @Mixin target at a non-existent class so
-        // the framework skips it with a "target not found", the same path MC's own
-        // moved inner classes take.
+        // Some mixins add state outside their handlers, so the whole mixin must
+        // be skipped instead of deleting only its injection methods.
         if (MixinBlocklist.isFullStrip(classNode.name)) {
             if (neutralizeMixin(classNode)) {
                 ClassWriter w = new ClassWriter(0);
                 classNode.accept(w);
-                LOGGER.info("Mixin blocklist: fully neutralized {} (whole-class strip) "
-                        + "- known to crash on the target MC; the mod loads with that "
-                        + "mixin's feature inert", classNode.name);
+                LOGGER.info("Disabled incompatible Mixin {}. Its feature will be unavailable.",
+                    classNode.name);
                 return w.toByteArray();
             }
         }
 
-        // Auto-neutralize a mixin whose @Mixin target is a removed (non-remappable)
-        // MC class; otherwise the framework throws ClassMetadataNotFoundException
-        // mid-transform and crashes the game during bootstrap (#79). Automatic
-        // complement to the curated list.
+        // A removed target cannot accept a mixin, but the rest of the mod may still work.
         String removedTarget = mixinTargetsRemovedClass(classNode);
         if (removedTarget != null && neutralizeMixin(classNode)) {
             ClassWriter w = new ClassWriter(0);
             classNode.accept(w);
-            LOGGER.info("Mixin auto-neutralized {} - its @Mixin target {} was removed on "
-                    + "this MC and can't be remapped; applying it would crash the game. "
-                    + "The mod loads with that mixin's feature inert.",
+            LOGGER.info("Disabled Mixin {} because target {} no longer exists. "
+                    + "Its feature will be unavailable.",
                     classNode.name, removedTarget);
             return w.toByteArray();
         }
 
-        // Strip blocklisted handler methods first. Some handlers crash on the target
-        // MC and can't be repaired by remapping (chiefly a MixinExtras @WrapOperation/
-        // @ModifyExpressionValue capturing a @Local from a vanilla method whose local
-        // layout changed: the @Local resolves to the wrong slot, MixinExtras emits an
-        // invalid bridge, VerifyError at load). Removing the handler here leaves the
-        // mod loading with that feature inert. Curated in mixin-blocklist.json.
+        // Curated handlers with incompatible local layouts are safer to remove.
         Set<String> blockedMethods = MixinBlocklist.methodsToStrip(classNode.name);
         if (blockedMethods != null) {
             int before = classNode.methods.size();
             if (blockedMethods.isEmpty()) {
-                // whole-class: drop every injector handler (keep <init>, helpers)
+                // Keep constructors and helpers when only injector handlers are blocked.
                 classNode.methods.removeIf(MixinCompatibilityTransformer::hasInjectorAnnotation);
             } else {
                 classNode.methods.removeIf(m -> blockedMethods.contains(m.name));
@@ -155,13 +141,12 @@ public class MixinCompatibilityTransformer {
             int removed = before - classNode.methods.size();
             if (removed > 0) {
                 modified = true;
-                LOGGER.info("Mixin blocklist: stripped {} handler method(s) from {} "
-                        + "- this mixin is known to crash on the target MC; the mod loads "
-                        + "with that feature inert", removed, classNode.name);
+                LOGGER.info("Removed {} incompatible handler(s) from {}. "
+                        + "The related feature will be unavailable.", removed, classNode.name);
             }
         }
 
-        // class-level @Mixin targets (visible and invisible: @Mixin is RuntimeInvisible)
+        // @Mixin can be stored in either annotation list.
         for (List<AnnotationNode> annotations : List.of(
                 classNode.visibleAnnotations != null ? classNode.visibleAnnotations : List.<AnnotationNode>of(),
                 classNode.invisibleAnnotations != null ? classNode.invisibleAnnotations : List.<AnnotationNode>of())) {
@@ -172,10 +157,7 @@ public class MixinCompatibilityTransformer {
             }
         }
 
-        // Collect @Inject handlers whose target's parameter list changed (1.3.0 track A, #69):
-        // the target gained a leading arg the handler can ignore, so the handler must be re-signatured
-        // to keep matching the target's parameter prefix. Gated to 1.21.5+ hosts: on an older host
-        // those signatures are unchanged, so re-signaturing would break an otherwise-working handler.
+        // Parameter repairs only apply after the 1.21.5 method refactor.
         boolean refactorHost = has1215Refactor();
         List<MethodNode> resignTargets = new ArrayList<>();
         List<List<MixinHandlerResignature.ParamInsert>> resignInserts = new ArrayList<>();
@@ -183,14 +165,11 @@ public class MixinCompatibilityTransformer {
         for (MethodNode method : classNode.methods) {
             modified |= transformMethodAnnotations(method);
             if (!refactorHost) continue;
-            // Rewrite signature-drifted selectors inside @At(target=...)/method=/target= (#69: the
-            // old-descriptor CALL SITE no longer exists in the host method, so the injection-point
-            // scan finds 0 targets even though the handler itself is fine).
+            // Repair annotation selectors before changing the matching handler.
             modified |= MixinHandlerResignature.rewriteAnnotationDrift(method);
             List<MixinHandlerResignature.ParamInsert> ins = MixinHandlerResignature.injectSignatureChange(method);
             if (ins != null) { resignTargets.add(method); resignInserts.add(ins); }
-            // Drifted @Redirect/@WrapOperation call sites + drifted @Overwrite methods
-            // (detection only; applied in the guarded re-emit).
+            // Apply bytecode repairs later, during guarded frame recomputation.
             driftRepairs.addAll(MixinHandlerResignature.detectRedirectDrift(method));
             driftRepairs.addAll(MixinHandlerResignature.detectOverwriteDrift(method));
         }
@@ -199,10 +178,7 @@ public class MixinCompatibilityTransformer {
             modified |= transformFieldAnnotations(field);
         }
 
-        // Demote a @Shadow @Final field whose target vanilla field was removed in the 1.21.5
-        // worldgen refactor to a @Unique mixin field seeded from the ctor param the mixin's
-        // @Inject handler already captures (YUNG's API NoiseChunkMixin.noiseSettings). Gated to
-        // 1.21.5+ hosts (where the field is gone); on older hosts the @Shadow still resolves.
+        // A removed worldgen shadow becomes mixin-owned state on affected hosts.
         if (refactorHost && MixinShadowFieldDemotion.handles(classNode.name)) {
             modified |= MixinShadowFieldDemotion.apply(classNode);
         }
@@ -211,24 +187,14 @@ public class MixinCompatibilityTransformer {
             return classBytes;
         }
 
-        // Snapshot the annotation-only result FIRST. If a handler re-signature can't recompute valid
-        // stack-map frames (an unanalyzable body, or a slot-shift edge case), we ship this instead of
-        // a VerifyError-crashing class; the blocklist strip remains the ultimate safety net. The
-        // ValueIO save-data adapter (#48) runs separately as a post-remap pass (adaptValueIoHandlers).
+        // Keep a valid annotation-only fallback in case frame recomputation fails.
         ClassWriter annWriter = new ClassWriter(0);
         classNode.accept(annWriter);
         byte[] annotationOnly = annWriter.toByteArray();
         return reemitWithResignatures(classNode, resignTargets, resignInserts, driftRepairs, annotationOnly);
     }
 
-    /**
-     * Apply pending {@code @Inject} re-signatures (Track A, #69) to the already-parsed
-     * {@code classNode} and re-emit with recomputed frames. {@code fallbackBytes} is the valid,
-     * un-re-signatured snapshot to return when there is nothing to do or when frame recomputation
-     * throws: safety-by-construction, so a slot-shift bug can never ship a {@code VerifyError}-
-     * crashing class. Mutates {@code classNode}. Shared by the Fabric ({@link #transformMixinClass})
-     * and NeoForge/Forge ({@link #stripBlocklistedHandlers}) paths.
-     */
+    /** Applies handler repairs and falls back to valid annotation-only bytes on failure. */
     private byte[] reemitWithResignatures(ClassNode classNode, List<MethodNode> targets,
             List<List<MixinHandlerResignature.ParamInsert>> inserts,
             List<MixinHandlerResignature.DriftRepair> driftRepairs, byte[] fallbackBytes) {
@@ -238,8 +204,7 @@ public class MixinCompatibilityTransformer {
             for (int i = 0; i < targets.size(); i++) {
                 if (MixinHandlerResignature.insertParams(targets.get(i), inserts.get(i))) applied++;
             }
-            // Drift repairs: @Redirect/@WrapOperation call sites (rewrite the @At target AND
-            // re-signature the mirroring handler together) and drifted @Overwrite methods.
+            // A call-site selector and its matching handler must change together.
             for (MixinHandlerResignature.DriftRepair d : driftRepairs) {
                 if (d.apply()) applied++;
             }
@@ -247,37 +212,26 @@ public class MixinCompatibilityTransformer {
             ClassWriter cw = new com.retromod.util.SafeClassWriter(ClassWriter.COMPUTE_FRAMES);
             classNode.accept(cw);
             byte[] out = cw.toByteArray();
-            LOGGER.info("Repaired {} drifted mixin handler(s)/call site(s) in {} (re-signature / redirect drift)",
+            LOGGER.info("Repaired {} changed Mixin handler(s) or call site(s) in {}",
                     applied, classNode.name);
             return out;
         } catch (Throwable t) {
-            LOGGER.debug("Handler re-signature could not verify in {} ({}); keeping prior result",
+            LOGGER.debug("Could not verify repaired handlers in {} ({}). Keeping the safe fallback.",
                     classNode.name, t.toString());
             return fallbackBytes;
         }
     }
 
-    /**
-     * Whether the host has the 1.21.5 refactor that both moved save-data to ValueIO AND prepended a
-     * {@code ServerLevel} to many entity methods. Gates both the ValueIO adapter and the @Inject
-     * re-signature: on a pre-1.21.5 host those signatures are unchanged, so applying either would
-     * corrupt a working handler. Unparseable/unknown host declines (conservative).
-     */
+    /** Returns whether the host includes the 1.21.5 entity and ValueIO refactor. */
     private boolean has1215Refactor() {
         return com.retromod.core.RetromodVersion.compareMcVersions(
                 com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "1.21.5") >= 0;
     }
 
     /**
-     * Phase 4 (#48): adapt {@code CompoundTag} save-data {@code @Inject} handlers to the modern
-     * {@code ValueOutput}/{@code ValueInput} param. Run as a POST-remap pass (after the main
-     * bytecode remap) on BOTH loaders, because a Fabric mod's handler param is intermediary
-     * ({@code class_2487}) until then; here it is Mojang ({@code net/minecraft/nbt/CompoundTag}) on
-     * every loader, so identification is uniform. Returns the input unchanged when nothing applies;
-     * on a frame-computation failure, strips the identified handlers (soft-fail, = the blocklist
-     * behavior) rather than shipping the broken original. Safe to call on every class.
-     *
-     * @see MixinValueIoAdapter
+     * Adapts save-data handlers from {@code CompoundTag} to ValueIO after name
+     * remapping. A handler that cannot be repaired is removed instead of
+     * leaving a class that fails during Mixin application.
      */
     public byte[] adaptValueIoHandlers(byte[] classBytes) {
         if (!has1215Refactor()) return classBytes;
@@ -286,32 +240,24 @@ public class MixinCompatibilityTransformer {
         if (!isMixinClass(classNode)) return classBytes;
 
         List<MixinValueIoAdapter.Target> targets = MixinValueIoAdapter.collect(classNode);
-        // Repair-or-strip: a save-data @Inject still capturing CompoundTag that the adapter can NOT
-        // repair is definitionally broken on this host (the target passes ValueIO now) and would
-        // throw InvalidInjectionException -> NeoForge "broken mod state" (#48). Strip those, the
-        // same soft-fail the curated blocklist used to provide, now automatic.
+        // A stale CompoundTag capture cannot receive the host's ValueIO argument.
         List<MethodNode> unrepairable = MixinValueIoAdapter.collectUnrepairable(classNode, targets);
         if (targets.isEmpty() && unrepairable.isEmpty()) return classBytes;
 
         if (!targets.isEmpty()) {
-            // Register the runtime bridge NOW (before the reference is emitted below), coupled to the
-            // adaptation itself so the Forge/NeoForge embedder always finds it - no loader entry point
-            // can forget it (the Forge path did not register it otherwise, review finding, #48).
+            // Register the bridge before adapted bytecode can refer to it.
             MixinValueIoAdapter.ensureBridgeRegistered(transformer);
         }
 
-        // name+descriptor keys (captured BEFORE apply() renames the handlers) for the identity-safe
-        // strip fallback: keying on name alone could collaterally delete an unrelated overload.
+        // Include descriptors so an unrelated overload cannot be removed.
         java.util.Set<String> targetKeys = new java.util.HashSet<>();
         for (MixinValueIoAdapter.Target t : targets) targetKeys.add(t.originalName + t.handler.desc);
         try {
             int applied = MixinValueIoAdapter.apply(classNode, targets);
             if (!unrepairable.isEmpty()) {
-                // Strip by IDENTITY, not name: apply() just synthesized adapters that reuse the
-                // adaptable handlers' names, and a name match could otherwise delete one of those.
+                // Identity keeps newly generated adapters with the same name intact.
                 classNode.methods.removeIf(unrepairable::contains);
-                LOGGER.info("ValueIO adapter: stripped {} unrepairable CompoundTag save-data handler(s) "
-                        + "in {} (soft-fail; the target passes ValueIO on this host)",
+                LOGGER.info("Removed {} save-data handler(s) from {} because they cannot use ValueIO",
                         unrepairable.size(), classNode.name);
             }
             if (applied == 0 && unrepairable.isEmpty()) return classBytes;
@@ -319,47 +265,26 @@ public class MixinCompatibilityTransformer {
             classNode.accept(cw);
             byte[] out = cw.toByteArray();
             if (applied > 0) {
-                LOGGER.info("ValueIO adapter: wrapped {} CompoundTag save-data @Inject handler(s) in {} for "
-                        + "the ValueOutput/ValueInput refactor", applied, classNode.name);
+                LOGGER.info("Adapted {} save-data Mixin handler(s) in {} for ValueIO",
+                        applied, classNode.name);
             }
             return out;
         } catch (Throwable t) {
-            LOGGER.debug("ValueIO adaptation could not verify in {} ({}); stripping the handler(s) (soft-fail)",
+            LOGGER.debug("Could not verify the ValueIO repair in {} ({}). Removing the affected handlers.",
                     classNode.name, t.toString());
-            // The fallback strips from the PRISTINE original bytes (a fresh ClassNode with no
-            // synthesized adapters); it matches on name+descriptor so an unrelated overloaded
-            // @Inject sharing a stripped handler's name is not collaterally deleted.
+            // Start from the original bytes so no partial adapter survives.
             java.util.Set<String> allKeys = new java.util.HashSet<>(targetKeys);
             for (MethodNode m : unrepairable) allKeys.add(m.name + m.desc);
             return MixinValueIoAdapter.stripTargetsFrom(classBytes, allKeys);
         }
     }
 
-    /**
-     * NeoForge/Forge + CLI-offline entry point: runs the full {@link #transformMixinClass} pipeline.
-     * A mixin's {@code @Mixin}/{@code @At}/{@code method=}/{@code target=} selectors are annotation
-     * strings, so the bytecode {@code ClassRemapper} never reaches them; they still need the
-     * API-rename method/class redirects (#50 {@code FlyingMob -> Mob}, #28 {@code Painting}
-     * class-move on the NeoForge Deeper and Darker, GameNarrator/setScreen), so a blocklist strip
-     * alone is not enough. Safe on any class (a non-mixin returns unchanged).
-     */
+    /** Runs the same Mixin pipeline for Forge, NeoForge, and offline transforms. */
     public byte[] stripBlocklistedHandlers(byte[] classBytes) {
         return transformMixinClass(classBytes);
     }
 
-    /**
-     * Neutralize a mixin by repointing its {@code @Mixin} annotation at a non-existent
-     * target class. The framework then logs "@Mixin target ... was not found" and skips
-     * the whole class (no handlers, no added interface, no {@code @Shadow}/{@code @Inject}
-     * resolution), the same path MC's own moved/renamed inner classes take, non-fatal even
-     * under {@code "required": true}.
-     *
-     * <p>Clears both {@code value} (Class[]) and {@code targets} (String[]), then sets
-     * {@code targets} to a single Retromod-namespaced placeholder. Returns {@code true}
-     * if the {@code @Mixin} annotation was found and rewritten.
-     *
-     * @see MixinBlocklist#isFullStrip(String)
-     */
+    /** Points a Mixin at an absent placeholder so the framework skips it cleanly. */
     private boolean neutralizeMixin(ClassNode classNode) {
         AnnotationNode mixinAnn = null;
         for (List<AnnotationNode> anns : List.of(
@@ -373,7 +298,7 @@ public class MixinCompatibilityTransformer {
         if (mixinAnn == null) return false;
 
         if (mixinAnn.values == null) mixinAnn.values = new ArrayList<>();
-        // drop existing value (Class[]) and targets (String[])
+        // Remove both supported forms of the original target list.
         for (int i = mixinAnn.values.size() - 2; i >= 0; i -= 2) {
             Object k = mixinAnn.values.get(i);
             if ("value".equals(k) || "targets".equals(k)) {
@@ -381,7 +306,7 @@ public class MixinCompatibilityTransformer {
                 mixinAnn.values.remove(i);
             }
         }
-        // point at an absent placeholder so the framework skips it
+        // The Retromod namespace makes an accidental real target very unlikely.
         String simple = classNode.name.substring(classNode.name.lastIndexOf('/') + 1);
         List<String> placeholder = new ArrayList<>();
         placeholder.add("retromod/stripped/" + simple);
@@ -412,14 +337,13 @@ public class MixinCompatibilityTransformer {
 
     /**
      * Detect a mixin whose {@code @Mixin} target is a Minecraft class removed (not renamed)
-     * on the host, which can't be remapped. Applying it makes the framework throw
-     * {@code ClassMetadataNotFoundException} mid-transform, aborting the whole class-transform
-     * pass and crashing the game at bootstrap (often with a misleading vanilla-class stacktrace
-     * that names no mod). #79: Spelunkery targets {@code LootDataManager}, deleted in the 1.21
-     * loot-data refactor.
+     * on the host. Applying it makes the framework throw {@code ClassMetadataNotFoundException}
+     * mid-transform and crash the game at bootstrap, often with a misleading vanilla-class
+     * stacktrace that names no mod. #79: Spelunkery targets {@code LootDataManager}, deleted
+     * in the 1.21 loot-data refactor.
      *
-     * <p>Automatic complement to the curated {@link MixinBlocklist}: neutralizes the
-     * removed-target case generically (the mod loads with that mixin inert). Fires only when:
+     * <p>Automatic complement to the curated {@link MixinBlocklist}; the mod loads with that
+     * mixin inert. Fires only when:
      * <ul>
      *   <li>the target is a {@code net/minecraft/} class (mod/library targets resolve later
      *       via JiJ/companion mods);</li>
@@ -577,6 +501,7 @@ public class MixinCompatibilityTransformer {
                     if (target instanceof String s) {
                         String redirected = redirectClassName(s);
                         newTargets.add(redirected);
+                        currentTargetOwners.get().add(redirected.replace('.', '/'));
                         if (!s.equals(redirected)) {
                             modified = true;
                             LOGGER.debug("Redirected Mixin target: {} -> {}", s, redirected);
@@ -594,6 +519,7 @@ public class MixinCompatibilityTransformer {
                         String internal = type.getInternalName();
                         String redirected = transformer.getClassRedirects()
                             .getOrDefault(internal, internal);
+                        currentTargetOwners.get().add(redirected);
                         if (!internal.equals(redirected)) {
                             newValues.add(org.objectweb.asm.Type.getObjectType(redirected));
                             modified = true;
@@ -628,22 +554,21 @@ public class MixinCompatibilityTransformer {
                 if (desc != null && desc.startsWith("Lorg/spongepowered/asm/mixin/injection/")
                         && !desc.contains("/callback/")) {
                     // Family-prefix dispatch, mirroring the MixinExtras branch below. The former
-                    // explicit whitelist (@Inject/@Redirect/@ModifyArg/@ModifyVariable) silently
-                    // skipped @ModifyArgs (plural) and @ModifyConstant, leaving their method=/at=
-                    // selectors unremapped while sibling mixins in the same config were rewritten
-                    // (#157, nekomasfixed's LabelCommandRendererCommandMixin + the wildfire
-                    // NetherFortressGeneratorMixin). Non-selector-bearing members of the package
-                    // (@Surrogate/@Group/@Coerce) pass through untouched: the walker only rewrites
-                    // method/at/target/slice keys and adds nothing unless it rewrote something.
+                    // explicit whitelist silently skipped @ModifyArgs (plural) and
+                    // @ModifyConstant, leaving their selectors unremapped (#157, nekomasfixed's
+                    // LabelCommandRendererCommandMixin + the wildfire
+                    // NetherFortressGeneratorMixin). Non-selector members of the package
+                    // (@Surrogate/@Group/@Coerce) pass through untouched: the walker only
+                    // rewrites method/at/target/slice keys and adds nothing unless it rewrote
+                    // something.
                     modified |= transformInjectionAnnotation(annotation, false);
                 } else if (desc != null && desc.startsWith(MIXINEXTRAS_INJECTOR_PREFIX)) {
-                    // MixinExtras injectors (@ModifyReturnValue / @ModifyExpressionValue /
-                    // @WrapOperation / @ModifyReceiver / @WrapWithCondition / @WrapMethod) carry the
-                    // same method=/at=/target= selectors as core injectors but were never dispatched,
-                    // so a renamed target went un-remapped and the injection failed with "Scanned 0
-                    // target(s)" (#50 Revamped Phantoms). Route them through the same remap; only add
-                    // the require=0 soft-fail net when we actually rewrote a selector, so a working
-                    // MixinExtras mixin is left byte-identical.
+                    // MixinExtras injectors (@WrapOperation, @ModifyExpressionValue,
+                    // @ModifyReturnValue, ...) carry the same method=/at=/target= selectors as
+                    // core injectors but were never dispatched, so a renamed target failed with
+                    // "Scanned 0 target(s)" (#50 Revamped Phantoms). Same remap; require=0 is
+                    // added only when a selector was actually rewritten, so an untouched
+                    // MixinExtras mixin stays byte-identical.
                     modified |= transformInjectionAnnotation(annotation, true);
                 } else if (SHADOW_DESC.equals(desc) || OVERWRITE_DESC.equals(desc)) {
                     modified |= transformShadowAnnotation(annotation, method);
@@ -733,10 +658,8 @@ public class MixinCompatibilityTransformer {
                 }
             }
 
-            // "target" is used by MixinExtras annotations (@ModifyExpressionValue) and some
-            // @Inject variants, same shape as @At's target, so run it through the same
-            // redirector. Without this, a mixin whose outer @Mixin target was renamed still
-            // has stale class references in its inner annotations and the processor refuses
+            // "target" appears on MixinExtras annotations (@ModifyExpressionValue) and some
+            // @Inject variants, same shape as @At's target. Left stale, the processor refuses
             // the injection with "specifies a target class 'X', which is not supported"
             // (CustomHUD 4.1.3 on 26.1.2).
             if ("target".equals(key)) {
@@ -771,21 +694,19 @@ public class MixinCompatibilityTransformer {
                 }
             }
 
-            // Downgrade CAPTURE_FAILHARD to CAPTURE_FAILSOFT. FAILHARD crashes the JVM
-            // (fatal BootstrapMethodError at MC load) when the injection site's local-
-            // variable table doesn't match the mixin's expected shape, which happens
-            // whenever MC adds/removes/reorders locals across versions (e.g. architectury
-            // MixinFallingBlockEntity once FallingBlockEntity.tick() gained a ServerLevel
-            // local on 26.1). FAILSOFT keeps the same check but skips the injection with a
-            // warning, so only that feature dies and MC still boots. Enum values are stored
-            // as a String[]: [0] descriptor, [1] constant name.
+            // Downgrade CAPTURE_FAILHARD to CAPTURE_FAILSOFT. FAILHARD is a fatal
+            // BootstrapMethodError at MC load when the injection site's locals don't match
+            // the mixin's expected shape, which happens whenever MC changes locals across
+            // versions (architectury MixinFallingBlockEntity, after FallingBlockEntity.tick()
+            // gained a ServerLevel local on 26.1). FAILSOFT skips the injection with a
+            // warning instead, so only that feature dies and MC still boots. Enum values are
+            // stored as a String[]: [0] descriptor, [1] constant name.
             if ("locals".equals(key) && value instanceof String[] enumValue
                     && enumValue.length == 2
                     && "Lorg/spongepowered/asm/mixin/injection/callback/LocalCapture;".equals(enumValue[0])
                     && "CAPTURE_FAILHARD".equals(enumValue[1])) {
-                // Allocate a new String[] instead of mutating in place: ASM can share the
-                // same array across AnnotationNode instances when classnodes are reused
-                // across passes, and an in-place edit would rewrite all of them, hiding the
+                // Allocate a new String[]: ASM can share the array across AnnotationNode
+                // instances when classnodes are reused, and an in-place edit would hide the
                 // CAPTURE_FAILHARD from a later pass.
                 annotation.values.set(i + 1, new String[]{enumValue[0], "CAPTURE_FAILSOFT"});
                 modified = true;
@@ -793,11 +714,9 @@ public class MixinCompatibilityTransformer {
             }
         }
 
-        // require=0 makes injections soft-fail when a target method no longer exists. Core injectors
-        // get it unconditionally (the existing soft-fail net). MixinExtras injectors get it ONLY when
-        // we actually rewrote a selector above; otherwise a working MixinExtras handler would be
-        // needlessly weakened and its bytecode changed for no reason (breaking the byte-identical
-        // guarantee for mixins we did not touch).
+        // require=0 soft-fails an injection whose target no longer exists. Core injectors get
+        // it unconditionally; MixinExtras injectors only when a selector was rewritten above,
+        // so a mixin we did not touch stays byte-identical.
         if (!hasRequire && (!mixinExtras || modified)) {
             annotation.values.add("require");
             annotation.values.add(0);
@@ -999,14 +918,45 @@ public class MixinCompatibilityTransformer {
             // never rename constructors/static initializers
             String newMethod = methodName.startsWith("<")
                 ? methodName
-                : remapMethodName(methodName);
+                : remapBareMethodName(methodName);
             desc = remapDescriptorClasses(desc);
             return newMethod + desc;
         }
 
         // bare name (never rename constructors)
         if (target.startsWith("<")) return target;
-        return remapMethodName(target);
+        return remapBareMethodName(target);
+    }
+
+    /**
+     * Remaps a selector without an owner. Ordinary redirects take priority; same-owner Mojang
+     * renames are safe only when the mixin declares one target.
+     */
+    private String remapBareMethodName(String name) {
+        String r = remapMethodName(name);
+        if (!r.equals(name)) {
+            return r;
+        }
+        return scopedRename(name).orElse(name);
+    }
+
+    /**
+     * Finds a same-owner rename for a single-target mixin.
+     */
+    private Optional<String> scopedRename(String name) {
+        Set<String> targetOwners = currentTargetOwners.get();
+        if (targetOwners.size() != 1) {
+            return Optional.empty();
+        }
+        Map<String, String> renames = ownerScopedRenames.get(targetOwners.iterator().next());
+        if (renames == null) {
+            return Optional.empty();
+        }
+        String renamed = renames.get(name);
+        if (renamed == null || AMBIGUOUS_RENAME.equals(renamed)) {
+            return Optional.empty();
+        }
+        return Optional.of(renamed);
     }
 
     /**
@@ -1691,8 +1641,7 @@ public class MixinCompatibilityTransformer {
         KNOWN_REMOVED_METHODS.add("net/minecraft/class_1657.method_5652");
 
         // Note: method_569 (writeToFile), method_5647 (writeNbt), method_38244 (createNbt)
-        // still EXIST but with changed signatures. These are NOT removed; they should be
-        // handled by the shim's method redirect system, not stripped.
+        // still exist with changed signatures. Redirect them instead of removing them.
     }
 
     /** Register a known-removed class (called during polyfill registration). */

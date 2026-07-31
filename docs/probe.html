@@ -97,8 +97,8 @@ select { padding:.5em .8em; color:var(--fg); background:var(--bg3); border:1px s
 </div>
 
 <div class="hero">
-  <h1>Will this mod transform?</h1>
-  <p>Drop a Minecraft mod <code>.jar</code> and Probe checks whether Retromod is likely to translate it onto a newer version: what loader and version it is built for, which removed or renamed APIs it touches, and whether anything is a known wall. It is a pre-flight screen, not a guarantee.</p>
+  <h1>Check a mod before transforming it</h1>
+  <p>Probe reads a mod jar, finds its loader and version, and checks referenced APIs against Retromod's compatibility data. The result is an estimate, not a guarantee.</p>
 </div>
 
 <main>
@@ -119,7 +119,7 @@ select { padding:.5em .8em; color:var(--fg); background:var(--bg3); border:1px s
       <div class="sub">Fabric, NeoForge, or Forge. Nothing is uploaded.</div>
     </div>
     <input id="file" type="file" accept=".jar,application/java-archive,application/zip">
-    <p class="privacy"><b>100% in your browser.</b> The jar is unzipped and analyzed locally using the decompression built into your browser. It never leaves your machine: there is no upload and no server.</p>
+    <p class="privacy"><b>Runs in your browser.</b> Your jar is analyzed locally and is never uploaded.</p>
   </div>
 
   <div id="panel-modrinth" style="display:none">
@@ -129,7 +129,7 @@ select { padding:.5em .8em; color:var(--fg); background:var(--bg3); border:1px s
     </div>
     <div id="mr-results"></div>
     <div id="mr-versions"></div>
-    <p class="privacy">The mod list comes from Modrinth's public API. The version you pick is fetched straight from Modrinth's CDN to <b>your browser</b> and analyzed locally: it is not sent to any Retromod server.</p>
+    <p class="privacy">Modrinth results come from its public API. Selected jars go from Modrinth's CDN to your browser and are analyzed locally.</p>
   </div>
 
   <div id="status"></div>
@@ -152,7 +152,7 @@ select { padding:.5em .8em; color:var(--fg); background:var(--bg3); border:1px s
   function setStatus(msg) { var s = el("status"); s.style.display = msg ? "block" : "none"; s.textContent = msg || ""; }
   function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
 
-  // ---------- version compare (handles 26.2 > 1.21.11) ----------
+  // Version comparison, including jumps such as 1.21.11 to 26.2
   function verTokens(v) { var m = String(v || "").match(/(\d+(?:\.\d+){0,3})/); return m ? m[1].split(".").map(Number) : null; }
   function cmpVer(a, b) {
     var x = verTokens(a), y = verTokens(b);
@@ -169,7 +169,7 @@ select { padding:.5em .8em; color:var(--fg); background:var(--bg3); border:1px s
     return best;
   }
 
-  // ---------- ZIP (central directory) + native deflate ----------
+  // ZIP central directory and native deflate
   function u16(dv, o) { return dv.getUint16(o, true); }
   function u32(dv, o) { return dv.getUint32(o, true); }
 
@@ -250,7 +250,7 @@ select { padding:.5em .8em; color:var(--fg); background:var(--bg3); border:1px s
 
   function readText(buf, e) { return readEntry(buf, e).then(function (b) { return b ? new TextDecoder().decode(b) : null; }); }
 
-  // ---------- .class constant pool -> referenced class names ----------
+  // Class references from the constant pool
   var CP_SIZE = { 3: 4, 4: 4, 9: 4, 10: 4, 11: 4, 12: 4, 8: 2, 16: 2, 19: 2, 20: 2, 15: 3, 17: 4, 18: 4 };
   function scanClass(bytes) {
     var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -277,7 +277,7 @@ select { padding:.5em .8em; color:var(--fg); background:var(--bg3); border:1px s
     return { refs: refs, javaMajor: major };
   }
 
-  // ---------- metadata ----------
+  // Mod metadata
   function firstVer(s) { var m = String(s || "").match(/(\d+\.\d+(?:\.\d+)?)/); return m ? m[1] : null; }
   function tomlVal(t, key) { var m = t.match(new RegExp(key + '\\s*=\\s*"([^"]*)"')); return m ? m[1] : null; }
 
@@ -306,7 +306,7 @@ select { padding:.5em .8em; color:var(--fg); background:var(--bg3); border:1px s
     return out;
   }
 
-  // ---------- the probe ----------
+  // Compatibility probe
   function analyze(buf) {
     var zip = listEntries(buf);
     var names = {}; zip.entries.forEach(function (e) { names[e.name] = e; });
@@ -416,11 +416,8 @@ select { padding:.5em .8em; color:var(--fg); background:var(--bg3); border:1px s
     else if (!refs.length) { badge = "LIKELY OK"; cls = "b-likely"; headline = "No Minecraft/loader API references were flagged. Likely transforms cleanly (or is a resource-only mod)."; }
     else { badge = "LIKELY OK"; cls = "b-likely"; headline = "The MC/loader APIs it references are not on any known-removed list. Likely transforms cleanly."; }
 
-    // Note: we deliberately do NOT downgrade the badge on mixin COUNT alone. A count can't tell a
-    // few simple HUD hooks (AppleSkin, works great) from deep-integration mixins (AE2, does not) -
-    // that judgment lives in the known-incompatible list. The mixin count is surfaced as an
-    // informative structure note instead, so a mixin-heavy mod reads as higher-risk without a
-    // false RISKY verdict on a legitimate one.
+    // A mixin count cannot distinguish a few simple HUD hooks from deep integration.
+    // Keep it as an informational note and rely on the known-incompatible list for verdicts.
     return { badge: badge, cls: cls, headline: headline, range: range,
              removedNoBridge: removedNoBridge, removedBridged: removedBridged, renamed: renamed, moved: moved, incompat: incompat };
   }
@@ -475,7 +472,7 @@ select { padding:.5em .8em; color:var(--fg); background:var(--bg3); border:1px s
     var r = el("result"); r.innerHTML = html; r.style.display = "block";
   }
 
-  // ---------- run pipeline (shared by the upload and Modrinth paths) ----------
+  // Shared pipeline for uploads and Modrinth downloads
   var lastAnalysis = null;
 
   function showAnalysis(a) {
@@ -515,7 +512,7 @@ select { padding:.5em .8em; color:var(--fg); background:var(--bg3); border:1px s
       .catch(function (e) { setStatus(""); el("result").style.display = "block"; el("result").innerHTML = '<div class="err">Could not read the file: ' + esc(e && e.message || e) + '</div>'; });
   }
 
-  // ---------- Modrinth picker (fetches jar bytes straight to the browser; no Retromod server) ----------
+  // Modrinth picker. The browser downloads the jar directly.
   var MR_API = "https://api.modrinth.com/v2";
   var mrSlug = null;  // the currently-picked Modrinth mod, for the shareable ?mod= deep link
 
@@ -537,7 +534,7 @@ select { padding:.5em .8em; color:var(--fg); background:var(--bg3); border:1px s
     fetch(url).then(function (r) { return r.json(); }).then(function (d) {
       var hits = (d && d.hits) || [];
       if (!hits.length) { el("mr-results").innerHTML = '<div class="privacy">No mods found for "' + esc(q) + '".</div>'; return; }
-      // Build rows with the DOM API, NOT innerHTML string concatenation: a crafted Modrinth
+      // Build rows with the DOM API so a crafted Modrinth
       // title/description/icon_url must not be able to break out of an attribute and inject a
       // handler. All untrusted values go in via dataset / textContent / a validated https img src.
       el("mr-results").innerHTML = "";
@@ -605,7 +602,7 @@ select { padding:.5em .8em; color:var(--fg); background:var(--bg3); border:1px s
       .catch(function (e) { setStatus(""); el("result").style.display = "block"; el("result").innerHTML = '<div class="err">Could not download from Modrinth: ' + esc(e && e.message || e) + '</div>'; });
   }
 
-  // ---------- wiring ----------
+  // Event handlers
   function onFile(f) { if (f) run(f); }
 
   el("file").addEventListener("change", function (e) { onFile(e.target.files[0]); });

@@ -35,7 +35,7 @@ class ReferenceVerifierTest {
         // Stub index: only the "new" class exists. The "old" class doesn't.
         StubIndex index = new StubIndex();
         index.classes.add("net/minecraft/core/BlockPos"); // new
-        // Note: net/minecraft/util/math/BlockPos intentionally NOT added
+        // Note: net/minecraft/util/math/BlockPos intentionally not added
 
         ReferenceVerifier verifier = new ReferenceVerifier(index, emptyLoaderRenames(), 3);
         byte[] modClass = classThatReferences("net/minecraft/util/math/BlockPos", "getX", "()I");
@@ -235,9 +235,7 @@ class ReferenceVerifierTest {
                 "a field BAD_SIGNATURE must render with the ' : ' field separator: " + fieldRef.prettyPrint());
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // HELPERS
-    // ═══════════════════════════════════════════════════════════════════════
+    // Test helpers
 
     private static LoaderApiRenames emptyLoaderRenames() {
         return LoaderApiRenames.forTesting(Map.of(), Map.of(), Set.of());

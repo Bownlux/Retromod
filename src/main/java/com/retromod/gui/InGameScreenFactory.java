@@ -22,7 +22,7 @@ public final class InGameScreenFactory {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-GUI");
 
-    // resolved lazily
+    // Resolve Minecraft classes only when a screen is first needed.
     private static Class<?> screenClass;
     private static Class<?> textClass;
     private static Class<?> confirmScreenClass;
@@ -47,8 +47,7 @@ public final class InGameScreenFactory {
             "net.minecraft.network.chat.Component"
         );
 
-        // plain Yes/No ConfirmScreen, not ConfirmLinkScreen (the link-warning
-        // dialog with a different ctor)
+        // ConfirmLinkScreen has a different constructor and cannot be used here.
         confirmScreenClass = McReflect.findClass(
             "net.minecraft.client.gui.screen.ConfirmScreen",    // yarn
             "net.minecraft.client.gui.screens.ConfirmScreen"    // mojang
@@ -65,7 +64,7 @@ public final class InGameScreenFactory {
         );
 
         if (screenClass == null || textClass == null || minecraftClientClass == null) {
-            LOGGER.warn("Could not resolve MC screen classes for in-game GUI");
+            LOGGER.warn("Retromod could not find the Minecraft screen classes for this version.");
             return false;
         }
 
@@ -77,28 +76,28 @@ public final class InGameScreenFactory {
             Method getInstance = McReflect.findMethod(minecraftClientClass, "getInstance");
             return getInstance != null ? getInstance.invoke(null) : null;
         } catch (Exception e) {
-            LOGGER.debug("Could not get MC client instance: {}", e.getMessage());
+            LOGGER.debug("Could not get the Minecraft client instance: {}", e.getMessage());
             return null;
         }
     }
 
     private static Object createText(String text) {
         try {
-            // Text.literal() (1.19.2+) / Component.literal()
+            // Current Yarn and Mojang names share literal().
             Method literal = McReflect.findMethod(textClass,
                 new Class[]{String.class}, "literal");
             if (literal != null) {
                 return literal.invoke(null, text);
             }
 
-            // Text.of() / Component.translatable()
+            // Older versions may expose of() instead.
             Method of = McReflect.findMethod(textClass,
                 new Class[]{String.class}, "of");
             if (of != null) {
                 return of.invoke(null, text);
             }
 
-            // LiteralText constructor (pre-1.19.2)
+            // Oldest supported clients use a concrete text class.
             Class<?> literalTextClass = McReflect.findClass(
                 "net.minecraft.text.LiteralText",
                 "net.minecraft.network.chat.TextComponent"
@@ -107,7 +106,7 @@ public final class InGameScreenFactory {
                 return literalTextClass.getConstructor(String.class).newInstance(text);
             }
         } catch (Exception e) {
-            LOGGER.debug("Could not create Text object: {}", e.getMessage());
+            LOGGER.debug("Could not create Minecraft text: {}", e.getMessage());
         }
         return null;
     }
@@ -123,7 +122,7 @@ public final class InGameScreenFactory {
                 setScreen.invoke(client, screen);
             }
         } catch (Exception e) {
-            LOGGER.warn("Could not set MC screen: {}", e.getMessage());
+            LOGGER.warn("Could not open the Minecraft screen: {}", e.getMessage());
         }
     }
 
@@ -138,7 +137,7 @@ public final class InGameScreenFactory {
     public static void showConfirmScreen(String title, String message,
                                           Runnable onYes, Runnable onNo) {
         if (!resolveClasses()) {
-            LOGGER.warn("Cannot show in-game confirm screen (classes not available)");
+            LOGGER.warn("The confirmation screen is unavailable on this Minecraft version.");
             return;
         }
 
@@ -190,7 +189,7 @@ public final class InGameScreenFactory {
             showNotification(title + "\n" + message);
 
         } catch (Exception e) {
-            LOGGER.warn("Failed to show confirm screen: {}", e.getMessage());
+            LOGGER.warn("Could not show the confirmation screen: {}", e.getMessage());
         }
     }
 
@@ -207,7 +206,7 @@ public final class InGameScreenFactory {
     public static void showRestartConfirm(Object parentScreen, String title,
                                           String message, Runnable onYes) {
         if (!resolveClasses() || confirmScreenClass == null) {
-            LOGGER.warn("Cannot show restart confirm (screen classes unavailable)");
+            LOGGER.warn("The restart screen is unavailable on this Minecraft version.");
             return;
         }
         try {
@@ -244,7 +243,7 @@ public final class InGameScreenFactory {
             Object screen = ctor.newInstance(callback, titleText, messageText);
             setScreen(screen);
         } catch (Exception e) {
-            LOGGER.warn("Failed to show restart confirm: {}", e.getMessage());
+            LOGGER.warn("Could not show the restart screen: {}", e.getMessage());
         }
     }
 
@@ -302,16 +301,11 @@ public final class InGameScreenFactory {
             LOGGER.debug("NoticeScreen not available: {}", e.getMessage());
         }
 
-        LOGGER.info("[Retromod Notification] {}", message);
+        LOGGER.info("Retromod notice: {}", message);
     }
 
-    /**
-     * Show transformation results in-game.
-     *
-     * @param results list of per-mod result strings
-     * @param needsRestart whether to show a "Restart Required" message
-     */
-    public static void showTransformResults(List<String> results, boolean needsRestart) {
+    /** Shows one result per mod and offers to close the game when a restart is needed. */
+    public static void showUpdateResults(List<String> results, boolean needsRestart) {
         StringBuilder msg = new StringBuilder();
 
         for (String result : results) {
@@ -319,10 +313,10 @@ public final class InGameScreenFactory {
         }
 
         if (needsRestart) {
-            msg.append("\nPlease RESTART Minecraft for changes to take effect.");
+            msg.append("\nRestart Minecraft to load the updated mods.");
         }
 
-        showResultScreen("Retromod - Transformation Results", msg.toString(), () -> {
+        showResultScreen("Retromod results", msg.toString(), () -> {
             if (needsRestart) {
                 try {
                     Object client = getClientInstance();
@@ -348,12 +342,11 @@ public final class InGameScreenFactory {
      * @param onSaveQuit callback for "Save & Quit" action
      */
     public static void showCrashScreen(String modName, String errorMsg, Runnable onSaveQuit) {
-        String title = "Retromod - Mod Error Detected";
-        String message = "A transformed mod caused an error:\n\n"
+        String title = "Retromod found a mod error";
+        String message = "Retromod stopped after an updated mod failed:\n\n"
             + "Mod: " + modName + "\n"
             + "Error: " + errorMsg + "\n\n"
-            + "Your world has been saved automatically.\n"
-            + "Click 'Save & Quit' to exit safely.";
+            + "Retromod will try to save the current world before exiting.";
 
         showConfirmScreen(title, message, onSaveQuit, onSaveQuit);
     }

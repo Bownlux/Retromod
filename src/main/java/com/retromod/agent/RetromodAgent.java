@@ -8,36 +8,35 @@ import com.retromod.core.RetromodTransformer;
 
 import java.lang.instrument.Instrumentation;
 
-/**
- * Java Agent for Retromod, attached via -javaagent:retromod-agent.jar to enable
- * bytecode transformation outside the mod loaders.
- */
-public class RetromodAgent {
+/** Runs Retromod's bytecode transformer when Retromod is attached as a Java agent. */
+public final class RetromodAgent {
 
     public static Instrumentation instrumentation;
 
+    private RetromodAgent() {}
+
     /** Attached at JVM startup via -javaagent. */
     public static void premain(String agentArgs, Instrumentation inst) {
-        System.out.println("[Retromod Agent] Installing class transformer (premain)");
+        System.out.println("[Retromod Agent] Installing the runtime class transformer");
 
         instrumentation = inst;
         inst.addTransformer(RetromodTransformer.getInstance(), true);
         System.setProperty("retromod.agent.class", RetromodAgent.class.getName());
 
-        System.out.println("[Retromod Agent] Transformer installed successfully");
+        System.out.println("[Retromod Agent] The runtime class transformer is ready");
     }
 
     /** Attached to a running JVM via the Attach API. */
     public static void agentmain(String agentArgs, Instrumentation inst) {
-        System.out.println("[Retromod Agent] Installing class transformer (agentmain)");
+        System.out.println("[Retromod Agent] Attaching the runtime class transformer");
 
         instrumentation = inst;
         inst.addTransformer(RetromodTransformer.getInstance(), true);
-        // classes loaded before we attached need a retransform pass
+        // Classes loaded before attachment need one pass through the transformer.
         retransformLoadedClasses(inst);
         System.setProperty("retromod.agent.class", RetromodAgent.class.getName());
 
-        System.out.println("[Retromod Agent] Transformer installed and classes retransformed");
+        System.out.println("[Retromod Agent] The runtime class transformer is ready");
     }
 
     private static void retransformLoadedClasses(Instrumentation inst) {
@@ -47,7 +46,8 @@ public class RetromodAgent {
                 try {
                     inst.retransformClasses(clazz);
                 } catch (Exception e) {
-                    System.err.println("[Retromod Agent] Failed to retransform: " + name);
+                    System.err.println("[Retromod Agent] Could not update the loaded class "
+                            + name + ": " + e.getMessage());
                 }
             }
         }

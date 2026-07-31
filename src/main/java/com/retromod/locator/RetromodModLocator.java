@@ -63,24 +63,26 @@ public final class RetromodModLocator implements IModFileCandidateLocator {
         try {
             folder = resolveModFolder(resolveGameDir(context));
         } catch (RuntimeException e) {
-            LOGGER.warn("[Retromod] could not resolve the Retromod mods folder; skipping", e);
+            LOGGER.warn("Could not find the Retromod mods folder, so no transformed mods "
+                    + "will be added", e);
             return;
         }
 
-        // Create the folder if absent so users have a place to drop jars; a read-only game dir mustn't break discovery.
+        // A read-only game directory should not stop the rest of mod discovery.
         if (!Files.isDirectory(folder)) {
             try {
                 Files.createDirectories(folder);
-                LOGGER.info("[Retromod] created mod folder {} (drop transformed jars here)", folder);
+                LOGGER.info("Created {}. Put transformed mod jars in this folder.", folder);
             } catch (IOException e) {
-                LOGGER.debug("[Retromod] mod folder {} is absent and could not be created: {}", folder, e.toString());
+                LOGGER.debug("Could not create the transformed mod folder {}: {}",
+                        folder, e.toString());
             }
             return;
         }
 
         List<Path> jars = listJars(folder);
         if (jars.isEmpty()) {
-            LOGGER.debug("[Retromod] no jars in {}", folder);
+            LOGGER.debug("No transformed mod jars found in {}", folder);
             return;
         }
 
@@ -91,10 +93,12 @@ public final class RetromodModLocator implements IModFileCandidateLocator {
                         IncompatibleFileReporting.WARN_ON_KNOWN_INCOMPATIBILITY);
                 added++;
             } catch (RuntimeException e) {
-                LOGGER.warn("[Retromod] failed to offer {} to mod discovery: {}", jar.getFileName(), e.toString());
+                LOGGER.warn("Could not add {} to mod discovery: {}",
+                        jar.getFileName(), e.toString());
             }
         }
-        LOGGER.info("[Retromod] offered {} jar(s) from {} to mod discovery", added, folder);
+        LOGGER.info("Added {} transformed mod {} from {} to mod discovery",
+                added, added == 1 ? "jar" : "jars", folder);
     }
 
     @Override
@@ -102,7 +106,7 @@ public final class RetromodModLocator implements IModFileCandidateLocator {
         return "retromod folder locator (" + SUBFOLDER + ")";
     }
 
-    // helpers are package-private for host-independent unit testing
+    // Package-private helpers keep these paths testable without a running game.
 
     /**
      * Folder to scan: the {@code retromod.modfolder} system property (absolute path) if set,
@@ -130,7 +134,7 @@ public final class RetromodModLocator implements IModFileCandidateLocator {
             Object dir = ILaunchContext.class.getMethod("gameDirectory").invoke(context);
             if (dir instanceof Path p) return p;
         } catch (ReflectiveOperationException | RuntimeException absentOnLoader4x) {
-            // gameDirectory() absent on this loader (MC 1.21.x); fall through to FMLPaths
+            // Older loader versions expose the game directory through FMLPaths instead.
         }
         try {
             Class<?> fmlPaths = Class.forName("net.neoforged.fml.loading.FMLPaths");
@@ -138,7 +142,7 @@ public final class RetromodModLocator implements IModFileCandidateLocator {
             Object dir = fmlPaths.getMethod("get").invoke(gamedir);
             if (dir instanceof Path p) return p;
         } catch (ReflectiveOperationException | RuntimeException e) {
-            LOGGER.warn("[Retromod] could not resolve the NeoForge game directory: {}", e.toString());
+            LOGGER.warn("Could not find the NeoForge game directory: {}", e.toString());
         }
         return null;
     }
@@ -154,7 +158,7 @@ public final class RetromodModLocator implements IModFileCandidateLocator {
                    .sorted()
                    .forEach(out::add);
         } catch (IOException e) {
-            LOGGER.warn("[Retromod] could not list {}: {}", folder, e.toString());
+            LOGGER.warn("Could not list transformed mods in {}: {}", folder, e.toString());
         }
         return out;
     }

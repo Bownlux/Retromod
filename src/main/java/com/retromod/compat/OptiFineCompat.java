@@ -16,16 +16,17 @@ import java.util.jar.JarFile;
 import java.util.zip.ZipEntry;
 
 /**
- * Limited OptiFine support: detect it, warn about conflicts (Sodium/Iris/Indium and other
- * rendering mods), and point users at alternatives. OptiFine is closed source and rewrites
- * rendering bytecode, so we don't translate it.
+ * Detects OptiFine so Retromod can explain why it is outside the normal transform path.
  */
-public class OptiFineCompat {
+public final class OptiFineCompat {
     
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-OptiFine");
     
     private static boolean optiFineDetected = false;
     private static String optiFineVersion = null;
+
+    private OptiFineCompat() {
+    }
     
     /** Check if a JAR is OptiFine. */
     public static boolean isOptiFine(Path jarPath) {
@@ -78,30 +79,15 @@ public class OptiFineCompat {
         return "Unknown";
     }
     
-    /** Warn about OptiFine and offer alternatives once it's been detected. */
+    /** Warns once Retromod has identified an OptiFine jar. */
     public static void handleOptiFineDetected(Path jarPath, boolean isServer) {
         optiFineDetected = true;
         optiFineVersion = getOptiFineVersion(jarPath);
         
-        LOGGER.warn("═══════════════════════════════════════════════════════════");
-        LOGGER.warn("  OPTIFINE DETECTED!");
-        LOGGER.warn("═══════════════════════════════════════════════════════════");
-        LOGGER.warn("  Version: {}", optiFineVersion);
-        LOGGER.warn("");
-        LOGGER.warn("  ⚠️  OptiFine has LIMITED support in Retromod! And Has MUCH better alternative's");
-        LOGGER.warn("");
-        LOGGER.warn("  KNOWN ISSUES:");
-        LOGGER.warn("  - May crash with other rendering mods");
-        LOGGER.warn("  - Shader support may not work");
-        LOGGER.warn("  - Performance may be worse than alternatives");
-        LOGGER.warn("  - Some features may be broken");
-        LOGGER.warn("");
-        LOGGER.warn("  RECOMMENDED ALTERNATIVES:");
-        LOGGER.warn("  - Sodium (better FPS) + Iris (shaders)");
-        LOGGER.warn("  - Both work great with Retromod!");
-        LOGGER.warn("  - https://modrinth.com/mod/sodium");
-        LOGGER.warn("  - https://modrinth.com/mod/iris");
-        LOGGER.warn("═══════════════════════════════════════════════════════════");
+        LOGGER.warn("OptiFine {} was detected. Retromod cannot reliably translate its renderer changes.",
+            optiFineVersion);
+        LOGGER.warn("It may fail on a newer Minecraft version or conflict with another rendering mod.");
+        LOGGER.warn("Compatibility notes: https://bownlux.github.io/Retromod/incompatible-mods/");
         
         if (!isServer) {
             showOptiFineWarningDialog();
@@ -121,38 +107,22 @@ public class OptiFineCompat {
             } catch (Exception ignored) {}
 
             String message = """
-                ⚠️ OptiFine Detected!
+                Retromod found OptiFine.
 
-                Retromod has LIMITED support for OptiFine.
-
-                KNOWN ISSUES:
-                • May crash with other rendering mods
-                • Shader support may not work correctly
-                • Performance may actually be worse
-                • Some features may be completely broken
-
-                ═══════════════════════════════════════
-
-                RECOMMENDED ALTERNATIVES:
-
-                • Sodium - Much better FPS optimization
-                • Iris - Full shader support
-                • Both work perfectly with Retromod!
-
-                ═══════════════════════════════════════
-
-                What would you like to do?
+                OptiFine replaces parts of Minecraft's renderer, so Retromod cannot
+                translate it reliably. Continuing may lead to missing features,
+                rendering problems, or a crash.
                 """;
 
             choiceHolder[0] = JOptionPane.showOptionDialog(
                 null,
                 message,
-                "Retromod - OptiFine Warning",
+                "OptiFine compatibility",
                 JOptionPane.YES_NO_CANCEL_OPTION,
                 JOptionPane.WARNING_MESSAGE,
                 null,
-                new String[]{"Open Sodium Page", "Continue Anyway", "Cancel"},
-                "Open Sodium Page"
+                new String[]{"Read Compatibility Notes", "Continue Anyway", "Cancel"},
+                "Read Compatibility Notes"
             );
         };
 
@@ -173,11 +143,12 @@ public class OptiFineCompat {
         int choice = choiceHolder[0];
         if (choice == 0) {
             try {
-                Desktop.getDesktop().browse(URI.create("https://modrinth.com/mod/sodium"));
+                Desktop.getDesktop().browse(
+                    URI.create("https://bownlux.github.io/Retromod/incompatible-mods/"));
             } catch (Exception e) {
                 SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(null,
-                    "Please visit: https://modrinth.com/mod/sodium",
-                    "Open Browser",
+                    "Please visit: https://bownlux.github.io/Retromod/incompatible-mods/",
+                    "Compatibility notes",
                     JOptionPane.INFORMATION_MESSAGE));
             }
         } else if (choice == 2) {
@@ -220,15 +191,7 @@ public class OptiFineCompat {
     }
 
     public static void logConflict(String modId) {
-        LOGGER.error("═══════════════════════════════════════════════════════════");
-        LOGGER.error("  MOD CONFLICT DETECTED!");
-        LOGGER.error("═══════════════════════════════════════════════════════════");
-        LOGGER.error("  OptiFine conflicts with: {}", modId);
-        LOGGER.error("");
-        LOGGER.error("  These mods CANNOT be used together!");
-        LOGGER.error("  The game will likely crash or have severe issues.");
-        LOGGER.error("");
-        LOGGER.error("  SOLUTION: Remove either OptiFine or {}", modId);
-        LOGGER.error("═══════════════════════════════════════════════════════════");
+        LOGGER.error("OptiFine conflicts with {}. Remove one of them before restarting Minecraft.",
+            modId);
     }
 }

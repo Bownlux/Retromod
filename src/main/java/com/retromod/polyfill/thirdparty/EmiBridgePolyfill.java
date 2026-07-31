@@ -21,7 +21,7 @@ import com.retromod.polyfill.PolyfillProvider;
  *   <li>{@code EmiPort} helper class removed (was internal compat layer)</li>
  * </ul>
  *
- * This bridge does NOT bundle EMI. The user installs EMI 1.x normally;
+ * This bridge does not bundle EMI. The user installs EMI 1.x normally;
  * Retromod only redirects old 0.x class references to their 1.x equivalents.
  */
 public class EmiBridgePolyfill implements PolyfillProvider {

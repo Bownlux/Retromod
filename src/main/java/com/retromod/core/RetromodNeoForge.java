@@ -30,26 +30,22 @@ public class RetromodNeoForge {
     
     public RetromodNeoForge() {
         RetromodVersion.logPresenceBanner(LOGGER);
-        // Retromod.<clinit> can't run on NeoForge (no Fabric ModInitializer), so
-        // populate RetromodVersion from NeoForge's loader ourselves.
+        // NeoForge does not load the Fabric entry point that normally records this version.
         String mcVersion = RetromodVersion.detectFmlMcVersion();
         if (mcVersion != null) {
             RetromodVersion.TARGET_MC_VERSION = mcVersion;
         } else {
-            // Without the host MC version the shim gate (target <= host) skips every
-            // newer shim, dropping core renames (ResourceLocation->Identifier) and
-            // crashing mods with NoClassDefFoundError (#47). Fail loud, not silent.
-            LOGGER.error("Retromod could NOT detect the NeoForge host MC version - "
-                    + "falling back to {}. Version shims for any newer MC will be "
-                    + "SKIPPED, so mods may fail to translate. Please report your "
-                    + "NeoForge/FML version so the detection can be updated.",
+            // The shim gate needs the host version to decide which API changes are safe to apply.
+            LOGGER.error("Retromod could not detect the NeoForge Minecraft version. It will "
+                    + "use {} and skip shims for newer versions, so some mods may not work. "
+                    + "Please report your NeoForge and FML versions.",
                     RetromodVersion.TARGET_MC_VERSION);
         }
 
-        LOGGER.info("Retromod initializing on NeoForge (target MC: {})...",
+        LOGGER.info("Starting Retromod on NeoForge for Minecraft {}",
                 RetromodVersion.TARGET_MC_VERSION);
 
-        // Write the default config.json if missing (#74).
+        // First-time users need a real file they can edit.
         RetromodConfig.ensureDefaultConfig();
 
         boolean isServer = EnvironmentDetector.isDedicatedServer();
@@ -168,9 +164,11 @@ public class RetromodNeoForge {
                 initializeClientGui();
             }
         } else {
-            LOGGER.info("Server mode - GUI disabled");
+            LOGGER.info("Running without the in-game interface on this server");
             if (transformed > 0) {
-                LOGGER.info("Transformed {} mod(s) - please restart for changes to take effect", transformed);
+                LOGGER.info("Updated {} {}. Restart the server to load {}.",
+                        transformed, transformed == 1 ? "mod" : "mods",
+                        transformed == 1 ? "it" : "them");
             }
         }
 
@@ -188,8 +186,8 @@ public class RetromodNeoForge {
                     java.util.List<AutoFixEngine.AppliedFix> fixes =
                         autoFixEngine.analyzeAndFix(logFile, transformer);
                     if (!fixes.isEmpty()) {
-                        LOGGER.warn("AutoFix: registered {} redirect(s) from previous log (opt-in feature). "
-                                + "Review each one - log lines are an attacker-writable surface:",
+                        LOGGER.warn("Auto-fix registered {} redirect(s) from the previous log. "
+                                + "Review each one because log content is untrusted:",
                                 fixes.size());
                         for (AutoFixEngine.AppliedFix fix : fixes) {
                             LOGGER.warn("  AutoFix [{}] {} => {}",
@@ -201,21 +199,16 @@ public class RetromodNeoForge {
                 LOGGER.warn("Could not run auto-fix analysis: {}", e.getMessage());
             }
         } else {
-            LOGGER.debug("AutoFix disabled by default. Enable with -Dretromod.autoFix=true "
+            LOGGER.debug("Auto-fix is disabled. Enable it with -Dretromod.autoFix=true "
                     + "(see security notes in Retromod.java).");
         }
 
-        LOGGER.info("Retromod initialized!");
+        LOGGER.info("Retromod initialized.");
         
         if (isServer) {
-            LOGGER.info("=======================================================");
-            LOGGER.info("  Retromod: Server Mode Active (NeoForge)");
-            LOGGER.info("=======================================================");
-            LOGGER.info("  • Bytecode transformation: ENABLED");
-            LOGGER.info("  • AOT compilation: ENABLED");
-            LOGGER.info("  • Forge -> NeoForge migration: ENABLED");
-            LOGGER.info("  • GUI features: DISABLED (headless)");
-            LOGGER.info("=======================================================");
+            LOGGER.info("Retromod is running in NeoForge server mode.");
+            LOGGER.info("Bytecode transforms, ahead-of-time compilation, and Forge migration are enabled.");
+            LOGGER.info("GUI features are unavailable on a headless server.");
         }
     }
     
@@ -290,7 +283,7 @@ public class RetromodNeoForge {
             RetromodGui gui = new RetromodGui(gameDir);
 
             if (gui.isFirstRun()) {
-                LOGGER.info("First run detected - showing setup dialog");
+                LOGGER.info("Opening the Retromod setup dialog for the first run");
                 gui.showFirstRunDialog();
             } else {
                 gui.showAddModsButton();
@@ -448,7 +441,7 @@ public class RetromodNeoForge {
         return count;
     }
 
-    /** Pop up a "restart required" dialog after a transform. */
+    /** Asks the player to restart after jars changed on disk. */
     private void showRestartPopup(int transformedCount) {
         if (!EnvironmentDetector.canShowGui()) return;
 
@@ -459,33 +452,21 @@ public class RetromodNeoForge {
             } catch (Exception ignored) {}
 
             javax.swing.JOptionPane.showMessageDialog(null,
-                "Retromod transformed " + transformedCount + " mod(s).\n\n" +
-                "Please close Minecraft and launch it again\n" +
-                "for the changes to take effect.\n\n" +
-                "This only happens the first time.",
-                "Retromod - Restart Required",
+                "Retromod updated " + transformedCount + " mod(s).\n\n" +
+                "Restart Minecraft to load the new jars. You should only need\n" +
+                "this restart after Retromod changes a mod.",
+                "Restart Minecraft",
                 javax.swing.JOptionPane.INFORMATION_MESSAGE);
         }, "Retromod-RestartPopup");
         popupThread.setDaemon(true);
         popupThread.start();
     }
 
-    /**
-     * Log a nudge toward the offline/AOT path after an in-place transform (#95):
-     * {@link #transformModsInPlace()} runs after the module layer is built, too late to
-     * fix module-layer failures that the offline {@code prepare}/{@code batch} commands avoid.
-     */
+    /** Recommends the earlier offline path when startup had to update jars in place. */
     private void recommendAotFlow(int inPlaceCount) {
-        LOGGER.info("════════════════════════════════════════════════════════════");
-        LOGGER.info("[Retromod] Transformed {} mod(s) in place at startup.", inPlaceCount);
-        LOGGER.info("[Retromod] On NeoForge this runs AFTER the module layer is built, so");
-        LOGGER.info("[Retromod] module-layer issues (split packages, Forge-named JiJ libs)");
-        LOGGER.info("[Retromod] can crash before Retromod gets to act. For best reliability,");
-        LOGGER.info("[Retromod] run the offline (AOT) transform ONCE - it processes the jars");
-        LOGGER.info("[Retromod] BEFORE the loader scans:");
-        LOGGER.info("[Retromod]     java -jar retromod-cli.jar prepare <minecraft-dir>");
-        LOGGER.info("[Retromod] (or: retromod batch mods/), then restart.");
-        LOGGER.info("════════════════════════════════════════════════════════════");
+        LOGGER.info("Retromod updated {} mod(s) during NeoForge startup.", inPlaceCount);
+        LOGGER.info("For future setup, `retromod prepare <minecraft-dir>` is more reliable because "
+            + "it updates jars before NeoForge builds its module layer.");
     }
 
     private void scanForRuntimeTransformableMods() {

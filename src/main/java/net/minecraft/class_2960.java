@@ -1,7 +1,7 @@
 /*
  * Compile-time stub for Minecraft's class_2960 (Identifier / ResourceLocation).
  *
- * Exists ONLY so a Retromod class can name the MC type at compile time - same trick
+ * Exists only so a Retromod class can name the MC type at compile time - same trick
  * the @Mod stubs use (net/{minecraftforge,neoforged}/fml/common/Mod.java). The
  * resulting .class is excluded from the production jar (see pom.xml &lt;excludes&gt;),
  * so MC's real {@code class_2960} wins at runtime.

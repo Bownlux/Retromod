@@ -19,11 +19,10 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
 /**
- * Hybrid AOT/JIT transformation engine. JIT handles classes loaded before the
- * background AOT pass has cached them; AOT serves the rest from the disk cache.
- * Tracks which mod each class came from for per-mod performance monitoring.
+ * Builds transformed classes in the background and handles early class loads at runtime.
+ * It also records which mod owns each class for crash reports and performance tracking.
  */
-public class HybridTransformationEngine {
+public final class HybridTransformationEngine {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Hybrid");
 
@@ -61,10 +60,8 @@ public class HybridTransformationEngine {
         this.versionDetector = new ModVersionDetector();
         this.performanceMonitor = MemorySafetyMonitor.getInstance();
 
-        // Creates the cache dir AND wipes it when the Retromod build changed since it was
-        // written. Critical here: the per-class preload below (loadAotCache) trusts every
-        // .class file in the directory with no version check, so without this stamp an
-        // updated Retromod kept serving the PREVIOUS build's cached transforms.
+        // The preload trusts each cached class, so a different Retromod build must clear the
+        // directory before anything is read.
         com.retromod.aot.AotCacheStamp.ensureCurrent(AOT_CACHE_DIR);
 
         this.backgroundExecutor = Executors.newFixedThreadPool(
@@ -72,7 +69,7 @@ public class HybridTransformationEngine {
             r -> {
                 Thread t = new Thread(r, "Retromod-AOT-Background");
                 t.setDaemon(true);
-                t.setPriority(Thread.MIN_PRIORITY); // don't compete with the game
+                t.setPriority(Thread.MIN_PRIORITY);
                 return t;
             }
         );
@@ -85,33 +82,32 @@ public class HybridTransformationEngine {
         return instance;
     }
     
-    /**
-     * Scan mods and start background AOT.
-     */
+    /** Finds old mods and starts preparing their classes in the background. */
     public void initialize(Path modsFolder, String targetVersion) {
-        LOGGER.info("Initializing Hybrid AOT/JIT engine...");
+        LOGGER.info("Preparing the background transformation cache");
 
         loadAotCache();
         scanModsFolder(modsFolder, targetVersion);
 
-        // crash handler shares our class->mod mapping
+        // Crash reports use the same ownership map as the transformer.
         initializeCrashHandler();
 
         if (!modsToTransform.isEmpty()) {
             startBackgroundAotCompilation(targetVersion);
         } else {
             aotCompletedFlag.set(true);
-            LOGGER.info("No mods need transformation - AOT skipped");
+            LOGGER.info("No mods need background preparation");
         }
 
-        LOGGER.info("Hybrid engine ready: {} mods queued for AOT, {} classes pre-cached",
-            modsToTransform.size(), aotCache.size());
+        LOGGER.info("Background transformation is ready with {} {} queued and {} cached {}",
+                modsToTransform.size(), modsToTransform.size() == 1 ? "mod" : "mods",
+                aotCache.size(), aotCache.size() == 1 ? "class" : "classes");
     }
 
     private void initializeCrashHandler() {
         try {
             SafeCrashHandler.getInstance();
-            LOGGER.info("Safe crash handler initialized");
+            LOGGER.debug("Crash recovery is ready");
         } catch (Exception e) {
             LOGGER.warn("Could not initialize safe crash handler: {}", e.getMessage());
         }
@@ -234,7 +230,7 @@ public class HybridTransformationEngine {
                                 jitTransformer.addTransformablePackage(pkg);
                             }
 
-                            LOGGER.info("Found mod to transform: {} ({} -> {})",
+                            LOGGER.info("Queued {} for an update from Minecraft {} to {}",
                                 info.modId(), info.targetMcVersion(), targetVersion);
                         }
                     } catch (Exception e) {
@@ -242,7 +238,7 @@ public class HybridTransformationEngine {
                     }
                 });
         } catch (IOException e) {
-            LOGGER.error("Error scanning mods folder", e);
+            LOGGER.error("Could not scan the mods folder {}", modsFolder, e);
         }
     }
 
@@ -261,29 +257,30 @@ public class HybridTransformationEngine {
                     }
                 });
         } catch (IOException e) {
-            LOGGER.debug("Could not extract packages from: {}", jarPath);
+            LOGGER.debug("Could not read class packages from {}", jarPath);
         }
 
         return packages;
     }
 
     private void startBackgroundAotCompilation(String targetVersion) {
-        LOGGER.info("Starting background AOT compilation of {} mods...", modsToTransform.size());
+        LOGGER.info("Preparing {} {} in the background",
+                modsToTransform.size(), modsToTransform.size() == 1 ? "mod" : "mods");
 
         for (ModTransformInfo mod : modsToTransform.values()) {
             backgroundExecutor.submit(() -> {
                 try {
                     compileModAot(mod, targetVersion);
                 } catch (Exception e) {
-                    LOGGER.warn("Background AOT failed for {}: {}", mod.modId(), e.getMessage());
+                    LOGGER.warn("Could not prepare {} in the background: {}",
+                            mod.modId(), e.getMessage());
                 }
             });
         }
 
-        // marks completion once every queued mod has been processed
         backgroundExecutor.submit(() -> {
             aotCompletedFlag.set(true);
-            LOGGER.info("Background AOT compilation complete! Stats: {} AOT hits, {} JIT fallbacks",
+            LOGGER.info("Background precompilation finished: {} cache hits, {} launch-time fallbacks",
                 aotHits.get(), jitFallbacks.get());
         });
     }

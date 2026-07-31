@@ -67,7 +67,7 @@ public class RetromodTestModForge {
         // #85/#115 construct crash (Macaw's / Management Wanted on NeoForge 26.2). The guarding
         // try/catch in check() turns a regression into a visible fail line instead of taking the
         // whole mod down, but the reference a native @Mod would crash on is the same one.
-        // ONLY meaningful when this Forge mod runs on a NeoForge host (deploy this jar to a
+        // only meaningful when this Forge mod runs on a NeoForge host (deploy this jar to a
         // NeoForge instance's retromod-input/); on a Forge host it is native. The host-independent
         // redirect assertion lives in the JUnit ForgeEventMigrationTest.
         n++; passed += check(n, "#85/#115 FMLJavaModLoadingContext.get().getModEventBus() bridge", () ->

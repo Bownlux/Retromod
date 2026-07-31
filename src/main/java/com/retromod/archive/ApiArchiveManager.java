@@ -95,8 +95,7 @@ public class ApiArchiveManager {
     
     /**
      * Loads an archive from disk into the memory cache. Never downloads: if the archive isn't already
-     * present it throws, pointing at {@link #downloadArchiveWithUserConsent}. We don't make outbound
-     * HTTP calls on a cache miss; downloads only happen through an explicit consent gate.
+     * present it throws, pointing at {@link #downloadArchiveWithUserConsent}.
      */
     public void loadArchive(String loaderType, String mcVersion) throws IOException {
         String archiveKey = loaderType + "-" + mcVersion;

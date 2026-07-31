@@ -92,7 +92,7 @@ public final class RetroEntityTypeBuild {
                     Object v = f.get(null);
                     if (v != null && String.valueOf(v).contains("entity_type")
                             && !String.valueOf(v).contains("point_of_interest")) {
-                        // "minecraft:root / minecraft:entity_type" and NOT the block/poi variants
+                        // "minecraft:root / minecraft:entity_type" and not the block/poi variants
                         // (point_of_interest_type contains no bare "entity_type";
                         //  villager profession etc. don't either; the double-check is cheap).
                         if (String.valueOf(v).endsWith("entity_type")) {

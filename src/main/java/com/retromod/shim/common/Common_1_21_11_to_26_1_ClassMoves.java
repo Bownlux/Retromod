@@ -219,6 +219,18 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                     "()Lnet/minecraft/TracingExecutor;",
                     "net/minecraft/TracingExecutor", "service", "()Ljava/util/concurrent/ExecutorService;");
         }
+        // Inventory.setPickedItem(ItemStack) -> addAndPickItem(ItemStack) by 26.1 (the middle-click
+        // pick-block method that puts the picked stack into the hotbar; setPickedItem is gone on 26.1,
+        // addAndPickItem is the rename, identical (ItemStack)V descriptor and role, pickSlot(int) kept
+        // its name). Owner+descriptor-scoped. Corpus-mined from a NeoForge 1.21.1 audit (2 mods @Inject
+        // this - inventory/pick-block tweak mixins); the redirect also propagates to those mixin
+        // selectors via MixinCompatibilityTransformer.buildMixinRedirects. (Fabric mods reach it after
+        // the intermediary->Mojang pass produces the old `setPickedItem` name, then this corrects it.)
+        t.registerMethodRedirect(
+                "net/minecraft/world/entity/player/Inventory", "setPickedItem",
+                "(Lnet/minecraft/world/item/ItemStack;)V",
+                "net/minecraft/world/entity/player/Inventory", "addAndPickItem",
+                "(Lnet/minecraft/world/item/ItemStack;)V");
         // CompoundTag.getList(String,int) -> getListOrEmpty(String): drop the type-hint int.
         t.registerArgDropMethodRedirect(
                 "net/minecraft/nbt/CompoundTag", "getList",
@@ -471,7 +483,7 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
      * The factory is registered as a synthetic so the Forge/NeoForge per-mod embedder relocates a
      * JPMS-split-package-safe copy into any mod that references it (Fabric injects it directly). Gated
      * 26.1+ by the caller (these are interfaces on every 26.1+ host, so the old constructor is
-     * genuinely gone; on a pre-1.21.5 host the redirect must NOT fire, and this shim never runs there).
+     * genuinely gone; on a pre-1.21.5 host the redirect must not fire, and this shim never runs there).
      */
     public static void registerTextEventBridges26x(RetromodTransformer t) {
         ensureSyntheticRegistered(t, "com/retromod/polyfill/minecraft/RetroTextEvents");

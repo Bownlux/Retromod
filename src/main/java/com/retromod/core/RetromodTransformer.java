@@ -14,11 +14,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.instrument.ClassFileTransformer;
+import java.io.IOException;
+import java.io.InputStream;
 import java.security.ProtectionDomain;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 /**
  * Core ASM bytecode transformer that rewrites class/method/field references at load time.
@@ -50,12 +53,11 @@ public class RetromodTransformer implements ClassFileTransformer {
     // visitMethodInsn since matching needs owner+name+descriptor, not just name.
     private final Map<MethodKey, MethodTarget> methodRedirects = new ConcurrentHashMap<>(256);
 
-    // Calls to a method deleted on the host are rewritten in place to discard the args
-    // (and receiver) and push a default return, so the mod loads instead of hitting
-    // NoSuchMethodError. The RenderSystem state setters (enableBlend/blendFunc/depthMask)
-    // removed in the 26.x GpuDevice/RenderPipeline refactor have no method to redirect to,
-    // so the dead call is made inert. Keyed on exact owner+name+desc so a live overload
-    // sharing the owner is untouched; owners tracked separately for an O(1) skip.
+    // Calls to a method deleted on the host: discard the args (and receiver), push a default
+    // return, so the mod loads instead of hitting NoSuchMethodError. Motivating case: the
+    // RenderSystem state setters (enableBlend/blendFunc/depthMask) removed in the 26.x
+    // GpuDevice/RenderPipeline refactor have no redirect target. Exact owner+name+desc match,
+    // so a live overload is untouched; owners tracked separately for an O(1) skip.
     private final Set<MethodKey> neutralizedMethods = ConcurrentHashMap.newKeySet();
     private final Set<String> neutralizedMethodOwners = ConcurrentHashMap.newKeySet();
 
@@ -86,12 +88,12 @@ public class RetromodTransformer implements ClassFileTransformer {
     // is retargeted with the lambda's reified event type appended as a Class constant
     // (EventBus 7 addListener bridging; see registerIndyTypedCallRewrite).
     /**
-     * Set when the CURRENT thread's transform pass emitted a rewrite that adds, removes, or
-     * reorders instructions (ctor->factory, super-ctor replace, arg-drop pops, neutralize,
-     * appended CHECKCASTs, indy-typed LDC). Irrelevant on the COMPUTE_FRAMES path (frames are
-     * recomputed), but the COMPUTE_MAXS fallback preserves the ORIGINAL StackMapTable, whose
-     * offsets such rewrites invalidate; the fallback consults this to refuse shipping a class
-     * that would die "StackMapTable format error" at load (hit live on Collective's DuskConfig).
+     * Set when the CURRENT thread's pass emitted a rewrite that adds, removes, or reorders
+     * instructions (ctor->factory, super-ctor replace, arg-drop pops, neutralize, appended
+     * CHECKCASTs, indy-typed LDC). COMPUTE_FRAMES recomputes frames and doesn't care. The
+     * COMPUTE_MAXS fallback preserves the ORIGINAL StackMapTable, which such rewrites
+     * invalidate; it consults this flag and refuses to ship a class that would die
+     * "StackMapTable format error" at load (hit live on Collective's DuskConfig).
      */
     private final ThreadLocal<Boolean> frameInvalidatingRewrite =
             ThreadLocal.withInitial(() -> Boolean.FALSE);
@@ -117,13 +119,10 @@ public class RetromodTransformer implements ClassFileTransformer {
     private final Map<String, String> intermediaryFieldNames = new ConcurrentHashMap<>(40000);
 
     // Descriptor-qualified fallback for AMBIGUOUS intermediary short-names, keyed by
-    // "name|descriptor". A short-name is ambiguous when the offline harvest couldn't make
-    // it globally unique, i.e. the same method_XXXX/field_XXXX maps to more than one distinct
-    // Mojang name depending on descriptor. The flat maps above are last-writer-wins for those,
-    // which silently produces a wrong rename (NoSuchMethodError/VerifyError at runtime). At
-    // lookup time, if a name is in the ambiguous set, we resolve via name+descriptor here
-    // instead of trusting the flat map. Unambiguous names never touch these and stay on the
-    // fast name-only path with zero behavior change.
+    // "name|descriptor". A short-name is ambiguous when the offline harvest couldn't make it
+    // globally unique: the flat maps above are then last-writer-wins, a silent wrong rename
+    // (NoSuchMethodError/VerifyError at runtime). Names in the ambiguous set resolve via
+    // name+descriptor here; unambiguous names stay on the fast name-only path unchanged.
     // Adapted from Sinytra Connector (MIT): IntermediateMapping.extendedMappings + getMappingKey.
     private final Map<String, String> intermediaryMethodNamesByDesc = new ConcurrentHashMap<>();
     private final Map<String, String> intermediaryFieldNamesByDesc = new ConcurrentHashMap<>();
@@ -147,6 +146,18 @@ public class RetromodTransformer implements ClassFileTransformer {
     // Class-to-interface migrations: when a class becomes an interface in newer MC,
     // mods extending it get their superclass changed to a bridge plus the interface added.
     private final Map<String, SuperclassRedirect> superclassRedirects = new ConcurrentHashMap<>(16);
+
+    // Supplies classes from the jar currently being transformed. Those classes are not on the
+    // transform classpath yet, but ASM still needs their hierarchy to compute valid frames.
+    private volatile Function<String, byte[]> jarClassBytes;
+
+    public void setJarClassBytesProvider(Function<String, byte[]> provider) {
+        this.jarClassBytes = provider;
+    }
+
+    public void clearJarClassBytesProvider() {
+        this.jarClassBytes = null;
+    }
 
     // new Foo(args) -> Foo.factory(args), for constructors replaced by static factories
     // (e.g. new ResourceLocation(s) -> Identifier.parse(s) in 26.1).
@@ -287,12 +298,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
-     * Initialize the fuzzy method/field resolver with the target MC JAR.
-     * The resolver indexes all classes, methods, and fields in the JAR so it can
-     * fuzzy-match unresolved references during bytecode transformation.
-     *
-     * <p>This is a FALLBACK mechanism; hardcoded redirects registered by shims
-     * always take priority. Call this once during startup after shims are loaded.</p>
+     * Index the target MC JAR for fuzzy-matching unresolved references. Fallback only:
+     * hardcoded shim redirects always win. Call once at startup after shims load.
      *
      * @param mcJarPath path to the Minecraft client JAR, or null to auto-detect
      */
@@ -335,18 +342,15 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
-     * Get the pattern heuristics engine, or null if not initialized.
-     * Pattern heuristics are checked BEFORE the fuzzy resolver because they
-     * are faster (simple string comparisons) and more reliable (deterministic rules).
+     * Pattern heuristics engine, or null if not initialized. Checked before the fuzzy
+     * resolver: faster and deterministic.
      */
     public PatternHeuristics getPatternHeuristics() {
         return patternHeuristics;
     }
 
     /**
-     * Register a method redirect.
-     * When legacy code calls oldOwner.oldName(oldDesc),
-     * it will be rewritten to call newOwner.newName(newDesc).
+     * Register a method redirect: oldOwner.oldName(oldDesc) -> newOwner.newName(newDesc).
      */
     public void registerMethodRedirect(
             String oldOwner, String oldName, String oldDesc,
@@ -407,7 +411,7 @@ public class RetromodTransformer implements ClassFileTransformer {
      * sin(F)F} widened to {@code (D)F} (arg F2D), {@code Window.getGuiScale()D} narrowed to {@code
      * ()I} (return I2D), {@code SoundManager.play(SoundInstance)V} now returns a {@code PlayResult}
      * (return POP). The last-arg rule is safe because a widened arg is the final value pushed before
-     * the call; multi-arg conversions on non-top slots are NOT expressible here (register those a
+     * the call; multi-arg conversions on non-top slots are not expressible here (register those a
      * different way).
      */
     public void registerConvertingRedirect(
@@ -489,7 +493,7 @@ public class RetromodTransformer implements ClassFileTransformer {
      * <p>This recovers the listener event type that EventBus 6 read from the lambda's constant
      * pool and EventBus 7 cannot: {@code bus.addListener(this::onSetup)} compiles to
      * [captures..., INDY, INVOKEINTERFACE], so at transform time the type is right there. Calls
-     * NOT immediately preceded by a Consumer indy (a stored variable, a field) fall through to
+     * not immediately preceded by a Consumer indy (a stored variable, a field) fall through to
      * the normal pipeline (the bridge's default method does runtime generics recovery instead).
      */
     public void registerIndyTypedCallRewrite(
@@ -1176,7 +1180,7 @@ public class RetromodTransformer implements ClassFileTransformer {
     /**
      * Read-only counterpart of {@link #dropPhantomComRetromodTargets}: returns every currently
      * registered redirect target under {@code com/retromod/} that is neither a registered
-     * synthetic nor loadable, WITHOUT removing anything. The runtime guard makes these fail-safe;
+     * synthetic nor loadable, without removing anything. The runtime guard makes these fail-safe;
      * this exists so a CI test can assert the set is empty and prevent NEW phantom targets from
      * being introduced (the shim tree carried a long tail of them, #119). Sorted for stable output.
      */
@@ -1355,8 +1359,8 @@ public class RetromodTransformer implements ClassFileTransformer {
                     || !intermediaryMethodNames.isEmpty() || !intermediaryFieldNames.isEmpty()
                     || !mojangMethodRenames.isEmpty();
             ClassWriter writer = hasClassRemaps
-                    ? new SafeClassWriter(ClassWriter.COMPUTE_FRAMES)
-                    : new SafeClassWriter(reader, ClassWriter.COMPUTE_FRAMES);
+                    ? new SafeClassWriter(ClassWriter.COMPUTE_FRAMES, jarClassBytes)
+                    : new SafeClassWriter(reader, ClassWriter.COMPUTE_FRAMES, jarClassBytes);
             // NO RetromodClassVisitor here: it consults the live redirect maps, which would make
             // the baseline equal pass 1 for changed classes too (false "unchanged"). When nothing
             // matches, RetromodClassVisitor is pure delegation, so leaving it out of the identity
@@ -1520,8 +1524,8 @@ public class RetromodTransformer implements ClassFileTransformer {
         // the output. A standalone ClassWriter forces ASM to build a fresh constant pool.
         boolean hasClassRemaps = (classRemapper != null);
         ClassWriter writer = hasClassRemaps
-            ? new SafeClassWriter(ClassWriter.COMPUTE_FRAMES)
-            : new SafeClassWriter(reader, ClassWriter.COMPUTE_FRAMES);
+            ? new SafeClassWriter(ClassWriter.COMPUTE_FRAMES, jarClassBytes)
+            : new SafeClassWriter(reader, ClassWriter.COMPUTE_FRAMES, jarClassBytes);
 
         ClassVisitor visitor = writer;
 
@@ -1556,7 +1560,7 @@ public class RetromodTransformer implements ClassFileTransformer {
             // failure: it used to be swallowed silently, which hid a frame-corruption bug for
             // weeks (the fallback preserves ORIGINAL StackMapTable entries, so any structural
             // rewrite that moves or removes instructions ships stale frames).
-            LOGGER.warn("COMPUTE_FRAMES failed for {}; retrying with preserved frames",
+            LOGGER.warn("Frame recomputation failed for {}; retrying with the original frames",
                     className, e);
             try {
                 ClassWriter fallbackWriter = hasClassRemaps
@@ -1891,7 +1895,7 @@ public class RetromodTransformer implements ClassFileTransformer {
 
         // Now rebuild, keeping only the first method whose access matches "best",
         // or the first occurrence if all have the same flags.
-        ClassWriter dedupWriter = new SafeClassWriter(ClassWriter.COMPUTE_FRAMES);
+        ClassWriter dedupWriter = new SafeClassWriter(ClassWriter.COMPUTE_FRAMES, jarClassBytes);
         cr.accept(new ClassVisitor(Opcodes.ASM9, dedupWriter) {
             @Override
             public MethodVisitor visitMethod(int access, String name, String descriptor,
@@ -1930,12 +1934,25 @@ public class RetromodTransformer implements ClassFileTransformer {
      */
     private static class SafeClassWriter extends ClassWriter {
 
+        private final Function<String, byte[]> jarClassBytes;
+
         public SafeClassWriter(int flags) {
-            super(flags);
+            this(flags, null);
         }
 
         public SafeClassWriter(ClassReader classReader, int flags) {
+            this(classReader, flags, null);
+        }
+
+        public SafeClassWriter(int flags, Function<String, byte[]> jarClassBytes) {
+            super(flags);
+            this.jarClassBytes = jarClassBytes;
+        }
+
+        public SafeClassWriter(ClassReader classReader, int flags,
+                               Function<String, byte[]> jarClassBytes) {
             super(classReader, flags);
+            this.jarClassBytes = jarClassBytes;
         }
 
         @Override
@@ -1943,12 +1960,99 @@ public class RetromodTransformer implements ClassFileTransformer {
             try {
                 return super.getCommonSuperClass(type1, type2);
             } catch (Exception | LinkageError e) {
-                // A type isn't resolvable via Class.forName, common in modded MC, and
-                // especially when a type lives in a Fabric Jar-in-Jar (META-INF/jars/*),
-                // is a mod class, or was remapped to a name not on the transform
-                // classpath. Don't blindly fall back to Object; see commonSuperFallback.
+                // Mod classes are often unavailable to Class.forName during transformation.
+                // Read their hierarchy from the jar before using the broader fallback.
+                String viaBytes = commonSuperViaBytes(type1, type2, jarClassBytes);
+                if (viaBytes != null) {
+                    return viaBytes;
+                }
                 return commonSuperFallback(type1, type2);
             }
+        }
+    }
+
+    /**
+     * Finds a common superclass from class bytes when the types are not on the classpath.
+     * Returns {@code null} unless the shared ancestor will also exist at runtime. This prevents
+     * pre-remap intermediary names from leaking into stack-map frames.
+     */
+    static String commonSuperViaBytes(String type1, String type2,
+                                      Function<String, byte[]> provider) {
+        if (type1 == null || type2 == null) {
+            return null;
+        }
+        if (type1.equals(type2)) {
+            return type1;
+        }
+        LinkedHashSet<String> firstChain = superChain(type1, provider);
+        if (firstChain.isEmpty()) {
+            return null;
+        }
+
+        String name = type2;
+        for (int guard = 0; guard < 64 && name != null && !"java/lang/Object".equals(name); guard++) {
+            if (firstChain.contains(name) && isRuntimeResolvable(name, provider)) {
+                return name;
+            }
+            name = superOf(name, provider);
+        }
+        return null;
+    }
+
+    private static LinkedHashSet<String> superChain(String type, Function<String, byte[]> provider) {
+        LinkedHashSet<String> chain = new LinkedHashSet<>();
+        String name = type;
+        for (int guard = 0; guard < 64 && name != null && !"java/lang/Object".equals(name); guard++) {
+            if (!chain.add(name)) {
+                break;
+            }
+            name = superOf(name, provider);
+        }
+        return chain;
+    }
+
+    private static String superOf(String name, Function<String, byte[]> provider) {
+        byte[] bytes = readClassBytes(name, provider);
+        if (bytes == null) {
+            return null;
+        }
+        try {
+            return new ClassReader(bytes).getSuperName();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static byte[] readClassBytes(String name, Function<String, byte[]> provider) {
+        if (provider != null) {
+            byte[] bytes = provider.apply(name);
+            if (bytes != null) {
+                return bytes;
+            }
+        }
+        try (InputStream in = RetromodTransformer.class.getClassLoader()
+                .getResourceAsStream(name + ".class")) {
+            return in == null ? null : in.readAllBytes();
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private static boolean isRuntimeResolvable(String name, Function<String, byte[]> provider) {
+        if (name == null) {
+            return false;
+        }
+        if (name.startsWith("java/")) {
+            return true;
+        }
+        if (provider != null && provider.apply(name) != null) {
+            return true;
+        }
+        try {
+            Class.forName(name.replace('/', '.'), false, RetromodTransformer.class.getClassLoader());
+            return true;
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 
@@ -1960,14 +2064,14 @@ public class RetromodTransformer implements ClassFileTransformer {
      * via {@code Class.forName} (it lives in a Fabric Jar-in-Jar, is a mod class, or was remapped
      * off the transform classpath).
      *
-     * <p>Two opposite failure modes have to be threaded here, so the answer is NOT simply "return
+     * <p>Two opposite failure modes have to be threaded here, so the answer is not simply "return
      * Throwable if either looks like one":
      * <ul>
-     *   <li><b>Merging two exception types must NOT collapse to {@code Object}</b> ({@code #94},
+     *   <li><b>Merging two exception types must not collapse to {@code Object}</b> ({@code #94},
      *       forge-config-api-port {@code ConfigTracker}): a catch-handler join where the caught
      *       value is later consumed as a {@code Throwable} fails verification if ASM typed it as
      *       {@code Object}. So two Throwables merge to {@code Throwable}.
-     *   <li><b>Merging a {@code Throwable} with a plain non-exception must NOT over-generalize to
+     *   <li><b>Merging a {@code Throwable} with a plain non-exception must not over-generalize to
      *       {@code Throwable}</b> (jade {@code CommonProxy.lambda$loadComplete$5}): a try body's
      *       {@code goto} and the catch's rethrow both fall into the same trailing {@code return},
      *       so ASM merges {@code ModMetadata} (try, local 3) with {@code Throwable} (catch, local
@@ -2087,7 +2191,7 @@ public class RetromodTransformer implements ClassFileTransformer {
     // Classes that became interfaces in newer MC/DFU (e.g. DataResult). The JVM needs
     // INVOKEINTERFACE for interface methods and INVOKEVIRTUAL for class methods; old bytecode
     // uses INVOKEVIRTUAL for these, which would crash with IncompatibleClassChangeError, so we
-    // fix the opcode. MutableComponent is deliberately NOT here: it's still a class (implements
+    // fix the opcode. MutableComponent is deliberately not here: it's still a class (implements
     // Component), so INVOKEVIRTUAL on it is correct.
     private static final Set<String> KNOWN_INTERFACES = Set.of(
         "com/mojang/serialization/DataResult",
@@ -2106,7 +2210,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         "java/util/function/Supplier"
     );
 
-    // Types that became interfaces only on 26.x - consulted ONLY on 26.x hosts. On 1.20.x-1.21.x
+    // Types that became interfaces only on 26.x - consulted only on 26.x hosts. On 1.20.x-1.21.x
     // hosts these are still abstract CLASSES, and rewriting a valid INVOKEVIRTUAL/Methodref call
     // to interface form there corrupts working translations (review finding, empirically
     // reproduced: IntProvider.codec itf=true / getMinValue INVOKEINTERFACE on a class).
@@ -2236,7 +2340,7 @@ public class RetromodTransformer implements ClassFileTransformer {
             // is included because a class->class rebase rewrites super(...) <init> owners in the
             // body (#70); superCtorRedirects likewise because it rewrites the super()/this()
             // descriptor there (the 1.12.2 Block(Material)->Block(Properties) bridge). Omitting
-            // superCtorRedirects was a latent bug: a redirect set with ONLY super-ctor + class
+            // superCtorRedirects was a latent bug: a redirect set with only super-ctor + class
             // redirects skipped the wrapper and never applied the super-ctor rewrite. It was
             // masked whenever the same shim also registered a method redirect, and surfaced once
             // the phantom-target sweep dropped those (Forge_1_12_2_to_1_13_2's FlatteningShim).
@@ -2313,7 +2417,7 @@ public class RetromodTransformer implements ClassFileTransformer {
      * INVOKESPECIAL with INVOKESTATIC. The suppression state is a STACK, not a single slot:
      * the args of a deferred {@code new} can themselves contain redirect-eligible {@code new}s,
      * and javac brackets them properly (inner {@code <init>} always precedes the outer one).
-     * Crucially, an inner PLAIN NEW (no redirect) must NOT flush the outer entry: the args may
+     * Crucially, an inner PLAIN NEW (no redirect) must not flush the outer entry: the args may
      * contain branches (ternaries), and emitting the buffered NEW+DUP mid-expression puts them
      * on ONE path only, so the paths reach the convergent {@code <init>} with different stack
      * heights (ASM Frame.merge AIOOBE; hit live on Collective's DuskConfig, snapshot.8). The
@@ -2431,18 +2535,17 @@ public class RetromodTransformer implements ClassFileTransformer {
                     factory = constructorRedirects.get(new ConstructorKey(owner, descriptor));
                 }
                 if (factory != null) {
-                    // Replace NEW+DUP+INVOKESPECIAL with INVOKESTATIC factory
+                    // The pending NEW and DUP are removed when the redirect is registered.
                     String originalClass = pendingNews.pop().type;
                     markFrameInvalidatingRewrite();
-                    LOGGER.info("Constructor→factory redirect: new {}({}) -> {}.{}{}",
+                    LOGGER.debug("Redirected constructor {}{} to {}.{}{}",
                             owner, descriptor, factory.factoryClass(), factory.factoryMethod(),
                             factory.factoryDesc());
                     super.visitMethodInsn(Opcodes.INVOKESTATIC, factory.factoryClass(),
                             factory.factoryMethod(), factory.factoryDesc(),
                             factory.factoryIsInterface());
-                    // If the factory returns Object but the original class is specific, emit
-                    // CHECKCAST to satisfy the verifier. Cast to the ORIGINAL (pre-remap)
-                    // class; the downstream remapper retypes it along with everything else.
+                    // A factory returning Object needs a cast to keep the verifier's stack type
+                    // precise. The later remap updates this original class name.
                     String factoryReturnType = factory.factoryDesc().substring(
                             factory.factoryDesc().lastIndexOf(')') + 1);
                     if (factoryReturnType.equals("Ljava/lang/Object;")) {
@@ -2788,23 +2891,15 @@ public class RetromodTransformer implements ClassFileTransformer {
                                 Opcodes.H_INVOKESTATIC,
                                 factory.factoryClass(), factory.factoryMethod(), factory.factoryDesc(),
                                 factory.factoryIsInterface());
-                        LOGGER.info("Constructor-reference redirect: {}::new -> {}.{}{}",
+                        LOGGER.debug("Redirected constructor reference {}::new to {}.{}{}",
                                 h.getOwner(), factory.factoryClass(), factory.factoryMethod(), factory.factoryDesc());
                     }
                 }
             }
 
-            // Method-REFERENCE form of a converting redirect (e.g. `Vec3::new` inside a codec
-            // `VECTOR3F.map(Vec3::new, Vec3::toVector3f)`): the direct-call converting redirect only
-            // fires on INVOKE* sites in visitMethodInsn, NOT on the H_NEWINVOKESPECIAL/H_INVOKE*
-            // method handle a `X::y` reference compiles into the invokedynamic bootstrap args. Apply
-            // the SAME retarget to the handle, but ONLY when the redirect needs no spliced conversion
-            // (argConvOpcode/retAdaptOpcode == 0): a method handle has no call site to insert a
-            // conversion into, so a widening/narrowing/return-POP redirect can't be expressed as one.
-            // A pure descriptor change (Vec3.<init>(Vector3f)->(Vector3fc), the joml concrete->
-            // interface arg) is exactly this shape; jade's EntityAccessorImpl$SyncData died on it
-            // (NoSuchMethodError in <clinit> at map(Vec3::new,...), reached via a packet TYPE static
-            // init from CommonProxy.onInitialize).
+            // Method references store their targets in invokedynamic arguments, so visitMethodInsn
+            // never sees them. A pure target or descriptor change can be applied to the handle.
+            // Redirects that need inserted conversion bytecode are left alone.
             if (!convertingRedirects.isEmpty() && bootstrapMethodArguments != null) {
                 for (int i = 0; i < bootstrapMethodArguments.length; i++) {
                     if (!(bootstrapMethodArguments[i] instanceof org.objectweb.asm.Handle h)) continue;
@@ -2817,14 +2912,11 @@ public class RetromodTransformer implements ClassFileTransformer {
                     }
                     if (conv == null || conv.argConvOpcode() != 0 || conv.retAdaptOpcode() != 0
                             || conv.unwrapOwner() != null) continue;
-                    // Only a same-invoke-kind retarget is expressible by editing the handle. A ctor
-                    // reference (H_NEWINVOKESPECIAL <init>) must stay a ctor; a ctor->factory belongs
-                    // to constructorRedirects (handled above). Skip a mismatch rather than emit a
-                    // handle whose tag and target disagree.
+                    // Editing a handle cannot change a constructor reference into a factory call.
                     if ("<init>".equals(h.getName()) != "<init>".equals(conv.name())) continue;
                     bootstrapMethodArguments[i] = new org.objectweb.asm.Handle(
                             h.getTag(), conv.owner(), conv.name(), conv.desc(), h.isInterface());
-                    LOGGER.info("Converting method-reference redirect: {}.{}{} -> {}.{}{}",
+                    LOGGER.debug("Redirected method reference {}.{}{} to {}.{}{}",
                             h.getOwner(), h.getName(), h.getDesc(), conv.owner(), conv.name(), conv.desc());
                 }
             }
@@ -2932,7 +3024,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                             scr.extraFieldOwner(), scr.extraFieldName(), scr.extraFieldDesc());
                     }
                     markFrameInvalidatingRewrite();
-                    LOGGER.info("Super ctor redirect: {}.{} -> {}",
+                    LOGGER.debug("Redirected superclass constructor {}{} to {}",
                         owner, descriptor, scr.newDesc());
                     super.visitMethodInsn(opcode, owner, name, scr.newDesc(), isInterface);
                     return;

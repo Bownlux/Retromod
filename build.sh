@@ -1,40 +1,28 @@
 #!/bin/bash
-# ============================================================================
-# Retromod Build Script
+# Retromod build script
 # Copyright (c) 2026 RevivalSMP. MIT License.
 #
-# Builds all Retromod outputs:
-#   - CLI tool (standalone, all platforms)
-#   - Fabric mod (for Fabric Loader)
-#   - NeoForge mod (for NeoForge Loader)
-# ============================================================================
+# Builds the CLI and loader-specific jars.
 
 set -e
 
 VERSION="1.2.0"
 
-echo "============================================"
-echo "  Retromod Build Script v${VERSION}"
-echo "  MIT License - RevivalSMP"
-echo "============================================"
-echo ""
+echo "Retromod build ${VERSION}"
+echo
 
-# ---- Pre-flight checks ----
-
-# Check for Maven
+# Check the required build tools before doing any work.
 if ! command -v mvn &> /dev/null; then
-    echo "ERROR: Maven not found!"
-    echo "Install: https://maven.apache.org/install.html"
+    echo "Maven was not found. Install it from https://maven.apache.org/install.html"
     exit 1
 fi
 
-# Check for Java 25+
-# Note: Retromod's pom.xml targets Java 25 (release 25). Building with an
-# older JDK fails at the compile step, but failing loudly here is clearer.
+# Java 25 is needed to compile against current Minecraft classes. Maven still
+# emits Java 17 bytecode so the same Retromod jar can run on older hosts.
 if command -v java &> /dev/null; then
     JAVA_VER=$(java -version 2>&1 | head -1 | cut -d'"' -f2 | cut -d'.' -f1)
     if [ "$JAVA_VER" -lt 25 ] 2>/dev/null; then
-        echo "ERROR: Java 25 or later is required! You have Java $JAVA_VER."
+        echo "Java 25 or later is required. Found Java $JAVA_VER."
         echo "Install from: https://adoptium.net/"
         exit 1
     fi
@@ -161,13 +149,11 @@ exit /b 1
 :found
 java -jar "%CLI_JAR%" %*
 WRAPPER
-echo "  ✓ CLI wrapper: dist/retromod.bat (Windows)"
+echo "  CLI wrapper: dist/retromod.bat (Windows)"
 
-echo ""
-echo "============================================"
-echo "  Build Complete!"
-echo "============================================"
-echo ""
+echo
+echo "Build complete"
+echo
 echo "Output files in dist/:"
 ls -lh dist/
 echo ""

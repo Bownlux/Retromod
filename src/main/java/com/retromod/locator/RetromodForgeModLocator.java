@@ -56,26 +56,27 @@ public final class RetromodForgeModLocator implements IModLocator {
         try {
             folder = resolveModFolder();
         } catch (RuntimeException e) {
-            LOGGER.warn("[Retromod] could not resolve the Retromod mods folder; skipping (Forge)", e);
+            LOGGER.warn("Could not find the Retromod mods folder, so Forge will not load "
+                    + "transformed mods from it", e);
             return Collections.emptyList();
         }
         if (folder == null || !Files.isDirectory(folder) || !hasJars(folder)) {
             return Collections.emptyList();
         }
         try {
-            // delegate to Forge's directory locator so the jars become proper IModFile instances
+            // Forge must create the IModFile objects so its normal discovery rules still apply.
             Class<?> mfl = Class.forName("net.minecraftforge.fml.loading.moddiscovery.ModsFolderLocator");
             Constructor<?> ctor = mfl.getDeclaredConstructor(Path.class, String.class);
             ctor.setAccessible(true);
             Object inner = ctor.newInstance(folder, "Retromod");
             Object result = mfl.getMethod("scanMods").invoke(inner);
             List<?> list = (result instanceof List) ? (List<?>) result : Collections.emptyList();
-            LOGGER.info("[Retromod] offered {} jar(s) from {} to Forge mod discovery", list.size(), folder);
+            LOGGER.info("Added {} transformed mod {} from {} to Forge discovery",
+                    list.size(), list.size() == 1 ? "jar" : "jars", folder);
             return list;
         } catch (Throwable t) {
-            // soft-fail rather than break Forge discovery if the class moved or reflection is blocked
-            LOGGER.warn("[Retromod] Forge mods/Retromod/ locator could not delegate to "
-                    + "ModsFolderLocator ({}); those jars won't load on Forge", t.toString());
+            LOGGER.warn("Forge could not scan transformed mods in {}. The mods in that folder "
+                    + "will not load: {}", folder, t.toString());
             return Collections.emptyList();
         }
     }

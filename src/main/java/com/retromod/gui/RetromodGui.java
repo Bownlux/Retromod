@@ -14,28 +14,11 @@ import java.awt.event.*;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.prefs.Preferences;
 
-/**
- * GUI for Retromod, allowing users to select and transform mods without CLI.
- * 
- * Features:
- * - File picker to select mod JARs (opens Finder on Mac, Explorer on Windows)
- * - Shows transformation progress
- * - "Add More Mods" button for subsequent use
- * - Works on Windows, Mac, and Linux
- * 
- * First launch flow:
- * 1. Shows welcome dialog
- * 2. Opens file picker
- * 3. User selects mod JARs
- * 4. Retromod transforms them
- * 5. Copies to mods folder
- * 6. Prompts for restart
- */
+/** Desktop file picker used to update and install selected mods. */
 public class RetromodGui {
     
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-GUI");
@@ -58,65 +41,44 @@ public class RetromodGui {
         this.prefs = Preferences.userNodeForPackage(RetromodGui.class);
     }
     
-    /**
-     * Check if this is the first time running Retromod.
-     */
+    /** Returns whether setup has been shown before. */
     public boolean isFirstRun() {
         return !prefs.getBoolean(PREFS_KEY_FIRST_RUN, false);
     }
     
-    /**
-     * Mark first run as complete.
-     */
+    /** Remembers that setup has been shown. */
     public void markFirstRunComplete() {
         prefs.putBoolean(PREFS_KEY_FIRST_RUN, true);
     }
     
-    /**
-     * Show the first-run welcome dialog.
-     */
+    /** Shows the first-run setup dialog. */
     public void showFirstRunDialog() {
-        // Use Swing's thread-safe invocation
         SwingUtilities.invokeLater(() -> {
             try {
-                // Set native look and feel
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             } catch (Exception e) {
-                // Fallback to default
+                LOGGER.debug("Could not use the system look and feel: {}", e.getMessage());
             }
             
             int choice = JOptionPane.showOptionDialog(
                 null,
                 """
-                Welcome to Retromod!
-                
-                This looks like your first time using Retromod.
-                
-                To use old mods with your current Minecraft version,
-                you need to select the mod JAR files you want to transform.
-                
-                Click "Select Mods" to open the file picker and choose
-                the mods you want to use.
-                
-                (The original mods won't be modified - Retromod creates
-                transformed copies in your mods folder.)
-                
-                ═══════════════════════════════════════════════════
-                
-                TIP: After selecting mods, you can enable "Full AOT Mode"
-                for maximum performance! It takes longer to compile once,
-                but makes future launches MUCH faster.
+                Choose the old mod jars you want Retromod to update for this
+                Minecraft version.
+
+                Retromod keeps the originals and installs updated copies in
+                your mods folder. You can also precompile them from Settings
+                if you want later launches to do less work.
                 """,
-                "Retromod - First Time Setup",
+                "Set up Retromod",
                 JOptionPane.DEFAULT_OPTION,
                 JOptionPane.INFORMATION_MESSAGE,
                 null,
-                new String[]{"Select Mods", "Skip for Now"},
-                "Select Mods"
+                new String[]{"Choose Mods", "Not Now"},
+                "Choose Mods"
             );
             
             if (choice == 0) {
-                // User chose to select mods
                 openFilePickerAndTransform();
             }
             
@@ -124,25 +86,22 @@ public class RetromodGui {
         });
     }
     
-    // Track if Full AOT is enabled
     private boolean fullAotEnabled = false;
     
-    /**
-     * Open the file picker dialog and transform selected mods.
-     */
+    /** Opens the file picker and updates the selected mods. */
     public void openFilePickerAndTransform() {
         SwingUtilities.invokeLater(() -> {
             JFileChooser fileChooser = new JFileChooser();
-            fileChooser.setDialogTitle("Select Mod JARs to Transform");
+            fileChooser.setDialogTitle("Choose mod jars");
             fileChooser.setMultiSelectionEnabled(true);
-            fileChooser.setFileFilter(new FileNameExtensionFilter("Minecraft Mods (*.jar)", "jar"));
+            fileChooser.setFileFilter(new FileNameExtensionFilter("Minecraft mods (*.jar)", "jar"));
             
-            // Add Full AOT checkbox to file chooser
-            JCheckBox fullAotCheckbox = new JCheckBox("Enable Full AOT Mode (slower compile, faster gameplay)");
-            fullAotCheckbox.setToolTipText("Pre-compiles ALL mod code for maximum performance. Takes longer but game runs faster!");
+            JCheckBox fullAotCheckbox =
+                new JCheckBox("Precompile updated mods (slower setup, faster launch)");
+            fullAotCheckbox.setToolTipText(
+                "Prepares more code now so later launches have less work to do.");
             fileChooser.setAccessory(createAotPanel(fullAotCheckbox));
             
-            // Remember last directory
             String lastDir = prefs.get(PREFS_KEY_LAST_DIR, System.getProperty("user.home"));
             fileChooser.setCurrentDirectory(new File(lastDir));
             
@@ -153,29 +112,24 @@ public class RetromodGui {
             if (result == JFileChooser.APPROVE_OPTION) {
                 File[] selectedFiles = fileChooser.getSelectedFiles();
                 
-                // Save directory for next time
                 if (selectedFiles.length > 0) {
                     prefs.put(PREFS_KEY_LAST_DIR, selectedFiles[0].getParent());
                 }
                 
-                // Transform the selected mods
                 transformSelectedMods(selectedFiles);
             }
         });
     }
     
-    /**
-     * Transform the selected mod files.
-     */
+    /** Updates the selected mod files in a background thread. */
     private void transformSelectedMods(File[] modFiles) {
         if (modFiles == null || modFiles.length == 0) {
             return;
         }
         
-        // Show progress dialog
-        JDialog progressDialog = new JDialog((Frame) null, "Retromod - Transforming Mods", true);
+        JDialog progressDialog = new JDialog((Frame) null, "Retromod: updating mods", true);
         JProgressBar progressBar = new JProgressBar(0, modFiles.length);
-        JLabel statusLabel = new JLabel("Preparing...");
+        JLabel statusLabel = new JLabel("Getting ready...");
         JTextArea logArea = new JTextArea(10, 50);
         logArea.setEditable(false);
         
@@ -189,12 +143,11 @@ public class RetromodGui {
         progressDialog.pack();
         progressDialog.setLocationRelativeTo(null);
         
-        // Run transformation in background thread
-        new Thread(() -> {
+        Thread updateThread = new Thread(() -> {
             List<String> successfulMods = new ArrayList<>();
             List<String> failedMods = new ArrayList<>();
             List<String> skippedMods = new ArrayList<>();
-            List<Path> transformedModPaths = new ArrayList<>(); // For Full AOT
+            List<Path> transformedModPaths = new ArrayList<>();
             
             try {
                 Files.createDirectories(modsFolder);
@@ -212,48 +165,43 @@ public class RetromodGui {
                 });
                 
                 try {
-                    // Step 1: Check Modrinth for native version
                     var modrinthResult = com.retromod.core.ModrinthVersionChecker
                         .checkForNativeVersion(modFile.toPath(),
                             com.retromod.core.Retromod.TARGET_MC_VERSION);
                     
                     if (modrinthResult.found()) {
-                        // Found native version! Ask user what to do
                         boolean skip = com.retromod.core.ModrinthVersionChecker
                             .offerNativeVersion(modrinthResult, modFile.getName());
                         
                         if (skip) {
                             skippedMods.add(modFile.getName());
-                            final String msg = "⏭ " + modFile.getName() + " (skipped - native version available on Modrinth)";
+                            final String msg =
+                                "Skipped " + modFile.getName() + ": a native version is available on Modrinth.";
                             SwingUtilities.invokeLater(() -> logArea.append(msg + "\n"));
                             continue;
                         }
                     }
                     
                     SwingUtilities.invokeLater(() -> {
-                        statusLabel.setText("Transforming: " + modFile.getName());
+                        statusLabel.setText("Updating: " + modFile.getName());
                     });
                     
-                    // Step 2: Analyze the mod
                     var analysis = checker.analyzeJar(modFile.toPath());
                     
                     String logMessage;
-                    Path transformedPath = null;
                     if (analysis != null) {
-                        // Needs transformation
                         Path result = checker.transformAndInstall(modFile.toPath());
-                        logMessage = "✓ " + modFile.getName() + " → " + result.getFileName();
+                        logMessage = "Updated " + modFile.getName() + " as " + result.getFileName();
                         successfulMods.add(modFile.getName());
-                        transformedModPaths.add(result); // Track for Full AOT
+                        transformedModPaths.add(result);
                         transformedAnyMods = true;
                     } else {
-                        // Already compatible, just copy
                         Path dest = modsFolder.resolve(modFile.getName());
                         Files.copy(modFile.toPath(), dest, 
                             java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                        logMessage = "✓ " + modFile.getName() + " (already compatible, copied)";
+                        logMessage = "Copied " + modFile.getName() + ": no update was needed.";
                         successfulMods.add(modFile.getName());
-                        transformedModPaths.add(dest); // Track for Full AOT
+                        transformedModPaths.add(dest);
                     }
                     
                     final String msg = logMessage;
@@ -266,80 +214,74 @@ public class RetromodGui {
                     failedMods.add(modFile.getName());
                     
                     SwingUtilities.invokeLater(() -> {
-                        logArea.append("✗ " + modFile.getName() + " - FAILED: " + e.getMessage() + "\n");
+                        logArea.append(modFile.getName() + " could not be updated: "
+                            + e.getMessage() + "\n");
                     });
                 }
             }
             
-            // Done, show result
             SwingUtilities.invokeLater(() -> {
                 progressBar.setValue(modFiles.length);
-                statusLabel.setText("Complete!");
+                statusLabel.setText("Finished");
                 
                 progressDialog.dispose();
                 
-                // Show completion message
                 StringBuilder message = new StringBuilder();
-                message.append("Transformation complete!\n\n");
-                message.append("Successful: ").append(successfulMods.size()).append(" mod(s)\n");
+                message.append("Your mods are ready.\n\n");
+                message.append("Updated: ").append(successfulMods.size()).append("\n");
                 if (!skippedMods.isEmpty()) {
-                    message.append("Skipped (native available): ").append(skippedMods.size()).append(" mod(s)\n");
+                    message.append("No changes needed: ").append(skippedMods.size()).append("\n");
                 }
                 if (!failedMods.isEmpty()) {
-                    message.append("Failed: ").append(failedMods.size()).append(" mod(s)\n");
+                    message.append("Failed: ").append(failedMods.size()).append("\n");
                 }
-                message.append("\nMods installed to: ").append(modsFolder).append("\n\n");
+                message.append("\nInstalled in: ").append(modsFolder).append("\n\n");
                 
                 if (fullAotEnabled && !transformedModPaths.isEmpty()) {
-                    message.append("Full AOT Mode is enabled - next step will pre-compile for max performance.\n\n");
+                    message.append("Retromod will now precompile the updated mods.\n\n");
                 }
                 
                 if (transformedAnyMods) {
-                    message.append("Please RESTART the game for changes to take effect.");
+                    message.append("Restart Minecraft to load the updated mods.");
                 }
                 
                 JOptionPane.showMessageDialog(
                     null,
                     message.toString(),
-                    "Retromod - Complete",
+                    "Retromod",
                     JOptionPane.INFORMATION_MESSAGE
                 );
                 
-                // Run Full AOT compilation if enabled
                 if (fullAotEnabled && !transformedModPaths.isEmpty()) {
                     runFullAotCompilation(transformedModPaths);
                 }
             });
             
-        }).start();
+        }, "retromod-gui-update");
+        updateThread.start();
         
         progressDialog.setVisible(true);
     }
     
-    /**
-     * Show the "Add More Mods" button overlay.
-     * This creates a small floating button the user can click.
-     */
+    /** Shows a small floating button for choosing more mods. */
     public void showAddModsButton() {
         SwingUtilities.invokeLater(() -> {
             try {
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             } catch (Exception e) {
-                // Ignore
+                LOGGER.debug("Could not use the system look and feel: {}", e.getMessage());
             }
             
-            // Create a small undecorated window for the button
             mainFrame = new JFrame();
             mainFrame.setUndecorated(true);
             mainFrame.setAlwaysOnTop(true);
             mainFrame.setType(Window.Type.UTILITY);
             
-            addModsButton = new JButton("+ Add Mods");
-            addModsButton.setToolTipText("Click to add more mods to transform");
+            addModsButton = new JButton("Choose Mods");
+            addModsButton.setToolTipText("Choose more mods for Retromod to update");
             addModsButton.addActionListener(e -> openFilePickerAndTransform());
             
-            // Style the button
-            addModsButton.setBackground(new Color(88, 101, 242)); // Discord-ish blue
+            addModsButton.setBackground(new Color(88, 101, 242));
             addModsButton.setForeground(Color.WHITE);
             addModsButton.setFocusPainted(false);
             addModsButton.setBorderPainted(false);
@@ -349,20 +291,17 @@ public class RetromodGui {
             mainFrame.add(addModsButton);
             mainFrame.pack();
             
-            // Position in bottom-right corner
             Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
             mainFrame.setLocation(
                 screenSize.width - mainFrame.getWidth() - 20,
                 screenSize.height - mainFrame.getHeight() - 60
             );
             
-            // Make draggable
             final Point[] dragPoint = {null};
             addModsButton.addMouseListener(new MouseAdapter() {
                 @Override
                 public void mousePressed(MouseEvent e) {
                     if (SwingUtilities.isRightMouseButton(e)) {
-                        // Right-click to hide
                         mainFrame.setVisible(false);
                     } else {
                         dragPoint[0] = e.getPoint();
@@ -386,39 +325,31 @@ public class RetromodGui {
         });
     }
     
-    /**
-     * Hide the add mods button.
-     */
+    /** Hides the floating button. */
     public void hideAddModsButton() {
         if (mainFrame != null) {
             SwingUtilities.invokeLater(() -> mainFrame.dispose());
         }
     }
     
-    /**
-     * Check if any mods were transformed.
-     */
+    /** Returns whether this window updated at least one mod. */
     public boolean didTransformMods() {
         return transformedAnyMods;
     }
     
-    /**
-     * Create the Full AOT options panel for file chooser.
-     */
+    /** Creates the precompile option shown in the file picker. */
     private JPanel createAotPanel(JCheckBox checkbox) {
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setBorder(BorderFactory.createTitledBorder("Performance Options"));
+        panel.setBorder(BorderFactory.createTitledBorder("Launch performance"));
         
         checkbox.setAlignmentX(Component.LEFT_ALIGNMENT);
         panel.add(checkbox);
         
         JLabel infoLabel = new JLabel("<html><small>" +
-            "Full AOT Mode pre-compiles ALL mod<br>" +
-            "code for maximum performance.<br><br>" +
-            "• Takes longer to compile (once)<br>" +
-            "• Game runs MUCH faster after<br>" +
-            "• Results are cached for future use" +
+            "Precompiling takes longer once,<br>" +
+            "then saves work on later launches.<br>" +
+            "The result stays in Retromod's cache." +
             "</small></html>");
         infoLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
         panel.add(Box.createVerticalStrut(10));
@@ -427,9 +358,7 @@ public class RetromodGui {
         return panel;
     }
     
-    /**
-     * Run Full AOT compilation on transformed mods.
-     */
+    /** Precompiles the updated mods. */
     private void runFullAotCompilation(List<Path> modPaths) {
         if (!fullAotEnabled || modPaths.isEmpty()) {
             return;
@@ -437,39 +366,34 @@ public class RetromodGui {
         
         try {
             com.retromod.aot.FullAotCompiler compiler = 
-                com.retromod.aot.FullAotCompiler.getInstance(gameDir, "1.21.1");
+                com.retromod.aot.FullAotCompiler.getInstance(
+                    gameDir, com.retromod.core.RetromodVersion.TARGET_MC_VERSION);
             
-            // Show progress dialog (blocks until complete)
             compiler.showProgressDialog(modPaths);
             
         } catch (Exception e) {
-            LOGGER.error("Full AOT compilation failed", e);
+            LOGGER.error("Could not precompile updated mods", e);
             JOptionPane.showMessageDialog(
                 null,
-                "Full AOT compilation failed: " + e.getMessage() + "\n\n" +
-                "The mods are still installed and will work,\n" +
-                "but without the full performance boost.",
-                "AOT Compilation Error",
+                "Retromod could not precompile the updated mods: " + e.getMessage() + "\n\n" +
+                "The mods are still installed and can use the normal launch-time path.",
+                "Could not precompile mods",
                 JOptionPane.WARNING_MESSAGE
             );
         }
     }
     
-    /**
-     * Static helper to run the GUI from mod initialization.
-     */
+    /** Runs setup when this instance has not shown it before. */
     public static void runFirstTimeSetupIfNeeded(Path gameDir) {
         RetromodGui gui = new RetromodGui(gameDir);
         
         if (gui.isFirstRun()) {
-            LOGGER.info("First run detected - showing setup dialog");
+            LOGGER.info("Showing the first-run setup dialog.");
             gui.showFirstRunDialog();
         }
     }
     
-    /**
-     * Static helper to show the add mods button.
-     */
+    /** Shows the floating button for this game directory. */
     public static void showFloatingButton(Path gameDir) {
         RetromodGui gui = new RetromodGui(gameDir);
         gui.showAddModsButton();

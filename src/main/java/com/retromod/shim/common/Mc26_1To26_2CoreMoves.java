@@ -415,6 +415,16 @@ public final class Mc26_1To26_2CoreMoves {
         t.registerClassRedirect("net/minecraft/client/renderer/feature/BlockFeatureRenderer",
                 "net/minecraft/client/renderer/feature/MovingBlockFeatureRenderer");
 
+        // 26.2 corrected the long-standing spelling typo InstantenousMobEffect ->
+        // InstantaneousMobEffect (present on 26.1, gone on 26.2; same abstract instant-effect base,
+        // the healing/harming-style parent). A custom-instant-potion mod that `extends
+        // InstantenousMobEffect` otherwise dies NoClassDefFoundError at class load on 26.2. A plain
+        // class redirect fixes the `extends` reference. Mojang-name-only, exactly like the criterion
+        // -> triggers renames above: a Fabric mod's intermediary class_1289 becomes the old-spelling
+        // Mojang name in the earlier intermediary->Mojang pass, then this pass corrects the spelling.
+        t.registerClassRedirect("net/minecraft/world/effect/InstantenousMobEffect",
+                "net/minecraft/world/effect/InstantaneousMobEffect");
+
         t.registerClassRedirect("net/minecraft/world/entity/animal/Bucketable",
                 "net/minecraft/world/entity/Bucketable");
         t.registerClassRedirect("net/minecraft/world/entity/monster/MagmaCube",

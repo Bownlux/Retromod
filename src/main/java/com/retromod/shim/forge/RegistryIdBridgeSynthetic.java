@@ -170,14 +170,9 @@ public final class RegistryIdBridgeSynthetic {
         return cw.toByteArray();
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Forge (LexForge) 26.2 variant. Forge kept register(String, Supplier) as its ONLY register
-    // overload (no id-aware Function form to reroute to), so the id is threaded differently: the
-    // supplier is wrapped in this bridge (implements Supplier), dr.register(name, wrapper) returns
-    // the RegistryObject (which knows the full entry ResourceKey via getKey()), the wrapper is
-    // handed that RegistryObject, and at supplier-call time it sets the thread-local from
-    // ro.getKey() around the mod's supplier. Same Properties stamping as the NeoForge bridge.
-    // ---------------------------------------------------------------------------------------------
+    // Forge only kept register(String, Supplier), so the bridge wraps the supplier.
+    // Once registration returns, the wrapper can read the full key from RegistryObject
+    // and expose it while the original supplier creates the item or block.
 
     public static final String FORGE_INTERNAL = "com/retromod/shim/forge/embedded/ForgeRegistryIdBridge";
 

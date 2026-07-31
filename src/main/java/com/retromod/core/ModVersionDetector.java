@@ -259,13 +259,12 @@ public class ModVersionDetector {
     /**
      * Resolve a Maven version range to the mod's effective source MC version.
      *
-     * <p><b>Host-containment first (#174):</b> a mod declaring a FINITE range that contains the
-     * host (e.g. {@code [1.19,1.20.1]} on a 1.20.1 host) is telling the loader it runs natively
-     * there; taking its LOWER bound made Retromod treat a working multi-version mod as "a 1.19
-     * mod", transform it, and break it alongside everything it dragged down. Such a mod now reads
-     * as host-version (so {@code needsTransformation} skips it everywhere). The upper bound must
-     * be FINITE: an open range like {@code [1.19,)} is mod-author optimism, and on a 26.x host the
-     * 1.19 mod genuinely needs translation, so open ranges keep the old lower-bound behavior.
+     * <p>Host containment wins (#174): a FINITE range containing the host, e.g.
+     * {@code [1.19,1.20.1]} on a 1.20.1 host, means the mod runs natively there. Taking its
+     * lower bound made Retromod transform a working multi-version mod as "a 1.19 mod" and
+     * break it. Such a range now reads as host-version, so {@code needsTransformation} skips
+     * the mod. Open ranges like {@code [1.19,)} keep the old lower-bound behavior: on a 26.x
+     * host that 1.19 mod genuinely needs translation.
      *
      * <p>Otherwise: the lower bound: "[1.21,1.21.1)" -> "1.21", "[1.21.8,)" -> "1.21.8".
      */
@@ -286,7 +285,7 @@ public class ModVersionDetector {
                         ? RetromodVersion.compareMcVersions(host, upper) < 0
                         : RetromodVersion.compareMcVersions(host, upper) <= 0;
                 if (lowerOk && upperOk) {
-                    LOGGER.info("Mod declares MC range {} which CONTAINS host {}: treating as "
+                    LOGGER.info("Mod range {} includes host {}; treating it as "
                             + "native, no transform (#174)", range, host);
                     return host;
                 }

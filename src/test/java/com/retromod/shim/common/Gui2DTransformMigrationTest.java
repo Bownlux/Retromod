@@ -218,7 +218,7 @@ class Gui2DTransformMigrationTest {
     @Test
     @DisplayName("SAFETY: a genuine 3D PoseStack (not from GuiGraphics.pose()) is left untouched")
     void threeDPoseStackNotTouched() {
-        // render(PoseStack ps) { ps.translate(1f, 2f, 3f); }  -- the receiver is a param, NOT pose().
+        // render(PoseStack ps) { ps.translate(1f, 2f, 3f); }  -- the receiver is a param, not pose().
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V17, ACC_PUBLIC, "test/World", null, "java/lang/Object", null);
         MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "render", "(L" + POSE + ";)V", null, null);

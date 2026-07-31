@@ -1,172 +1,51 @@
 ---
-title: Technical
-nav_order: 9
+title: Technical Details
+nav_order: 11.5
 ---
 
-# How Retromod Works
+# Technical Details
 
-Retromod is a bytecode transformer. When the game launches, Retromod rewrites old mod JARs so they target the current Minecraft API instead of the one they were built for. No source changes, no recompilation. The mod author never has to do anything.
+Retromod uses ASM 9.8 and compiles with Java 25 while targeting Java 17 bytecode. Host Minecraft still determines the required JVM.
 
-This page explains the technical side at a level that should be useful if you're curious, want to contribute, or are evaluating whether Retromod is safe to run.
+## Bytecode Rewrites
 
-## The pipeline
+The visitor pipeline applies class remapping before owner/name/descriptor redirects:
 
-```
-┌──────────────────┐
-│  Old mod JAR     │   e.g. mymod-1.21.1.jar, targets MC 1.21.1
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ ModVersionDetect │   reads fabric.mod.json / mods.toml
-│                  │   extracts modId + target MC version
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│  ShimRegistry    │   BFS search: find a chain of version shims
-│                  │   1.21.1 → 1.21.2 → … → 26.1
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│  RetromodXformer │   For each class in the JAR:
-│                  │   - apply each shim's class/method/field redirects
-│                  │   - IntermediaryToMojangMapper renames method_XXXX etc.
-│                  │   - inject polyfills for removed APIs
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ Metadata patcher │   Relax version constraints in fabric.mod.json /
-│                  │   mods.toml so the mod is no longer rejected by
-│                  │   Fabric/Forge version checks
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ TransformVerifier│   (optional) Scan the output JAR for references
-│                  │   that don't exist in the current MC; write a
-│                  │   report to config/retromod/verify-reports/
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ Transformed JAR  │   mymod-1.21.1-retromod.jar, targets MC 26.1
-└──────────────────┘
+```text
+ClassReader
+  -> ClassRemapper
+  -> RetromodClassVisitor
+  -> ClassWriter
 ```
 
-## The ASM visitor chain
+Supported operations include class moves, member renames, descriptor changes, constructor-to-factory conversion, field access bridges, selected argument conversions, and removed-call neutralization.
 
-Bytecode transformation uses [ASM](https://asm.ow2.io/). For each `.class` file:
+Fabric intermediary and Forge SRG mappings use separate tables. Mojang-to-Mojang changes stay owner-scoped because readable names are not globally unique.
 
-```
-ClassReader  →  ClassRemapper  →  RetromodClassVisitor  →  ClassWriter
-              (outer - renames)    (inner - redirects)
-```
+## Frames
 
-`ClassRemapper` runs first and handles name translation (intermediary → Mojang). `RetromodClassVisitor` then sees the already-renamed names and applies shim redirects: method signature changes, constructor deferrals, polyfill injections. The final `ClassWriter` produces the new bytecode.
+ASM recomputes stack-map frames after structural rewrites. Mod classes are often unavailable through `Class.forName` during pre-launch, so Retromod can read their hierarchy from the jar being transformed. It only narrows a frame type when the common ancestor can be proven to exist at runtime.
 
-## Shims and polyfills
+If a frame-changing rewrite cannot be emitted safely, Retromod keeps the earlier valid result or the original class.
 
-A **shim** is a pair of rules: "in mods targeting MC version X, when you see call `Foo.bar()`, rewrite it to `Foo.baz()` (or to `Polyfill.bar(Foo)`)." Shims are chained so a 1.16 mod can be walked up through 1.17, 1.18, 1.19, 1.20, 1.21 to 26.1.
+## Mixins
 
-A **polyfill** is a reimplementation of a removed API using current MC primitives. When the shim chain says "this method was removed in 1.20," the polyfill provides a drop-in replacement so old code continues to compile.
+Mixin annotations and refmaps are rewritten separately from normal instructions. Retromod handles many renamed targets and a curated set of signature changes. It does not guess when a method body or local-variable layout was redesigned.
 
-Retromod currently ships 143 version shims and 76 polyfill providers. (Counts drift between releases; the ServiceLoader files under `META-INF/services/` are the source of truth.)
+Known fatal handlers can be removed through the mixin blocklist, leaving the associated feature inactive.
 
-## Security model
+## Embedded Classes
 
-Retromod reads and writes JARs on disk. That's a privileged operation, so the codebase is careful about:
+Deleted loader APIs are embedded under a unique `com/retromod/embedded/<mod-key>/` path. This avoids split packages between the loader and multiple transformed mods.
 
-- **Zip slip / path traversal:** every JAR entry goes through `ZipSecurity.safeEntryName()` before being written to disk or another archive.
-- **Zip bombs:** `ZipSecurity.safeReadAllBytes(is, max)` counts actual bytes read, not header-declared sizes, so a crafted archive that lies about entry sizes can't blow up memory.
-- **Arbitrary class loading:** `Class.forName()` is only ever called on class names harvested from user JARs with `initialize=false` and Retromod's own classloader. No user-supplied code is executed during transformation.
-- **File deletion:** only within managed directories (`mods/`, `retromod-input/`, `retromod-backups/`, `config/retromod/`). No user files outside those paths are ever touched.
+## Cache and Verification
 
-## Authenticity & forks
+AOT caches include a stamp derived from the Retromod version and its own class hash. Packaged builds clear a cache when the stamp changes.
 
-### This is a security feature, not an anti-fork feature
+The verifier checks transformed references against the host jar. It catches linkage gaps, not semantic changes.
 
-First, **I'm a big fan of open source.** Given two apps with the same features, one open source and one closed, I'll pick open source every time, and Retromod exists as open source for exactly that reason. Forks are welcome. You can rebuild it, modify it, redistribute it, or base a new project on it. The MIT license grants all of that and nothing in this section takes it back.
+## Security Model
 
-The signature-check and fork-notice system is here for **one reason only**: some bad actors edit open-source code to add malware and then redistribute it under the original name to trick users into trusting it. That's a real problem that's happened to lots of popular projects. The verifier lets honest users tell "this is the actual Retromod I downloaded from the official repo" apart from "this is a file labeled Retromod from a sketchy site." The goal is security, not keeping people from forking.
+Mods are untrusted input. Retromod limits writes to its game-directory paths, does not make runtime network requests by default, and treats failed transformations as errors instead of executing downloaded code.
 
-If Retromod is ever discontinued, all of this comes out. A verifier that fires forever on a dead project would just be noise on every legitimate fork that inherits the codebase. In that scenario the fork-notice text, the cert-check, and the hardened logging come out together, and whatever fork ends up as the community continuation just works.
-
-Retromod is MIT-licensed. Forks are allowed, encouraged, and legally fine. The license grants that right without any conditions beyond keeping the license text.
-
-There's a practical problem, though: **if a malicious actor publishes a JAR calling itself "Retromod" and the user downloads it from somewhere other than the official repo, we can't technically tell that apart from a legitimate fork.** Both show up the same way to our verification code: code that doesn't match the official build hash.
-
-### How Retromod handles this
-
-Official builds embed a SHA-256 of Retromod's own classes. At startup, `SignatureVerifier` re-hashes the running JAR and compares:
-
-| Status | Meaning |
-|--------|---------|
-| `VERIFIED` | Bytecode matches the embedded release hash: unchanged from the published build. (A hash match isn't proof of provenance, since there's no secret key, so the status says "verified," not "official.") |
-| `MODIFIED` | Bytecode differs from the release hash: a fork, a repack, or a corrupted download. |
-| `IMPOSTOR` | The manifest doesn't even claim to be Retromod. |
-| `UNKNOWN` | Can't tell: a dev/source build (no hash embedded), or not running from a JAR. |
-
-This is an integrity check, **not** cryptographic anti-tamper. There's no secret key, so a determined attacker can recompute the embedded hash. It catches accidental corruption and casual modification; for real verification, users compare the JAR's SHA-256 against the value published on the releases page.
-
-The published build emits a normal startup line like:
-
-> `[Retromod] ✓ Authenticity: VERIFIED - Bytecode matches the published release hash`
-
-For any other status (`MODIFIED`, `IMPOSTOR`) the verifier **automatically** emits:
-
-> `You are using a Retromod Fork. If this was advertised as the official Retromod, this is NOT official! Check github.com/Bownlux/Retromod for the real thing.`
-
-The official build **never** emits this line. If the hash matches, it's the unmodified build.
-
-### I'm making a fork, what do I do?
-
-Forks are fine, encouraged, and fully MIT-licensed. If you keep the name "Retromod" in your fork's logs/UI, the fork notice fires automatically: no code you need to add, no flag to flip. That's the safe default. Every build whose code doesn't match the official hash announces itself, and a silent "Retromod" is an obvious red flag for users.
-
-**There's no customizable version on purpose.** If forks could pass arbitrary text, a malicious build could log something like "Official Retromod v1.2.3, verified build" and users would have no way to tell. The fixed string plainly says "this is NOT official," which defeats that impersonation regardless of what the attacker calls themselves.
-
-The notice deliberately points users to the GitHub repo rather than an email address, otherwise a single inbox gets flooded with "please verify this JAR" requests from people who could just compare hashes themselves.
-If you've renamed your project entirely (no "Retromod" branding in your logs, manifest, or UI), the announcement isn't necessary. The `Implementation-Title` manifest check will report `IMPOSTOR` if your manifest doesn't claim to be Retromod, which is accurate for "a build that isn't claiming to be Retromod."
-
-### Can I drop the notice from my fork?
-
-**You don't need permission, and you don't need to contact anyone.** The MIT license already lets you change or remove anything in your fork. Adding an approval requirement wouldn't be enforceable anyway, and gatekeeping it isn't the point.
-
-What we *ask*, as a community norm rather than a rule, is that you **keep the notice**. It costs nothing, and it's the whole reason it works: if honest forks keep it, a build that's *missing* it stands out as a red flag, which is what protects users from malware wearing the Retromod name. So remove it if you truly must, but please don't, and never replace it with a fake "official / verified" line.
-
-If you've fully rebranded (no "Retromod" in your logs, manifest, or UI), the notice is moot anyway. See above.
-
-### For users
-
-If your logs contain a fork-notice line and you thought you downloaded the official Retromod:
-
-1. **Check where you downloaded it from.** The official source is [github.com/Bownlux/Retromod](https://github.com/Bownlux/Retromod). If the JAR came from somewhere else, delete it and grab a fresh copy from the official repo.
-2. If it came from a reputable modpack or fork you trust, the notice is expected. It just means the JAR isn't the official upstream build, so no action needed.
-3. If it came from a site you don't recognize, treat it as suspicious. It could be malware using the Retromod name.
-
-If you don't see any fork notice AND the authenticity log line isn't `VERIFIED`, that's also a red flag: a legitimate fork maintainer should have added the notice.
-
-## The `Implementation-Title` check
-
-Separately from signature checking, `SignatureVerifier` also reads the JAR's manifest. Official releases set `Implementation-Title: Retromod`. If a JAR claims a different `Implementation-Title`, we report `IMPOSTOR`: it's not even pretending to be Retromod.
-
-This catches the trivial case of "someone renamed retromod.jar to something malicious.jar" and prevents some self-inflicted confusion.
-
-## How to verify a download
-
-The in-jar check is informational and can't defend against a determined attacker (there's no secret key). For real verification, compare the file's SHA-256 against the value published on the [GitHub releases page](https://github.com/Bownlux/Retromod/releases). Modrinth shows one per file too:
-
-```bash
-sha256sum retromod-1.2.0-snapshot.7+26.2.jar       # Linux
-shasum -a 256 retromod-1.2.0-snapshot.7+26.2.jar   # macOS
-```
-
-If it matches the published hash, you have the exact official file. That reference lives out-of-band on the trusted page, where a tamperer can't change it. That's the guarantee an embedded self-hash can't make on its own.
-
-## Further reading
-
-- [Architecture]({{ '/architecture' | relative_url }}): higher-level walkthrough of the codebase
-- [Authenticity]({{ '/authenticity' | relative_url }}): what the different signature statuses mean
-- [Contributing]({{ '/contributing' | relative_url }}): how to contribute shims, polyfills, and fixes
+The embedded build hash is an integrity hint, not a digital signature. See [Authenticity]({{ '/authenticity' | relative_url }}).

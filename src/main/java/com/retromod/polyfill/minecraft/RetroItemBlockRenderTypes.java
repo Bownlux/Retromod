@@ -73,7 +73,7 @@ public final class RetroItemBlockRenderTypes {
         return layerToken("TRANSLUCENT");
     }
 
-    // ------------------------------------------------------------------ layer derivation
+    // Layer selection
 
     private static String blockLayerName(Object state) {
         try {
@@ -158,7 +158,7 @@ public final class RetroItemBlockRenderTypes {
         return "SOLID";
     }
 
-    // ------------------------------------------------------------------ token mapping
+    // Token mapping
 
     private static Object layerToken(String layerName) {
         try {
@@ -196,7 +196,7 @@ public final class RetroItemBlockRenderTypes {
                 .getMethod(name);
     }
 
-    // ------------------------------------------------------------------ client plumbing
+    // Client integration
 
     private static Object minecraft() {
         try {

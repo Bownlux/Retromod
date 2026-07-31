@@ -35,7 +35,7 @@ class ModDataMigratorTest {
 
     @Test
     void chainRenameIsQuoteBounded() {
-        // must NOT touch chain_command_block (a real 26.1 item) or a modid:chain
+        // must not touch chain_command_block (a real 26.1 item) or a modid:chain
         String in = "{\"a\":\"minecraft:chain_command_block\",\"b\":\"dungeons_arise:chain\"}";
         assertEquals(in, mig("data/m/loot_table/x.json", in, "26.1"));
     }

@@ -32,7 +32,7 @@
   "retromod.settings.log_transformations": "Loguj przekszta\u0142cenia",
   "retromod.settings.debug": "Tryb debugowania",
 
-  "retromod.filepicker.title": "Retromod \u2014 Wybierz pliki JAR mod\u00f3w do przekszta\u0142cenia",
+  "retromod.filepicker.title": "Retromod: Wybierz pliki JAR mod\u00f3w do przekszta\u0142cenia",
 
   "retromod.result.success": "Przekszta\u0142cono",
   "retromod.result.skipped": "Ju\u017c zgodne",

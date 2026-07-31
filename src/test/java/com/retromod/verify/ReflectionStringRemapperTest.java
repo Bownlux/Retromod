@@ -121,9 +121,7 @@ class ReflectionStringRemapperTest {
         assertEquals(0, remapper.getSuspiciousUnmapped());
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // HELPERS: construct test classes with specific LDC + invoke patterns
-    // ═══════════════════════════════════════════════════════════════════════
+    // Builds test classes with specific LDC and invocation patterns.
 
     /**
      * Generate a class whose only method body is:
@@ -160,7 +158,7 @@ class ReflectionStringRemapperTest {
     }
 
     /**
-     * Generate a class whose only method LOADS a string but does NOT feed it
+     * Generate a class whose only method LOADS a string but does not feed it
      * to a reflection sink. Used to verify we don't rewrite data strings.
      */
     private static byte[] classWithStringDataOnly(String value) {

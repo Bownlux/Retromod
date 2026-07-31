@@ -59,7 +59,7 @@ public class ForgeCorePolyfill implements PolyfillProvider {
             "net/minecraftforge/common/util/LazyOptional",
             "com/retromod/shim/api/forge/embedded/LazyOptionalShim"
         );
-        // MinecraftForge (the class holding the static EVENT_BUS) maps to the embedded shim ONLY on a
+        // MinecraftForge (the class holding the static EVENT_BUS) maps to the embedded shim only on a
         // non-NeoForge host. On NeoForge, Forge_1_20_to_NeoForge_1_21 already maps MinecraftForge ->
         // net/neoforged/neoforge/common/NeoForge (which HAS a real IEventBus EVENT_BUS field) plus a
         // MinecraftForge.EVENT_BUS -> NeoForge.EVENT_BUS field redirect. This polyfill runs AFTER the

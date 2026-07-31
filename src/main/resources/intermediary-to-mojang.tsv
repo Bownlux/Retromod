@@ -88734,7 +88734,7 @@ CLASS	net/minecraft/class_94$class_99	net/minecraft/world/level/storage/loot/fun
 CLASS	net/minecraft/class_944	net/minecraft/client/renderer/entity/layers/ShulkerHeadLayer
 
 # =========================================================================
-# HARVESTED — multi-version intermediary->Mojang methods & fields
+# Harvested multi-version intermediary-to-Mojang methods and fields
 # -------------------------------------------------------------------------
 # Fills member-name gaps for Fabric mods built against versions whose
 # intermediary IDs were dropped from newer tiny files (a 1.20.1 mod uses

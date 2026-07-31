@@ -13,9 +13,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * The multi-version SRG union (1.3.0-snapshot.3): the srg-to-mojang table was extended from a
- * 1.20.1-only join to the union across the whole Forge SRG era (1.16.5..1.20.6), so pre-1.20.1
- * mods stop hitting per-modpack gaps (the #171 class of report). Smoke-checks that the (now much
- * larger) table loads cleanly and that a spread of harvested cross-version members resolve.
+ * 1.20.1-only join to the union across the whole Forge SRG era (1.16.5..1.21.8), so pre-1.20.1
+ * mods stop hitting per-modpack gaps (the #171 class of report) and 1.21.x Forge mods resolve
+ * their SRG ids too. Smoke-checks that the (now much larger) table loads cleanly and that a
+ * spread of harvested cross-version members resolve.
  */
 class SrgUnionCoverageTest {
 
@@ -25,10 +26,11 @@ class SrgUnionCoverageTest {
         SrgToMojangMapper m = SrgToMojangMapper.getInstance();
         Map<String, String> methods = m.getMethodMap();
         Map<String, String> fields = m.getFieldMap();
-        // The old table was ~23.6k methods / ~30k fields; the union roughly doubles both.
-        assertTrue(methods.size() > 40_000,
+        // The old table was ~23.6k methods / ~30k fields; the union (through 1.21.8) more than
+        // doubles both (~56k methods / ~69k fields).
+        assertTrue(methods.size() > 50_000,
                 "method map should hold the multi-version union, got " + methods.size());
-        assertTrue(fields.size() > 45_000,
+        assertTrue(fields.size() > 60_000,
                 "field map should hold the multi-version union, got " + fields.size());
     }
 
@@ -48,6 +50,16 @@ class SrgUnionCoverageTest {
         assertEquals("noCounter", m.getFieldMap().get("f_19507_"));
         assertEquals("interactionRangeSqr", m.getFieldMap().get("f_23938_"));
         assertEquals("getName", m.getMethodMap().get("m_96461_"));
+    }
+
+    @Test
+    @DisplayName("1.21.x-era SRG ids resolve (the 1.21.1..1.21.8 union extension)")
+    void newEra1_21EntriesResolve() {
+        SrgToMojangMapper m = SrgToMojangMapper.getInstance();
+        // f_19068_ = InteractionResult.SUCCESS; absent from the 1.16.5..1.20.6 pass, added by the
+        // 1.21.x extension. f_336604_ = a 1.21.x data-component field (CROSSBOW_CHARGE_TIME).
+        assertEquals("SUCCESS", m.getFieldMap().get("f_19068_"));
+        assertEquals("CROSSBOW_CHARGE_TIME", m.getFieldMap().get("f_336604_"));
     }
 
     @Test

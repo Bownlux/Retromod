@@ -1,9 +1,6 @@
 # test-mods
 
-The Retromod regression test mod, one standalone Gradle project per loader. Each builds a small mod
-whose `TestRunner` executes a suite of `Test` cases at init and prints pass/fail per case to the
-launch log. When a user-reported bug is fixed, a regression case is added here so it can't silently
-come back (see `CLAUDE.md` -> "Per-issue regression process").
+These small mods exercise Retromod inside a real Minecraft launch. Each test writes a clear pass or fail line to the game log.
 
 | Project | Loader | Notes |
 |---------|--------|-------|
@@ -11,19 +8,15 @@ come back (see `CLAUDE.md` -> "Per-issue regression process").
 | `retromod-test-mod-forge/` | Forge | Loader-specific cases. |
 | `retromod-test-mod-neoforge/` | NeoForge | Loader-specific cases. |
 
-These are Gradle projects (the root Retromod build is Maven). Their Gradle wrapper/build files are
-intentionally not tracked (the root `.gitignore` ignores `build.gradle` / `gradlew` / etc. repo-wide
-"project uses Maven, not Gradle"), so only sources + resources are versioned. `rootProject.name` is
-unchanged by the move into `test-mods/`, so built jars keep their names
-(`retromod-test-mod-<ver>.jar`, ...).
+The test mods use each loader's normal Gradle tooling. Retromod itself still uses Maven because it does not compile against Minecraft.
 
-Build one:
+Build the project for the loader you are testing:
 
 ```bash
-cd test-mods/retromod-test-mod && ./gradlew build      # Fabric
-cd test-mods/retromod-test-mod-neoforge && ./gradlew build
+cd test-mods/retromod-test-mod
+./gradlew build
 ```
 
-Then run it through Retromod (transform to the target MC) and launch per the acceptance steps in
-`CLAUDE.md`: a passing SUMMARY at init is not a passing launch, so confirm the game outlives init
-(window/title-screen log lines, no new `crash-reports/` entry).
+Transform the built jar with Retromod, launch Minecraft, and wait for a stable title screen or server start. The summary appears during initialization, so it is not enough by itself. Also check that the run did not create a new crash report.
+
+The full regression process is in [AGENTS.md](../AGENTS.md).

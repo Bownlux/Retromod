@@ -59,7 +59,7 @@ class ForgeEventMigrationTest {
      * FMLJavaModLoadingContext, so it can't be a same-name bulk rename; the B4 bridge synthetic
      * supplies it, but a Forge mod references the {@code net/minecraftforge/...} name and the
      * {@code SyntheticEmbedder} only embeds a synthetic whose EXACT registered name the mod
-     * references. So the migration MUST redirect the Forge name to the synthetic's NeoForge name,
+     * references. So the migration must redirect the Forge name to the synthetic's NeoForge name,
      * and that redirect must live on the API-shim path ({@code registerRedirects}) which runs on
      * BOTH the offline CLI/AOT batch and the live NeoForge runtime, not only in the runtime-only
      * {@code Forge_1_20_to_NeoForge_1_21}. Before the fix the Forge reference survived, the embedder

@@ -98,8 +98,8 @@ public class FabricRendererMaterialBridge implements VersionShim {
         transformer.registerClassRedirect(OLD_SPRITE_FINDER,    NEW_SPRITE_FINDER);
         transformer.registerClassRedirect(OLD_FORWARDING_BAKED, NEW_FORWARDING_BAKED);
 
-        LOGGER.info("[Retromod] Fabric renderer-material bridge - injected {} synthetic types "
-                + "+ {} class redirects (soft-fail: mods load, custom rendering inert)", 14, 10);
+        LOGGER.warn("Loaded support for the removed Fabric renderer material API. Mods can start, "
+                + "but custom rendering through that API will be inactive.");
     }
 
     private static byte[] generateEmptyClass(String name) {

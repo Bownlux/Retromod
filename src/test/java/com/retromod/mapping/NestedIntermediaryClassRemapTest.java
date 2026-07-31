@@ -54,6 +54,21 @@ class NestedIntermediaryClassRemapTest {
     }
 
     @Test
+    @DisplayName("GlStateManager inner state classes complete the platform->opengl move (26.1)")
+    void glStateManagerInnersMoved() {
+        var moves = m.getClassMoves();
+        assertEquals("com/mojang/blaze3d/opengl/GlStateManager$BlendState",
+                moves.get("com/mojang/blaze3d/platform/GlStateManager$BlendState"),
+                "BlendState should follow its enclosing class");
+        assertEquals("com/mojang/blaze3d/opengl/GlStateManager$DepthState",
+                moves.get("com/mojang/blaze3d/platform/GlStateManager$DepthState"));
+        assertEquals("com/mojang/blaze3d/opengl/GlConst",
+                moves.get("com/mojang/blaze3d/platform/GlConst"));
+        assertEquals("com/mojang/blaze3d/opengl/GlDebug$LogEntry",
+                moves.get("com/mojang/blaze3d/platform/GlDebug$LogEntry"));
+    }
+
+    @Test
     @DisplayName("top-level and anonymous-inner names are unaffected by the nested pattern")
     void topLevelAndAnonUnaffected() {
         // top-level: no $class_N, so the nested pattern doesn't touch it; the FQ path still maps it

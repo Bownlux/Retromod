@@ -32,7 +32,7 @@
   "retromod.settings.log_transformations": "Journaliser les transformations",
   "retromod.settings.debug": "Mode d\u00e9bogage",
 
-  "retromod.filepicker.title": "Retromod \u2014 S\u00e9lectionnez les JAR de mods \u00e0 transformer",
+  "retromod.filepicker.title": "Retromod: S\u00e9lectionnez les JAR de mods \u00e0 transformer",
 
   "retromod.result.success": "Transform\u00e9",
   "retromod.result.skipped": "D\u00e9j\u00e0 compatible",

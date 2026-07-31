@@ -25,7 +25,7 @@ import com.retromod.polyfill.PolyfillProvider;
  *   <li>{@code ExtendedGeoEntityRenderer} -> {@code DynamicGeoEntityRenderer}</li>
  * </ul>
  *
- * This bridge does NOT bundle GeckoLib. The user installs GeckoLib 4.x normally;
+ * This bridge does not bundle GeckoLib. The user installs GeckoLib 4.x normally;
  * Retromod only redirects old 3.x class references to their 4.x equivalents.
  */
 public class GeckoLibBridgePolyfill implements PolyfillProvider {

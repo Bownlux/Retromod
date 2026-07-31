@@ -91,7 +91,7 @@ class Forge1122ClassMovesTest {
 
         assertTrue(descs.contains("Lnet/minecraft/core/BlockPos;"), "BlockPos -> core: " + descs);
         assertTrue(descs.contains("Lnet/minecraft/world/level/Level;"), "World -> Level: " + descs);
-        // 1.20.1 kept ResourceLocation; the 26.1-only Identifier name must NOT appear
+        // 1.20.1 kept ResourceLocation; the 26.1-only Identifier name must not appear
         assertTrue(descs.contains("Lnet/minecraft/resources/ResourceLocation;"),
                 "ResourceLocation -> resources (1.20.1 name): " + descs);
         assertFalse(descs.stream().anyMatch(d -> d.contains("resources/Identifier")),

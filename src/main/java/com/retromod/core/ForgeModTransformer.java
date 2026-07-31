@@ -106,11 +106,9 @@ public class ForgeModTransformer {
             return directCopy;
         }
 
-        // Skip the extract + re-transform when a previous run already produced an
-        // up-to-date output for this exact source + Retromod version + loader. The
-        // key mirrors the AOT cache (Retromod version + source hash); the loader is
-        // folded in because the transform differs by host (e.g. NeoForge toml promotion).
-        // (adapted from Sinytra Connector (MIT))
+        // Reuse a previous run's output when source + Retromod version + loader all
+        // match. The key mirrors the AOT cache; the loader is folded in because the
+        // transform differs by host. (adapted from Sinytra Connector (MIT))
         String cacheKey = transformCacheKey(sourceJar);
         if (cacheKey != null && isCacheUpToDate(outputJar, cacheKey)) {
             LOGGER.info("  {} is up to date in the transform cache - reusing {}",
@@ -143,10 +141,8 @@ public class ForgeModTransformer {
                 LOGGER.info("Embedded {} referenced synthetic class(es)", synthetics);
             }
 
-            // Pre-1.13 (1.12.2) mods ship only mcmod.info; modern Forge/NeoForge needs a
-            // mods.toml or they are never scanned. Synthesize one so the loader recognizes the
-            // mod (#79, the first 1.12.2 in-game prerequisite). promoteToNeoForgeToml below then
-            // renames it to neoforge.mods.toml on a NeoForge host.
+            // 1.12.2 mods ship only mcmod.info and modern Forge/NeoForge never scans them;
+            // synthesize a mods.toml (#79). promoteToNeoForgeToml below renames it on NeoForge.
             generateTomlFromMcmodInfo(tempDir);
 
             updateModsToml(tempDir, "META-INF/mods.toml");
@@ -167,9 +163,8 @@ public class ForgeModTransformer {
                 LOGGER.info("Migrated 26.x data formats in {} data file(s)", dataMigrated);
             }
 
-            // Stamp the manifest so a runtime membership predicate can tell "Retromod brought
-            // this mod in" from a native mod (pitfalls #14/#46). The Fabric path already stamps
-            // Retromod-Transformed; this extends the stamp to the Forge/NeoForge path.
+            // Stamp the manifest so runtime code can tell a Retromod-brought mod from a
+            // native one (#14/#46). The Fabric path already stamps Retromod-Transformed.
             stampTransformedManifest(tempDir, originalName);
 
             repackageJar(tempDir, outputJar);
@@ -288,8 +283,7 @@ public class ForgeModTransformer {
                 .toList();
         }
 
-        // Parallel per-class: classes are independent and the redirect tables
-        // are thread-safe for reads.
+        // Classes are independent and the redirect tables are safe to read in parallel.
         final java.util.concurrent.atomic.AtomicInteger counter =
                 new java.util.concurrent.atomic.AtomicInteger();
 
@@ -300,30 +294,21 @@ public class ForgeModTransformer {
                     .replace(".class", "")
                     .replace(File.separator, "/");
 
-                // Strip blocklisted mixin handlers first (the Fabric path does this
-                // inside FabricModTransformer) (#48).
+                // Remove handlers that cannot be translated before changing their bytecode.
                 byte[] preStripped = mixinTransformer.stripBlocklistedHandlers(original);
-                // 26.x GUI 2D-transform migration (peephole): rewrite the immediate
-                // guiGraphics.pose().pushPose()/popPose() chain to the 2D Matrix3x2fStack ops.
-                // Runs on the Mojang-named bytecode BEFORE the class redirect renames GuiGraphics ->
-                // GuiGraphicsExtractor. Gated to 26.1+ where pose() returns the 2D stack; a no-op (and
-                // never a regression) otherwise. See docs/design/gui-2d-transform-migration.md.
+                // GUI migration needs the old GuiGraphics owner, before the class redirect.
                 if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
                         com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
                     preStripped = com.retromod.shim.common.Gui2DTransformMigration.migrate(preStripped);
                 }
                 byte[] transformed = bytecodeTransformer.transformClass(preStripped, className);
-                // Phase 4 (#48): ValueIO save-data adapter, POST-remap (NeoForge/Forge names are
-                // already Mojang, but running it here keeps identification uniform with Fabric).
+                // Keep the ValueIO repair in the same post-remap position on every loader.
                 if (transformed != null) {
                     transformed = mixinTransformer.adaptValueIoHandlers(transformed);
                 }
-                // Forge 26.2 only (self-gating): EventBus 7's auto-subscriber rejects
-                // @Mod.EventBusSubscriber classes with <2 static handlers; strip those (#85).
+                // These helpers inspect the class and leave unrelated versions unchanged.
                 transformed = com.retromod.shim.forge.ForgeEventBusSynthetics
                         .stripLenientAutoSubscriber(transformed);
-                // 1.12.2 only (self-gating on the old @Mod(modid=...) shape): modernize the
-                // annotation and wire the @Mod.EventHandler lifecycle (#103/#108/#117).
                 transformed = com.retromod.shim.forge.Forge1122LifecycleSynthetics
                         .upgradeLegacyModClass(transformed);
                 boolean wroteFirst = false;
@@ -431,10 +416,9 @@ public class ForgeModTransformer {
 
     /**
      * Synthesize a {@code META-INF/mods.toml} from a pre-1.13 {@code mcmod.info} (#79). 1.12.2 mods
-     * predate the toml format, so modern Forge/NeoForge never scans them; without a toml the class
-     * moves and ctor bridge never run. No-op unless the mod has {@code mcmod.info} and neither toml.
-     * Fields are extracted by regex (mcmod.info is JSON but we only need a few), matching the
-     * codebase's TOML-parsing approach. The minecraft/forge ranges are relaxed to {@code [1,)}.
+     * predate the toml format, so modern Forge/NeoForge never scans them and the class moves and
+     * ctor bridge never run. No-op unless the mod has {@code mcmod.info} and neither toml.
+     * The minecraft/forge ranges are relaxed to {@code [1,)}.
      */
     void generateTomlFromMcmodInfo(Path tempDir) throws IOException {
         Path forgeToml = tempDir.resolve("META-INF/mods.toml");
@@ -447,10 +431,9 @@ public class ForgeModTransformer {
         StringBuilder body = new StringBuilder();
         java.util.List<String> ids = new java.util.ArrayList<>();
 
-        // Preferred path: parse the mcmod.info JSON and emit a [[mods]] block PER entry. A single
-        // 1.12.2 jar can declare several modids (The Betweenlands ships "thebetweenlands" + "mclib");
-        // the pre-#115 first-entry-only toml left the extra modids undeclared, so FML never
-        // registered them and any class/registration keyed on the second modid failed (#115).
+        // Emit a [[mods]] block per mcmod.info entry: a single 1.12.2 jar can declare several
+        // modids (The Betweenlands ships "thebetweenlands" + "mclib"), and a first-entry-only
+        // toml left the rest unregistered (#115).
         for (com.google.gson.JsonObject entry : parseMcmodEntries(json)) {
             String modId = jsonStr(entry, "modid");
             if (modId == null) modId = jsonStr(entry, "modId");
@@ -552,9 +535,8 @@ public class ForgeModTransformer {
                 }
             }
         } catch (Throwable parseFail) {
-            // leave empty: caller uses the regex fallback. Throwable (not just Exception) so a
-            // deeply-nested / hostile mcmod.info that StackOverflowErrors inside gson degrades to
-            // the regex fallback instead of letting an Error escape and abort the whole jar pass.
+            // Leave empty: caller uses the regex fallback. Throwable, not Exception, so a hostile
+            // mcmod.info that StackOverflowErrors inside gson degrades instead of aborting the jar.
         }
         return out;
     }
@@ -625,11 +607,10 @@ public class ForgeModTransformer {
      */
     static String normalizeVersion(String version) {
         String v = version.replace('+', '_');
-        // mcmod.info is untrusted, and the JSON parse path decodes escapes into real quotes/
-        // newlines/backslashes, so a crafted "version" reaching the emitted version="..." line
-        // could break out of the quoted TOML value and inject extra keys or a spoofed [[mods]]
-        // block. Only a digit-led [A-Za-z0-9._-] version (which is also a valid JPMS module
-        // version) is allowed; anything else falls back to the literal, same as a placeholder.
+        // mcmod.info is untrusted and the JSON path decodes escapes into real quotes/newlines,
+        // so a crafted version could break out of the quoted TOML value and inject keys. Allow
+        // only a digit-led [A-Za-z0-9._-] version (also a valid JPMS module version); anything
+        // else falls back to the literal.
         if (v.isEmpty() || !Character.isDigit(v.charAt(0)) || !v.matches("[A-Za-z0-9._-]+")) {
             return "1.0.0";
         }
@@ -803,15 +784,12 @@ public class ForgeModTransformer {
      * FML skips the other side's version handshake and a vanilla/other-side peer accepts the
      * connection. No-op for BOTH/UNKNOWN mods or when the author already set displayTest.
      *
-     * <p>Side is read ONLY from an explicit author-provided {@code side=} inside the mod's own
-     * {@code [[mods]]} block (a real per-mod signal FML honors). It is deliberately NOT inferred
-     * from a raw {@code side=} scan of the whole toml: in an FML toml {@code side=} otherwise
-     * appears inside {@code [[dependencies.<modid>]]} blocks, where it describes which side a
-     * DEPENDENCY is needed on, not the mod's own side. Scanning the whole file misreads a
-     * both-sided mod that declares a side-scoped dependency (e.g. an optional client-only
-     * integration) as single-sided and suppresses its version handshake wrongly. The
-     * mcmod.info path (clientSideOnly/serverSideOnly) remains the authoritative side source.
-     * (adapted from Sinytra Connector (MIT))
+     * <p>Side is read only from an author-provided {@code side=} inside the mod's own
+     * {@code [[mods]]} block, never from a whole-file scan: elsewhere in an FML toml,
+     * {@code side=} lives in {@code [[dependencies.<modid>]]} blocks and describes the
+     * DEPENDENCY's side, so a whole-file scan misreads a both-sided mod with a side-scoped
+     * dependency as single-sided. The mcmod.info path (clientSideOnly/serverSideOnly) stays
+     * the authoritative side source. (adapted from Sinytra Connector (MIT))
      */
     static String ensureDisplayTest(String toml) {
         if (Pattern.compile("(?m)^\\s*displayTest\\s*=").matcher(toml).find()) {
@@ -832,9 +810,7 @@ public class ForgeModTransformer {
     /**
      * Read an explicit {@code side=} only from the mod's own {@code [[mods]]} block (bounded by
      * the next table header), never from a {@code [[dependencies.*]]} block. Returns
-     * {@code UNKNOWN} when no {@code [[mods]]} block exists or it declares no {@code side}. This
-     * is the sound side signal for the displayTest decision: a dependency-scoped {@code side}
-     * describes where a DEPENDENCY is needed, not the mod's own side.
+     * {@code UNKNOWN} when no {@code [[mods]]} block exists or it declares no {@code side}.
      */
     static ModEnvironmentDetector.ModEnvironment sideFromModsBlock(String toml) {
         Matcher modsHeader = Pattern.compile("(?m)^\\s*\\[\\[mods\\]\\]\\s*$").matcher(toml);
@@ -1042,17 +1018,14 @@ public class ForgeModTransformer {
 
     /**
      * Convert Fabric access wideners / class tweakers in a Forge/NeoForge jar
-     * (cross-loader mods ship both) into a NeoForge/Forge AccessTransformer,
-     * then remove the AW file (Forge can't read that format).
+     * (cross-loader mods ship both) into an AccessTransformer at
+     * {@code META-INF/accesstransformer.cfg}, then remove the AW file (Forge
+     * can't read that format).
      *
-     * <p>The target loader here is NeoForge/Forge, which consumes
-     * {@code META-INF/accesstransformer.cfg} (auto-detected at the default
-     * path). Rather than dropping the widening outright, we emit an equivalent
-     * AT so the mod keeps its widened MC access. Gated on the jar not already
-     * declaring an AT at that path, so an author-provided AT is never clobbered.
-     * The converter does no name remapping and refuses an intermediary-namespace
-     * AW (returning empty), so such an AW is simply deleted as before rather than
-     * turned into an unresolvable AT; only a named/official-namespace AW is emitted.
+     * <p>Skipped when the jar already declares an AT at that path, so an
+     * author-provided AT is never clobbered. The converter refuses an
+     * intermediary-namespace AW (no name remapping happens here), which is then
+     * simply deleted rather than turned into an unresolvable AT.
      */
     private void stripAccessWideners(Path dir) {
         Path atFile = dir.resolve("META-INF").resolve("accesstransformer.cfg");

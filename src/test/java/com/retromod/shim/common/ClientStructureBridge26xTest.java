@@ -317,7 +317,7 @@ public class ClientStructureBridge26xTest {
         assertNotNull(firstCall(doors, "net/minecraft/tags/BlockItemTagId", "item"),
                 "an ItemTags constant must use .item()");
 
-        // A constant that SURVIVED on 26.2 BlockTags (LOGS) must NOT be redirected.
+        // A constant that SURVIVED on 26.2 BlockTags (LOGS) must not be redirected.
         List<AbstractInsnNode> survived = transformBody("()" + tagKey, mv -> {
             mv.visitFieldInsn(GETSTATIC, "net/minecraft/tags/BlockTags", "LOGS", tagKey);
             mv.visitInsn(ARETURN);

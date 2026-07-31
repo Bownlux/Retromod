@@ -14,10 +14,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.*;
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// COMPONENT BRIDGE SHIM
-// Bridges old NBT-based item data to the new Component system (1.20.5+)
-// ═══════════════════════════════════════════════════════════════════════════════
+// Bridges old NBT item data to the component system introduced in 1.20.5.
 
 /**
  * Bridges the old ItemStack NBT system to the new Component system.
@@ -215,10 +212,7 @@ public class ComponentBridgeShim {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// WORLD HEIGHT SHIM
-// Bridges old 0-256 world height to new -64 to 320 (1.17+)
-// ═══════════════════════════════════════════════════════════════════════════════
+// Bridges the old 0-256 world height to the range used since 1.17.
 
 /**
  * Handles world height changes between versions.
@@ -316,10 +310,7 @@ class WorldHeightShim {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// CHUNK FORMAT SHIM
-// Handles chunk storage format changes
-// ═══════════════════════════════════════════════════════════════════════════════
+// Handles chunk storage format changes.
 
 /**
  * Bridges chunk format differences between versions.
@@ -354,10 +345,7 @@ class ChunkHeightShim {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// WORLD GEN SHIM  
-// Bridges world generation changes (major overhaul in 1.18)
-// ═══════════════════════════════════════════════════════════════════════════════
+// Bridges the world generation changes introduced in 1.18.
 
 /**
  * Bridges world generation API changes.
@@ -412,10 +400,7 @@ class WorldGenShim {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// TEXT COMPONENT SHIM
-// Bridges text component changes across versions
-// ═══════════════════════════════════════════════════════════════════════════════
+// Bridges text component changes across versions.
 
 /**
  * Bridges Text/Component API changes.
@@ -511,10 +496,7 @@ class TextShim {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// REGISTRY SHIM
-// Bridges registry access changes
-// ═══════════════════════════════════════════════════════════════════════════════
+// Bridges registry access changes.
 
 /**
  * Bridges registry API changes across versions.

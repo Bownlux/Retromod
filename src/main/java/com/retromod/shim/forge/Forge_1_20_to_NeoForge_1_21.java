@@ -246,16 +246,21 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "net/minecraftforge/network/simple/SimpleChannel$MessageBuilder", builder);
         // newSimpleChannel: the mod's Forge-typed descriptor must erase to the shim's Object form
         // (keyed on both the pre- and post-class-redirect spellings; the return CHECKCASTs back).
+        // Class remapping runs first on 26.1, so register both spellings of the resource ID.
         for (String owner : new String[]{"net/minecraftforge/network/NetworkRegistry", netShim}) {
-            for (String ret : new String[]{"Lnet/minecraftforge/network/simple/SimpleChannel;",
-                                           "L" + wrapper + ";"}) {
-                transformer.registerMethodRedirect(
-                    owner, "newSimpleChannel",
-                    "(Lnet/minecraft/resources/ResourceLocation;Ljava/util/function/Supplier;"
-                        + "Ljava/util/function/Predicate;Ljava/util/function/Predicate;)" + ret,
-                    netShim, "newSimpleChannel",
-                    "(Ljava/lang/Object;Ljava/util/function/Supplier;Ljava/util/function/Predicate;"
-                        + "Ljava/util/function/Predicate;)Ljava/lang/Object;");
+            for (String resourceIdDescriptor : new String[]{
+                    "Lnet/minecraft/resources/ResourceLocation;",
+                    "Lnet/minecraft/resources/Identifier;"}) {
+                for (String ret : new String[]{"Lnet/minecraftforge/network/simple/SimpleChannel;",
+                                               "L" + wrapper + ";"}) {
+                    transformer.registerMethodRedirect(
+                        owner, "newSimpleChannel",
+                        "(" + resourceIdDescriptor + "Ljava/util/function/Supplier;"
+                            + "Ljava/util/function/Predicate;Ljava/util/function/Predicate;)" + ret,
+                        netShim, "newSimpleChannel",
+                        "(Ljava/lang/Object;Ljava/util/function/Supplier;Ljava/util/function/Predicate;"
+                            + "Ljava/util/function/Predicate;)Ljava/lang/Object;");
+                }
             }
         }
         // The direction-qualified messageBuilder: NetworkDirection erases to the shim's Object.
@@ -278,7 +283,7 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
 
     @Override
     public String[] getShimClasses() {
-        // Inner classes MUST be listed explicitly: the embed loaders resolve exactly these
+        // Inner classes must be listed explicitly: the embed loaders resolve exactly these
         // resource names (no glob), and the SimpleChannel bridge redirects point AT the inners
         // (NetworkShim$SimpleChannelWrapper etc.), so an outer-only list left them unresolvable
         // in the mod's module (#156).

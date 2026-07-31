@@ -33,14 +33,10 @@ public class AotCompiler {
 
     private static final String AOT_MANIFEST_KEY = "Retromod-AOT-Version";
 
-    // bump when shims change (package-visible: AotCacheStamp folds it into the generation stamp)
+    // Bump this when transform behavior changes.
     static final String AOT_VERSION = "1.3.0-snapshot.3";
 
-    // Self-hash of the running Retromod jar, stamped on every cache entry so any change to Retromod's
-    // own classes invalidates stale caches (AOT_VERSION alone only catches version bumps). Empty hash
-    // means "don't stamp, don't check", degrading to AOT_VERSION-only when the verifier can't find the
-    // running jar (dev/IDE classpath). The same value drives AotCacheStamp's directory-level
-    // generation stamp, which physically clears the cache on any Retromod change.
+    // Development classpaths have no jar to hash, so this can be empty.
     private static String currentSelfHash() {
         return AotCacheStamp.currentSelfHash();
     }
@@ -62,8 +58,7 @@ public class AotCompiler {
         this.apiEmbedder = new ApiEmbedder();
         this.targetMcVersion = targetMcVersion;
 
-        // Creates the cache dir AND wipes it when the Retromod build changed since it was
-        // written, so users never have to clear config/retromod/aot-cache by hand.
+        // Never reuse transforms produced by a different Retromod build.
         AotCacheStamp.ensureCurrent(AOT_CACHE_DIR);
     }
     
@@ -112,8 +107,8 @@ public class AotCompiler {
         // Layer the vanilla 26.1 class moves on top of the chain, matching the in-game boot and CLI
         // `transform` paths. Without these, AOT-prepped mods kept pre-26.x class names (EndDragonFight
         // vs EnderDragonFight) and a 1.21.x mod's mixin @Shadow/@Inject failed to apply. Class moves are
-        // loader-agnostic; the intermediary->Mojang MEMBER mappings are Fabric-only (NeoForge/Forge are
-        // already Mojang-named, so applying them clobbers correct fields).
+        // loader-agnostic; the intermediary->Mojang MEMBER mappings are Fabric-only, since
+        // NeoForge/Forge are already Mojang-named and applying them clobbers correct fields.
         if (RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) {
             try {
                 var moves = com.retromod.mapping.IntermediaryToMojangMapper
@@ -133,11 +128,11 @@ public class AotCompiler {
                     LOGGER.warn("Could not register member mappings for AOT", e);
                 }
             }
-            // Same empty-chain gap as the CLI transform/batch paths (the version-graph BFS returns
-            // an empty chain for 1.21.x sources): without registering the loader-agnostic 26.1
-            // common shim + (for 26.2+ targets) the 26.2 core moves here, an AOT jar missed the
-            // 26.x signature/API skews and the screen/hideGui bridges that a plain transform
-            // applies. Idempotent when the chain DOES include them.
+            // Same empty-chain gap as the CLI transform/batch paths: the version-graph BFS returns
+            // an empty chain for 1.21.x sources. Register the loader-agnostic 26.1 common shim,
+            // and for 26.2+ targets the 26.2 core moves, or an AOT jar misses the 26.x
+            // signature/API skews and the screen/hideGui bridges a plain transform applies.
+            // Idempotent when the chain already includes them.
             try {
                 com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
             } catch (Exception e) {
@@ -336,14 +331,14 @@ public class AotCompiler {
             jos.closeEntry();
 
             // ZIP directory entries: package resources (ClassLoader.getResources) and classpath
-// scanners (Reflections - YungsApi @AutoRegister) silently find nothing without them.
+            // scanners (Reflections, YungsApi @AutoRegister) silently find nothing without them.
             java.util.List<String> allNames = new java.util.ArrayList<>(transformedClasses.keySet());
             allNames.addAll(originalResources.keySet());
             com.retromod.util.JarDirectoryEntries.writeAllForNames(jos, allNames);
 
-            // safeEntryName guards against zip-slip: entry names come from the input JAR, so a malicious
-            // mod could ship a class whose name traverses out of the archive ("../../etc/foo.class").
-            // Downstream tooling that extracts the output JAR would otherwise inherit the vuln from us.
+            // safeEntryName guards against zip-slip: entry names come from the input JAR, so a
+            // malicious mod could ship one that traverses out of the archive ("../../etc/foo.class").
+            // Downstream tooling that extracts the output JAR would inherit it.
             for (Map.Entry<String, byte[]> entry : transformedClasses.entrySet()) {
                 jos.putNextEntry(new JarEntry(ZipSecurity.safeEntryName(entry.getKey())));
                 jos.write(entry.getValue());
@@ -458,16 +453,8 @@ public class AotCompiler {
     }
 
     /**
-     * Full-fidelity AOT class transform: the SAME {@link RetromodTransformer#transformClass} pass
-     * the runtime and the CLI transform/batch paths use, so AOT output carries EVERY mechanism
-     * (field hop accessors, field static bridges, converting/singleton redirects, field accessors,
-     * invokedynamic handle rewrites, ...). The former HybridCompiler primary implemented only
-     * class+method redirects, so AOT jars silently missed the whole rest of the mechanism set
-     * (adversarial-review finding, snapshot.3): a mod reading {@code Minecraft.screen} AOT-compiled
-     * clean but died {@code NoSuchFieldError} in-game, while the identical mod through plain
-     * {@code transform} worked. Its JIT-required markers were never consumed at runtime, so nothing
-     * is lost by the reroute. Falls back to {@link #transformClassSimple} on any throw (which
-     * itself falls back to JIT-then-ship-original), preserving the #125/#127 per-class posture.
+     * Uses the same complete class transform as the runtime path. A smaller
+     * transform remains as a per-class fallback when the main pass fails.
      */
     private byte[] transformClassAot(byte[] classBytes, String className) {
         try {
@@ -483,9 +470,8 @@ public class AotCompiler {
     private byte[] transformClassSimple(byte[] classBytes, String className) {
         try {
             ClassReader reader = new ClassReader(classBytes);
-            // SafeClassWriter's getCommonSuperClass override catches the TypeNotPresentException raw ClassWriter
-            // throws when ASM can't resolve an MC class via Class.forName(): a target-MC class absent from the
-            // source classpath would otherwise blow up the whole AOT pass.
+            // Mod dependencies are often absent here, so frame computation needs
+            // the class writer that tolerates an unresolved common parent.
             ClassWriter writer = new com.retromod.util.SafeClassWriter(reader, ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
 
             ClassVisitor visitor = new AotClassVisitor(Opcodes.ASM9, writer, className);
@@ -493,19 +479,14 @@ public class AotCompiler {
 
             return writer.toByteArray();
         } catch (Throwable frameFailure) {
-            // COMPUTE_FRAMES can throw deep inside ASM (Frame.merge -> ArrayIndexOutOfBounds /
-            // NegativeArraySize) on classes whose stack map can't be recomputed after our rewrites.
-            // A single such class must NOT abort the whole jar's AOT (that dropped every mod back to
-            // un-transformed bytes: #125 MineColonies, #127 The Flying Things). Delegate to the main
-            // JIT transformer, which has its own COMPUTE_MAXS + ship-original frame-corruption guard and
-            // never throws; if even that yields nothing, ship the untouched bytes for this one class.
-            LOGGER.warn("AOT simple transform failed for {} ({}); falling back to JIT transform",
+            // One unusual stack map should not discard the rest of the prepared jar.
+            LOGGER.warn("The simple transform failed for {} ({}). Trying the runtime transform.",
                     className, frameFailure.toString());
             try {
                 byte[] jit = transformer.transformClass(classBytes, className);
                 return jit != null ? jit : classBytes;
             } catch (Throwable jitFailure) {
-                LOGGER.warn("JIT fallback also failed for {} ({}); shipping original bytes",
+                LOGGER.warn("The fallback also failed for {} ({}). Keeping the original class.",
                         className, jitFailure.toString());
                 return classBytes;
             }

@@ -283,7 +283,7 @@ public class Forge_1_12_2_to_1_13_2 implements VersionShim {
                 "com/retromod/generated/forge1122/IForgeRegistryEntry");             // Forge 1.17
 
         // RegistryEvent (+ inner Register/MissingMappings) is the pre-1.13 registration EVENT, used as
-        // a @SubscribeEvent handler PARAMETER. Unlike the interfaces above, an empty stub is NOT enough:
+        // a @SubscribeEvent handler PARAMETER. Unlike the interfaces above, an empty stub is not enough:
         // Forge's EventBus.registerListener rejects (throws at registration) a @SubscribeEvent param that
         // is not assignable to the eventbus base Event. So the stub must be a CLASS extending the host's
         // eventbus Event. The event never fires on a modern host, so the mod's registration-via-event

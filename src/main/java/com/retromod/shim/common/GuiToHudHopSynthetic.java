@@ -33,7 +33,7 @@ import static org.objectweb.asm.Opcodes.*;
  * <p>{@code getMobEffectSprite} was already static on Gui and is static on Hud, so it's a plain
  * owner-move method redirect, no forwarder.
  *
- * <p>The forwarder class MUST be generated (it references {@code Gui}/{@code Hud}, which Retromod
+ * <p>The forwarder class must be generated (it references {@code Gui}/{@code Hud}, which Retromod
  * can't see at build time) and is registered as a synthetic so the per-mod embedder relocates a
  * JPMS-safe copy into referencing mods on Forge/NeoForge (Fabric injects it directly). 26.2 epoch:
  * registered from {@link Mc26_1To26_2CoreMoves} only.

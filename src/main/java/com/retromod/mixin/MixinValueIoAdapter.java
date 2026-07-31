@@ -31,7 +31,7 @@ import java.util.Set;
  * methods pass a {@code ValueOutput}/{@code ValueInput}, so Mixin rejects the handler with
  * {@code InvalidInjectionException: Invalid descriptor: expected ValueOutput, found CompoundTag}.
  *
- * <p>This is NOT a rename (the ValueIO API differs from CompoundTag), so the handler can't be
+ * <p>This is not a rename (the ValueIO API differs from CompoundTag), so the handler can't be
  * re-signatured like {@link MixinHandlerResignature}. Instead we keep the mod's handler body
  * <b>unchanged</b> and wrap it:
  * <ol>
@@ -116,7 +116,7 @@ public final class MixinValueIoAdapter {
 
     /**
      * Repair-or-strip complement to {@link #collect}: {@code @Inject} handlers that target a
-     * save-data method AND capture a {@code CompoundTag} somewhere but do NOT fit the strict
+     * save-data method AND capture a {@code CompoundTag} somewhere but do not fit the strict
      * adaptable shape (extra captured params, an annotated capture, a non-void return). On a
      * 1.21.5+ host these are DEFINITIONALLY broken (the target passes ValueIO, not CompoundTag), so
      * Mixin rejects them with {@code InvalidInjectionException} and NeoForge cascades into the
@@ -226,7 +226,7 @@ public final class MixinValueIoAdapter {
      * Ensure {@link com.retromod.mixin.runtime.ValueIoBridge} is registered as a synthetic so the
      * Forge/NeoForge per-mod embedder can relocate a JPMS-safe copy into any mod whose adapted
      * handler references it. Called from the adapter's own transform path (not from a loader entry
-     * point), so it can NEVER be forgotten on a loader: a Forge host would otherwise ship the
+     * point), so it can never be forgotten on a loader: a Forge host would otherwise ship the
      * inserted {@code INVOKESTATIC ValueIoBridge} unembedded and crash with
      * {@code NoClassDefFoundError} at save/load (converting the intended soft-fail into a hard
      * crash). Idempotent; best-effort (on Fabric there is no embedder and the direct reference to

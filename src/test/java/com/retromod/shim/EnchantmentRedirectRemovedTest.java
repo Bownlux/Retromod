@@ -24,7 +24,7 @@ import static org.objectweb.asm.Opcodes.*;
 
 /**
  * Regression for #119 (Apollo's Enchantment Rebalance anvil crash): the 1.20.6->1.21 shims must
- * NOT rewrite {@code Enchantment.getMaxLevel()} / {@code getMinLevel()} to the never-written
+ * not rewrite {@code Enchantment.getMaxLevel()} / {@code getMinLevel()} to the never-written
  * {@code EnchantmentShim}. Those methods never left the API (1.21 through 26.2), and the redirect
  * target was a phantom class, so the rewritten anvil call died {@code NoClassDefFoundError} the
  * first time a player combined an item + book.

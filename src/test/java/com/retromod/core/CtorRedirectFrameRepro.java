@@ -62,7 +62,7 @@ class CtorRedirectFrameRepro {
         ClassNode cn = new ClassNode();
         new ClassReader(out).accept(cn, ClassReader.EXPAND_FRAMES);
 
-        // 2. BasicVerifier dataflow-analyzes each method WITHOUT loading app classes: stack
+        // 2. BasicVerifier dataflow-analyzes each method without loading app classes: stack
         //    underflow or branch-path height mismatches (the Frame.merge AIOOBE) surface here.
         boolean sawFactory = false;
         boolean sawRawCtor = false;

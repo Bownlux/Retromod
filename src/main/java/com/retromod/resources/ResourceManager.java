@@ -12,15 +12,7 @@ import java.nio.file.*;
 import java.util.*;
 
 /**
- * Manages transformation of resource packs and data packs.
- * 
- * USAGE:
- * 1. Put old resource packs in: retromod-input/resourcepacks/
- * 2. Put old data packs in: retromod-input/datapacks/
- * 3. Retromod transforms them on startup
- * 4. Transformed packs go to: resourcepacks/ and saves/[world]/datapacks/
- * 
- * This mirrors the mod transformation workflow for consistency.
+ * Moves staged resource packs and data packs through their matching transformers.
  */
 public class ResourceManager {
     
@@ -31,7 +23,6 @@ public class ResourceManager {
     private final ResourcePackTransformer rpTransformer;
     private final DataPackTransformer dpTransformer;
     
-    // Statistics
     private int resourcePacksTransformed = 0;
     private int dataPacksTransformed = 0;
     
@@ -42,12 +33,9 @@ public class ResourceManager {
         this.dpTransformer = new DataPackTransformer(targetMcVersion);
     }
     
-    /**
-     * Initialize resource folders.
-     */
+    /** Creates the input and archive folders used by pack transforms. */
     public void ensureFolders() {
         try {
-            // Create input folders
             Path inputDir = gameDir.resolve("retromod-input");
             Path rpInput = inputDir.resolve("resourcepacks");
             Path dpInput = inputDir.resolve("datapacks");
@@ -55,13 +43,11 @@ public class ResourceManager {
             Files.createDirectories(rpInput);
             Files.createDirectories(dpInput);
             
-            // Create processed folders
             Files.createDirectories(rpInput.resolve("processed"));
             Files.createDirectories(dpInput.resolve("processed"));
             
-            // Create README in resource input folders
-            createReadme(rpInput, "RESOURCE PACKS");
-            createReadme(dpInput, "DATA PACKS");
+            createReadme(rpInput, "resource packs");
+            createReadme(dpInput, "data packs");
             
         } catch (Exception e) {
             LOGGER.warn("Could not create resource folders: {}", e.getMessage());
@@ -73,41 +59,25 @@ public class ResourceManager {
         if (Files.exists(readme)) return;
         
         Files.writeString(readme, String.format("""
-            ═══════════════════════════════════════════════════════════
-            RETROMOD %s INPUT
-            ═══════════════════════════════════════════════════════════
-            
-            Put your OLD %s here!
-            
-            Retromod will automatically:
-            1. Transform them to work with Minecraft %s
-            2. Copy transformed versions to the correct folder
-            3. Move originals to processed/
-            
-            SUPPORTED FORMATS:
-            - .zip files
-            - Folders (unzipped packs)
-            
-            ═══════════════════════════════════════════════════════════
+            Retromod %s input
+
+            Put old %s here as zip files or unpacked folders.
+            Retromod updates them for Minecraft %s, copies the results to
+            the appropriate output folder, and keeps the originals in processed/.
             """, type, type.toLowerCase(), targetMcVersion));
     }
     
-    /**
-     * Scan and transform all resource packs and data packs.
-     */
+    /** Processes every staged resource pack and data pack. */
     public void processAll() {
         processResourcePacks();
         processDataPacks();
         
         if (resourcePacksTransformed > 0 || dataPacksTransformed > 0) {
-            LOGGER.info("Resource transformation complete: {} resource packs, {} data packs",
+            LOGGER.info("Updated {} resource pack(s) and {} data pack(s)",
                 resourcePacksTransformed, dataPacksTransformed);
         }
     }
     
-    /**
-     * Process resource packs from retromod-input/resourcepacks/
-     */
     private void processResourcePacks() {
         Path inputDir = gameDir.resolve("retromod-input/resourcepacks");
         Path outputDir = gameDir.resolve("resourcepacks");
@@ -118,7 +88,6 @@ public class ResourceManager {
         try {
             Files.createDirectories(outputDir);
             
-            // Find all resource packs
             try (var stream = Files.list(inputDir)) {
                 stream.filter(p -> !p.getFileName().toString().equals("processed"))
                       .filter(p -> !p.getFileName().toString().equals("README.txt"))
@@ -140,15 +109,12 @@ public class ResourceManager {
     private void processResourcePack(Path pack, Path outputDir, Path processedDir) throws IOException {
         String name = pack.getFileName().toString();
         
-        // Check if already processed
         Path processedMarker = processedDir.resolve(name + ".done");
         if (Files.exists(processedMarker)) {
-            return; // Already processed
+            return;
         }
         
-        // Check if needs transformation
         if (!rpTransformer.needsTransformation(pack)) {
-            // Just copy to output
             Path dest = outputDir.resolve(name);
             if (!Files.exists(dest)) {
                 if (Files.isDirectory(pack)) {
@@ -156,15 +122,13 @@ public class ResourceManager {
                 } else {
                     Files.copy(pack, dest);
                 }
-                LOGGER.info("Copied resource pack (already compatible): {}", name);
+                LOGGER.info("Copied {} without changes", name);
             }
         } else {
-            // Transform
             rpTransformer.transformPack(pack, outputDir);
             resourcePacksTransformed++;
         }
         
-        // Move original to processed
         Path processed = processedDir.resolve(name);
         if (Files.isDirectory(pack)) {
             moveDirectory(pack, processed);
@@ -172,47 +136,33 @@ public class ResourceManager {
             Files.move(pack, processed, StandardCopyOption.REPLACE_EXISTING);
         }
         
-        // Create marker
         Files.writeString(processedMarker, "Processed by Retromod");
     }
     
-    /**
-     * Process data packs from retromod-input/datapacks/
-     */
     private void processDataPacks() {
         Path inputDir = gameDir.resolve("retromod-input/datapacks");
         Path processedDir = inputDir.resolve("processed");
         
         if (!Files.exists(inputDir)) return;
         
-        // Data packs go to saves/[world]/datapacks/, but we don't know the world name
-        // So we'll put them in a staging area and let user copy to their world
+        // The world is not known at startup, so data packs wait in a shared output folder.
         Path outputDir = gameDir.resolve("retromod-output/datapacks");
         
         try {
             Files.createDirectories(outputDir);
             
-            // Create instructions
             Path instructions = outputDir.resolve("INSTRUCTIONS.txt");
             if (!Files.exists(instructions)) {
                 Files.writeString(instructions, """
-                    ═══════════════════════════════════════════════════════════
-                    TRANSFORMED DATA PACKS
-                    ═══════════════════════════════════════════════════════════
-                    
-                    These data packs have been transformed by Retromod.
-                    
-                    TO USE THEM:
-                    1. Copy the .zip files to your world's datapacks folder:
+                    Retromod data pack output
+
+                    Copy the updated packs to your world's datapacks folder:
                        .minecraft/saves/[YourWorld]/datapacks/
-                    
-                    2. In-game, run: /reload
-                    
-                    ═══════════════════════════════════════════════════════════
+
+                    Then run /reload in the game.
                     """);
             }
             
-            // Find all data packs
             try (var stream = Files.list(inputDir)) {
                 stream.filter(p -> !p.getFileName().toString().equals("processed"))
                       .filter(p -> !p.getFileName().toString().equals("README.txt"))
@@ -234,7 +184,6 @@ public class ResourceManager {
     private void processDataPack(Path pack, Path outputDir, Path processedDir) throws IOException {
         String name = pack.getFileName().toString();
         
-        // Check if already processed
         Path processedMarker = processedDir.resolve(name + ".done");
         if (Files.exists(processedMarker)) {
             return;

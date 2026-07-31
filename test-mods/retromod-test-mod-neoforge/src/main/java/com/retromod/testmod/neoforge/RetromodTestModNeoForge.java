@@ -57,10 +57,10 @@ public class RetromodTestModNeoForge {
         LOG.info("{} Starting tests", PREFIX);
         int n = 0, passed = 0;
 
-        // ─── Sanity ──────────────────────────────────────────────────────
+        // Sanity
         n++; passed += check(n, "mod loaded", () -> true);
 
-        // ─── Component / Text ───────────────────────────────────────────
+        // Components and text
         n++; passed += check(n, "Component.literal", () -> {
             Component c = Component.literal("hello");
             return c != null && "hello".equals(c.getString());
@@ -84,7 +84,7 @@ public class RetromodTestModNeoForge {
             return c != null && c.getSiblings().size() == 1;
         });
 
-        // ─── ResourceLocation ───────────────────────────────────────────
+        // Resource locations
         n++; passed += check(n, "ResourceLocation.fromNamespaceAndPath", () -> {
             ResourceLocation id = ResourceLocation.fromNamespaceAndPath("retromod", "test");
             return id != null && "retromod:test".equals(id.toString());
@@ -100,7 +100,7 @@ public class RetromodTestModNeoForge {
             return bad == null;
         });
 
-        // ─── Blocks / Items / EntityType ────────────────────────────────
+        // Blocks, items, and entity types
         n++; passed += check(n, "Blocks.STONE static field", () -> Blocks.STONE != null);
         n++; passed += check(n, "Blocks.AIR.defaultBlockState().isAir()", () ->
             Blocks.AIR.defaultBlockState().isAir());
@@ -116,7 +116,7 @@ public class RetromodTestModNeoForge {
         n++; passed += check(n, "EntityType.ZOMBIE static field", () -> EntityType.ZOMBIE != null);
         n++; passed += check(n, "EntityType.PLAYER static field", () -> EntityType.PLAYER != null);
 
-        // ─── Math ───────────────────────────────────────────────────────
+        // Math
         n++; passed += check(n, "BlockPos.ZERO", () -> {
             BlockPos p = BlockPos.ZERO;
             return p.getX() == 0 && p.getY() == 0 && p.getZ() == 0;
@@ -141,7 +141,7 @@ public class RetromodTestModNeoForge {
             return box.getXsize() == 1.0;
         });
 
-        // ─── NBT ────────────────────────────────────────────────────────
+        // NBT
         n++; passed += check(n, "CompoundTag putString round-trip", () -> {
             CompoundTag c = new CompoundTag();
             c.putString("k", "v");
@@ -161,13 +161,13 @@ public class RetromodTestModNeoForge {
             return list.size() == 2;
         });
 
-        // ─── Sound events (static accessor surface) ─────────────────────
+        // Sound event static accessors
         // MC 1.21+ Mojang names dropped the BLOCK_/ENTITY_ prefixes that
         // earlier yarn-style naming used. AMBIENT_CAVE has been around
         // since alpha and is a safe field to probe for.
         n++; passed += check(n, "SoundEvents.AMBIENT_CAVE", () -> SoundEvents.AMBIENT_CAVE != null);
 
-        // ─── #87: Mixin synthetic-args dummy must be stripped ───────────
+        // Regression for #87: strip the Mixin synthetic-args placeholder.
         // This mod's SOURCE jar deliberately ships
         // org/spongepowered/asm/synthetic/args/Dummy.class (the old-Forge
         // export hack Blueprint-era mods use). On a NeoForge 1.20.2+ host

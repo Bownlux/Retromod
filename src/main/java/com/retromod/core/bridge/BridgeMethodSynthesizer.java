@@ -133,9 +133,7 @@ public final class BridgeMethodSynthesizer {
         return owner + "#" + name + " " + descriptor;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // MAIN ENTRY POINT
-    // ═══════════════════════════════════════════════════════════════════════
+    // Entry point
 
     /**
      * Scan the class for override-orphan candidates and synthesize bridges for
@@ -202,9 +200,7 @@ public final class BridgeMethodSynthesizer {
         return out;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // SCANNING: figure out what bridges we need
-    // ═══════════════════════════════════════════════════════════════════════
+    // Find the bridges this class needs.
 
     /**
      * Immutable scan result. The emitter walks the same bytes a second time
@@ -290,9 +286,7 @@ public final class BridgeMethodSynthesizer {
         return methodRenameLookup.apply(renameKey(owner, name, descriptor));
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // EMISSION: write the bridges into the class bytecode
-    // ═══════════════════════════════════════════════════════════════════════
+    // Write the bridges into the class.
 
     private byte[] emit(byte[] classBytes, String ownerClass, List<BridgeCandidate> candidates) {
         ClassReader reader = new ClassReader(classBytes);
@@ -355,9 +349,7 @@ public final class BridgeMethodSynthesizer {
         mv.visitEnd();
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // METRICS
-    // ═══════════════════════════════════════════════════════════════════════
+    // Metrics
 
     public int getBridgesSynthesized() { return bridgesSynthesized.get(); }
     public int getClassesModified() { return classesModified.get(); }
@@ -369,9 +361,7 @@ public final class BridgeMethodSynthesizer {
         bridgesSkippedCollision.set(0);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // HELPERS FOR TRANSFORMER INTEGRATION
-    // ═══════════════════════════════════════════════════════════════════════
+    // Transformer integration
 
     /**
      * Build a rename-lookup function from a method-redirect table using the

@@ -8,7 +8,8 @@ crashes, instead of chasing it reactively through a log (see pitfalls #15/#48 in
 |------|------|---------|
 | `mixin-scan` | CLI (Java, ASM) | What mixins/injectors exist across these jars? |
 | `scripts/mixin-rank.py` | Python | Which targets are hit by the most mods? (worklist) |
-| `scripts/mixin-crossjoin.py` | Python | Which mixins break on version A to B? (predicted breaks) |
+| `scripts/mixin-crossjoin.py` | Python | Which target classes moved or disappeared between two versions? |
+| `scripts/mixin-method-breaks.py` | Python | Which target methods disappeared while their classes survived? |
 | `scripts/mixin-refmap-harvest.py` | Python | What do the refmaps reference? (no-JDK cross-check) |
 
 The scanner produces JSON; the three Python tools consume it. All Python tools are
@@ -183,6 +184,26 @@ It parses the refmap `mappings` (per mixin class: human ref to intermediary ref)
 per-environment `data` sub-maps, then emits a per-mixin-class member inventory as JSON plus
 a summary. Where the scanner reports a target the refmap does not (or vice versa), that
 discrepancy is worth a look.
+
+---
+
+## 5. `scripts/mixin-method-breaks.py` (method-level breaks)
+
+`mixin-crossjoin` finds moved and removed classes. This companion catches the next case:
+the class still exists, but an injector's target method does not. It follows known class
+moves and the target's superclass chain before reporting a method as missing.
+
+```bash
+python3 scripts/mixin-method-breaks.py <scan.json> <26.2-client.jar> [--class-moves <tsv>]
+```
+
+The output ranks targets by the number of jars that use them and labels each one
+`METHOD_GONE` or `CLASS_GONE`. The scan must use Mojang names, as the target jar does.
+Map Fabric intermediary names first.
+
+Treat the report as a worklist, not a verdict. Accessor selectors may refer to fields,
+known render rewrites may be intentionally unsupported, and existing method redirects are
+not consulted by this script.
 
 ---
 

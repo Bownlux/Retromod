@@ -10,8 +10,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.retromod.util.ZipSecurity;
-import javax.swing.*;
-import java.awt.*;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,7 +43,6 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
 
     private static int totalTransformed = 0;
     private static List<String> transformedMods = new ArrayList<>();
-    private static List<String> skippedComplexMods = new ArrayList<>();
 
     /** Whether mods were transformed this launch (for the in-game restart screen). */
     public static boolean hasPendingRestart() {
@@ -64,9 +61,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
     
     @Override
     public void onPreLaunch() {
-        LOGGER.info("╔════════════════════════════════════════════════════════════╗");
-        LOGGER.info("║  Retromod v1.3.0-snapshot.3                                ║");
-        LOGGER.info("╚════════════════════════════════════════════════════════════╝");
+        LOGGER.info("Starting Retromod {} on Fabric", RetromodVersion.RETROMOD_VERSION);
         RetromodVersion.logPresenceBanner(LOGGER);
         
         try {
@@ -147,11 +142,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 com.retromod.gui.RestartPrompt.markPending(totalTransformed);
             }
 
-            if (!skippedComplexMods.isEmpty()) {
-                showComplexityWarning();
-            }
-
-            LOGGER.info("Retromod pre-launch complete!");
+            LOGGER.info("Retromod finished its Fabric pre-launch work");
             
         } catch (Exception e) {
             LOGGER.error("Retromod pre-launch error: {}", e.getMessage());
@@ -198,17 +189,14 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                     continue;
                 }
                 try {
-                    // This is the FABRIC transform path (pre-launch, before Fabric scans
-                    // mods/): register ONLY Fabric and loader-agnostic ("common") shims, the
-                    // same filter the other three entry points already apply
-                    // (Retromod.onInitialize, RetromodForge, RetromodNeoForge). Without it,
-                    // a NeoForge/Forge shim's MOJANG-named redirect fires on a Fabric mod:
-                    // after the intermediary→Mojang harvest the mod's names match the shim's
-                    // keys, so e.g. NeoForge_1_20_6_to_1_21's Enchantment.getMaxLevel redirect
-                    // rewrote AER's anvil call to the nonexistent EnchantmentShim →
-                    // NoClassDefFoundError the first time the anvil ran (#119). Fabric-owned
-                    // shims that rewrite net/minecraft names into fabric-API targets are the
-                    // converse hazard on Forge/NeoForge, already handled by their filters.
+                    // Fabric transform path: register only "fabric" and "common" shims,
+                    // the same filter the other three entry points apply. Without it a
+                    // NeoForge/Forge shim's Mojang-named redirect fires on a Fabric mod
+                    // after the intermediary→Mojang harvest. #119: NeoForge_1_20_6_to_1_21's
+                    // Enchantment.getMaxLevel redirect rewrote AER's anvil call to the
+                    // nonexistent EnchantmentShim, NoClassDefFoundError on first anvil use.
+                    // The converse hazard (Fabric shims on Forge/NeoForge) is handled by
+                    // their filters.
                     String loaderType = shim.getModLoaderType();
                     if (!"fabric".equals(loaderType) && !"common".equals(loaderType)) {
                         skippedOtherLoader++;
@@ -442,80 +430,38 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
     }
     
     private void createPrimaryReadme(Path folder) {
-        try {
-            Path readme = folder.resolve("README.txt");
-            if (!Files.exists(readme)) {
-                Files.writeString(readme, """
-                    ╔════════════════════════════════════════════════════════════╗
-                    ║  RETROMOD INPUT FOLDER (PRIMARY)                           ║
-                    ╠════════════════════════════════════════════════════════════╣
-                    ║                                                            ║
-                    ║  Put your OLD mods here!                                   ║
-                    ║                                                            ║
-                    ║  HOW TO USE:                                               ║
-                    ║  1. Drop old .jar mod files into this folder               ║
-                    ║  2. Start Minecraft                                        ║
-                    ║  3. Retromod transforms them automatically                 ║
-                    ║  4. ⚠️ RESTART Minecraft (required first time)             ║
-                    ║  5. Your mods work!                                        ║
-                    ║                                                            ║
-                    ║  WHY RESTART?                                              ║
-                    ║  Fabric scans mods BEFORE Retromod can run. Transformed    ║
-                    ║  mods only load on the next launch. This is a Fabric       ║
-                    ║  limitation, not a Retromod bug.                           ║
-                    ║                                                            ║
-                    ║  AFTER TRANSFORMATION:                                     ║
-                    ║  - Originals move to: processed/                           ║
-                    ║  - Transformed mods go to: mods/                           ║
-                    ║                                                            ║
-                    ║  ⚠️  Do NOT drop new mods in processed/!                   ║
-                    ║  That subfolder is the AFTER-transform staging area.      ║
-                    ║  Mods dropped there are treated as already-handled and    ║
-                    ║  skipped on the next scan.                                ║
-                    ║                                                            ║
-                    ║  ALTERNATIVE LOCATION:                                     ║
-                    ║  You can also use: mods/retromod-input/                    ║
-                    ║  (Same rule - don't use its processed/ subfolder either.) ║
-                    ║                                                            ║
-                    ╚════════════════════════════════════════════════════════════╝
-                    """);
-            }
-        } catch (Exception e) {
-            // Ignore
-        }
+        writeReadmeIfMissing(folder, inputFolderReadme());
     }
 
     private void createSecondaryReadme(Path folder) {
+        writeReadmeIfMissing(folder, inputFolderReadme());
+    }
+
+    private String inputFolderReadme() {
+        return """
+            Retromod input folder
+
+            Put old mod jars directly in this folder, then start Minecraft.
+            Retromod will update them and ask you to restart so Fabric can load
+            the new jars.
+
+            Updated jars go to mods/. Originals are kept in processed/.
+            Do not put new mods inside processed/, because Retromod skips it.
+
+            You can use either of these input folders:
+              retromod-input/
+              mods/retromod-input/
+            """;
+    }
+
+    private void writeReadmeIfMissing(Path folder, String content) {
         try {
             Path readme = folder.resolve("README.txt");
             if (!Files.exists(readme)) {
-                Files.writeString(readme, """
-                    ╔════════════════════════════════════════════════════════════╗
-                    ║  RETROMOD INPUT FOLDER (SECONDARY)                         ║
-                    ╠════════════════════════════════════════════════════════════╣
-                    ║                                                            ║
-                    ║  This folder works too! Put old mods here.                 ║
-                    ║                                                            ║
-                    ║  Both locations work:                                      ║
-                    ║  • .minecraft/retromod-input/      (primary)               ║
-                    ║  • .minecraft/mods/retromod-input/ (this folder)           ║
-                    ║                                                            ║
-                    ║  Same instructions:                                        ║
-                    ║  1. Drop old .jar files here                               ║
-                    ║  2. Start Minecraft                                        ║
-                    ║  3. RESTART Minecraft                                      ║
-                    ║  4. Mods work!                                             ║
-                    ║                                                            ║
-                    ║  ⚠️  Drop mods HERE, not in the processed/ subfolder.      ║
-                    ║  processed/ is where originals go AFTER transformation -  ║
-                    ║  mods dropped there are treated as already-handled and    ║
-                    ║  skipped on the next scan.                                ║
-                    ║                                                            ║
-                    ╚════════════════════════════════════════════════════════════╝
-                    """);
+                Files.writeString(readme, content);
             }
         } catch (Exception e) {
-            // Ignore
+            LOGGER.debug("Could not write {}: {}", folder.resolve("README.txt"), e.getMessage());
         }
     }
     
@@ -523,84 +469,23 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
         try {
             Path guide = modsFolder.resolve("!RETROMOD-READ-ME-FIRST!.txt");
 
-            // overwrite each launch so instruction changes propagate
+            // Refresh this file so installation instructions stay current.
             Files.writeString(guide, """
-                ╔════════════════════════════════════════════════════════════╗
-                ║                                                            ║
-                ║   ██████╗ ███████╗████████╗██████╗  ██████╗               ║
-                ║   ██╔══██╗██╔════╝╚══██╔══╝██╔══██╗██╔═══██╗              ║
-                ║   ██████╔╝█████╗     ██║   ██████╔╝██║   ██║              ║
-                ║   ██╔══██╗██╔══╝     ██║   ██╔══██╗██║   ██║              ║
-                ║   ██║  ██║███████╗   ██║   ██║  ██║╚██████╔╝              ║
-                ║   ╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝               ║
-                ║                                                            ║
-                ║   MOD INSTALLATION GUIDE                                   ║
-                ║                                                            ║
-                ╠════════════════════════════════════════════════════════════╣
-                ║                                                            ║
-                ║   ⚠️  DO NOT PUT OLD MODS DIRECTLY IN THIS FOLDER!  ⚠️    ║
-                ║                                                            ║
-                ║   If you put old mods here, Minecraft will CRASH           ║
-                ║                                                            ║
-                ║                                                            ║
-                ╠════════════════════════════════════════════════════════════╣
-                ║                                                            ║
-                ║   WHERE TO PUT OLD MODS:                                   ║
-                ║                                                            ║
-                ║   Option 1 (Recommended):                                  ║
-                ║   .minecraft/retromod-input/                               ║
-                ║                                                            ║
-                ║   Option 2 (Also works):                                   ║
-                ║   .minecraft/mods/retromod-input/                           ║
-                ║      (There's a folder inside THIS mods folder!)           ║
-                ║                                                            ║
-                ║   IMPORTANT: drop mods directly in retromod-input/.       ║
-                ║   Do NOT put them in the `processed/` subfolder! That's    ║
-                ║   where Retromod moves originals AFTER it transforms       ║
-                ║   them - mods dropped there are skipped and won't load.   ║
-                ║                                                            ║
-                ╠════════════════════════════════════════════════════════════╣
-                ║                                                            ║
-                ║   STEP BY STEP:                                            ║
-                ║                                                            ║
-                ║   1. Find the retromod-input folder                        ║
-                ║      (either location above)                               ║
-                ║                                                            ║
-                ║   2. Put your OLD mod .jar files there                     ║
-                ║      Example: sodium-1.20.4.jar                            ║
-                ║                                                            ║
-                ║   3. Start Minecraft                                       ║
-                ║      Retromod will transform the mods                      ║
-                ║                                                            ║
-                ║   4. ⚠️ RESTART Minecraft ⚠️                               ║
-                ║      (This is required! Transformed mods load on restart)  ║
-                ║                                                            ║
-                ║   5. Your old mods now work! 🎉                            ║
-                ║                                                            ║
-                ╠════════════════════════════════════════════════════════════╣
-                ║                                                            ║
-                ║   WHERE DO MODS GO AFTER TRANSFORMATION?                   ║
-                ║                                                            ║
-                ║   • Transformed mods appear in THIS folder (mods/)         ║
-                ║     with "-retromod" added to the name                     ║
-                ║     Example: sodium-1.20.4-retromod.jar                    ║
-                ║                                                            ║
-                ║   • Original mods move to retromod-input/processed/        ║
-                ║     (as a backup)                                          ║
-                ║                                                            ║
-                ╠════════════════════════════════════════════════════════════╣
-                ║                                                            ║
-                ║   WHY IS RESTART REQUIRED?                                 ║
-                ║                                                            ║
-                ║   Fabric Loader scans this folder ONCE at startup.         ║
-                ║   Retromod transforms mods, but Fabric already read        ║
-                ║   the folder. On restart, Fabric sees the new mods.        ║
-                ║                                                            ║
-                ║   This is a Fabric limitation, not a Retromod bug.         ║
-                ║                                                            ║
-                ╚════════════════════════════════════════════════════════════╝
-                
-                Need help? Visit: github.com/Bownlux/Retromod/issues
+                Retromod on Fabric
+
+                Keep Retromod and mods made for this Minecraft version here.
+
+                Put older mods directly in one of these folders instead:
+                  ../retromod-input/
+                  retromod-input/
+
+                Start Minecraft after adding them, then restart when Retromod asks.
+                Fabric scans mods before Retromod runs, so the updated jars can only
+                load on the next launch.
+
+                Retromod keeps the originals in retromod-input/processed/.
+
+                Help: https://github.com/Bownlux/Retromod/issues
                 """);
             
         } catch (Exception e) {
@@ -646,44 +531,40 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
 
             FabricModTransformer transformer = new FabricModTransformer(targetVersion);
 
-            boolean forceComplex = isForceTranslateEnabled();
-
             for (Path modJar : modsToTransform) {
                 try {
                     String fileName = modJar.getFileName().toString();
                     String modVersion = extractModMinecraftVersion(modJar);
 
-                    LOGGER.info("┌─ Processing: {}", fileName);
-                    LOGGER.info("│  Mod version: {}", modVersion != null ? modVersion : "unknown");
-                    LOGGER.info("│  Target: {}", targetVersion);
+                    LOGGER.info("Checking {} (source {}, target {})",
+                        fileName, modVersion != null ? modVersion : "unknown", targetVersion);
 
-                    // warn on complexity, but always transform
+                    // Complexity is advisory here. Staged mods are transformed unless
+                    // they already target the host exactly.
                     com.retromod.gui.ModComplexityAnalyzer analyzer =
                         new com.retromod.gui.ModComplexityAnalyzer();
                     com.retromod.gui.ModComplexityAnalyzer.ComplexityReport report =
                         analyzer.analyze(modJar);
 
                     if (report.isUnlikelyToWork()) {
-                        LOGGER.warn("│  ⚠ High complexity (score: {}) - some features may not work", report.score());
-                        LOGGER.warn("│  Reason: {}", report.reason());
+                        LOGGER.warn("{} has a high compatibility risk ({}/100): {}",
+                            fileName, report.score(), report.reason());
                     }
 
-                    // transform unless the version matches exactly
                     boolean needsTransform = !isExactVersionMatch(modVersion, targetVersion);
 
                     if (!needsTransform) {
-                        LOGGER.info("│  Status: Already compatible (exact match)");
-                        LOGGER.info("└─ Copying directly to mods/");
+                        LOGGER.info("{} already targets Minecraft {}; copying it unchanged",
+                            fileName, targetVersion);
                         Files.copy(modJar, outputFolder.resolve(fileName),
                             StandardCopyOption.REPLACE_EXISTING);
                     } else {
-                        LOGGER.info("│  Status: Needs transformation");
                         Path transformed = transformer.transformMod(modJar, outputFolder);
                         if (transformed != null) {
-                            LOGGER.info("└─ Created: {}", transformed.getFileName());
+                            LOGGER.info("Updated {} as {}", fileName, transformed.getFileName());
                             transformedMods.add(fileName);
                         } else {
-                            LOGGER.warn("└─ Transformation failed!");
+                            LOGGER.warn("Retromod could not update {}", fileName);
                         }
                     }
                     
@@ -805,40 +686,20 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
         return false;
     }
 
-    /** Create the README in the CurseForge-export folder (mods/Retromod/), #78. */
+    /** Explains which jars belong in the CurseForge export folder. */
     private void createCfExportReadme(Path folder) {
-        try {
-            Path readme = folder.resolve("README.txt");
-            if (!Files.exists(readme)) {
-                Files.writeString(readme, """
-                    RETROMOD - mods/Retromod/  (CurseForge-export folder, issue #78)
-                    ===============================================================
+        writeReadmeIfMissing(folder, """
+            Retromod CurseForge export folder
 
-                    Put LOADER-READY jars here: Retromod itself, and mods already
-                    transformed for THIS Minecraft version (the *-retromod.jar files
-                    produced by `retromod batch`).
+            This folder is for Retromod and jars that are already ready for the
+            current Minecraft version. CurseForge includes them as pack overrides.
 
-                    WHY THIS FOLDER EXISTS:
-                      CurseForge rejects modpack EXPORTS that contain jars not hosted
-                      on CurseForge. Jars in this subfolder ship as pack "overrides"
-                      (which CurseForge allows), and Retromod loads them anyway.
+            Put old, unconverted mods in retromod-input/ instead.
 
-                    HOW THEY LOAD:
-                      - NeoForge: loaded in-place at startup, no restart.
-                      - Fabric:   Retromod MOVES these into mods/ on the next launch,
-                                  then asks you to RESTART once (Fabric scans mods/
-                                  before Retromod can run). To load in-place and skip
-                                  the restart, add this JVM argument instead:
-                                    -Dfabric.addMods=<.minecraft>/mods/Retromod
-
-                    NOTE: RAW old mods that still need transforming do NOT go here -
-                    put those in retromod-input/. This folder is for jars that are
-                    already built for the current Minecraft version.
-                    """);
-            }
-        } catch (Exception e) {
-            // ignore: README is a convenience, not required
-        }
+            On Fabric, Retromod moves these jars into mods/ and asks for one restart.
+            Pack authors can load them in place with:
+              -Dfabric.addMods=<game-directory>/mods/Retromod
+            """);
     }
 
     /** True only when the mod version matches the target exactly. */
@@ -903,92 +764,13 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
         return null;
     }
     
-    /**
-     * Log the restart-required banner. The in-game screen is shown later by
-     * Retromod.onInitialize() via InGameScreenFactory.
-     */
+    /** Logs the same restart request shown later in game. */
     private void showRestartMessage() {
-        LOGGER.info("");
-        LOGGER.info("╔════════════════════════════════════════════════════════════╗");
-        LOGGER.info("║                                                            ║");
-        LOGGER.info("║   RESTART REQUIRED!                                        ║");
-        LOGGER.info("║                                                            ║");
-        LOGGER.info("║   Retromod transformed {} mod(s):                          ║", String.format("%-2d", totalTransformed));
+        LOGGER.info("Retromod updated {} mod(s). Restart Minecraft to load them:",
+            totalTransformed);
         for (String mod : transformedMods) {
-            String display = mod.length() > 48 ? mod.substring(0, 45) + "..." : mod;
-            LOGGER.info("║     - {}║", String.format("%-51s", display));
+            LOGGER.info("  - {}", mod);
         }
-        LOGGER.info("║                                                            ║");
-        LOGGER.info("║   Close Minecraft and launch again for mods to load.       ║");
-        LOGGER.info("║                                                            ║");
-        LOGGER.info("║   This is normal! Fabric needs a restart to see new mods.  ║");
-        LOGGER.info("║                                                            ║");
-        LOGGER.info("╚════════════════════════════════════════════════════════════╝");
-        LOGGER.info("");
-    }
-
-    /** Whether force_translate_complex is set in config. */
-    private boolean isForceTranslateEnabled() {
-        try {
-            Path configPath = Path.of("config/retromod/config.json");
-            if (Files.exists(configPath)) {
-                String json = Files.readString(configPath);
-                return json.contains("\"force_translate_complex\": true") ||
-                       json.contains("\"force_translate_complex\":true");
-            }
-        } catch (Exception e) {
-            // default to false
-        }
-        return false;
-    }
-
-    /** Warn (log + GUI) about mods skipped for high complexity. */
-    private void showComplexityWarning() {
-        LOGGER.warn("");
-        LOGGER.warn("╔════════════════════════════════════════════════════════════╗");
-        LOGGER.warn("║   MODS SKIPPED (UNLIKELY TO WORK)                          ║");
-        LOGGER.warn("╠════════════════════════════════════════════════════════════╣");
-        for (String mod : skippedComplexMods) {
-            String display = mod.length() > 51 ? mod.substring(0, 48) + "..." : mod;
-            LOGGER.warn("║   ⚠ {}║", String.format("%-54s", display));
-        }
-        LOGGER.warn("╠════════════════════════════════════════════════════════════╣");
-        LOGGER.warn("║   These mods were NOT translated because they use          ║");
-        LOGGER.warn("║   features Retromod cannot fully transform (coremods,      ║");
-        LOGGER.warn("║   heavy reflection, ASM manipulation, etc.).               ║");
-        LOGGER.warn("║                                                            ║");
-        LOGGER.warn("║   To try anyway, set in config/retromod/config.json:       ║");
-        LOGGER.warn("║     \"force_translate_complex\": true                       ║");
-        LOGGER.warn("╚════════════════════════════════════════════════════════════╝");
-        LOGGER.warn("");
-
-        if (EnvironmentDetector.canShowGui()) {
-            Thread warningThread = new Thread(() -> {
-                try {
-                    UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-                } catch (Exception ignored) {}
-
-                StringBuilder msg = new StringBuilder();
-                msg.append("Retromod skipped ").append(skippedComplexMods.size())
-                   .append(" mod(s) because they are unlikely to work:\n\n");
-                for (String mod : skippedComplexMods) {
-                    msg.append("  - ").append(mod).append("\n");
-                }
-                msg.append("\nThese mods use features that Retromod cannot fully\n");
-                msg.append("transform (coremods, heavy reflection, ASM, etc.).\n\n");
-                msg.append("To force translation anyway, set:\n");
-                msg.append("  \"force_translate_complex\": true\n");
-                msg.append("in config/retromod/config.json");
-
-                JOptionPane.showMessageDialog(
-                    null,
-                    msg.toString(),
-                    "Retromod - Mods Skipped",
-                    JOptionPane.WARNING_MESSAGE
-                );
-            }, "Retromod-ComplexityWarning");
-            warningThread.setDaemon(true);
-            warningThread.start();
-        }
+        LOGGER.info("Fabric scans mods before Retromod runs, so this one restart is expected.");
     }
 }

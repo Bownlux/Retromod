@@ -64,7 +64,7 @@ class RetromodPreLaunchTest {
     @Test
     @DisplayName("Shim gate: a shim is skipped when its target exceeds the host (#31/#32/#35)")
     void shimVersionGate() {
-        // The 1.21.11→26.1 shim (target 26.1) must NOT apply on a pre-26.1 host -
+        // The 1.21.11→26.1 shim (target 26.1) must not apply on a pre-26.1 host -
         // that's what was renaming Fabric API classes to 26.1 names and crashing mods.
         assertTrue(RetromodPreLaunch.mcVersionExceeds("26.1", "1.21.8"));
         assertTrue(RetromodPreLaunch.mcVersionExceeds("26.1", "1.21.1"));

@@ -67,8 +67,8 @@ public class PolyfillRegistry {
         }
 
         // Discover providers via ServiceLoader
-        // Uses iterator with error handling to support lite builds where some
-        // provider classes may be excluded from the JAR
+        // Lite builds intentionally omit some provider classes, so discovery must tolerate a
+        // missing ServiceLoader entry.
         ServiceLoader<PolyfillProvider> loader = ServiceLoader.load(PolyfillProvider.class);
 
         int registered = 0;
@@ -80,8 +80,8 @@ public class PolyfillRegistry {
             try {
                 provider = it.next();
             } catch (ServiceConfigurationError e) {
-                // Class not found: expected in lite builds where some providers are excluded
-                LOGGER.debug("Skipping unavailable polyfill provider: {}", e.getMessage());
+                LOGGER.debug("Skipping a polyfill that is not included in this build: {}",
+                        e.getMessage());
                 skipped++;
                 continue;
             }
@@ -94,18 +94,26 @@ public class PolyfillRegistry {
                     registered++;
 
                     String[] removed = provider.getRemovedClasses();
-                    LOGGER.info("Polyfill loaded: {} (category: {}, {} removed classes bridged)",
-                            provider.getName(), provider.getCategory(), removed.length);
+                    LOGGER.info("Loaded {} from the {} category ({})",
+                            provider.getName(), provider.getCategory(),
+                            removedClassSummary(removed.length));
                 } catch (Exception e) {
-                    LOGGER.warn("Failed to register polyfill: {}", provider.getName(), e);
+                    LOGGER.warn("Could not load the {} polyfill", provider.getName(), e);
                 }
             } else {
                 skipped++;
-                LOGGER.debug("Polyfill skipped (category disabled): {}", provider.getName());
+                LOGGER.debug("Skipping {} because its category is disabled", provider.getName());
             }
         }
 
-        LOGGER.info("Polyfill system: {} registered, {} skipped", registered, skipped);
+        LOGGER.info("Loaded {} polyfills and skipped {}", registered, skipped);
+    }
+
+    private static String removedClassSummary(int count) {
+        if (count == 0) {
+            return "no removed classes";
+        }
+        return count + (count == 1 ? " removed class" : " removed classes");
     }
 
     /**

@@ -62,7 +62,7 @@ Synthetic classes in `com/retromod/generated/legacynet/`:
 - CustomPacketPayload = `class_8710`; its `type()` = **`method_56479()Lnet/minecraft/class_9154;`**
 - CustomPacketPayload$Type = `class_8710$class_9154`; ctor = **`<init>(Lnet/minecraft/class_2960;)V`** (record wrapping a ResourceLocation)
 - StreamCodec = `class_9139`; RegistryFriendlyByteBuf = `class_9129`; FriendlyByteBuf = `class_2540`
-  - ⚠️ **STILL MISSING:** StreamCodec's `encode`/`decode` SAM *intermediary* method names. javap was
+  - Still missing: StreamCodec's `encode` and `decode` SAM intermediary method names. `javap` was
     corruption-blocked this session. Mojang names are `decode(B)->V` and `encode(B,V)->void`;
     run `javap -p class_9139` from the real 26.1.2 jar to get the `method_*` names BEFORE codegen.
     A wrong name here = VerifyError at class load (worse than today's soft-fail). This is the gating unknown.

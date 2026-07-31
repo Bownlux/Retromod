@@ -32,7 +32,7 @@
   "retromod.settings.log_transformations": "\u8bb0\u5f55\u8f6c\u6362",
   "retromod.settings.debug": "\u8c03\u8bd5\u6a21\u5f0f",
 
-  "retromod.filepicker.title": "Retromod \u2014 \u9009\u62e9\u8981\u8f6c\u6362\u7684\u6a21\u7ec4 JAR",
+  "retromod.filepicker.title": "Retromod: \u9009\u62e9\u8981\u8f6c\u6362\u7684\u6a21\u7ec4 JAR",
 
   "retromod.result.success": "\u5df2\u8f6c\u6362",
   "retromod.result.skipped": "\u5df2\u517c\u5bb9",

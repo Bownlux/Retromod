@@ -1,9 +1,7 @@
-# Retromod Version Shims - ServiceLoader configuration
+# Retromod version shims
 # Copyright (c) 2026 Bownlux
 
-# ============================================================
-# FABRIC SHIMS - Legacy versions (1.14.4 → 1.21)
-# ============================================================
+# Fabric shims for 1.14.4 through 1.21
 com.retromod.shim.fabric.Fabric_1_14_4_to_1_15_2
 com.retromod.shim.fabric.Fabric_1_15_2_to_1_16_5
 com.retromod.shim.fabric.Fabric_1_16_5_to_1_17
@@ -38,14 +36,12 @@ com.retromod.shim.fabric.Fabric_1_21_8_to_1_21_9
 com.retromod.shim.fabric.Fabric_1_21_9_to_1_21_10
 com.retromod.shim.fabric.Fabric_1_21_10_to_1_21_11
 
-# Fabric shim (1.21.11 → 26.1 — the big unobfuscation jump)
+# Fabric shim for the 1.21.11 to 26.1 unobfuscation jump
 com.retromod.shim.fabric.Fabric_1_21_11_to_26_1
 com.retromod.shim.fabric.Fabric_26_1_to_26_2
 
-# ============================================================
-# NEOFORGE SHIMS - Legacy versions (1.20.1 → 1.21)
+# NeoForge shims for 1.20.1 through 1.21
 # NeoForge started at 1.20.1 when it forked from Forge
-# ============================================================
 com.retromod.shim.neoforge.NeoForge_1_20_1_to_1_20_2
 com.retromod.shim.neoforge.NeoForge_1_20_2_to_1_20_3
 com.retromod.shim.neoforge.NeoForge_1_20_3_to_1_20_4
@@ -66,15 +62,13 @@ com.retromod.shim.neoforge.NeoForge_1_21_8_to_1_21_9
 com.retromod.shim.neoforge.NeoForge_1_21_9_to_1_21_10
 com.retromod.shim.neoforge.NeoForge_1_21_10_to_1_21_11
 
-# NeoForge shim (1.21.11 → 26.1 — the big unobfuscation jump)
+# NeoForge shim for the 1.21.11 to 26.1 unobfuscation jump
 com.retromod.shim.neoforge.NeoForge_1_21_11_to_26_1
 com.retromod.shim.neoforge.NeoForge_26_1_to_26_2
 
-# ============================================================
-# FORGE SHIMS - Legacy versions (1.12.2 → 1.20)
+# Forge shims for 1.12.2 through 1.20
 # Forge was the main loader before NeoForge forked at 1.20.1
-# The Flattening (1.12.2 → 1.13.2) is the biggest transition
-# ============================================================
+# The Flattening from 1.12.2 to 1.13.2 is the largest transition
 com.retromod.shim.forge.Forge_1_12_2_to_1_13_2
 com.retromod.shim.forge.Forge_1_13_2_to_1_14_4
 com.retromod.shim.forge.Forge_1_14_4_to_1_15_2
@@ -91,7 +85,7 @@ com.retromod.shim.forge.Forge_1_19_2_to_1_19_3
 com.retromod.shim.forge.Forge_1_19_3_to_1_19_4
 com.retromod.shim.forge.Forge_1_19_4_to_1_20
 
-# Forge → NeoForge migration (cross-loader)
+# Forge to NeoForge migration
 com.retromod.shim.forge.Forge_1_20_to_NeoForge_1_21
 
 # Forge shims (1.21.x chain)
@@ -107,14 +101,11 @@ com.retromod.shim.forge.Forge_1_21_8_to_1_21_9
 com.retromod.shim.forge.Forge_1_21_9_to_1_21_10
 com.retromod.shim.forge.Forge_1_21_10_to_1_21_11
 
-# Forge shim (1.21.11 → 26.1 — the big unobfuscation jump)
+# Forge shim for the 1.21.11 to 26.1 unobfuscation jump
 com.retromod.shim.forge.Forge_1_21_11_to_26_1
 com.retromod.shim.forge.Forge_26_1_to_26_2
 
-# ============================================================
-# POPULAR API SHIMS
-# These handle changes in commonly used mod libraries
-# ============================================================
+# Shims for commonly used mod APIs
 
 # Fabric API shims (networking, registry, rendering, etc.)
 com.retromod.shim.api.fabric.FabricApiShim
@@ -155,7 +146,7 @@ com.retromod.shim.api.forge.ForgeRegistryApiShim
 com.retromod.shim.api.common.GeckoLibApiShim
 com.retromod.shim.api.common.ArchitecturyApiShim
 com.retromod.shim.api.common.CreateModApiShim
-# Runtime version-check spoofer — defeats in-code version range checks like
+# Runtime version-check spoofer for in-code version range checks such as
 # REI's "Cloth Config X is unsupported, please use Y" when fabric.mod.json
 # relaxation alone isn't enough.
 com.retromod.shim.api.common.VersionSpoofShim

@@ -287,12 +287,11 @@ public final class TitleScreenButtonInjector {
         try {
             int width = McReflect.getIntField(screen, screenClass, 854, "width");
 
-            // top-right corner, 80x20, with a 2px margin off the edge
+            // Keep the button clear of the title screen's centered controls.
             int buttonX = width - 82;
             int buttonY = 2;
 
-            // press-action proxy opening the file-picker screen via ConfigScreenFactory:
-            // it stays on the render thread (no AWT FileDialog) and exposes the input folder
+            // Minecraft owns this callback, which keeps screen changes on the render thread.
             Class<?> pressActionClass = findPressActionClass();
             if (pressActionClass == null) {
                 LOGGER.debug("Could not find PressAction / OnPress class");
@@ -303,13 +302,11 @@ public final class TitleScreenButtonInjector {
                 new Class<?>[]{pressActionClass},
                 (proxy, method, args) -> {
                     if (method.getDeclaringClass() != Object.class) {
-                        // INFO so a click is visible in default logs
-                        LOGGER.info("[Retromod] Title-screen button clicked");
+                        LOGGER.debug("Opening the Retromod screen from the title menu");
                         try {
                             MainScreenFactory.open(screen);
-                            LOGGER.info("[Retromod] MainScreenFactory.open() returned");
                         } catch (Throwable t) {
-                            LOGGER.warn("[Retromod] Failed to open Retromod screen: {}",
+                            LOGGER.warn("Could not open the Retromod screen: {}",
                                     t.getMessage(), t);
                         }
                     }
@@ -317,29 +314,28 @@ public final class TitleScreenButtonInjector {
                 }
             );
 
-            // plain text button: SpriteIconButton needs the GUI sprite atlas to register
-            // our texture, which can fail silently and leave an invisible button
+            // A text button works on versions where custom sprite registration is unreliable.
             Object button = buildPlainTextButton(buttonX, buttonY, pressAction, pressActionClass);
             if (button == null) {
-                LOGGER.warn("[Retromod] Could not build title-screen button (button==null)");
+                LOGGER.warn("Could not create the Retromod title screen button");
                 return;
             }
 
-            // try addRenderableWidget (mojang) first since it also wires click handling;
-            // addDrawableChild (yarn) wires only rendering on some versions
+            // Prefer addRenderableWidget because some Yarn versions only render children added
+            // through addDrawableChild and do not give them click handling.
             Method addMethod = McReflect.findMethod(screenClass,
                 "addRenderableWidget", "addDrawableChild", "addWidget");
             if (addMethod != null) {
                 addMethod.setAccessible(true);
                 addMethod.invoke(screen, button);
-                LOGGER.info("[Retromod] Title-screen button registered via {} at ({},{})",
+                LOGGER.debug("Added the Retromod title button with {} at ({}, {})",
                         addMethod.getName(), buttonX, buttonY);
             } else {
-                LOGGER.warn("[Retromod] Could not find any add-widget method on Screen");
+                LOGGER.warn("Could not find a supported Screen method for adding the Retromod button");
             }
 
         } catch (Exception e) {
-            LOGGER.warn("[Retromod] Could not add title-screen button: {}", e.getMessage(), e);
+            LOGGER.warn("Could not add the Retromod title screen button: {}", e.getMessage(), e);
         }
     }
 
@@ -353,7 +349,8 @@ public final class TitleScreenButtonInjector {
             Method literal = McReflect.findMethod(textClass,
                 new Class[]{String.class}, "literal");
             if (literal == null) {
-                LOGGER.warn("[Retromod] Component.literal() not found");
+                LOGGER.warn("Could not create the Retromod button label because "
+                        + "Component.literal was not found");
                 return null;
             }
             Object text = literal.invoke(null, "Retromod");
@@ -361,7 +358,7 @@ public final class TitleScreenButtonInjector {
             Method builder = McReflect.findMethod(buttonWidgetClass,
                 new Class[]{textClass, pressActionClass}, "builder");
             if (builder == null) {
-                LOGGER.warn("[Retromod] Button.builder() not found");
+                LOGGER.warn("Could not create the Retromod button because Button.builder was not found");
                 return null;
             }
             Object b = builder.invoke(null, text, pressAction);
@@ -375,7 +372,7 @@ public final class TitleScreenButtonInjector {
             Method build = McReflect.findMethod(b.getClass(), "build");
             return build != null ? build.invoke(b) : null;
         } catch (Exception e) {
-            LOGGER.warn("[Retromod] buildPlainTextButton failed: {}", e.getMessage(), e);
+            LOGGER.warn("Could not build the Retromod title screen button: {}", e.getMessage(), e);
             return null;
         }
     }
@@ -560,7 +557,7 @@ public final class TitleScreenButtonInjector {
                 return;
             }
 
-            RetromodScreen retroScreen = new RetromodScreen(client, screen);
+            RetromodScreen retroScreen = new RetromodScreen(client);
             retroScreen.open();
 
         } catch (Exception e) {

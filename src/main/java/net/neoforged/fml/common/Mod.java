@@ -5,7 +5,7 @@
  * NeoForge isn't on the classpath (CLI / standalone build), and at RUNTIME
  * NeoForge's real annotation class shadows the stub.
  *
- * IMPORTANT: this .class file MUST be excluded from the production JAR
+ * Important: this .class file must be excluded from the production JAR
  * (maven-jar-plugin <excludes> in pom.xml). If both this stub and
  * NeoForge's real Mod class end up on the classpath, NeoForge's secure
  * classloader fails when looking up @Mod-annotated classes - same family

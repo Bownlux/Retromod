@@ -32,7 +32,7 @@ import com.retromod.shim.ShimRegistry;
  * Regression for the {@code transform} CLI command's missing polyfill pass.
  *
  * <p>{@code transformCommand} once registered only the version-shim chain (or the all-shims
- * fallback) and NOT the removed-API polyfills, so a transform-only pass left references to
+ * fallback) and not the removed-API polyfills, so a transform-only pass left references to
  * removed-vanilla classes dangling. The canonical case is {@code net/minecraft/util/LazyLoadedValue}
  * (removed in 26.1, referenced at runtime by Jade): the runtime/analyze/batch paths redirect it to
  * the embedded polyfill, but a plain {@code transform} did not. {@code transformCommand} now calls
@@ -87,9 +87,9 @@ class TransformPolyfillRegressionTest {
     }
 
     /**
-     * The {@code batch} (and AOT) path reaches the transformer ONLY through the shared
+     * The {@code batch} (and AOT) path reaches the transformer only through the shared
      * {@code registerAuxiliaryRedirects} step, which once registered class-moves/API-shims/mappings
-     * but NOT the polyfills, so a batch-transformed mod referencing a removed-vanilla class was left
+     * but not the polyfills, so a batch-transformed mod referencing a removed-vanilla class was left
      * dangling (found by a corpus audit: raw {@code net/minecraft/util/Tuple} refs survived batch).
      * {@code registerAuxiliaryRedirects} now loads polyfills too.
      */
@@ -145,7 +145,7 @@ class TransformPolyfillRegressionTest {
         assertTrue(cn.fields.stream().anyMatch(f -> f.desc.contains(SUPPLIER)),
                 "the field type must be rewritten to Supplier");
 
-        // `new LazyLoadedValue(supplier)` became the polyfill's static factory (NOT a `new` of the
+        // `new LazyLoadedValue(supplier)` became the polyfill's static factory (not a `new` of the
         // Supplier interface, which would be an invalid instantiation).
         boolean callsFactory = insns.stream().anyMatch(i ->
                 i instanceof org.objectweb.asm.tree.MethodInsnNode mi

@@ -212,7 +212,7 @@ public class RegistryPolyfill implements PolyfillProvider {
         // Gated to hosts >= 1.20.5, where the (String) / (String,String) constructors were removed for
         // the static factories. On 1.20.1-1.20.4 those ctors STILL exist, so a pure class-move leaves a
         // valid `new ResourceLocation(ns, path)`; firing this there corrupted the mod (#135 Wyrms of
-        // Nyrus, #136, #121). And it MUST use registerConstructorRedirect, not a plain method redirect:
+        // Nyrus, #136, #121). And it must use registerConstructorRedirect, not a plain method redirect:
         // a ctor->factory conversion has to delete the NEW/DUP and emit INVOKESTATIC (which only
         // CtorRedirectPrePass does). A plain method redirect only swapped the Methodref, leaving the
         // uninitialized NEW on the stack + an INVOKESPECIAL against the factory -> "Type uninitialized 0

@@ -23,36 +23,27 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 1.3.0 track A: re-signature a mixin {@code @Inject} handler when the target MC method GAINED a
- * leading parameter the handler can ignore. Canonical case (#69, Revamped Phantoms): the 1.21.5
- * refactor changed {@code LivingEntity.doHurtTarget(Entity)} to {@code doHurtTarget(ServerLevel,
- * Entity)}, so a handler capturing {@code (Entity, CallbackInfoReturnable)} no longer matches the
- * target's parameter prefix and injection fails ("Scanned 0 target(s)").
+ * Repairs Mixin handlers when Minecraft adds a parameter that the handler does not need.
  *
- * <p>The fix inserts the new leading param(s) into the handler descriptor and shifts every
- * local-variable slot in the body up by the inserted width, so the handler captures
- * {@code (ServerLevel, Entity, CallbackInfoReturnable)} - the ignored {@code ServerLevel} makes it a
- * valid prefix of the new target again, and the body logic is unchanged.
+ * <p>For example, Minecraft 1.21.5 changed
+ * {@code LivingEntity.doHurtTarget(Entity)} to
+ * {@code doHurtTarget(ServerLevel, Entity)}. An older handler still captures only the entity, so
+ * Mixin no longer considers it a valid prefix. This class inserts the missing parameter and moves
+ * the handler's local variable slots to match.
  *
- * <p><b>Safety:</b> this only DROPS stale stack-map frames; the caller MUST re-emit with
- * {@code COMPUTE_FRAMES} inside a try/catch and fall back to the un-re-signatured bytes if frame
- * computation throws, so a slot-shift bug can never ship a {@code VerifyError}-crashing handler. It
- * also declines conservatively: only for an explicit {@link #SIGNATURE_CHANGES} table entry, only
- * for a well-formed {@code @Inject} shape, and never when the captured params carry parameter
- * annotations ({@code @Local}/{@code @Coerce}), which frame verification would not catch.
+ * <p>The repair is deliberately narrow. It only handles changes listed in
+ * {@link #SIGNATURE_CHANGES}, skips parameters with Mixin annotations such as {@code @Local}, and
+ * lets the caller recompute stack frames. If frame computation fails, the caller keeps the
+ * original class bytes.
  *
- * <p><b>Selector forms:</b> a <em>bare-name</em> selector ({@code method="doHurtTarget"}) is repaired
- * by re-signaturing the handler alone (Mixin scans by name, finds the new target, and the handler is
- * now a valid prefix again). A <em>name+descriptor</em> selector
- * ({@code method="doHurtTarget(Lnet/minecraft/world/entity/Entity;)Z"}) also has its selector
- * descriptor rewritten to the new target signature (see {@link #rewriteSelectorDescriptor}), so both
- * forms resolve.
+ * <p>Bare method selectors need only the handler repair. Selectors that include a descriptor also
+ * receive the new target descriptor.
  */
 public final class MixinHandlerResignature {
 
     private MixinHandlerResignature() {}
 
-    /** A parameter inserted at {@code paramIndex} (0-based, over the descriptor params). */
+    /** A parameter and its zero-based position in the method descriptor. */
     public record ParamInsert(int paramIndex, String typeDescriptor) {}
 
     private static final String INJECT_DESC = "Lorg/spongepowered/asm/mixin/injection/Inject;";
@@ -60,78 +51,67 @@ public final class MixinHandlerResignature {
     private static final String CALLBACK_INFO_RETURNABLE = "org/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable";
 
     /**
-     * A known signature change. {@code acceptableFirstParams} is the OWNER GUARD: the set of Mojang
-     * first-parameter type descriptors the changed method actually takes. A bare-name match is only
-     * accepted when the handler's first captured param is one of these (or is unverifiable - a
-     * primitive, a non-MC type, or an intermediary name), so a same-named but UNCHANGED method on a
-     * different class (e.g. {@code Mob.mobInteract} vs the changed {@code PiglinAi.mobInteract}) is
-     * not wrongly re-signatured. {@code null} means no guard (permissive).
+     * A known signature change and the old first parameter types that identify it.
+     * {@code null} leaves the first parameter unrestricted.
      */
     private record SigChange(Set<String> acceptableFirstParams, List<ParamInsert> inserts) {}
 
-    /** Target method (bare Mojang name) -> its signature change. */
+    /** Known changes indexed by the bare Mojang method name. */
     private static final Map<String, SigChange> SIGNATURE_CHANGES = new HashMap<>();
     static {
-        // The 1.21.5 "world/level threading" refactor prepended a ServerLevel to many
-        // LivingEntity/Entity/Mob/Player methods (same name, leading ServerLevel@0). Harvested by
-        // diffing the official 1.21.1 Mojang mappings against the 26.2 jar. A handler that captures
-        // the old target params (e.g. the DamageSource on actuallyHurt) is otherwise no longer a
-        // valid parameter prefix of the new target and fails to inject ("Scanned 0 target(s)"). Each
-        // entry carries the acceptable first-param type(s) as an owner guard (see SigChange). Only
-        // methods whose OLD signature had >=1 capturable param are listed (0-arg-old ones need no
-        // re-signature: an empty capture is already a valid prefix). doHurtTarget is the #69 case.
-        ParamInsert sl = new ParamInsert(0, "Lnet/minecraft/server/level/ServerLevel;");
-        String DAMAGE = "Lnet/minecraft/world/damagesource/DamageSource;";
-        String ENTITY = "Lnet/minecraft/world/entity/Entity;";
-        String ITEMSTACK = "Lnet/minecraft/world/item/ItemStack;";
-        // Core LivingEntity/Entity/Mob/Player methods (harvest pass 1).
-        reg("doHurtTarget", sl, ENTITY);                                       // #69
-        reg("actuallyHurt", sl, DAMAGE);
-        reg("isInvulnerableTo", sl, DAMAGE);
-        reg("dropExperience", sl, ENTITY);
-        reg("dropFromLootTable", sl, DAMAGE);
-        reg("triggerOnDeathMobEffects", sl, "Lnet/minecraft/world/entity/Entity$RemovalReason;");
-        reg("spawnAtLocation", sl, ITEMSTACK, "Lnet/minecraft/world/level/ItemLike;");
-        reg("pickUpItem", sl, "Lnet/minecraft/world/entity/item/ItemEntity;",
-                "Lnet/minecraft/world/entity/Mob;", "Lnet/minecraft/world/entity/monster/piglin/Piglin;");
-        reg("wantsToPickUp", sl, ITEMSTACK);
-        reg("equipItemIfPossible", sl, ITEMSTACK);
-        reg("dropPreservedEquipment", sl, "Ljava/util/function/Predicate;");
-        reg("isPreventingPlayerRest", sl, "Lnet/minecraft/world/entity/player/Player;");
-        // Entity-specific methods (harvest pass 2, broad 734-class scan). Lambdas, generic names
-        // (hurt/destroy/mobInteract/...), and niche AI-framework statics (PiglinAi/Sensor/Raid) excluded.
-        reg("tickLeash", sl, ENTITY);
-        reg("playerDied", sl, "Lnet/minecraft/world/entity/player/Player;");
-        reg("handleAirSupply", sl);   // first param is int (primitive): no object guard needed
-        reg("onStopAttacking", sl, "Lnet/minecraft/world/entity/animal/axolotl/Axolotl;");
-        reg("hurtAndThrowTarget", sl, "Lnet/minecraft/world/entity/LivingEntity;");
-        reg("checkWalls", sl, "Lnet/minecraft/world/phys/AABB;");
-        reg("onCrystalDestroyed", sl, "Lnet/minecraft/world/entity/boss/enderdragon/EndCrystal;");
-        reg("onDestroyedBy", sl, DAMAGE);
+        // Minecraft 1.21.5 added ServerLevel to many entity methods. These entries came from a
+        // comparison of the official 1.21.1 mappings and the 26.2 jar. Methods with no old
+        // parameters do not need a repair because an empty capture remains valid.
+        ParamInsert serverLevel = new ParamInsert(0, "Lnet/minecraft/server/level/ServerLevel;");
+        String damageSource = "Lnet/minecraft/world/damagesource/DamageSource;";
+        String entity = "Lnet/minecraft/world/entity/Entity;";
+        String itemStack = "Lnet/minecraft/world/item/ItemStack;";
 
-        // TRAILING insert (not a leading ServerLevel): 26.1 appended a ResourceKey<Level> (the
-        // dimension key) to the end of ChunkGenerator.tryGenerateStructure's params (private method;
-        // verified present on 26.1+26.2, absent on 1.21.1). A 1.21.1 @Inject that captured the old
-        // 9 params (ending at SectionPos, index 8) is now missing that trailing arg, so its descriptor
-        // is no longer a valid prefix of the target -> InvalidInjectionException. Append the unused
-        // ResourceKey right before the CallbackInfo trailer (at the capture-count index 9), which
-        // shifts only the CallbackInfo slot. First-param guard: StructureSet$StructureSelectionEntry
-        // (YUNG's Better Strongholds DisableVanillaStrongholdsMixin, verified). The index equals the
-        // full old-capture count, so a handler that captured fewer params (or none) is declined by
-        // insertParams' shape guard rather than mis-shifted.
+        reg("doHurtTarget", serverLevel, entity);                              // #69
+        reg("actuallyHurt", serverLevel, damageSource);
+        reg("isInvulnerableTo", serverLevel, damageSource);
+        reg("dropExperience", serverLevel, entity);
+        reg("dropFromLootTable", serverLevel, damageSource);
+        reg("triggerOnDeathMobEffects", serverLevel,
+                "Lnet/minecraft/world/entity/Entity$RemovalReason;");
+        reg("spawnAtLocation", serverLevel, itemStack, "Lnet/minecraft/world/level/ItemLike;");
+        reg("pickUpItem", serverLevel, "Lnet/minecraft/world/entity/item/ItemEntity;",
+                "Lnet/minecraft/world/entity/Mob;", "Lnet/minecraft/world/entity/monster/piglin/Piglin;");
+        reg("wantsToPickUp", serverLevel, itemStack);
+        reg("equipItemIfPossible", serverLevel, itemStack);
+        reg("dropPreservedEquipment", serverLevel, "Ljava/util/function/Predicate;");
+        reg("isPreventingPlayerRest", serverLevel, "Lnet/minecraft/world/entity/player/Player;");
+        reg("tickLeash", serverLevel, entity);
+        reg("playerDied", serverLevel, "Lnet/minecraft/world/entity/player/Player;");
+        reg("handleAirSupply", serverLevel); // The old first parameter is a primitive.
+        reg("onStopAttacking", serverLevel, "Lnet/minecraft/world/entity/animal/axolotl/Axolotl;");
+        reg("hurtAndThrowTarget", serverLevel, "Lnet/minecraft/world/entity/LivingEntity;");
+        reg("checkWalls", serverLevel, "Lnet/minecraft/world/phys/AABB;");
+        reg("onCrystalDestroyed", serverLevel, "Lnet/minecraft/world/entity/boss/enderdragon/EndCrystal;");
+        reg("onDestroyedBy", serverLevel, damageSource);
+
+        // These MobEffect hooks came from scripts/harvest-serverlevel-prepend.py. Generic AI
+        // methods are intentionally excluded because matching them by name would be too broad.
+        String livingEntity = "Lnet/minecraft/world/entity/LivingEntity;";
+        reg("applyEffectTick", serverLevel, livingEntity);
+        reg("onMobHurt", serverLevel, livingEntity);
+        reg("onMobRemoved", serverLevel, livingEntity);
+
+        // Minecraft 26.1 added a ResourceKey after the ninth captured parameter. Placing it before
+        // CallbackInfo preserves the old body and rejects handlers that captured fewer parameters.
         SIGNATURE_CHANGES.put("tryGenerateStructure", new SigChange(
                 Set.of("Lnet/minecraft/world/level/levelgen/structure/StructureSet$StructureSelectionEntry;"),
                 List.of(new ParamInsert(9, "Lnet/minecraft/resources/ResourceKey;"))));
     }
 
-    /** Restricting registration: the handler's Mojang-MC first captured param must be in {@code acceptableFirstParams}. */
+    /** Registers a change and the old first parameter types that identify it. */
     private static void reg(String name, ParamInsert insert, String... acceptableFirstParams) {
         SIGNATURE_CHANGES.put(name, new SigChange(Set.of(acceptableFirstParams), List.of(insert)));
     }
 
     /**
-     * Register a target method's leading-parameter insertion(s) with NO owner guard (permissive).
-     * Used by tests and external callers; the harvested entity entries use the guarded {@link #reg}.
+     * Registers a change without restricting its old first parameter.
+     * Tests and external callers use this form.
      */
     public static void register(String targetMethodName, ParamInsert... inserts) {
         SIGNATURE_CHANGES.put(targetMethodName, new SigChange(null, List.of(inserts)));
@@ -166,40 +146,34 @@ public final class MixinHandlerResignature {
     }
 
     /**
-     * Whether {@code method}'s first captured target-param (the arg before the CallbackInfo trailer)
-     * is consistent with the changed method. Enforced only when that param is a genuine Mojang MC
-     * type; permissive for a primitive/array, a non-MC type, or an intermediary ({@code class_N},
-     * Fabric pre-remap) first param, none of which can be checked here (and on Fabric the intermediary
-     * selector already pins the exact method).
+     * Checks the first captured parameter when it has a Mojang Minecraft type.
+     * Other types do not provide enough information for a safe check.
      */
     private static boolean firstCapturedParamMatches(MethodNode method, Set<String> acceptable) {
         Type[] args = Type.getArgumentTypes(method.desc);
         int cb = callbackIndex(args);
-        if (cb <= 0) return true;                         // no captured param before CallbackInfo
+        if (cb <= 0) return true;
         Type first = args[0];
-        if (first.getSort() != Type.OBJECT) return true;  // primitive/array first param
+        if (first.getSort() != Type.OBJECT) return true;
         String desc = first.getDescriptor();
-        if (!isMojangMcType(desc)) return true;           // intermediary / java.* / mod type
+        if (!isMojangMcType(desc)) return true;
         return acceptable.contains(desc);
     }
 
-    /** A Mojang official MC type ({@code Lnet/minecraft/...}), excluding a Fabric intermediary {@code class_N}. */
+    /** Returns whether a descriptor uses a Mojang Minecraft class name. */
     private static boolean isMojangMcType(String descriptor) {
         return descriptor.startsWith("Lnet/minecraft/") && !descriptor.contains("/class_");
     }
 
     /**
-     * Whether {@code method} (an {@code @Inject} handler) captures at least one target parameter
-     * before the {@code CallbackInfo} trailer. When it captures none, insertParams cannot and will
-     * not re-signature it (an empty capture is already a valid prefix), so the caller must own the
-     * desc-qualified selector rewrite instead of deferring it to insertParams.
+     * Returns whether an {@code @Inject} handler captures a target parameter before its callback.
      */
     private static boolean injectHandlerCapturesParams(MethodNode method) {
         if (method.desc == null) return false;
         return callbackIndex(Type.getArgumentTypes(method.desc)) > 0;
     }
 
-    /** Index of the {@code CallbackInfo}/{@code CallbackInfoReturnable} trailer in {@code args}, or -1. */
+    /** Finds the callback parameter in a handler descriptor. */
     static int callbackIndex(Type[] args) {
         for (int i = 0; i < args.length; i++) {
             if (args[i].getSort() == Type.OBJECT) {
@@ -219,20 +193,19 @@ public final class MixinHandlerResignature {
         return null;
     }
 
-    /** "Lowner;name(desc)ret" / "name(desc)ret" / "name" -> bare "name". */
+    /** Extracts the bare method name from a Mixin selector. */
     static String bareName(String selector) {
         String s = selector;
         int paren = s.indexOf('(');
         if (paren >= 0) s = s.substring(0, paren);
-        int semi = s.lastIndexOf(';');            // drop a leading "Lowner;" if present
+        int semi = s.lastIndexOf(';');
         if (semi >= 0) s = s.substring(semi + 1);
         return s;
     }
 
     /**
-     * Insert the given leading parameters into an {@code @Inject} handler and shift its body slots.
-     * Mutates {@code handler} in place (dropping stale frames); returns {@code true} if applied.
-     * Returns {@code false} (unchanged) when not applicable, so the caller keeps the original.
+     * Adds parameters to an {@code @Inject} handler and moves its local variable slots.
+     * Returns {@code false} without changing unsupported handlers.
      */
     static boolean insertParams(MethodNode handler, List<ParamInsert> inserts) {
         if (inserts == null || inserts.isEmpty() || handler.desc == null) return false;
@@ -240,26 +213,18 @@ public final class MixinHandlerResignature {
         Type[] args = Type.getArgumentTypes(handler.desc);
         Type ret = Type.getReturnType(handler.desc);
 
-        // Find the CallbackInfo(Returnable) trailer; captured target params are the args before it.
         int cbIndex = callbackIndex(args);
-        if (cbIndex < 0) return false;                     // not a standard @Inject shape
+        if (cbIndex < 0) return false;
 
-        for (ParamInsert ins : inserts) {                  // every insert must land in the captured region
+        for (ParamInsert ins : inserts) {
             if (ins.paramIndex() < 0 || ins.paramIndex() > cbIndex) return false;
         }
-        // The handler must already capture >=1 target param. A zero-capture handler ((CallbackInfo)V)
-        // is a valid prefix of ANY target signature, so it never needs re-signaturing (and a trailing
-        // append at index 0 would wrongly turn it into a 1-param capture). Inserts are already
-        // constrained to [0, cbIndex] above; combined with this, that admits both a leading insert
-        // (#69, index 0) and a TRAILING append right before the CallbackInfo trailer (index == cbIndex,
-        // which pushes the CallbackInfo back one slot). Equivalent to the old "some insert < cbIndex"
-        // for the leading case, since those entries always insert at index 0.
+        // A handler with no captured target parameters is already a valid prefix. Adding a
+        // parameter would change its meaning.
         if (cbIndex < 1) return false;
 
-        // Decline if any parameter carries an annotation (@Local/@Coerce/@Share): insertRawParams
-        // shifts slots and the LVT but not the param-annotation arrays, so an inserted leading param
-        // leaves a @Local on the wrong index -> InvalidInjectionException (which COMPUTE_FRAMES can't
-        // catch). Guard the full width, since @Local sits past the CallbackInfo trailer.
+        // Parameter annotation arrays use descriptor positions. Moving parameters without moving
+        // those arrays could attach @Local, @Coerce, or @Share to the wrong parameter.
         if (hasParamAnnotations(handler.visibleParameterAnnotations, Integer.MAX_VALUE - 1)
                 || hasParamAnnotations(handler.invisibleParameterAnnotations, Integer.MAX_VALUE - 1)) {
             return false;
@@ -267,17 +232,13 @@ public final class MixinHandlerResignature {
 
         if (!insertRawParams(handler, inserts)) return false;
 
-        // A desc-qualified @Inject selector ("...doHurtTarget(L..Entity;)Z") still names the OLD target
-        // signature; Mixin would scan 0 targets even after the handler is re-signatured. Rewrite the
-        // selector descriptor to the new target signature too (a bare-name selector needs no change).
+        // A descriptor-qualified selector must follow the handler to the new target signature.
         rewriteInjectSelectors(handler);
         return true;
     }
 
     /**
-     * Core insertion, no shape guards: insert params at the given absolute descriptor indexes,
-     * shift every body slot and LVT entry, drop stale frames, rebuild the descriptor. The CALLER
-     * is responsible for shape validation and for re-emitting with {@code COMPUTE_FRAMES}.
+     * Performs an already validated insertion. The caller must recompute stack frames afterward.
      */
     static boolean insertRawParams(MethodNode handler, List<ParamInsert> inserts) {
         if (inserts == null || inserts.isEmpty() || handler.desc == null) return false;
@@ -289,7 +250,7 @@ public final class MixinHandlerResignature {
 
         boolean isStatic = (handler.access & Opcodes.ACC_STATIC) != 0;
         int[] paramSlot = new int[args.length + 1];
-        paramSlot[0] = isStatic ? 0 : 1;                   // slot 0 is `this` on an instance method
+        paramSlot[0] = isStatic ? 0 : 1;
         for (int i = 0; i < args.length; i++) paramSlot[i + 1] = paramSlot[i] + args[i].getSize();
 
         List<ParamInsert> sorted = new ArrayList<>(inserts);
@@ -300,7 +261,7 @@ public final class MixinHandlerResignature {
             insWidth[k] = Type.getType(sorted.get(k).typeDescriptor()).getSize();
         }
 
-        // Shift every local-variable access and LVT entry; drop stale frames.
+        // Existing frames describe the old slot layout, so the caller must rebuild them.
         List<AbstractInsnNode> frames = new ArrayList<>();
         for (AbstractInsnNode insn = handler.instructions.getFirst(); insn != null; insn = insn.getNext()) {
             if (insn instanceof VarInsnNode v) v.var += shiftFor(v.var, insSlot, insWidth);
@@ -312,25 +273,25 @@ public final class MixinHandlerResignature {
             for (LocalVariableNode lv : handler.localVariables) lv.index += shiftFor(lv.index, insSlot, insWidth);
         }
 
-        // Rebuild the descriptor (insert high index first so lower indices stay valid).
+        // Insert from the end so each earlier index remains valid.
         List<Type> newArgs = new ArrayList<>(Arrays.asList(args));
         for (int k = sorted.size() - 1; k >= 0; k--) {
             newArgs.add(sorted.get(k).paramIndex(), Type.getType(sorted.get(k).typeDescriptor()));
         }
         handler.desc = Type.getMethodDescriptor(ret, newArgs.toArray(new Type[0]));
 
-        handler.parameters = null;                         // drop optional MethodParameters (names) to avoid a count mismatch
-        handler.signature = null;                          // drop the now-stale generic signature (descriptor is authoritative)
-        int totalWidth = 0; for (int w : insWidth) totalWidth += w;
-        handler.maxLocals += totalWidth;                   // COMPUTE_FRAMES recomputes, but keep it consistent
+        // These optional attributes still describe the old parameter list.
+        handler.parameters = null;
+        handler.signature = null;
+        int totalWidth = 0;
+        for (int width : insWidth) {
+            totalWidth += width;
+        }
+        handler.maxLocals += totalWidth;
         return true;
     }
 
-    /**
-     * Rewrite each desc-qualified {@code @Inject method=} selector whose target has a known signature
-     * change, inserting the new parameter(s) into the selector's descriptor so it matches the modern
-     * (re-signatured) target. Bare-name selectors are left untouched (Mixin resolves those by name).
-     */
+    /** Updates descriptor-qualified {@code @Inject} selectors after a handler repair. */
     private static void rewriteInjectSelectors(MethodNode handler) {
         AnnotationNode inject = annotationOf(handler, INJECT_DESC);
         if (inject == null || inject.values == null) return;
@@ -354,51 +315,44 @@ public final class MixinHandlerResignature {
     }
 
     /**
-     * Insert a table target's new leading param(s) into a {@code name(desc)ret} selector, returning
-     * the rewritten selector, or {@code null} when it should be left as-is (bare name, unknown target,
-     * malformed descriptor, or an out-of-range insert index).
+     * Updates a selector for a known signature change.
+     * Returns {@code null} when the selector cannot be identified safely.
      */
     static String rewriteSelectorDescriptor(String selector) {
         int paren = selector.indexOf('(');
-        if (paren < 0) return null;                        // bare name: resolved by name, no rewrite
+        if (paren < 0) return null;
         SigChange sc = SIGNATURE_CHANGES.get(bareName(selector));
         if (sc == null) return null;
         List<ParamInsert> inserts = sc.inserts();
-        String head = selector.substring(0, paren);        // "Lowner;name" or "name"
-        // Owner scope: only VANILLA methods were re-signatured by the 1.21.5 refactor. A mod's own
-        // class can declare a method with the same name and the old vanilla signature (a copied
-        // idiom); its call sites still use the old descriptor, so rewriting a selector aimed at a
-        // non-vanilla owner would break a working mixin.
+        String head = selector.substring(0, paren);
+        // The table describes Minecraft methods. A mod can use the same method name and old
+        // descriptor for its own class, but that method must not be rewritten.
         int semi = head.lastIndexOf(';');
         if (semi >= 0) {
-            String owner = head.substring(0, semi);        // "Lnet/minecraft/..." expected
+            String owner = head.substring(0, semi);
             if (!owner.startsWith("Lnet/minecraft/")) return null;
         }
-        String methodDesc = selector.substring(paren);     // "(params)ret"
+        String methodDesc = selector.substring(paren);
         Type[] args;
         Type ret;
         try {
             args = Type.getArgumentTypes(methodDesc);
             ret = Type.getReturnType(methodDesc);
         } catch (RuntimeException e) {
-            return null;                                    // not a valid descriptor
+            return null;
         }
-        // Only rewrite a descriptor that is verifiably the OLD signature. Two guards:
-        // (a) idempotence: if the param at an insert position already IS the inserted type, the
-        //     selector is already new-form (rewriting again would double-insert, e.g.
-        //     (ServerLevel,ServerLevel,Entity)Z - a broken selector worse than the input);
-        // (b) owner guard: when the change knows its old first-param types, the selector's first
-        //     param must be one of them, so a same-named method with different params is untouched.
+        // A parameter already present at an insertion point means this selector is up to date.
         for (ParamInsert ins : inserts) {
             int idx = ins.paramIndex();
             if (idx < args.length && args[idx].getDescriptor().equals(ins.typeDescriptor())) {
-                return null;                                // already new-form
+                return null;
             }
         }
+        // The old first parameter separates this method from unrelated methods with the same name.
         Set<String> acceptable = sc.acceptableFirstParams();
         if (acceptable != null && !acceptable.isEmpty()) {
             if (args.length == 0 || !acceptable.contains(args[0].getDescriptor())) {
-                return null;                                // not the known old signature
+                return null;
             }
         }
         List<Type> newArgs = new ArrayList<>(Arrays.asList(args));
@@ -413,15 +367,8 @@ public final class MixinHandlerResignature {
     }
 
     /**
-     * Injector annotations whose HANDLER signature does not mirror the {@code @At} target call's
-     * argument list, so rewriting their {@code @At target} descriptor is safe on its own:
-     * {@code @Inject} (handler mirrors the CONTAINING method), {@code @ModifyReturnValue} /
-     * {@code @ModifyExpressionValue} (handler mirrors the expression's RETURN type, which the
-     * table's leading-param inserts never change). For {@code @Redirect}/{@code @WrapOperation}/
-     * {@code @ModifyArg(s)}-style injectors the handler mirrors the call's arguments, so rewriting
-     * only the {@code @At} target would turn a soft "injection point not found" into a hard
-     * {@code InvalidInjectionException} handler mismatch; those need a paired handler re-signature
-     * (not yet built) and are skipped here.
+     * Injectors whose handlers do not mirror the {@code @At} call parameters.
+     * Their targets can be updated without changing the handler descriptor.
      */
     private static final Set<String> AT_DRIFT_SAFE = Set.of(
             "Lorg/spongepowered/asm/mixin/injection/Inject;",
@@ -429,11 +376,7 @@ public final class MixinHandlerResignature {
             "Lcom/llamalad7/mixinextras/injector/ModifyExpressionValue;");
 
     /**
-     * Rewrite signature-drifted selectors (#69) in {@code method}'s injector annotations: the
-     * {@code method=} selector and any {@code @At(INVOKE, target=...)} injection point (recursing
-     * into {@code slice}), where the old-descriptor call site no longer exists on 26.x even though
-     * the handler body is fine. Only descriptors passing {@link #rewriteSelectorDescriptor}'s
-     * old-signature + idempotence guards are touched; the caller gates on a 1.21.5+ host.
+     * Repairs known selector changes in an injector annotation and its nested injection points.
      */
     public static boolean rewriteAnnotationDrift(MethodNode method) {
         boolean modified = false;
@@ -443,11 +386,8 @@ public final class MixinHandlerResignature {
             for (AnnotationNode a : anns) {
                 if (a.desc != null && (a.desc.startsWith("Lorg/spongepowered/asm/mixin/injection/")
                         || a.desc.startsWith("Lcom/llamalad7/mixinextras/"))) {
-                    // For @Inject, skip the top-level method= selector when the handler captures params:
-                    // insertParams re-signatures and rewrites it itself, and rewriting eagerly would ship
-                    // a new-form selector on a handler insertParams later declined (a @Local one). A
-                    // zero-capture @Inject never reaches insertParams, so its selector must rewrite here.
-                    // @ModifyReturnValue/@ModifyExpressionValue don't use insertParams: always rewrite.
+                    // A parameter-capturing @Inject is updated by insertParams. Updating it here
+                    // could leave a new selector on a handler that insertParams later rejects.
                     boolean skipTopLevel = INJECT_DESC.equals(a.desc) && injectHandlerCapturesParams(method);
                     modified |= driftWalk(a, AT_DRIFT_SAFE.contains(a.desc), false, skipTopLevel);
                 }
@@ -456,12 +396,7 @@ public final class MixinHandlerResignature {
         return modified;
     }
 
-    /**
-     * Recursive walker: rewrite "method"/"target" selector strings, descend into nested annotations.
-     * Inside an {@code @At} node the "target" key names the injection-point CALL, whose rewrite is
-     * gated by {@code allowAtRewrite}; at the top level "method"/"target" name the CONTAINING method,
-     * safe for every injector type.
-     */
+    /** Walks an injector annotation and updates selectors that are safe for its handler shape. */
     private static boolean driftWalk(AnnotationNode a, boolean allowAtRewrite, boolean insideAt,
                                      boolean skipTopLevelSelector) {
         if (a.values == null) return false;
@@ -469,9 +404,8 @@ public final class MixinHandlerResignature {
         for (int i = 0; i + 1 < a.values.size(); i += 2) {
             String key = (String) a.values.get(i);
             Object v = a.values.get(i + 1);
-            // At the top level (insideAt=false) "method"/"target" name the CONTAINING method; a
-            // @Inject skips those (skipTopLevelSelector, see rewriteAnnotationDrift). Inside an @At
-            // node the "target" names the injection-point CALL, gated by allowAtRewrite.
+            // A nested @At target describes a call. A top-level target describes the method that
+            // contains the injection point.
             boolean selectorKey = ("method".equals(key) || "target".equals(key))
                     && (insideAt ? allowAtRewrite : !skipTopLevelSelector);
             if (selectorKey && v instanceof String s) {
@@ -499,46 +433,35 @@ public final class MixinHandlerResignature {
         return "Lorg/spongepowered/asm/mixin/injection/At;".equals(a.desc);
     }
 
-    /**
-     * Injectors whose handler MIRRORS the {@code @At} target call's argument list: repairing a
-     * drifted call site needs the paired handler re-signature below, not just the target rewrite.
-     */
+    /** Injectors whose handlers mirror the target call parameters. */
     private static final Set<String> CALL_MIRRORING = Set.of(
             "Lorg/spongepowered/asm/mixin/injection/Redirect;",
             "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;");
 
     /**
-     * A detected-but-not-yet-applied drift repair. Detection is mutation-free (safe in the
-     * collection loop); {@code apply()} mutates and MUST run inside the caller's guarded
-     * COMPUTE_FRAMES re-emit so any failure falls back to the pre-mutation snapshot.
+     * A repair found during a read-only scan.
+     * The caller applies it while rebuilding frames and keeps the original bytes on failure.
      */
     interface DriftRepair {
         boolean apply();
     }
 
-    /**
-     * A drifted {@code @Redirect}/{@code @WrapOperation} call-site repair, detected but not yet
-     * applied: rewrite {@code at.values[valueIndex]} to {@code newTarget} AND insert
-     * {@code handlerInserts} into the handler (whose params mirror the call's receiver + args).
-     */
+    /** A target and handler repair for {@code @Redirect} or {@code @WrapOperation}. */
     record RedirectDrift(MethodNode handler, AnnotationNode at, int valueIndex,
                          String newTarget, List<ParamInsert> handlerInserts) implements DriftRepair {
 
-        /** Apply both halves. The caller re-emits with {@code COMPUTE_FRAMES} and owns the fallback. */
+        /** Applies the handler change before exposing the new target selector. */
         @Override
         public boolean apply() {
             if (!insertRawParams(handler, handlerInserts)) return false;
-            at.values.set(valueIndex, newTarget);          // only after the handler side succeeded
+            at.values.set(valueIndex, newTarget);
             return true;
         }
     }
 
     /**
-     * A drifted {@code @Overwrite} repair: the method's name+descriptor must match a vanilla method
-     * to overwrite, and the 1.21.5 refactor changed that descriptor, so the overwrite fails with a
-     * hard {@code InvalidOverwriteException} (no {@code require} net applies to @Overwrite at all -
-     * the truly "not even soft-failed" class). Re-signaturing the method (the inserted param is
-     * unused by the body) makes it overwrite the modern method again.
+     * An {@code @Overwrite} repair for a Minecraft method whose descriptor changed.
+     * The inserted parameter remains unused by the old method body.
      */
     record OverwriteDrift(MethodNode method, List<ParamInsert> inserts) implements DriftRepair {
         @Override
@@ -549,21 +472,17 @@ public final class MixinHandlerResignature {
 
     private static final String OVERWRITE_DESC = "Lorg/spongepowered/asm/mixin/Overwrite;";
 
-    /**
-     * Detect a drifted {@code @Overwrite}: the method's own name is in the signature-change table,
-     * its params match the KNOWN old signature (a non-empty first-param guard is required, so a
-     * same-named mod method can't false-positive), and it is not already new-form. Mutation-free.
-     */
+    /** Finds an {@code @Overwrite} that still has a known old descriptor. */
     static List<DriftRepair> detectOverwriteDrift(MethodNode method) {
         AnnotationNode ow = annotationOf(method, OVERWRITE_DESC);
         if (ow == null) return List.of();
         SigChange sc = SIGNATURE_CHANGES.get(method.name);
         if (sc == null) return List.of();
         Set<String> acceptable = sc.acceptableFirstParams();
-        if (acceptable == null || acceptable.isEmpty()) return List.of();  // need the strong guard here
+        if (acceptable == null || acceptable.isEmpty()) return List.of();
         Type[] args = Type.getArgumentTypes(method.desc);
         if (args.length == 0 || !acceptable.contains(args[0].getDescriptor())) return List.of();
-        for (ParamInsert ins : sc.inserts()) {                             // idempotence
+        for (ParamInsert ins : sc.inserts()) {
             int idx = ins.paramIndex();
             if (idx < args.length && args[idx].getDescriptor().equals(ins.typeDescriptor())) return List.of();
         }
@@ -575,13 +494,8 @@ public final class MixinHandlerResignature {
     }
 
     /**
-     * Detect drifted {@code @Redirect}/{@code @WrapOperation} call sites on {@code method} (the
-     * "not even soft-failed" class: on a require-carrying NeoForge mixin this is a hard
-     * {@code InvalidInjectionException}; elsewhere the feature goes silently inert). Detection is
-     * mutation-free; the caller applies inside its guarded re-emit. Declines conservatively when
-     * the handler's params don't provably mirror the call (receiver+args prefix for a virtual call,
-     * args prefix for a static call) or when the handler carries ANY parameter annotations
-     * (MixinExtras sugar arrays would misalign on insert).
+     * Finds {@code @Redirect} and {@code @WrapOperation} call sites with a known old descriptor.
+     * Ambiguous handler shapes and annotated parameters are left alone.
      */
     static List<RedirectDrift> detectRedirectDrift(MethodNode method) {
         List<RedirectDrift> out = new ArrayList<>();
@@ -596,8 +510,8 @@ public final class MixinHandlerResignature {
                     List<AnnotationNode> ats = new ArrayList<>();
                     if (v instanceof AnnotationNode one) ats.add(one);
                     else if (v instanceof List<?> l) { for (Object o : l) if (o instanceof AnnotationNode n) ats.add(n); }
-                    // @Redirect/@WrapOperation take a SINGLE @At, so at most one drift repair per
-                    // handler; stop at the first so a hypothetical multi-@At can't double-insert params.
+                    // These injectors normally have one @At. Stopping after the first match also
+                    // prevents an unusual annotation from inserting the same parameter twice.
                     for (AnnotationNode at : ats) {
                         RedirectDrift d = detectOneAt(method, at);
                         if (d != null) { out.add(d); break; }
@@ -613,14 +527,14 @@ public final class MixinHandlerResignature {
         for (int j = 0; j + 1 < at.values.size(); j += 2) {
             if (!"target".equals(at.values.get(j)) || !(at.values.get(j + 1) instanceof String target)) continue;
             String newTarget = rewriteSelectorDescriptor(target);
-            if (newTarget == null) return null;                        // not drifted (or guarded off)
+            if (newTarget == null) return null;
             SigChange sc = SIGNATURE_CHANGES.get(bareName(target));
             if (sc == null) return null;
-            // Handler params must provably mirror the OLD call: [receiver, oldArgs...] or [oldArgs...].
+            // A virtual handler starts with the receiver. A static handler starts with call args.
             int paren = target.indexOf('(');
             String head = target.substring(0, paren);
             int semi = head.lastIndexOf(';');
-            String ownerDesc = semi >= 0 ? head.substring(0, semi + 1) : null;   // "Lowner;"
+            String ownerDesc = semi >= 0 ? head.substring(0, semi + 1) : null;
             Type[] oldArgs;
             try {
                 oldArgs = Type.getArgumentTypes(target.substring(paren));
@@ -632,15 +546,15 @@ public final class MixinHandlerResignature {
             if (ownerDesc != null && hArgs.length >= 1 + oldArgs.length
                     && hArgs[0].getDescriptor().equals(ownerDesc)
                     && argsMatch(hArgs, 1, oldArgs)) {
-                receiverOffset = 1;                                    // virtual call: receiver captured
+                receiverOffset = 1;
             } else if (hArgs.length >= oldArgs.length && argsMatch(hArgs, 0, oldArgs)) {
-                receiverOffset = 0;                                    // static call
+                receiverOffset = 0;
             } else {
-                return null;                                           // shape not provable: leave alone
+                return null;
             }
             if (hasParamAnnotations(handler.visibleParameterAnnotations, Integer.MAX_VALUE - 1)
                     || hasParamAnnotations(handler.invisibleParameterAnnotations, Integer.MAX_VALUE - 1)) {
-                return null;                                           // sugar arrays would misalign
+                return null;
             }
             List<ParamInsert> shifted = new ArrayList<>();
             for (ParamInsert ins : sc.inserts()) {
@@ -669,7 +583,7 @@ public final class MixinHandlerResignature {
         return false;
     }
 
-    /** Total inserted width at slots at-or-below {@code slot} (the inserted param pushes it up). */
+    /** Counts how many local variable slots an insertion moves this slot by. */
     private static int shiftFor(int slot, int[] insSlot, int[] insWidth) {
         int sh = 0;
         for (int k = 0; k < insSlot.length; k++) if (insSlot[k] <= slot) sh += insWidth[k];

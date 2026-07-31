@@ -6,7 +6,7 @@
     "version": "${project.version}",
     "metadata": {
       "name": "Retromod",
-      "description": "Backwards compatibility layer for Minecraft mods - run older mods on newer versions. Works on clients AND servers. Made by the Developers of revivalsmp.net.",
+      "description": "Helps older Minecraft mods run on newer versions by updating their bytecode, mixins, and loader metadata.",
       "contributors": {
         "Bownlux": "Owner"
       },

@@ -124,7 +124,7 @@ public class DescriptorQualifiedMemberRemapTest {
                 "Z field access should remap to flag");
     }
 
-    // --- bytecode builders -------------------------------------------------
+    // Bytecode builders
 
     /** Class whose one method makes two INVOKESTATIC calls (same owner, given name/desc pairs). */
     private byte[] createTwoCallClass(String className,
@@ -200,7 +200,7 @@ public class DescriptorQualifiedMemberRemapTest {
         return cw.toByteArray();
     }
 
-    // --- readers -----------------------------------------------------------
+    // Result readers
 
     /** Maps each INVOKESTATIC call's descriptor to the (possibly remapped) method name. */
     private Map<String, String> methodCallNamesByDescriptor(byte[] classBytes) {

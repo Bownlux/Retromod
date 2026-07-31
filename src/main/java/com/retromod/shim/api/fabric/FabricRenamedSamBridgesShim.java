@@ -165,10 +165,7 @@ public class FabricRenamedSamBridgesShim implements VersionShim {
                 lpNew, "getPathTypeProvider",
                 "(Lnet/minecraft/world/level/block/Block;)L" + lpNew + "$PathTypeProvider;");
 
-        LOGGER.info("[Retromod] Fabric renamed-SAM bridges - ClientWorldEvents, "
-                + "ServerEntityWorldChangeEvents, LivingEntityFeatureRendererRegistrationCallback, "
-                + "DrawItemStackOverlayCallback, TooltipComponentCallback, "
-                + "ServerChunkEvents$LevelTypeChange, LandPathNodeTypesRegistry "
-                + "(7 APIs, old SAMs kept; STATUS: needs in-game verification)");
+        LOGGER.debug("Installed seven Fabric callback bridges. "
+                + "An in-game verification run is still pending.");
     }
 }

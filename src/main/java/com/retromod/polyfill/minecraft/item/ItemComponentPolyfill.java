@@ -57,7 +57,7 @@ public class ItemComponentPolyfill implements PolyfillProvider {
 
     @Override
     public void registerPolyfills(RetromodTransformer transformer) {
-        // host >= 1.20.5  <=>  "1.20.5" is NOT strictly greater than the target.
+        // host >= 1.20.5  <=>  "1.20.5" is not strictly greater than the target.
         if (RetromodVersion.mcVersionExceeds("1.20.5", RetromodVersion.TARGET_MC_VERSION)) {
             return; // ItemStack.getTag()/setTag()/... still exist below 1.20.5.
         }

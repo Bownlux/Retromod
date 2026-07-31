@@ -4,50 +4,33 @@
  */
 package com.retromod.core;
 
-/**
- * Loader-agnostic holder for the runtime-detected target MC version, plus version math.
- *
- * <p>Lives on a class with no Fabric/Forge/NeoForge supertype so any loader's entry point
- * can read it. When this constant sat on {@link Retromod} (which implements the Fabric-only
- * {@code ModInitializer}), reading it from {@code RetromodForge} linked {@code Retromod} and
- * crashed with {@code NoClassDefFoundError: net/fabricmc/api/ModInitializer} on Forge (#40).
- */
+/** Shares version state without linking one loader's entry point to another loader API. */
 public final class RetromodVersion {
 
     /** Target MC version, auto-detected at boot by whichever loader entry point runs first. */
     public static volatile String TARGET_MC_VERSION = "1.21.4";
 
-    /**
-     * Retromod's own version. Loader-agnostic so any transform path can fold it into
-     * a cache key (the runtime Forge/NeoForge transform cache mirrors the AOT key:
-     * Retromod version + source hash). Keep in sync with the other version refs.
-     */
+    /** Retromod version used by loader metadata and transform cache keys. */
     public static final String RETROMOD_VERSION = "1.3.0-snapshot.3";
 
     private RetromodVersion() {}
 
     private static volatile boolean bannerLogged = false;
 
-    /** Print a "Retromod is present" banner once, so log/crash readers reproduce without Retromod first. */
+    /** Leave one clear note in the log when Retromod can affect another mod's behavior. */
     public static void logPresenceBanner(org.slf4j.Logger logger) {
         if (bannerLogged) {
             return;
         }
         bannerLogged = true;
-        logger.warn("************************************************************************");
-        logger.warn("* RETROMOD IS PRESENT - it is transforming older mods to run on this");
-        logger.warn("* newer Minecraft version (bytecode transformation + API shims).");
-        logger.warn("* If ANY mod misbehaves, reproduce WITHOUT Retromod before reporting");
-        logger.warn("* to that mod's author: the cause may be Retromod's transform, not the");
-        logger.warn("* mod itself.  Retromod issues -> https://github.com/Bownlux/Retromod/issues");
-        logger.warn("************************************************************************");
+        logger.warn("Retromod is updating older mods at runtime.");
+        logger.warn("If a mod breaks, retry without Retromod before reporting it to that mod's author.");
+        logger.warn("Report Retromod problems at https://github.com/Bownlux/Retromod/issues");
     }
 
     /**
-     * Whether the host MC version is 26.1+ (first unobfuscated release, where Fabric switched
-     * from intermediary to Mojang names). Gates the intermediary to Mojang remap and 26.1 class
-     * moves; applying those on a pre-26.1 host rewrites working references to names that don't
-     * exist yet. Unparseable host parses as 26.1+ to preserve published behavior.
+     * Returns whether the host uses Mojang names at runtime. Unknown versions keep the
+     * established unobfuscated behavior instead of silently skipping required remaps.
      */
     public static boolean isUnobfuscatedTarget(String hostVersion) {
         if (hostVersion == null) return true;
@@ -61,10 +44,7 @@ public final class RetromodVersion {
         }
     }
 
-    /**
-     * Whether MC version {@code a} is strictly newer than {@code b}, used to skip shims whose
-     * target is newer than the host. Unparseable returns {@code false} so we never over-exclude.
-     */
+    /** Returns whether {@code a} is newer than {@code b}, without excluding unknown versions. */
     public static boolean mcVersionExceeds(String a, String b) {
         try {
             return compareMcVersions(a, b) > 0;

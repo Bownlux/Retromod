@@ -127,7 +127,7 @@ class ForgeEventBusBridgeTest {
         for (AbstractInsnNode in : insns.toArray()) {
             if (in instanceof MethodInsnNode mi) {
                 if (mi.owner.equals(ForgeEventBusSynthetics.LEB_IMPL)) {
-                    // static bridge targets MUST be on the impl class, not the interface (a plain
+                    // static bridge targets must be on the impl class, not the interface (a plain
                     // INVOKESTATIC Methodref on an interface = IncompatibleClassChangeError)
                     if (mi.name.equals("modBus")) { modBus = true; assertEquals(INVOKESTATIC, mi.getOpcode()); }
                     if (mi.name.equals("registerDeferred")) { deferred = true; assertEquals(INVOKESTATIC, mi.getOpcode()); }

@@ -10,7 +10,7 @@ links:
 summary: Retromod no longer corrupts its mixins, but its bundled reach-entity-attributes still can't apply
   on 1.21.11.
 details: 'snapshot.3 fixed the Retromod-caused failure (the model bridge was rewriting its mixin handler
-  descriptors — #70). What remains is the mod''s own jar-in-jar reach-entity-attributes 2.4.0, whose 1.20.1-era
+  descriptors, #70). What remains is the mod''s own jar-in-jar reach-entity-attributes 2.4.0, whose 1.20.1-era
   mixins target methods that changed by 1.21.11 (multiple critical injection failures). Needs the mixin-handler
   re-typing work tracked for a later release, or a 1.21.x build of the mod.'
 reporter: Bownlux

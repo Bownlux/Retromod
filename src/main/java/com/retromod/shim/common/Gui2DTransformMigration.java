@@ -290,7 +290,7 @@ public final class Gui2DTransformMigration {
      * every op on it.
      *
      * <p><b>Strictly conservative</b>, so 3D world rendering can never be corrupted: a slot is
-     * migrated ONLY when (a) its sole store is a single {@code GuiGraphics(Extractor).pose()}
+     * migrated only when (a) its sole store is a single {@code GuiGraphics(Extractor).pose()}
      * (a 3D {@code PoseStack} param has no store; a stack from any other source stores a non-pose
      * value; a reassigned/reused slot has >1 store - all excluded), and (b) EVERY load of the slot
      * feeds a migratable op (pushPose/popPose/translate(FFF)/scale(FFF)). If a load is used any other
@@ -312,7 +312,7 @@ public final class Gui2DTransformMigration {
         slotPose.keySet().removeAll(drop);
         if (slotPose.isEmpty()) return 0;
 
-        // 2. Any ASTORE to a candidate slot that is NOT its pose store means the slot holds something
+        // 2. Any ASTORE to a candidate slot that is not its pose store means the slot holds something
         //    else too (reassignment / slot reuse) -> drop it.
         for (AbstractInsnNode insn = m.instructions.getFirst(); insn != null; insn = insn.getNext()) {
             if (insn instanceof VarInsnNode st && st.getOpcode() == Opcodes.ASTORE

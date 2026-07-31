@@ -1,12 +1,10 @@
-# Retromod Polyfill Providers - ServiceLoader configuration
+# Retromod polyfill providers
 # Copyright (c) 2026 Bownlux
 #
 # Polyfills re-implement removed APIs as compatibility bridges.
 # Each provider can be toggled by category in config/retromod/config.json.
 
-# ============================================================
-# FABRIC POLYFILLS
-# ============================================================
+# Fabric polyfills
 
 # Fabric Loader polyfills (TinyMapping reader API removed)
 com.retromod.polyfill.fabric.TinyMappingPolyfill
@@ -23,9 +21,7 @@ com.retromod.polyfill.fabric.FabricRenderingPolyfill
 # Fabric Registry API polyfills (FabricBlockSettings, FabricRegistryBuilder, FuelRegistry)
 com.retromod.polyfill.fabric.FabricRegistryPolyfill
 
-# ============================================================
-# MINECRAFT VANILLA POLYFILLS
-# ============================================================
+# Minecraft polyfills
 
 # Mixin target stubs (removed MC classes used as mixin targets)
 com.retromod.polyfill.minecraft.mixin.MixinTargetPolyfill
@@ -82,9 +78,7 @@ com.retromod.polyfill.minecraft.math.MathPolyfill
 # Annotation changes (javax.annotation -> jspecify, Forge -> NeoForge distmarker)
 com.retromod.polyfill.minecraft.annotation.AnnotationPolyfill
 
-# ============================================================
-# FORGE POLYFILLS
-# ============================================================
+# Forge polyfills
 
 # Forge core (SidedProxy, RegistryObject, LazyOptional, capabilities)
 com.retromod.polyfill.forge.ForgeCorePolyfill
@@ -92,9 +86,7 @@ com.retromod.polyfill.forge.ForgeCorePolyfill
 # Forge registry system (GameRegistry, FML events, OreDictionary, Side)
 com.retromod.polyfill.forge.ForgeRegistryPolyfill
 
-# ============================================================
-# NEOFORGE POLYFILLS
-# ============================================================
+# NeoForge polyfills
 
 # NeoForge core (Transfer API, RenderHighlightEvent, annotations)
 com.retromod.polyfill.neoforge.NeoForgeCorePolyfill
@@ -102,9 +94,7 @@ com.retromod.polyfill.neoforge.NeoForgeCorePolyfill
 # NeoForge Transfer API rework (IItemHandler/IFluidHandler/IEnergyStorage)
 com.retromod.polyfill.neoforge.NeoForgeTransferPolyfill
 
-# ============================================================
-# THIRD-PARTY MOD API POLYFILLS
-# ============================================================
+# Third-party mod API polyfills
 
 # Baubles API (1.7.10-1.12.2, replaced by Curios)
 com.retromod.polyfill.thirdparty.BaublesPolyfill

@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * #70 (Arcanus): {@code registerSuperclassRebase} must rewrite only the inheritance
  * edge (the {@code extends} clause and the {@code super(...)} constructor call) and
- * NOT other references to the base type. The old pre-1.17 model bridge used a plain
+ * not other references to the base type. The old pre-1.17 model bridge used a plain
  * class redirect ({@code class_583 -> LegacyModelBase_583}), which also rewrote a
  * modern mod's mixin {@code @Inject} handler that captured the base as a parameter,
  * producing {@code InvalidInjectionException: Expected (class_583) but found

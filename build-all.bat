@@ -1,28 +1,22 @@
 @echo off
-REM ============================================================================
-REM Retromod Multi-Version Build Script (Windows)
+REM Retromod multi-version build script for Windows
 REM Copyright (c) 2026 RevivalSMP. MIT License.
 REM
-REM Builds Retromod for ALL loaders and supported MC versions (1.20+):
+REM Builds Retromod for every supported host:
 REM   - Fabric (1.20 through 26.1)
 REM   - Forge (1.20 through 26.1)
 REM   - NeoForge (1.20.1 through 26.1)
-REM   - CLI tool (standalone)
-REM Older versions (1.12-1.19) are translated BY Retromod, not hosted separately.
-REM ============================================================================
+REM   - Standalone CLI
+REM Older mods are translated at runtime and do not need separate host jars.
 
 setlocal enabledelayedexpansion
 
 set VERSION=1.2.0-snapshot.8
-REM Only build for 1.20+ - older mods are translated BY Retromod, not hosted separately.
+REM Only supported host versions need their own jars.
 set MC_VERSIONS=1.20 1.20.1 1.20.2 1.20.3 1.20.4 1.20.5 1.20.6 1.21 1.21.1 1.21.2 1.21.3 1.21.4 1.21.5 1.21.6 1.21.7 1.21.8 1.21.9 1.21.10 1.21.11 26.1 26.1.1 26.1.2
 set LOADERS=fabric forge neoforge
 
-echo ============================================
-echo   Retromod Multi-Version Build Script
-echo   Version: %VERSION%
-echo   MIT License - RevivalSMP
-echo ============================================
+echo Retromod multi-version build %VERSION%
 echo.
 
 REM Check for Maven
@@ -111,9 +105,7 @@ for %%L in (%LOADERS%) do (
 echo.
 echo [Step 4] Done!
 echo.
-echo ============================================
-echo   Build Complete!
-echo ============================================
+echo Build complete
 echo.
 
 REM Count JARs
@@ -122,7 +114,7 @@ for /r dist %%f in (*.jar) do set /a JAR_COUNT+=1
 echo   Total JARs: %JAR_COUNT%
 
 if %FAILED% gtr 0 (
-    echo   WARNING: %FAILED% JAR(s) failed to build
+    echo   %FAILED% JAR(s) failed to build.
 )
 
 echo.

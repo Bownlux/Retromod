@@ -5,61 +5,42 @@ nav_order: 2
 
 # Installation
 
-Retromod installs like any other Minecraft mod: drop the JAR in your `mods/` folder and launch the game. There's no installer, no wizard, no account to make.
+Retromod installs like a normal mod. There is no separate installer.
 
 ## Requirements
 
-- **Minecraft:** 1.20 through 26.2 on Fabric and Forge; 1.20.1 through 26.2 on NeoForge (NeoForge skipped the 26.1 and 26.1.1 patches, so its 26.x line is 26.1.2 and 26.2).
-- **Mod loader:** Fabric, NeoForge, or Forge
-- **Java:** whatever your Minecraft version needs: 17 for 1.20-1.20.4, 21 for 1.20.5-1.21.x, 25 for 26.x (Minecraft ships its own Java runtime, so this is usually taken care of automatically)
+- Minecraft 1.20-26.2
+- Fabric, NeoForge, or Forge
+- The Java version required by Minecraft: Java 17 for 1.20-1.20.4, Java 21 for 1.20.5-1.21.x, and Java 25 for 26.x
+- Fabric API on Fabric
 
-## Get the JAR
+Download the jar that matches both your loader and Minecraft version from [GitHub Releases](https://github.com/Bownlux/Retromod/releases).
 
-Grab the latest release from GitHub:
+## Fabric
 
-> [github.com/Bownlux/Retromod/releases](https://github.com/Bownlux/Retromod/releases)
+1. Put Retromod in your instance's `mods/` folder.
+2. Launch once, then close the game.
+3. Put old mods directly in `retromod-input/`.
+4. Launch again and restart when prompted.
 
-The file you want is named something like `retromod-1.2.0-snapshot.7+26.2.jar`; grab the jar matching your Minecraft version and mod loader. Download it somewhere you'll remember. Your Downloads folder is fine.
+Fabric checks mod versions before Retromod runs. Old mods placed directly in `mods/` may stop the game before they can be transformed.
 
-## Find your Minecraft game directory
+## Forge and NeoForge
 
-This is where your `mods/` folder lives. The exact path depends on your OS:
+1. Put Retromod in `mods/`.
+2. Put old mods in `mods/` or `retromod-input/`.
+3. Launch and restart when prompted.
 
-| OS | Path |
-|----|------|
-| **macOS** | `~/Library/Application Support/minecraft/` |
-| **Windows** | `%APPDATA%\.minecraft\` |
-| **Linux** | `~/.minecraft/` |
+Retromod stores originals in `retromod-backups/` or `retromod-input/processed/`.
 
-If you're using a launcher like Prism, MultiMC, or ATLauncher, each instance has its own game directory, so open the instance's folder in the launcher instead.
+## Minecraft 26.2
 
-## Install the mod
-
-1. Open your game directory.
-2. If there's no `mods/` folder, create one.
-3. Drop `retromod-1.2.0-snapshot.7+<your MC version>.jar` into `mods/`.
-4. Launch Minecraft.
-
-That's it. On macOS, the command-line version of step 3 looks like:
-
-```bash
-cp ~/Downloads/retromod-1.2.0-snapshot.7+26.2.jar \
-  ~/Library/Application\ Support/minecraft/mods/
-```
-
-## First launch
-
-The first time Retromod runs, it creates two folders inside your game directory:
-
-- **`config/retromod/`** holds `config.json` and subfolders like `verify-reports/` and `aot-cache/`. Safe to edit, safe to delete (Retromod will regenerate defaults).
-- **`retromod-input/`** is the inbox. Drop old mods here and Retromod will transform them on the next launch, then move them to `mods/`. This is the only way to install old Fabric mods: Fabric rejects them before Retromod gets a chance to help if they're placed directly in `mods/`.
-
-After first launch, you'll see a **Retromod** button on the title screen. That's your sign everything's wired up.
+Use **Video Settings > Graphics API > OpenGL**. Retromod selects OpenGL automatically unless you already chose a graphics backend.
 
 ## Updating
 
-Delete the old `retromod-*.jar` from `mods/` and drop in the new one. Your config is kept. If you've been using the AOT cache and Retromod's transform logic has changed, clear `config/retromod/aot-cache/` so mods are re-compiled with the new logic.
+Replace the old Retromod jar with the new one. Do not keep two Retromod versions in `mods/`. Cache stamps normally invalidate old transforms automatically.
 
 ## Uninstalling
 
-Remove the JAR from `mods/`. Your transformed mods stay transformed; they live in `mods/` as regular JARs now, not linked to Retromod anymore. To revert a mod, copy the original from `retromod-backups/` back into `mods/`.
+Remove the Retromod jar. Restore original mods from the backup folders if needed. Fabric users may also remove `config/fabric_loader_dependencies.json` if stale dependency overrides remain.
