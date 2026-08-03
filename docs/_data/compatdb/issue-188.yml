@@ -1,0 +1,15 @@
+name: "Caelum"
+badge: borked
+mod_version: "2.0.0.0"
+source_mc: "1.21.1"
+host_mc: "26.2"
+loader: "neoforge"
+retromod: "1.3.0-snapshot.4"
+links:
+  modrinth: "https://modrinth.com/mod/caelum"
+summary: "Mod failed to load correctly"
+details: "1 error had occured during loading: java.lang.NoClassDefFoundError: net/neoforged/neoforge/client/event/RegisterClientReloadListenersEvent [loader-11.0.13.jar:11.0] 	at net.neoforged.fml.ModLoader.lambda$dispatchParallelTask$3(ModLoader.java:203) [loader-11.0.13.jar:11.0] 	at java.base/java.util.concurrent.CompletableFuture.uniHandle(CompletableFuture.java:955) [?:?] 	at java.base/java.util.concurrent.CompletableFuture$UniHandle.tryFire(CompletableFuture.java:932) [?:?] 	at java.base/java.util.concurrent.CompletableFuture$Completion.exec(CompletableFuture.java:504) [?:?] 	at java.base/java.util.concurrent.ForkJoinTask.doExec(ForkJoinTask.java:511) [?:?] 	at java.base/java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(ForkJoinPool.java:1450) [?:?] 	at java.base/java.util.concurrent.ForkJoinPool.runWorker(ForkJoinPool.java:2019) [?:?] 	at java.base/java.util.concurrent.ForkJoinWorkerThread.run(ForkJoinWorkerThread.java:187) [?:?] Caused by: java.lang.ClassNotFoundException: net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent 	at net.neoforged.fml.classloading.ModuleClassLoader.loadClass(ModuleClassLoader.java:254) ~[loader-11.0.13.jar:11.0] 	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:490) ~[?:?] 	... 16 more [03Aug2026 11:28:18.757] [main/FATAL] [net.neoforged.fml.ModLoader/LOADING]: Failed to wait for future Mod Construction, 1 errors found [03Aug2026 11:28:19.274] [main/FATAL] [net.neoforged.neoforge.common.NeoForgeMod/]: Preparing crash report with UUID fe0c2dcb-9a8d-4a21-91ec-ba1edf50f3d1 [03Aug2026 11:28:19.466] [main/FATAL] [net.neoforged.neoforge.common.NeoForgeMod/]: Preparing crash report with UUID c19d83e3-d424-42b9-8787-c7dca40d8ed7"
+reporter: "AquaticVillager"
+date: "2026-08-03"
+issue: 188
+
