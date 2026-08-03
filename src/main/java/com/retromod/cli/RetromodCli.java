@@ -25,7 +25,7 @@ import java.util.*;
  */
 public class RetromodCli {
     
-    private static final String VERSION = "1.3.0-snapshot.3";
+    private static final String VERSION = "1.3.0-snapshot.4";
     // Each command can override this with --target.
     private static String TARGET_MC_VERSION = "26.1";
     
@@ -365,9 +365,17 @@ public class RetromodCli {
             }
         }
 
+        // The compiler writes into its own cache, so honour an explicit destination.
+        if (outputPath != null && !result.equals(modPath)) {
+            Path parent = outputPath.toAbsolutePath().getParent();
+            if (parent != null) Files.createDirectories(parent);
+            Files.copy(result, outputPath, StandardCopyOption.REPLACE_EXISTING);
+            result = outputPath;
+        }
+
         System.out.println("Output: " + result.getFileName());
         System.out.println("Time: " + duration + " ms");
-        
+
         if (result.equals(modPath)) {
             System.out.println("No new jar was needed.");
         } else {
@@ -1015,7 +1023,9 @@ public class RetromodCli {
                             }
                             // A mixin can need a safety repair even when its other bytecode does not.
                             data = mixinStripper.stripBlocklistedHandlers(data);
-                            // ValueIO matching needs the Mojang parameter names produced above.
+                            // The member bridges and ValueIO matching need the Mojang
+                            // descriptors produced above.
+                            data = mixinStripper.applyLegacyMemberBridges(data);
                             data = mixinStripper.adaptValueIoHandlers(data);
                             // These helpers inspect the class and ignore unrelated versions.
                             data = com.retromod.shim.forge.ForgeEventBusSynthetics
@@ -1184,12 +1194,28 @@ public class RetromodCli {
      * {@link #MAX_JIJ_DEPTH}. A mod registering content through a JiJ'd library references
      * relocated/intermediary names there too (#71). Mirrors FabricModTransformer.remapNestedJar.
      */
+    /** Repairs a nested library's Mixin, on bytes the class remap has already been through. */
+    private static byte[] repairNestedMixin(
+            com.retromod.mixin.MixinCompatibilityTransformer mixins, byte[] classBytes, String className) {
+        try {
+            byte[] out = mixins.stripBlocklistedHandlers(classBytes);
+            out = mixins.applyLegacyMemberBridges(out);
+            return mixins.adaptValueIoHandlers(out);
+        } catch (Throwable t) {
+            // The remapped bytecode is still worth keeping.
+            return classBytes;
+        }
+    }
+
     // Package-private for NestedJarRecursionTest.
     static byte[] transformNestedJar(byte[] jarData, int depth) {
         try {
             var bais = new java.io.ByteArrayInputStream(jarData);
             var baos = new java.io.ByteArrayOutputStream(jarData.length);
             boolean modified = false;
+            // Built here rather than reused, because it snapshots the redirects registered so far.
+            var nestedMixins = new com.retromod.mixin.MixinCompatibilityTransformer(
+                    RetromodTransformer.getInstance());
 
             try (var jis = new java.util.jar.JarInputStream(bais);
                  var jos = new java.util.jar.JarOutputStream(baos)) {
@@ -1211,6 +1237,10 @@ public class RetromodCli {
                             } catch (Exception ignored) {
                                 // leave the class untouched on any transform error
                             }
+                            // A bundled library ships its own mixins, and they need the same
+                            // repairs as the mod's or they cannot resolve their targets.
+                            byte[] repaired = repairNestedMixin(nestedMixins, data, className);
+                            if (repaired != data) { data = repaired; modified = true; }
                         } else if (name.endsWith(".mixins.json") || name.endsWith("mixin.json")
                                 || (name.contains("mixin") && name.endsWith(".json"))) {
                             byte[] patched = makeMixinConfigNonFatal(data);

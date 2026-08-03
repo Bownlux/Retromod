@@ -11,9 +11,10 @@ permalink: /
 Retromod translates older Minecraft mods while the game loads. It updates bytecode, mixins, metadata, and selected removed APIs without requiring the original source.
 
 <div class="retromod-hero-cta" style="margin: 1.5em 0;">
-  <a class="retromod-btn retromod-btn-primary" href="https://github.com/Bownlux/Retromod/releases">Download</a>
-  <a class="retromod-btn retromod-btn-secondary" href="https://github.com/Bownlux/Retromod">Source on GitHub</a>
+  <a class="retromod-btn retromod-btn-primary" href="https://modrinth.com/mod/retromod">Download on Modrinth</a>
+  <a class="retromod-btn retromod-btn-secondary" href="https://www.curseforge.com/minecraft/mc-mods/retromod">CurseForge</a>
   <a class="retromod-btn retromod-btn-ghost" href="{{ '/installation' | relative_url }}">Install guide</a>
+  <a class="retromod-btn retromod-btn-ghost" href="https://github.com/Bownlux/Retromod">Source</a>
 </div>
 
 It supports Fabric, NeoForge, and Forge on Minecraft 1.20 through 26.2. Source support reaches back to 1.12.2 on Forge, 1.14.4 on Fabric, and 1.20.1 on NeoForge.

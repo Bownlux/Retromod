@@ -31,8 +31,8 @@ on:
       release_type:
         description: "CurseForge release type"
         type: choice
-        options: [release, beta, alpha]
-        default: release
+        options: [auto, release, beta, alpha]
+        default: auto
       dry_run:
         description: "Dry run (validate + print plan, upload nothing)"
         type: boolean
@@ -68,9 +68,17 @@ jobs:
         env:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_PROJECT_ID: ${{ vars.CF_PROJECT_ID }}
+          # Read through the environment so the values never become shell syntax.
+          VERSION: ${{ inputs.version }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
         run: |
+          # "auto" leaves the choice to the script, which reads it off the version string.
+          RELEASE_TYPE_ARG=""
+          if [ "$RELEASE_TYPE" != "auto" ]; then
+            RELEASE_TYPE_ARG="--release-type $RELEASE_TYPE"
+          fi
           python3 scripts/publish-curseforge.py \
-            --version "${{ inputs.version }}" \
-            --release-type "${{ inputs.release_type }}" \
+            --version "$VERSION" \
+            $RELEASE_TYPE_ARG \
             --changelog-file CHANGELOG.md \
             ${{ inputs.dry_run && '--dry-run' || '' }}

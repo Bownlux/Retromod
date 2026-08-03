@@ -209,7 +209,9 @@ def upload(project_id, token, jar, game_version_ids, display_name, changelog, re
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--version", required=True, help="version string, e.g. 1.1.0")
-    ap.add_argument("--release-type", default="release", choices=["release", "beta", "alpha"])
+    # Defaults to what the version string says it is, so a snapshot is never listed as finished.
+    ap.add_argument("--release-type", default=None, choices=["release", "beta", "alpha"],
+                    help="defaults to beta for snapshot/rc versions, release otherwise")
     ap.add_argument("--changelog-file", default="CHANGELOG.md")
     ap.add_argument("--dist", default="dist")
     ap.add_argument("--dry-run", action="store_true")
@@ -218,6 +220,15 @@ def main():
                          "the rest are skipped. Use to re-push just the files that failed "
                          "a partial run without re-uploading the ones that succeeded.")
     args = ap.parse_args()
+
+    if args.release_type is None:
+        lowered = args.version.lower()
+        if "alpha" in lowered:
+            args.release_type = "alpha"
+        elif "snapshot" in lowered or "-rc" in lowered or "beta" in lowered:
+            args.release_type = "beta"
+        else:
+            args.release_type = "release"
     only_mc = {v.strip() for v in args.only_mc.split(",") if v.strip()}
 
     token = os.environ.get("CF_API_TOKEN")

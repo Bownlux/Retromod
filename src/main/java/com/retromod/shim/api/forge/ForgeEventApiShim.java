@@ -105,6 +105,14 @@ public class ForgeEventApiShim implements VersionShim {
         );
 
         // common events
+        //
+        // Known gap, verified in game on 26.2 with S33R More Food (#184): the five tick events
+        // below are mapped to their abstract parents, and NeoForge refuses a listener on those
+        // ("Cannot register listeners for abstract class ... Register a listener to one of its
+        // subclasses instead"), which kills the whole mod at construction. Each one really has
+        // Pre and Post subclasses. Repointing them is not enough on its own, because a Forge mod
+        // also reads the removed TickEvent.phase field and compares it against the removed
+        // TickEvent.Phase enum, so the split has to be handled together with those two.
         transformer.registerClassRedirect(
             "net/minecraftforge/event/TickEvent",
             "net/neoforged/neoforge/event/tick/TickEvent"
@@ -115,9 +123,12 @@ public class ForgeEventApiShim implements VersionShim {
             "net/neoforged/neoforge/event/tick/ServerTickEvent"
         );
         
+        // The client one sits with the other client events, not beside its siblings in
+        // event/tick. Verified against neoforge-26.2.0.0-beta: there is no
+        // event/tick/ClientTickEvent, so the old target could never resolve.
         transformer.registerClassRedirect(
             "net/minecraftforge/event/TickEvent$ClientTickEvent",
-            "net/neoforged/neoforge/event/tick/ClientTickEvent"
+            "net/neoforged/neoforge/client/event/ClientTickEvent"
         );
         
         transformer.registerClassRedirect(

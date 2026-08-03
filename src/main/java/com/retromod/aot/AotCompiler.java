@@ -34,7 +34,7 @@ public class AotCompiler {
     private static final String AOT_MANIFEST_KEY = "Retromod-AOT-Version";
 
     // Bump this when transform behavior changes.
-    static final String AOT_VERSION = "1.3.0-snapshot.3";
+    static final String AOT_VERSION = "1.3.0-snapshot.4";
 
     // Development classpaths have no jar to hash, so this can be empty.
     private static String currentSelfHash() {
@@ -266,7 +266,8 @@ public class AotCompiler {
         Map<String, byte[]> transformedClasses = new LinkedHashMap<>();
         Map<String, byte[]> originalResources = new LinkedHashMap<>();
         Set<String> obfuscatedClasses = new HashSet<>();
-        
+        MixinCompatibilityTransformer mixinTransformer = new MixinCompatibilityTransformer(transformer);
+
         try (JarFile jar = new JarFile(inputJar.toFile())) {
             Enumeration<JarEntry> entries = jar.entries();
             
@@ -283,20 +284,21 @@ public class AotCompiler {
                     if (entry.getName().endsWith(".class")) {
                         String className = entry.getName().replace(".class", "");
 
+                        byte[] out = data;
                         if (shouldTransformClass(className, modInfo)) {
                             if (isObfuscated(data)) {
                                 obfuscatedClasses.add(className);
-                                transformedClasses.put(entry.getName(), data);
                                 classesObfuscated++;
                             } else {
-                                byte[] transformed = transformClassAot(data, className);
-                                transformedClasses.put(entry.getName(), transformed);
+                                out = transformClassAot(data, className);
                                 classesTransformed++;
                             }
                         } else {
-                            transformedClasses.put(entry.getName(), data);
                             classesSkipped++;
                         }
+                        // A class whose own bytecode was left alone can still hold a Mixin.
+                        transformedClasses.put(entry.getName(),
+                                AotMixinRepair.apply(mixinTransformer, out, className));
                     } else {
                         originalResources.put(entry.getName(), data);
                     }
@@ -345,7 +347,6 @@ public class AotCompiler {
                 jos.closeEntry();
             }
             
-            MixinCompatibilityTransformer mixinTransformer = new MixinCompatibilityTransformer(transformer);
             for (Map.Entry<String, byte[]> entry : originalResources.entrySet()) {
                 if (entry.getKey().equals("META-INF/MANIFEST.MF")) continue;
 
@@ -362,6 +363,35 @@ public class AotCompiler {
                     } catch (Exception e) {
                         LOGGER.warn("Failed to process mixin config {}: {}", entry.getKey(), e.getMessage());
                     }
+                }
+
+                // A 26.x host reads the official namespace, so an intermediary access widener or
+                // refmap is rejected before any mod code runs. The JIT and CLI paths already
+                // repair both, and an AOT-prepared mod needs the same treatment.
+                if (RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) {
+                    String name = entry.getKey();
+                    String lower = name.toLowerCase();
+                    try {
+                        if (lower.endsWith(".accesswidener") || lower.endsWith(".classtweaker")) {
+                            data = com.retromod.core.AccessWidenerRemapper.remapToOfficial(
+                                    new String(data, java.nio.charset.StandardCharsets.UTF_8),
+                                    com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        } else if (name.endsWith("-refmap.json") || name.contains("refmap")) {
+                            data = com.retromod.core.MixinRefmapRemapper.remap(
+                                    new String(data, java.nio.charset.StandardCharsets.UTF_8),
+                                    com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        }
+                    } catch (Exception e) {
+                        LOGGER.warn("Could not remap {} ({}). Keeping the original.", name, e.toString());
+                    }
+                }
+
+                // 26.x data-only changes the bytecode pass cannot reach; gated inside migrate().
+                if (com.retromod.resources.ModDataMigrator.isMigratableData(entry.getKey())) {
+                    data = com.retromod.resources.ModDataMigrator.migrate(
+                            entry.getKey(), data, targetMcVersion);
                 }
 
                 // Relax version constraints in mod metadata for 26.1+
@@ -382,7 +412,7 @@ public class AotCompiler {
                 if ((entry.getKey().startsWith("META-INF/jars/")
                         || entry.getKey().startsWith("META-INF/jarjar/"))
                         && entry.getKey().endsWith(".jar")) {
-                    data = transformNestedJarAot(data, 1);
+                    data = transformNestedJarAot(data, 1, mixinTransformer);
                 }
 
                 jos.putNextEntry(new JarEntry(ZipSecurity.safeEntryName(entry.getKey())));
@@ -411,7 +441,8 @@ public class AotCompiler {
      * recurses into its own bundled jars. Mirrors {@code RetromodCli.transformNestedJar} (kept self-contained
      * so aot doesn't depend on cli). Soft-fails to the original bytes on any error.
      */
-    private byte[] transformNestedJarAot(byte[] jarData, int depth) {
+    private byte[] transformNestedJarAot(byte[] jarData, int depth,
+            MixinCompatibilityTransformer mixinTransformer) {
         try {
             var bais = new java.io.ByteArrayInputStream(jarData);
             var baos = new java.io.ByteArrayOutputStream(jarData.length);
@@ -424,6 +455,8 @@ public class AotCompiler {
                     if (!e.isDirectory()) {
                         byte[] d = ZipSecurity.safeReadAllBytes(jis);
                         String name = e.getName();
+                        boolean official = RetromodVersion.isUnobfuscatedTarget(targetMcVersion);
+                        String lower = name.toLowerCase();
                         if (name.endsWith(".class")) {
                             String cn = name.substring(0, name.length() - ".class".length());
                             try {
@@ -431,14 +464,35 @@ public class AotCompiler {
                                 if (t != null && t != d) { d = t; modified = true; }
                             } catch (Exception ignored) {
                             }
+                            // A bundled library ships its own Mixins, which need the same
+                            // repairs as the mod's, or they cannot resolve their targets.
+                            byte[] repaired = AotMixinRepair.apply(mixinTransformer, d, cn);
+                            if (repaired != d) { d = repaired; modified = true; }
                         } else if (name.equals("fabric.mod.json") || name.equals("quilt.mod.json")) {
                             d = relaxFabricModDependencies(d); modified = true;
                         } else if (name.equals("META-INF/mods.toml") || name.equals("META-INF/neoforge.mods.toml")) {
                             d = relaxNeoForgeDependencies(d); modified = true;
+                        } else if (official && (lower.endsWith(".accesswidener")
+                                || lower.endsWith(".classtweaker"))) {
+                            byte[] t = com.retromod.core.AccessWidenerRemapper.remapToOfficial(
+                                    new String(d, java.nio.charset.StandardCharsets.UTF_8),
+                                    com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                            if (!java.util.Arrays.equals(t, d)) { d = t; modified = true; }
+                        } else if (official && (name.endsWith("-refmap.json") || name.contains("refmap"))) {
+                            byte[] t = com.retromod.core.MixinRefmapRemapper.remap(
+                                    new String(d, java.nio.charset.StandardCharsets.UTF_8),
+                                    com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                            if (!java.util.Arrays.equals(t, d)) { d = t; modified = true; }
+                        } else if (com.retromod.resources.ModDataMigrator.isMigratableData(name)) {
+                            byte[] t = com.retromod.resources.ModDataMigrator.migrate(
+                                    name, d, targetMcVersion);
+                            if (t != d) { d = t; modified = true; }
                         } else if (depth < MAX_JIJ_DEPTH_AOT
                                 && (name.startsWith("META-INF/jars/") || name.startsWith("META-INF/jarjar/"))
                                 && name.endsWith(".jar")) {
-                            byte[] t = transformNestedJarAot(d, depth + 1);
+                            byte[] t = transformNestedJarAot(d, depth + 1, mixinTransformer);
                             if (t != d) { d = t; modified = true; }
                         }
                         jos.write(d);

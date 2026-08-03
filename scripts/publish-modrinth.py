@@ -120,11 +120,23 @@ def create_version(project, token, jar, version_number, display_name, mcver,
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--version", required=True, help="version string, e.g. 1.1.0")
-    ap.add_argument("--release-type", default="release", choices=["release", "beta", "alpha"])
+    # Defaults to what the version string says it is. A snapshot or release candidate uploaded
+    # as "release" tells everyone browsing the page that a development build is finished.
+    ap.add_argument("--release-type", default=None, choices=["release", "beta", "alpha"],
+                    help="defaults to beta for snapshot/rc versions, release otherwise")
     ap.add_argument("--changelog-file", default="CHANGELOG.md")
     ap.add_argument("--dist", default="dist")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+
+    if args.release_type is None:
+        lowered = args.version.lower()
+        if "alpha" in lowered:
+            args.release_type = "alpha"
+        elif "snapshot" in lowered or "-rc" in lowered or "beta" in lowered:
+            args.release_type = "beta"
+        else:
+            args.release_type = "release"
 
     token = os.environ.get("MODRINTH_TOKEN")
     project = os.environ.get("MODRINTH_PROJECT_ID")

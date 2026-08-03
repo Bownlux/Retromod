@@ -178,11 +178,6 @@ public final class MixinCompatibilityTransformer {
             modified |= transformFieldAnnotations(field);
         }
 
-        // A removed worldgen shadow becomes mixin-owned state on affected hosts.
-        if (refactorHost && MixinShadowFieldDemotion.handles(classNode.name)) {
-            modified |= MixinShadowFieldDemotion.apply(classNode);
-        }
-
         if (!modified && resignTargets.isEmpty() && driftRepairs.isEmpty()) {
             return classBytes;
         }
@@ -282,6 +277,35 @@ public final class MixinCompatibilityTransformer {
     /** Runs the same Mixin pipeline for Forge, NeoForge, and offline transforms. */
     public byte[] stripBlocklistedHandlers(byte[] classBytes) {
         return transformMixinClass(classBytes);
+    }
+
+    /**
+     * Rebuilds Mixin members whose old descriptor no longer resolves: a removed shadow becomes
+     * mixin-owned state, and a member the host still offers under a different descriptor becomes
+     * a mixin-owned bridge overload.
+     *
+     * <p>These repairs match Mojang descriptors, so they run after the main remap. A Fabric mod
+     * still carries intermediary names when {@link #transformMixinClass} runs, so matching there
+     * found nothing and left the mod to fail on the descriptor it was built against.
+     */
+    public byte[] applyLegacyMemberBridges(byte[] classBytes) {
+        if (!has1215Refactor()) return classBytes;
+        ClassNode classNode = new ClassNode();
+        new ClassReader(classBytes).accept(classNode, 0);
+        if (!isMixinClass(classNode)) return classBytes;
+
+        boolean modified = MixinLegacyMemberBridge.apply(classNode);
+        if (MixinShadowFieldDemotion.handles(classNode.name)) {
+            modified |= MixinShadowFieldDemotion.apply(classNode);
+        }
+        if (!modified) return classBytes;
+
+        // The repairs carry their own stack maps, so the class is written back as-is.
+        ClassWriter cw = new ClassWriter(0);
+        classNode.accept(cw);
+        LOGGER.info("Repaired legacy Mixin member(s) in {} for their current descriptors",
+                classNode.name);
+        return cw.toByteArray();
     }
 
     /** Points a Mixin at an absent placeholder so the framework skips it cleanly. */

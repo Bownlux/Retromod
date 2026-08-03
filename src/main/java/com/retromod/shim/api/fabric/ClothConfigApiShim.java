@@ -34,6 +34,8 @@ public class ClothConfigApiShim implements VersionShim {
     
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        registerAutoConfigClientMove(transformer);
+
         // old package was me.shedaniel.clothconfig, now clothconfig2
         transformer.registerClassRedirect(
             "me/shedaniel/clothconfig/api/ConfigBuilder",
@@ -161,6 +163,43 @@ public class ClothConfigApiShim implements VersionShim {
         );
     }
     
+    /**
+     * Cloth Config's 26.1 build moved the two client-only helpers off {@code AutoConfig} onto a
+     * new {@code AutoConfigClient}, keeping their signatures. A mod built against an older Cloth
+     * still calls the old owner, so opening its config screen through Mod Menu dies with
+     * {@code NoSuchMethodError: AutoConfig.getConfigScreen} while the rest of the mod runs (#181,
+     * Double Hotbar). Verified by comparing cloth-config 20.0.149 with 26.1.154: the pair is
+     * present on {@code AutoConfig} in the first and only on {@code AutoConfigClient} in the
+     * second, and {@code register} and {@code getConfigHolder} did not move.
+     *
+     * <p>Gated to 26.1 and newer. On an older host the old owner still has these methods, and
+     * pointing them at a class Cloth does not ship yet would break a mod that works today.
+     */
+    private void registerAutoConfigClientMove(RetromodTransformer transformer) {
+        if (!com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            return;
+        }
+
+        final String autoConfig = "me/shedaniel/autoconfig/AutoConfig";
+        final String autoConfigClient = "me/shedaniel/autoconfig/AutoConfigClient";
+
+        // Registered under both spellings of Screen, because a redirect may be matched either
+        // before or after the intermediary names are rewritten.
+        for (String screen : new String[]{
+                "Lnet/minecraft/class_437;", "Lnet/minecraft/client/gui/screens/Screen;"}) {
+            String desc = "(Ljava/lang/Class;" + screen + ")Ljava/util/function/Supplier;";
+            transformer.registerMethodRedirect(
+                autoConfig, "getConfigScreen", desc,
+                autoConfigClient, "getConfigScreen", desc);
+        }
+
+        String guiRegistry = "(Ljava/lang/Class;)Lme/shedaniel/autoconfig/gui/registry/GuiRegistry;";
+        transformer.registerMethodRedirect(
+            autoConfig, "getGuiRegistry", guiRegistry,
+            autoConfigClient, "getGuiRegistry", guiRegistry);
+    }
+
     @Override
     public String[] getShimClasses() {
         return new String[] {

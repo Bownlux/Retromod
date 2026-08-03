@@ -489,9 +489,13 @@ public class FabricModTransformer {
                         if (remapped != null && remapped != transformed) {
                             transformed = remapped;
                         }
-                        // The ValueIO adapter expects Mojang names, which are only
-                        // available after the main Fabric remap.
+                        // The member bridges and the ValueIO adapter expect Mojang names,
+                        // which are only available after the main Fabric remap.
                         if (transformed != null) {
+                            byte[] bridged = mixinTransformer.applyLegacyMemberBridges(transformed);
+                            if (bridged != null && bridged != transformed) {
+                                transformed = bridged;
+                            }
                             byte[] valio = mixinTransformer.adaptValueIoHandlers(transformed);
                             if (valio != null && valio != transformed) {
                                 transformed = valio;
@@ -998,8 +1002,10 @@ public class FabricModTransformer {
 
         try {
             try (var stream = Files.walk(dir)) {
-                stream.filter(p -> p.toString().endsWith(".mixins.json") ||
-                                   p.getFileName().toString().equals("mixins.json"))
+                // Same naming rules the rest of the pipeline uses. The narrower check here
+                // missed modid.mixin.json, and a mod named that way got no Mixin repairs at all.
+                stream.filter(p -> isMixinConfigFile(
+                        dir.relativize(p).toString().replace(File.separator, "/")))
                     .forEach(mixinConfig -> {
                         try {
                             String content = Files.readString(mixinConfig);
@@ -1540,6 +1546,19 @@ public class FabricModTransformer {
         }
     }
 
+    /** Repairs a nested library's Mixin, on bytes the class remap has already been through. */
+    private static byte[] repairNestedMixin(
+            com.retromod.mixin.MixinCompatibilityTransformer mixins, byte[] classBytes, String className) {
+        try {
+            byte[] out = mixins.stripBlocklistedHandlers(classBytes);
+            out = mixins.applyLegacyMemberBridges(out);
+            return mixins.adaptValueIoHandlers(out);
+        } catch (Throwable t) {
+            LOGGER.debug("Could not repair the Mixin in JiJ class {}: {}", className, t.toString());
+            return classBytes;
+        }
+    }
+
     /**
      * Whether a path looks like a mixin config JSON. Covers standard
      * (modid.mixins.json) and non-standard names (mixins.modmenu.json) plus configs
@@ -1627,6 +1646,10 @@ public class FabricModTransformer {
 
                 boolean modified = false;
 
+                // Built here rather than reused, because it snapshots the redirects registered so far.
+                var nestedMixins = new com.retromod.mixin.MixinCompatibilityTransformer(
+                        bytecodeTransformer);
+
                 // Transform class files (intermediary→Mojang remapping)
                 try (var classStream = Files.walk(tempDir)) {
                     for (Path file : classStream.filter(f -> f.toString().endsWith(".class")).toList()) {
@@ -1635,8 +1658,12 @@ public class FabricModTransformer {
                             String className = tempDir.relativize(file).toString()
                                 .replace(File.separator, "/").replace(".class", "");
                             byte[] transformed = bytecodeTransformer.transformClass(original, className);
-                            if (transformed != null && transformed != original) {
-                                Files.write(file, transformed);
+                            byte[] current = transformed != null ? transformed : original;
+                            // A bundled library ships its own mixins, which need the same repairs
+                            // as the mod's or they cannot resolve their targets.
+                            byte[] repaired = repairNestedMixin(nestedMixins, current, className);
+                            if (repaired != original) {
+                                Files.write(file, repaired);
                                 modified = true;
                             }
                         } catch (Exception e) {

@@ -152,35 +152,43 @@ directory is not a .yml, so the data loader skips it. Collect the hash values in
 <main>
   <div class="count" id="count"></div>
   <div id="list">
+  {% comment %}
+    Every value below comes from a community report, so it is escaped on the way out.
+    Liquid does not escape by default. Links are additionally required to start with
+    https://, because escaping alone would still allow a javascript: URL in an href.
+  {% endcomment %}
   {% for e in entries %}
   {% if e.bundle %}{% capture sname %}{{ e.name }} {% for m in e.mods %}{{ m.name }} {% endfor %}{% endcapture %}{% else %}{% capture sname %}{{ e.name }}{% endcapture %}{% endif %}
-  <div class="card" data-name="{{ sname | downcase }}" data-badge="{{ e.badge }}" data-loader="{{ e.loader }}">
-    <div class="medal m-{{ e.badge }}">
+  <div class="card" data-name="{{ sname | downcase | escape }}" data-badge="{{ e.badge | escape }}" data-loader="{{ e.loader | escape }}">
+    <div class="medal m-{{ e.badge | escape }}">
       {% case e.badge %}{% when 'diamond' %}⛏<br>DIAMOND{% when 'gold' %}🥇<br>GOLD{% when 'iron' %}⚙<br>IRON{% when 'copper' %}🟠<br>COPPER{% else %}💥<br>BORKED{% endcase %}
-      <small>Retromod {{ e.retromod }}</small>
+      <small>Retromod {{ e.retromod | escape }}</small>
     </div>
     <div class="body">
       <div class="title">
-        <h3>{{ e.name }}</h3>
+        <h3>{{ e.name | escape }}</h3>
         {% if e.bundle %}<span class="tag-bundle">📦 BUNDLE</span>{% endif %}
         <span class="links">
           {% unless e.bundle %}
-          {% if e.links.modrinth %}<a href="{{ e.links.modrinth }}">Modrinth</a>{% endif %}
-          {% if e.links.curseforge %}<a href="{{ e.links.curseforge }}">CurseForge</a>{% endif %}
-          {% if e.links.github %}<a href="{{ e.links.github }}">GitHub</a>{% endif %}
+          {% assign lmr = e.links.modrinth %}{% assign smr = lmr | slice: 0, 8 %}
+          {% if smr == "https://" %}<a href="{{ lmr | escape }}">Modrinth</a>{% endif %}
+          {% assign lcf = e.links.curseforge %}{% assign scf = lcf | slice: 0, 8 %}
+          {% if scf == "https://" %}<a href="{{ lcf | escape }}">CurseForge</a>{% endif %}
+          {% assign lgh = e.links.github %}{% assign sgh = lgh | slice: 0, 8 %}
+          {% if sgh == "https://" %}<a href="{{ lgh | escape }}">GitHub</a>{% endif %}
           {% endunless %}
-          {% if e.issue %}<a href="https://github.com/Bownlux/Retromod/issues/{{ e.issue }}">#{{ e.issue }}</a>{% endif %}
+          {% if e.issue %}<a href="https://github.com/Bownlux/Retromod/issues/{{ e.issue | escape }}">#{{ e.issue | escape }}</a>{% endif %}
         </span>
       </div>
       {% if e.bundle %}
-      <div class="mods">{% for m in e.mods %}<span class="modchip">{% if m.link %}<a href="{{ m.link }}">{{ m.name }}</a>{% else %}{{ m.name }}{% endif %} {{ m.version }}{% if m.source_mc %} <span style="opacity:.65">(MC {{ m.source_mc }})</span>{% endif %}</span>{% endfor %}</div>
-      <div class="meta">all together → host MC <code>{{ e.host_mc }}</code> · {{ e.loader }}</div>
+      <div class="mods">{% for m in e.mods %}<span class="modchip">{% assign ml = m.link %}{% assign sml = ml | slice: 0, 8 %}{% if sml == "https://" %}<a href="{{ ml | escape }}">{{ m.name | escape }}</a>{% else %}{{ m.name | escape }}{% endif %} {{ m.version | escape }}{% if m.source_mc %} <span style="opacity:.65">(MC {{ m.source_mc | escape }})</span>{% endif %}</span>{% endfor %}</div>
+      <div class="meta">all together → host MC <code>{{ e.host_mc | escape }}</code> · {{ e.loader | escape }}</div>
       {% else %}
-      <div class="meta">mod <code>{{ e.mod_version }}</code> (built for MC {{ e.source_mc }}) → host MC <code>{{ e.host_mc }}</code> · {{ e.loader }}</div>
+      <div class="meta">mod <code>{{ e.mod_version | escape }}</code> (built for MC {{ e.source_mc | escape }}) → host MC <code>{{ e.host_mc | escape }}</code> · {{ e.loader | escape }}</div>
       {% endif %}
-      <div class="sum">{{ e.summary }}</div>
-      {% if e.details %}<details class="more"><summary>Details</summary><p>{{ e.details }}</p></details>{% endif %}
-      <div class="foot">reported by {{ e.reporter }} · {{ e.date }}</div>
+      <div class="sum">{{ e.summary | escape }}</div>
+      {% if e.details %}<details class="more"><summary>Details</summary><p>{{ e.details | escape }}</p></details>{% endif %}
+      <div class="foot">reported by {{ e.reporter | escape }} · {{ e.date | escape }}</div>
     </div>
   </div>
   {% endfor %}

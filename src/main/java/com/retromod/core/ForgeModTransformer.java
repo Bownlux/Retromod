@@ -304,6 +304,7 @@ public class ForgeModTransformer {
                 byte[] transformed = bytecodeTransformer.transformClass(preStripped, className);
                 // Keep the ValueIO repair in the same post-remap position on every loader.
                 if (transformed != null) {
+                    transformed = mixinTransformer.applyLegacyMemberBridges(transformed);
                     transformed = mixinTransformer.adaptValueIoHandlers(transformed);
                 }
                 // These helpers inspect the class and leave unrelated versions unchanged.

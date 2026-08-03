@@ -298,6 +298,14 @@ public final class HybridTransformationEngine {
             for (JarEntry entry : classEntries) {
                 String className = entry.getName().replace(".class", "");
 
+                // An entry name is untrusted. One that climbs out of the cache directory would
+                // have Retromod write the mod's bytes to a path of the mod's choosing.
+                if (!isCacheableClassName(className)) {
+                    LOGGER.warn("Skipped a class with an unusable name in {}: {}",
+                            mod.jarPath().getFileName(), entry.getName());
+                    continue;
+                }
+
                 if (aotCache.containsKey(className)) {
                     continue;
                 }
@@ -328,9 +336,28 @@ public final class HybridTransformationEngine {
         }
     }
 
+    /**
+     * Whether a jar entry's class name can be used as a cache key and a file name.
+     *
+     * <p>The name reaches here straight from the archive, so it is rejected unless it is a plain
+     * relative path. Anything else could place the cached file outside the cache directory.
+     */
+    static boolean isCacheableClassName(String className) {
+        if (className.isBlank() || className.startsWith("/") || className.contains("\\")
+                || className.contains(":")) {
+            return false;
+        }
+        for (String segment : className.split("/")) {
+            if (segment.isEmpty() || ".".equals(segment) || "..".equals(segment)) return false;
+        }
+        return true;
+    }
+
     private void saveToCache(String className, byte[] bytes) {
         try {
-            Path cachePath = AOT_CACHE_DIR.resolve(className + ".class");
+            // Checked again at the write, so a new caller cannot reintroduce the escape.
+            Path cachePath = com.retromod.util.ZipSecurity.safeResolve(
+                    AOT_CACHE_DIR, className + ".class");
             Files.createDirectories(cachePath.getParent());
             Files.write(cachePath, bytes);
         } catch (IOException e) {

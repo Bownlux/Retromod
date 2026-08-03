@@ -14,7 +14,9 @@ Retromod installs like a normal mod. There is no separate installer.
 - The Java version required by Minecraft: Java 17 for 1.20-1.20.4, Java 21 for 1.20.5-1.21.x, and Java 25 for 26.x
 - Fabric API on Fabric
 
-Download the jar that matches both your loader and Minecraft version from [GitHub Releases](https://github.com/Bownlux/Retromod/releases).
+Download the jar that matches both your loader and Minecraft version from [Modrinth](https://modrinth.com/mod/retromod) or [CurseForge](https://www.curseforge.com/minecraft/mc-mods/retromod). Most launchers can install it for you if you search for Retromod there, and they will tell you when a new build is out.
+
+Every build is also on [GitHub Releases](https://github.com/Bownlux/Retromod/releases) if you prefer to grab it directly.
 
 ## Fabric
 

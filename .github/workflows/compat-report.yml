@@ -105,7 +105,7 @@ jobs:
 
             let entry = `\n- name: ${q(name)}\n`;
             if (isBundle) {
-              entry += `  bundle: true\n  badge: ${badge}\n  host_mc: ${q(host)}\n  loader: ${loader}\n  retromod: ${q(retromod)}\n  mods:\n`;
+              entry += `  bundle: true\n  badge: ${badge}\n  host_mc: ${q(host)}\n  loader: ${q(loader)}\n  retromod: ${q(retromod)}\n  mods:\n`;
               const lines = bundleRaw.split('\n').map(l => l.trim()).filter(Boolean);
               for (const l of lines) {
                 const p = l.split('|').map(x => x.trim());
@@ -118,7 +118,7 @@ jobs:
             } else {
               entry += `  badge: ${badge}\n  mod_version: ${q(modVersion)}\n`;
               if (sourceMc) entry += `  source_mc: ${q(sourceMc)}\n`;
-              entry += `  host_mc: ${q(host)}\n  loader: ${loader}\n  retromod: ${q(retromod)}\n`;
+              entry += `  host_mc: ${q(host)}\n  loader: ${q(loader)}\n  retromod: ${q(retromod)}\n`;
               if (link) {
                 const site = /modrinth/i.test(link) ? 'modrinth' : /curseforge/i.test(link) ? 'curseforge' : 'github';
                 entry += `  links:\n    ${site}: ${q(link)}\n`;

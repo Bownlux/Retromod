@@ -171,13 +171,14 @@ class MixinShadowFieldDemotionTest {
     }
 
     @Test
-    @DisplayName("Wired: transformMixinClass demotes on a 1.21.5+ host, and re-emits valid bytecode")
+    @DisplayName("Wired: the post-remap pass demotes on a 1.21.5+ host, and re-emits valid bytecode")
     void wiredOnModernHost() {
         savedVersion = RetromodVersion.TARGET_MC_VERSION;
         RetromodVersion.TARGET_MC_VERSION = "26.2";
         var t = new MixinCompatibilityTransformer(RetromodTransformer.getInstance());
 
-        byte[] out = t.transformMixinClass(syntheticMixin());
+        // The rule matches a Mojang field descriptor, so it only runs once the remap is done.
+        byte[] out = t.applyLegacyMemberBridges(syntheticMixin());
         // must be verifiable: reading it back (ClassReader) would throw on malformed bytecode
         ClassNode cn = read(out);
         assertFalse(fieldHas(cn, SHADOW), "on a 26.2 host the field is demoted");
@@ -192,7 +193,7 @@ class MixinShadowFieldDemotionTest {
         RetromodVersion.TARGET_MC_VERSION = "1.21.1";
         var t = new MixinCompatibilityTransformer(RetromodTransformer.getInstance());
 
-        ClassNode cn = read(t.transformMixinClass(syntheticMixin()));
+        ClassNode cn = read(t.applyLegacyMemberBridges(syntheticMixin()));
         assertTrue(fieldHas(cn, SHADOW), "pre-1.21.5: noiseSettings still exists on NoiseChunk, keep the @Shadow");
         assertFalse(fieldHas(cn, UNIQUE), "no demotion on an old host");
     }

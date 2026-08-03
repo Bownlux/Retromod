@@ -70,13 +70,27 @@ public class FullAotCompiler {
         return instance;
     }
     
+    /**
+     * Reduces a mod id to a single safe directory name.
+     *
+     * <p>The id is read out of the mod's own metadata, or falls back to its file name, so it is
+     * untrusted. Without this an id such as {@code ../../evil} would put the cache, and the class
+     * files read back out of it, anywhere the game can write.
+     */
+    static String safeModId(String modId) {
+        String cleaned = modId == null ? "" : modId.replaceAll("[^A-Za-z0-9._-]", "_");
+        while (cleaned.startsWith(".")) cleaned = cleaned.substring(1);
+        return cleaned.isBlank() ? "unnamed-mod" : cleaned;
+    }
+
     public boolean hasCachedCompilation(String modId) {
-        Path modCache = cacheDir.resolve(modId + ".aot");
+        Path modCache = cacheDir.resolve(safeModId(modId) + ".aot");
         return Files.exists(modCache);
     }
-    
+
     public byte[] getCachedClass(String modId, String className) {
-        Path classCache = cacheDir.resolve(modId).resolve(className.replace('/', '_') + ".class");
+        Path classCache = cacheDir.resolve(safeModId(modId))
+            .resolve(className.replace('/', '_') + ".class");
         
         if (Files.exists(classCache)) {
             try {
@@ -173,11 +187,16 @@ public class FullAotCompiler {
     
     /** Transform every class in a mod JAR in parallel and write the results to the mod's cache dir. */
     private void compileAllClassesInMod(Path jarPath, RetromodTransformer transformer) {
+        // Selectors live in annotation text, which the class remap leaves alone, so a cached
+        // Mixin would still point at the name the mod was built against.
+        com.retromod.mixin.MixinCompatibilityTransformer mixinTransformer =
+            new com.retromod.mixin.MixinCompatibilityTransformer(transformer);
         String modId = extractModId(jarPath);
         if (modId == null) {
             modId = jarPath.getFileName().toString().replace(".jar", "");
         }
-        
+        modId = safeModId(modId);
+
         Path modCacheDir = cacheDir.resolve(modId);
         try {
             Files.createDirectories(modCacheDir);
@@ -228,6 +247,8 @@ public class FullAotCompiler {
                             }
 
                             byte[] transformed = transformer.transformClass(original, className);
+                            transformed = AotMixinRepair.apply(mixinTransformer,
+                                transformed != null ? transformed : original, className);
 
                             if (transformed != null && transformed != original) {
                                 String cacheFileName = className.replace('.', '_') + ".class";

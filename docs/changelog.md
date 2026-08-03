@@ -10,6 +10,27 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.3.0 Snapshot Line
 
+### Snapshot 4, August 2, 2026
+
+- Added real mixin bridges for legacy `MobEffect` shadows and custom `Pose` constructor invokers.
+- Added a mixin bridge so custom tree decorators, placers, feature sizes, and block state providers register again.
+- Fixed a mod's config screen crashing when its config library moved its own API out from under it.
+- Fixed a HUD mixin being rejected because it shadowed a method the HUD rework removed.
+- Fixed a Forge client tick event that was mapped to a class NeoForge does not have.
+- Fixed mixin member repairs that never reached Fabric mods at runtime because they ran before the name remap.
+- Fixed precompiled (AOT) mods losing every mixin, because their selectors were never remapped.
+- Fixed precompiled mods skipping the refmap, access widener, and datapack repairs the other paths run.
+- Fixed mixins inside a bundled library never being repaired.
+- Fixed mods whose mixin config is named `modid.mixin.json` getting no mixin repairs at all.
+- Fixed `retromod aot --output` being ignored.
+- Added Fabric load-time regression mixins for the new repairs.
+- Improved bare selector renames and expanded method-level mixin discovery.
+- Expanded Forge SRG mappings and completed more 26.x class moves.
+- Fixed frame rebuilding for mod-owned class hierarchies and two loader migration gaps.
+- Updated CurseForge publishing and compatibility-report storage.
+
+Some reported mods are improved but not finished. Species 2.3 still has a criterion API gap, Double Hotbar's second hotbar needs a real port because 26.x moved hotbar drawing out of the class it hooks, and a Forge mod that listens for tick events still will not start on NeoForge. The full changelog explains each one.
+
 ### Snapshot 3, July 25, 2026
 
 - Brought offline Fabric transforms in line with runtime behavior.
