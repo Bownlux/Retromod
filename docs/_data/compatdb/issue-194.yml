@@ -1,0 +1,14 @@
+name: "Strider's Grace"
+badge: borked
+mod_version: "1.20.1"
+host_mc: "26.2"
+loader: "fabric"
+retromod: "1.3.0"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/striders-grace/comments"
+summary: "Does not work"
+details: "Crashes immediately upon trying to launch. java.lang.RuntimeException: Could not execute entrypoint stage 'main' due to errors, provided by 'striders-grace' at 'accieo.striders.grace.StridersGrace'! 	at net.fabricmc.loader.impl.FabricLoaderImpl.lambda$invokeEntrypoints$0(FabricLoaderImpl.java:413) 	at net.fabricmc.loader.impl.util.ExceptionUtil.gatherExceptions(ExceptionUtil.java:33) 	at net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:411) 	at net.fabricmc.loader.impl.game.minecraft.Hooks.startClient(Hooks.java:52) 	at knot//net.minecraft.client.Minecraft.<init>(Minecraft.java:456) 	at knot//net.minecraft.client.main.Main.main(Main.java:278) 	at net.fabricmc.loader.impl.game.minecraft.MinecraftGameProvider.launch(MinecraftGameProvider.java:514) 	at net.fabricmc.loader.impl.launch.knot.Knot.launch(Knot.java:72) 	at net.fabricmc.loader.impl.launch.knot.KnotClient.main(KnotClient.java:23) 	at org.prismlauncher.launcher.impl.StandardLauncher.launch(StandardLauncher.java:115) 	at org.prismlauncher.EntryPoint.listen(EntryPoint.java:129) 	at org.prismlauncher.EntryPoint.main(EntryPoint.java:70) Caused by: java.lang.IncompatibleClassChangeError: class accieo.striders.grace.StridersGraceEnchantment cannot inherit from final class net.minecraft.world.item.enchantment.Enchantment 	at java.base/java.lang.ClassLoader.defineClass1(Native Method) 	at java.base/java.lang.ClassLoader.defineClass(ClassLoader.java:962) 	at java.base/java.security.SecureClassLoader.defineClass(SecureClassLoader.java:144) 	at net.fabricmc.loader.impl.launch.knot.KnotClassLoader.defineClassFwd(KnotClassLoader.java:165) 	at net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.tryLoadClass(KnotClassDelegate.java:368) 	at net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.loadClass(KnotClassDelegate.java:231) 	at net.fabricmc.loader.impl.launch.knot.KnotClassLoader.loadClass(KnotClassLoader.java:119) 	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:490) 	at java.base/java.lang.Class.forName0(Native Method) 	at java.base/java.lang.Class.forName(Class.java:547) 	at net.fabricmc.loader.impl.util.DefaultLanguageAdapter.create(DefaultLanguageAdapter.java:53) 	at net.fabricmc.loader.impl.entrypoint.EntrypointStorage$NewEntry.getOrCreate(EntrypointStorage.java:124) 	at net.fabricmc.loader.impl.entrypoint.EntrypointContainerImpl.getEntrypoint(EntrypointContainerImpl.java:53) 	at net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:409) 	... 9 more"
+reporter: "EdragonGhostmage"
+date: "2026-08-05"
+issue: 194
+
