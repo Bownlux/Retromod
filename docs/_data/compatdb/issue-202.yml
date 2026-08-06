@@ -1,0 +1,14 @@
+name: "OreSpawn"
+badge: borked
+mod_version: "1.7.10-20.2"
+host_mc: "1.21.1"
+loader: "forge"
+retromod: "1.30-snapshot4"
+links:
+  github: "https://www.planetminecraft.com/mod/orespawn-mod-2090519/"
+summary: "game fails to load"
+details: "shows error \"The Mod File C:\\users\\Skyla\\AppData\\Roaming\\PrismLauncher\\instances\\1.21.1\\minecraft\\mods\\orespawn-1.7.10-20-3 (1).jar has mods that were not found\""
+reporter: "explodingtomatos544-code"
+date: "2026-08-06"
+issue: 202
+
