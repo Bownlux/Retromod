@@ -1,0 +1,14 @@
+name: "SCP: Lockdown"
+badge: borked
+mod_version: "2.4.3 for 1.12.2"
+host_mc: "1.21.1"
+loader: "forge"
+retromod: "130-snapshot4"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/scp-lockdown"
+summary: "SCP: Lockdown fails to load"
+details: "shows error \"SCP: Lockdown (scp) has failed to load correctly\" \"java.lang.NoClassDefFoundError: net/minecraft/properties/IProperty\""
+reporter: "explodingtomatos544-code"
+date: "2026-08-06"
+issue: 200
+
