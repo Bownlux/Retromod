@@ -1,0 +1,33 @@
+name: "Thermal series"
+bundle: true
+badge: borked
+host_mc: "1.21.1"
+loader: "forge"
+retromod: "1.30-snapshot4"
+mods:
+  - name: "CoFH Core"
+    version: "11.0.2"
+    source_mc: "1.20.1"
+    link: "https://modrinth.com/mod/cofh-core"
+  - name: "Thermal Dynamics"
+    version: "11.0.1"
+    source_mc: "1.20.1"
+    link: "https://modrinth.com/mod/thermal-dynamics"
+  - name: "Thermal Expansion"
+    version: "11.0.1"
+    source_mc: "1.20.1"
+    link: "https://modrinth.com/mod/thermal-expansion"
+  - name: "Thermal Foundation"
+    version: "11.0.6"
+    source_mc: "1.20.1"
+    link: "https://modrinth.com/mod/thermal-foundation"
+  - name: "Thermal Innovation"
+    version: "11.0.1"
+    source_mc: "1.20.1"
+    link: "https://modrinth.com/mod/thermal-innovation"
+summary: "cofh core tries to locate something about LivingEntityMixin before Retromod activates"
+details: "org.spongepowered.asm.mixin.transformer.throwables.InvalidMixinException: @Shadow method m_21211_ in mixins.cofhcore.json:LivingEntityMixin was not located in the target class net.minecraft.world.entity.LivingEntity. Using refmap mixins.cofhcore.refmap.json"
+reporter: "explodingtomatos544-code"
+date: "2026-08-06"
+issue: 204
+
