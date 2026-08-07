@@ -1,0 +1,13 @@
+name: "Pathmind"
+badge: borked
+mod_version: "1.1.5, build for 1.21.11"
+host_mc: "26.2"
+loader: "fabric"
+retromod: "1.1.5"
+links:
+  modrinth: "https://modrinth.com/mod/pathmind"
+summary: "Game start but mod tries to access ClientTickEvents.START_WORLD_TICK wich causes the onInitializeClient() to aborts immediately"
+reporter: "TropicSnowJPR"
+date: "2026-08-07"
+issue: 208
+
