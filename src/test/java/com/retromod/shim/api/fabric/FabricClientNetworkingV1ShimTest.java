@@ -6,6 +6,7 @@ package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.polyfill.fabric.FabricNetworkingPolyfill;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -85,6 +86,33 @@ class FabricClientNetworkingV1ShimTest {
         byte[] out = RetromodTransformer.getInstance()
                 .transformClass(fixtureCalling("canSend", "(" + ID + ")Z"), "test/NetFixture");
         assertCallSite(out, "canSend");
+    }
+
+    @Test
+    void pre26HostUsesIntermediarySamAndSurvivesPolyfillRegistration() {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        RetromodVersion.TARGET_MC_VERSION = "1.21.11";
+        new FabricClientNetworkingV1Shim().registerRedirects(t);
+        new FabricNetworkingPolyfill().registerPolyfills(t);
+
+        byte[] sam = t.getSyntheticClasses().get(NEW_SAM);
+        assertNotNull(sam);
+        String[] receive = {null};
+        new ClassReader(sam).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override public MethodVisitor visitMethod(int a, String n, String d, String s, String[] e) {
+                if ("receive".equals(n)) receive[0] = d;
+                return null;
+            }
+        }, 0);
+        assertEquals("(Lnet/minecraft/class_310;Lnet/minecraft/class_634;"
+                + "Lnet/minecraft/class_2540;Lnet/fabricmc/fabric/api/networking/v1/PacketSender;)V",
+                receive[0]);
+
+        byte[] out = t.transformClass(
+                fixtureCalling("registerGlobalReceiver", "(" + ID + "L" + OLD_SAM + ";)Z"),
+                "test/NetFixture");
+        assertCallSite(out, "registerGlobalReceiver");
     }
 
     /** {@code test/NetFixture.go()} calling {@code ClientPlayNetworking.<name><desc>}. */

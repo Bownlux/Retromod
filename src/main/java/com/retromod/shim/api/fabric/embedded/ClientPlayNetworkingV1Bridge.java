@@ -62,23 +62,27 @@ public final class ClientPlayNetworkingV1Bridge {
     private static synchronized void ensureInit() {
         if (ready || initFailed) return;
         try {
-            cType          = Class.forName("net.minecraft.network.protocol.common.custom.CustomPacketPayload$Type");
-            cStreamCodec   = Class.forName("net.minecraft.network.codec.StreamCodec");
-            cCustomPayload = Class.forName("net.minecraft.network.protocol.common.custom.CustomPacketPayload");
+            cType          = loadFirst("net.minecraft.network.protocol.common.custom.CustomPacketPayload$Type",
+                    "net.minecraft.class_8710$class_9154");
+            cStreamCodec   = loadFirst("net.minecraft.network.codec.StreamCodec", "net.minecraft.class_9139");
+            cCustomPayload = loadFirst("net.minecraft.network.protocol.common.custom.CustomPacketPayload",
+                    "net.minecraft.class_8710");
             cByteBuf       = Class.forName("io.netty.buffer.ByteBuf");
             cPayloadHandler = Class.forName("net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking$PlayPayloadHandler");
             cContext        = Class.forName("net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking$Context");
             Class<?> cPayloadReg = Class.forName("net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry");
             Class<?> cClientNet  = Class.forName("net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking");
-            Class<?> cFriendly   = Class.forName("net.minecraft.network.FriendlyByteBuf");
+            Class<?> cFriendly   = loadFirst("net.minecraft.network.FriendlyByteBuf", "net.minecraft.class_2540");
             Class<?> cUnpooled   = Class.forName("io.netty.buffer.Unpooled");
-            Class<?> cMc         = Class.forName("net.minecraft.client.Minecraft");
+            Class<?> cMc         = loadFirst("net.minecraft.client.Minecraft", "net.minecraft.class_310");
+            Class<?> cListener   = loadFirst("net.minecraft.client.multiplayer.ClientPacketListener",
+                    "net.minecraft.class_634");
 
             typeCtor = singleArgCtor(cType);
             friendlyBufCtor = cFriendly.getConstructor(cByteBuf);
 
-            mClientboundPlay = cPayloadReg.getMethod("clientboundPlay");
-            mServerboundPlay = cPayloadReg.getMethod("serverboundPlay");
+            mClientboundPlay = firstStaticByNames(cPayloadReg, "clientboundPlay", "playS2C");
+            mServerboundPlay = firstStaticByNames(cPayloadReg, "serverboundPlay", "playC2S");
             mRegistryRegister = firstByNameAndArity(cPayloadReg, "register", 2);
 
             mNetRegisterReceiver = firstStaticByNameAndArity(cClientNet, "registerGlobalReceiver", 2);
@@ -93,8 +97,8 @@ public final class ClientPlayNetworkingV1Bridge {
             mBufWriteBytes = cByteBuf.getMethod("writeBytes", byte[].class);
             mUnpooledWrapped = cUnpooled.getMethod("wrappedBuffer", byte[].class);
 
-            mMcGetInstance = cMc.getMethod("getInstance");
-            mMcGetConnection = noArgReturning(cMc, "net.minecraft.client.multiplayer.ClientPacketListener");
+            mMcGetInstance = staticNoArgReturning(cMc, cMc);
+            mMcGetConnection = noArgReturning(cMc, cListener);
 
             if (mRegistryRegister == null || mNetRegisterReceiver == null || mNetSend == null) {
                 throw new NoSuchMethodException("core 26.1 networking entrypoint not found");
@@ -215,12 +219,27 @@ public final class ClientPlayNetworkingV1Bridge {
         return ClientPlayNetworkingV1Bridge.class.getClassLoader();
     }
 
+    private static Class<?> loadFirst(String... names) throws ClassNotFoundException {
+        ClassNotFoundException last = null;
+        for (String name : names) {
+            try {
+                return Class.forName(name);
+            } catch (ClassNotFoundException e) {
+                last = e;
+            }
+        }
+        throw last != null ? last : new ClassNotFoundException("no class aliases supplied");
+    }
+
     /** Backing handler for a raw {@code CustomPacketPayload} proxy. */
     private static final class RawPayloadHandler implements InvocationHandler {
         final Object type;
         final byte[] data;
         RawPayloadHandler(Object type, byte[] data) { this.type = type; this.data = data; }
         @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            if (method.getParameterCount() == 0 && method.getReturnType().isInstance(type)) {
+                return type;
+            }
             switch (method.getName()) {
                 case "type":     return type;
                 case "hashCode": return System.identityHashCode(proxy);
@@ -238,6 +257,15 @@ public final class ClientPlayNetworkingV1Bridge {
         final Object type;
         RawCodecHandler(Object type) { this.type = type; }
         @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            if (args != null && args.length == 1 && method.getReturnType() != Void.TYPE) {
+                byte[] data = drainBytes(args[0]);
+                return newRawPayload(type, data);
+            }
+            if (args != null && args.length == 2 && method.getReturnType() == Void.TYPE) {
+                byte[] data = bytesOf(args[1]);
+                if (data != null) mBufWriteBytes.invoke(args[0], (Object) data);
+                return null;
+            }
             switch (method.getName()) {
                 case "decode": {           // V decode(B buffer)
                     Object buf = args[0];
@@ -379,9 +407,25 @@ public final class ClientPlayNetworkingV1Bridge {
         return firstStaticByNameAndArity(c, name, arity);
     }
 
-    private static Method noArgReturning(Class<?> c, String returnTypeName) {
+    private static Method firstStaticByNames(Class<?> c, String... names) {
+        for (String name : names) {
+            Method found = firstStaticByNameAndArity(c, name, 0);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private static Method noArgReturning(Class<?> c, Class<?> returnType) {
         for (Method m : c.getMethods()) {
-            if (m.getParameterCount() == 0 && m.getReturnType().getName().equals(returnTypeName)) return m;
+            if (m.getParameterCount() == 0 && m.getReturnType() == returnType) return m;
+        }
+        return null;
+    }
+
+    private static Method staticNoArgReturning(Class<?> c, Class<?> returnType) {
+        for (Method m : c.getMethods()) {
+            if (Modifier.isStatic(m.getModifiers()) && m.getParameterCount() == 0
+                    && m.getReturnType() == returnType) return m;
         }
         return null;
     }

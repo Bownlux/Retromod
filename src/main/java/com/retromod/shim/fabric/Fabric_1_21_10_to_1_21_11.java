@@ -51,6 +51,19 @@ public class Fabric_1_21_10_to_1_21_11 implements VersionShim {
             "net/minecraft/client/renderer/RenderType",
             "net/minecraft/client/renderer/RenderTypes"
         );
+
+        // Player model-part state moved to the new Avatar superclass. Old mods can read the
+        // field directly or expose it through a static @Accessor, so register both the
+        // intermediary bytecode name and the old named accessor spelling.
+        String dataAccessor = "Lnet/minecraft/class_2940;";
+        transformer.registerFieldRedirect(
+            "net/minecraft/class_1657", "field_7518", dataAccessor,
+            "net/minecraft/class_11890", "field_62514", dataAccessor
+        );
+        transformer.registerFieldRedirect(
+            "net/minecraft/class_1657", "PLAYER_MODEL_PARTS", dataAccessor,
+            "net/minecraft/class_11890", "field_62514", dataAccessor
+        );
     }
     
     @Override

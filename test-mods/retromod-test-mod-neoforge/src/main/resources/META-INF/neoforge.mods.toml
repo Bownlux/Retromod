@@ -17,13 +17,13 @@ forward at load time. Test results are logged with the [Retromod-Test-NeoForge] 
 [[dependencies.retromod_test_mod_neoforge]]
 modId = "neoforge"
 type = "required"
-versionRange = "[20,)"
+versionRange = "[21.1,)"
 ordering = "NONE"
 side = "CLIENT"
 
 [[dependencies.retromod_test_mod_neoforge]]
 modId = "minecraft"
 type = "required"
-versionRange = "[1.20,)"
+versionRange = "[1.21.1]"
 ordering = "NONE"
 side = "CLIENT"

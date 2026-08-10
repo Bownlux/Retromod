@@ -25,7 +25,7 @@ import java.util.*;
  */
 public class RetromodCli {
     
-    private static final String VERSION = "1.3.0-snapshot.4";
+    private static final String VERSION = RetromodVersion.RETROMOD_VERSION;
     // Each command can override this with --target.
     private static String TARGET_MC_VERSION = "26.1";
     
@@ -415,9 +415,11 @@ public class RetromodCli {
             System.err.println("Retromod could not determine the source Minecraft version.");
             System.err.println("It will try every shim that applies to the target.");
             RetromodTransformer transformer = RetromodTransformer.getInstance();
+            registerOfflineSrgMappings(transformer, info);
             registerAllShimsGated(transformer);
             // Offline output needs the same removed API replacements as a normal launch.
             new com.retromod.polyfill.PolyfillRegistry().loadAndRegister(transformer);
+            registerOfflinePre26FabricBridges(transformer, info);
             register26xTargetMappings(transformer, info);
             transformJar(modPath, outputPath, transformer, info);
             com.retromod.core.SyntheticEmbedder.embedIntoJar(
@@ -434,6 +436,7 @@ public class RetromodCli {
         );
 
         RetromodTransformer transformer = RetromodTransformer.getInstance();
+        registerOfflineSrgMappings(transformer, info);
         for (VersionShim shim : chain) {
             System.out.println("Applying: " + shim.getShimName());
             shim.registerRedirects(transformer);
@@ -441,6 +444,7 @@ public class RetromodCli {
 
         // Offline output needs the same removed API replacements as a normal launch.
         new com.retromod.polyfill.PolyfillRegistry().loadAndRegister(transformer);
+        registerOfflinePre26FabricBridges(transformer, info);
 
         // API shims have their own versions and sit outside the Minecraft version path.
         java.util.Set<VersionShim> chainSet = new java.util.HashSet<>(chain);
@@ -583,6 +587,7 @@ public class RetromodCli {
             RetromodTransformer transformer, ModVersionInfo info, List<VersionShim> chain) {
         // Batch and ahead-of-time paths both reach polyfills through this helper.
         new com.retromod.polyfill.PolyfillRegistry().loadAndRegister(transformer);
+        int srgMappings = registerOfflineSrgMappings(transformer, info);
         java.util.Set<VersionShim> chainSet = new java.util.HashSet<>(chain);
         int apiApplied = 0;
         // Unit tests can exercise this helper without starting the CLI.
@@ -601,6 +606,12 @@ public class RetromodCli {
                 // One optional API shim should not block the others.
             }
         }
+
+        // Pre-26 Fabric hosts keep intermediary names. The runtime path discovers this
+        // 1.21.2 descriptor change from host bytes, but offline transforms have no host jar.
+        // Register it from the requested target version so transformed ENGRAM jars work
+        // without depending on a later JIT pass.
+        registerOfflinePre26FabricBridges(transformer, info);
 
         int classMovesApplied = 0;
         int memberMappings = 0;
@@ -651,11 +662,42 @@ public class RetromodCli {
             }
         }
 
-        if (apiApplied == 0 && classMovesApplied == 0 && memberMappings == 0) {
+        if (apiApplied == 0 && classMovesApplied == 0 && memberMappings == 0
+                && srgMappings == 0) {
             return null;
         }
         return "Applied alongside the version chain: " + apiApplied + " API shim(s), "
-                + classMovesApplied + " class move(s), " + memberMappings + " member mapping(s).";
+                + classMovesApplied + " class move(s), " + memberMappings
+                + " member mapping(s), " + srgMappings + " SRG mapping(s).";
+    }
+
+    private static void registerOfflinePre26FabricBridges(
+            RetromodTransformer transformer, ModVersionInfo info) {
+        if ("fabric".equalsIgnoreCase(info.modLoaderType())
+                && !com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)
+                && !com.retromod.core.RetromodVersion.mcVersionExceeds("1.21.2", TARGET_MC_VERSION)) {
+            com.retromod.shim.fabric.Pre1_21_2EntityTypeBuildBridge.registerRedirects(transformer);
+        }
+    }
+
+    /** Mirrors the Forge and NeoForge entry points for offline transforms. */
+    private static int registerOfflineSrgMappings(
+            RetromodTransformer transformer, ModVersionInfo info) {
+        String loader = info.modLoaderType();
+        if (!"forge".equalsIgnoreCase(loader) && !"neoforge".equalsIgnoreCase(loader)) {
+            return 0;
+        }
+        // Pre-26 Forge runtimes still expose their current SRG member names. Mapping an
+        // old SRG name to Mojang here would bypass Forge's normal reobfuscation path and
+        // leave an official member name that does not exist in the runtime jar.
+        if (!com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)) {
+            return 0;
+        }
+        try {
+            return com.retromod.mapping.SrgToMojangMapper.getInstance().applyTo(transformer);
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     private static void batchCommand(String[] args) throws Exception {
@@ -983,6 +1025,15 @@ public class RetromodCli {
                     && inJar.getEntry("META-INF/mods.toml") != null
                     && inJar.getEntry("META-INF/neoforge.mods.toml") == null;
 
+            try (var hierarchyScope = transformer.pushJarClassBytesProvider(name -> {
+                var classEntry = inJar.getJarEntry(name + ".class");
+                if (classEntry == null) return null;
+                try (var classInput = inJar.getInputStream(classEntry)) {
+                    return com.retromod.util.ZipSecurity.safeReadAllBytes(classInput);
+                } catch (IOException e) {
+                    return null;
+                }
+            })) {
             var entries = inJar.entries();
             // Aggregate decompression cap: the per-entry safeReadAllBytes below bounds MEMORY, but a
             // high-entry-count jar could still force hundreds of GB of inflate/deflate work (CPU DoS).
@@ -1032,6 +1083,11 @@ public class RetromodCli {
                                     .stripLenientAutoSubscriber(data);
                             data = com.retromod.shim.forge.Forge1122LifecycleSynthetics
                                     .upgradeLegacyModClass(data);
+                            if (com.retromod.core.RetromodVersion
+                                    .isUnobfuscatedTarget(TARGET_MC_VERSION)) {
+                                data = com.retromod.shim.common.LegacyAbstractButtonBridge
+                                        .apply(data);
+                            }
                         } else if (entry.getName().equals("fabric.mod.json")) {
                             data = relaxFabricModDependencies(data);
                         } else if (entry.getName().equals("quilt.mod.json")) {
@@ -1106,6 +1162,7 @@ public class RetromodCli {
                         com.retromod.util.ZipSecurity.safeEntryName(def.getKey())));
                 outJar.write(def.getValue());
                 outJar.closeEntry();
+            }
             }
         }
     }
@@ -1213,11 +1270,14 @@ public class RetromodCli {
             var bais = new java.io.ByteArrayInputStream(jarData);
             var baos = new java.io.ByteArrayOutputStream(jarData.length);
             boolean modified = false;
+            RetromodTransformer transformer = RetromodTransformer.getInstance();
+            Map<String, byte[]> classBytes = RetromodTransformer.readJarClassBytes(jarData);
             // Built here rather than reused, because it snapshots the redirects registered so far.
             var nestedMixins = new com.retromod.mixin.MixinCompatibilityTransformer(
-                    RetromodTransformer.getInstance());
+                    transformer);
 
-            try (var jis = new java.util.jar.JarInputStream(bais);
+            try (var hierarchyScope = transformer.pushJarClassBytesProvider(classBytes::get);
+                 var jis = new java.util.jar.JarInputStream(bais);
                  var jos = new java.util.jar.JarOutputStream(baos)) {
 
                 java.util.jar.JarEntry entry;
@@ -1232,7 +1292,7 @@ public class RetromodCli {
                         if (name.endsWith(".class")) {
                             String className = name.substring(0, name.length() - ".class".length());
                             try {
-                                byte[] t = RetromodTransformer.getInstance().transformClass(data, className);
+                                byte[] t = transformer.transformClass(data, className);
                                 if (t != null && t != data) { data = t; modified = true; }
                             } catch (Exception ignored) {
                                 // leave the class untouched on any transform error
@@ -1322,6 +1382,11 @@ public class RetromodCli {
                 boolean isCoreDependent = isMinecraft || isNeoForge || isForge;
 
                 // Maven range format: [1.21,1.21.1) or [1.21.8,1.22)
+                // Exact ranges such as [1.21.1] reject every newer host too (#188, Caelum).
+                block = block.replaceAll(
+                    "(versionRange\\s*=\\s*\")\\[([^,\\]\"]+)\\]\"",
+                    "$1[$2,)\""
+                );
                 block = block.replaceAll(
                     "(versionRange\\s*=\\s*\")\\[([^,\"]+),[^\"]*\"",
                     "$1[$2,)\""

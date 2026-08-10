@@ -24,6 +24,8 @@ import com.retromod.testmod.tests.SoundParticleTests;
 import com.retromod.testmod.tests.StatusEffectTests;
 import com.retromod.testmod.tests.TagTests;
 import com.retromod.testmod.tests.Test05SuperKeyPressed;
+import com.retromod.testmod.tests.Test06RenderPipelineBridge;
+import com.retromod.testmod.tests.Test07PlayerModelPartsAccessor;
 import com.retromod.testmod.tests.TextTests;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,6 +72,8 @@ public final class TestRunner {
         all.addAll(TagTests.all());
         all.addAll(MiscApiTests.all());
         all.add(new Test05SuperKeyPressed());
+        all.add(new Test06RenderPipelineBridge());
+        all.add(new Test07PlayerModelPartsAccessor());
         return List.copyOf(all);
     }
 

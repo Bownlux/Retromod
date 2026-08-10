@@ -11,6 +11,7 @@
 package com.retromod.shim.neoforge;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.SyntheticEmbedder;
 import com.retromod.core.VersionShim;
 
 /**
@@ -42,6 +43,10 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        SyntheticEmbedder.registerClassResource(
+                transformer,
+                "com/retromod/shim/neoforge/embedded/ReloadListenerEventShim",
+                NeoForge_1_21_11_to_26_1.class);
 
         // Vanilla 1.21.11 to 26.1 class moves, shared with the Fabric 26.1 shim. Also
         // in mojang-class-moves-26.1.tsv, but registering here too makes them apply on
@@ -245,6 +250,26 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
                 "com/retromod/shim/neoforge/embedded/ReloadListenerEventShim", "addListener",
                 "(Ljava/lang/Object;Ljava/lang/Object;)V",
                 true  // devirtualize: event.addListener(l) -> shim.addListener(event, l)
+            );
+        }
+
+        // The client companion changed in the same way: the old event was deleted, and its
+        // registerReloadListener(listener) call became addListener(id, listener). Caelum 2.0.0.0
+        // reaches both during mod construction, so moving only the event parameter still leaves a
+        // NoSuchMethodError when the handler fires (#188). Reuse the server bridge because the new
+        // client and server events share SortedReloadListenerEvent's two-argument method.
+        String oldClientReload =
+                "net/neoforged/neoforge/client/event/RegisterClientReloadListenersEvent";
+        String newClientReload =
+                "net/neoforged/neoforge/client/event/AddClientReloadListenersEvent";
+        transformer.registerClassRedirect(oldClientReload, newClientReload);
+        for (String owner : new String[]{oldClientReload, newClientReload}) {
+            transformer.registerMethodRedirect(
+                owner, "registerReloadListener",
+                "(Lnet/minecraft/server/packs/resources/PreparableReloadListener;)V",
+                "com/retromod/shim/neoforge/embedded/ReloadListenerEventShim", "addListener",
+                "(Ljava/lang/Object;Ljava/lang/Object;)V",
+                true
             );
         }
 

@@ -12,6 +12,7 @@ import net.minecraft.nbt.StringTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.packs.resources.ResourceManagerReloadListener;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.ItemStack;
@@ -20,6 +21,8 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -49,8 +52,18 @@ public class RetromodTestModNeoForge {
     private static final Logger LOG = LoggerFactory.getLogger("Retromod-Test-NeoForge");
     private static final String PREFIX = "[Retromod-Test-NeoForge]";
 
-    public RetromodTestModNeoForge() {
+    public RetromodTestModNeoForge(IEventBus modBus) {
+        // #188: 26.1 renamed this event and changed its registration method from one argument to
+        // an id plus listener. Keeping a real old-signature listener in the test mod proves the
+        // handler descriptor and call site both survive the transform. The callback log proves the
+        // embedded bridge also works when the client reload actually runs.
+        modBus.addListener(this::registerClientReloadListener);
         runTests();
+    }
+
+    private void registerClientReloadListener(RegisterClientReloadListenersEvent event) {
+        event.registerReloadListener((ResourceManagerReloadListener) resourceManager ->
+                LOG.info("{} #188 client reload-listener bridge fired", PREFIX));
     }
 
     private void runTests() {

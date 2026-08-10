@@ -64,9 +64,8 @@ public class FabricNetworkingPolyfill implements PolyfillProvider {
             "net/fabricmc/fabric/api/networking/v1/ServerPlayNetworking$PlayChannelHandler",
             "com/retromod/polyfill/fabric/embedded/ServerPlayChannelHandler");
 
-        transformer.registerClassRedirect(
-            "net/fabricmc/fabric/api/client/networking/v1/ClientPlayNetworking$PlayChannelHandler",
-            "com/retromod/polyfill/fabric/embedded/ClientPlayChannelHandler");
+        // FabricClientNetworkingV1Shim owns the client handler and its call redirects.
+        // It selects an intermediary or Mojang synthetic SAM from the running host.
 
         // Source descriptors use post-remapping names: ClassRemapper (outer) runs before
         // RetromodClassVisitor (inner), so by the time the method visitor sees the bytecode
@@ -80,23 +79,6 @@ public class FabricNetworkingPolyfill implements PolyfillProvider {
             "com/retromod/polyfill/fabric/embedded/FabricNetworkingBridge",
             "registerServerGlobalReceiver",
             "(Ljava/lang/Object;Ljava/lang/Object;)Z");
-
-        transformer.registerMethodRedirect(
-            "net/fabricmc/fabric/api/client/networking/v1/ClientPlayNetworking",
-            "registerGlobalReceiver",
-            "(Lnet/minecraft/resources/Identifier;Lcom/retromod/polyfill/fabric/embedded/ClientPlayChannelHandler;)Z",
-            "com/retromod/polyfill/fabric/embedded/FabricNetworkingBridge",
-            "registerClientGlobalReceiver",
-            "(Ljava/lang/Object;Ljava/lang/Object;)Z");
-
-        // bridge wraps the old raw-bytes-on-a-channel send into a CustomPacketPayload
-        transformer.registerMethodRedirect(
-            "net/fabricmc/fabric/api/client/networking/v1/ClientPlayNetworking",
-            "send",
-            "(Lnet/minecraft/resources/Identifier;Lnet/minecraft/network/FriendlyByteBuf;)V",
-            "com/retromod/polyfill/fabric/embedded/FabricNetworkingBridge",
-            "clientSend",
-            "(Ljava/lang/Object;Ljava/lang/Object;)V");
 
         // Server: send(ServerPlayer, Identifier, FriendlyByteBuf) -> void
         transformer.registerMethodRedirect(

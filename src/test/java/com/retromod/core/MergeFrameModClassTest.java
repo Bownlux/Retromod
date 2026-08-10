@@ -34,9 +34,11 @@ import static org.objectweb.asm.Opcodes.*;
 class MergeFrameModClassTest {
 
     private final RetromodTransformer transformer = RetromodTransformer.getInstance();
+    private String savedVersion;
 
     @AfterEach
     void tearDown() {
+        if (savedVersion != null) RetromodVersion.TARGET_MC_VERSION = savedVersion;
         transformer.clearJarClassBytesProvider();
         transformer.clearRedirectsForTesting();
     }
@@ -107,6 +109,8 @@ class MergeFrameModClassTest {
     @Test
     @DisplayName("with the jar class-bytes provider, the merge resolves to the mod superclass (valid frame)")
     void mergeResolvesToModSuper() {
+        savedVersion = RetromodVersion.TARGET_MC_VERSION;
+        RetromodVersion.TARGET_MC_VERSION = "26.2";
         byte[] oldCombat = modClass("rmtest/OldCombat", "java/lang/Object");
         byte[] newCombat = modClass("rmtest/NewCombat", "rmtest/OldCombat");
         Function<String, byte[]> provider = n ->

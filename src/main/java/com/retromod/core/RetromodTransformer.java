@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.instrument.ClassFileTransformer;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.ProtectionDomain;
@@ -22,6 +23,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
+import java.util.jar.JarEntry;
+import java.util.jar.JarInputStream;
+
+import com.retromod.util.ZipSecurity;
 
 /**
  * Core ASM bytecode transformer that rewrites class/method/field references at load time.
@@ -151,12 +156,84 @@ public class RetromodTransformer implements ClassFileTransformer {
     // transform classpath yet, but ASM still needs their hierarchy to compute valid frames.
     private volatile Function<String, byte[]> jarClassBytes;
 
+    // A nested jar must temporarily replace the outer jar's hierarchy on the current transform
+    // thread. A thread-local stack keeps recursive JiJ transforms isolated without disturbing a
+    // parallel class pass that is using the outer provider on another worker.
+    private final ThreadLocal<ArrayDeque<Function<String, byte[]>>> scopedJarClassBytes =
+            ThreadLocal.withInitial(ArrayDeque::new);
+
+    @FunctionalInterface
+    public interface JarClassBytesScope extends AutoCloseable {
+        @Override
+        void close();
+    }
+
     public void setJarClassBytesProvider(Function<String, byte[]> provider) {
         this.jarClassBytes = provider;
     }
 
     public void clearJarClassBytesProvider() {
         this.jarClassBytes = null;
+    }
+
+    /** Temporarily use a class hierarchy for the current thread, restoring it on close. */
+    public JarClassBytesScope pushJarClassBytesProvider(Function<String, byte[]> provider) {
+        Objects.requireNonNull(provider, "provider");
+        ArrayDeque<Function<String, byte[]>> providers = scopedJarClassBytes.get();
+        providers.push(provider);
+        AtomicBoolean closed = new AtomicBoolean();
+        return () -> {
+            if (!closed.compareAndSet(false, true)) return;
+            ArrayDeque<Function<String, byte[]>> current = scopedJarClassBytes.get();
+            if (!current.isEmpty()) current.pop();
+            if (current.isEmpty()) scopedJarClassBytes.remove();
+        };
+    }
+
+    private Function<String, byte[]> currentJarClassBytesProvider() {
+        ArrayDeque<Function<String, byte[]>> providers = scopedJarClassBytes.get();
+        return providers.isEmpty() ? jarClassBytes : providers.peek();
+    }
+
+    /** Reads the class entries of an in-memory nested jar for frame hierarchy resolution. */
+    public static Map<String, byte[]> readJarClassBytes(byte[] jarData) throws IOException {
+        Map<String, byte[]> classes = new LinkedHashMap<>();
+        long total = 0;
+        try (JarInputStream jar = new JarInputStream(new ByteArrayInputStream(jarData))) {
+            JarEntry entry;
+            while ((entry = jar.getNextJarEntry()) != null) {
+                if (entry.isDirectory() || !entry.getName().endsWith(".class")) continue;
+                byte[] bytes = ZipSecurity.safeReadAllBytes(jar);
+                total += bytes.length;
+                if (total > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
+                    throw new IOException("nested jar classes exceed max decompressed size");
+                }
+                String name = entry.getName().substring(0, entry.getName().length() - 6);
+                classes.put(name, bytes);
+            }
+        }
+        return classes;
+    }
+
+    /**
+     * Best common superclass for a frame merge when the classpath cannot answer.
+     *
+     * <p>Shared with writers outside this class so they get the same answer it does. The order
+     * matters: the mod's own jar is consulted first, because a merge of two of the mod's types has
+     * a real answer sitting in that jar, and widening it to {@code Object} produces a class the
+     * verifier rejects as soon as the value is used (#180). Only when nothing can be read does this
+     * fall back to the naming-based guess that keeps exception merges working (#94).
+     */
+    public static String resolveCommonSuperClass(String type1, String type2) {
+        Function<String, byte[]> provider = INSTANCE == null
+                ? null : INSTANCE.currentJarClassBytesProvider();
+        if (provider != null) {
+            String shared = commonSuperViaBytes(type1, type2, provider);
+            if (shared != null) {
+                return shared;
+            }
+        }
+        return commonSuperFallback(type1, type2);
     }
 
     // new Foo(args) -> Foo.factory(args), for constructors replaced by static factories
@@ -193,6 +270,9 @@ public class RetromodTransformer implements ClassFileTransformer {
     private final Map<String, byte[]> syntheticClasses = new ConcurrentHashMap<>();
     // Synthetic classes generated as INTERFACES; redirect emission consults this for the itf flag.
     private final Set<String> interfaceSyntheticTargets = ConcurrentHashMap.newKeySet();
+    // Compiled embedded shims that are classes. Calls redirected from an old interface must not
+    // retain INVOKEINTERFACE or an InterfaceMethodref when their replacement owner is a class.
+    private final Set<String> classShimTargets = ConcurrentHashMap.newKeySet();
 
     // Indexes the target MC JAR and scores candidate methods/fields when no hardcoded
     // redirect is found. Never overrides a hardcoded redirect. Lazily initialized.
@@ -355,11 +435,16 @@ public class RetromodTransformer implements ClassFileTransformer {
     public void registerMethodRedirect(
             String oldOwner, String oldName, String oldDesc,
             String newOwner, String newName, String newDesc) {
-        
+        if (oldOwner.equals(newOwner) && oldName.equals(newName) && oldDesc.equals(newDesc)) {
+            LOGGER.debug("Ignored identity method-redirect registration for: {}.{}{}",
+                    oldOwner, oldName, oldDesc);
+            return;
+        }
         MethodKey key = new MethodKey(oldOwner, oldName, oldDesc);
         MethodTarget target = new MethodTarget(newOwner, newName, newDesc);
         methodRedirects.put(key, target);
         methodRedirectOwners.add(oldOwner); // track owners for the fast-path skip
+        registerRemappedMethodAlias(oldOwner, oldName, oldDesc, target);
         
         LOGGER.debug("Registered method redirect: {}.{}{} -> {}.{}{}",
                 oldOwner, oldName, oldDesc, newOwner, newName, newDesc);
@@ -376,10 +461,48 @@ public class RetromodTransformer implements ClassFileTransformer {
             String newOwner, String newName, String newDesc,
             boolean devirtualize) {
 
+        if (!devirtualize && oldOwner.equals(newOwner) && oldName.equals(newName)
+                && oldDesc.equals(newDesc)) {
+            LOGGER.debug("Ignored identity method-redirect registration for: {}.{}{}",
+                    oldOwner, oldName, oldDesc);
+            return;
+        }
+
         MethodKey key = new MethodKey(oldOwner, oldName, oldDesc);
         MethodTarget target = new MethodTarget(newOwner, newName, newDesc, devirtualize);
         methodRedirects.put(key, target);
         methodRedirectOwners.add(oldOwner);
+        registerRemappedMethodAlias(oldOwner, oldName, oldDesc, target);
+    }
+
+    /**
+     * ClassRemapper runs before the instruction visitor, so a method paired with a class redirect
+     * arrives under the replacement owner and descriptor. Keep an alias for that final call shape.
+     */
+    private void registerRemappedMethodAlias(String oldOwner, String oldName, String oldDesc,
+            MethodTarget target) {
+        String remappedOwner = classRedirects.getOrDefault(oldOwner, oldOwner);
+        String remappedDesc = resolveDescriptor(oldDesc);
+        if (remappedOwner.equals(oldOwner) && remappedDesc.equals(oldDesc)) {
+            return;
+        }
+        methodRedirects.put(new MethodKey(remappedOwner, oldName, remappedDesc), target);
+        methodRedirectOwners.add(remappedOwner);
+    }
+
+    /** Rebuild aliases when a later class redirect changes an already registered descriptor. */
+    private void refreshRemappedMethodAliases(String redirectedClass) {
+        List<Map.Entry<MethodKey, MethodTarget>> registrations =
+                new ArrayList<>(methodRedirects.entrySet());
+        for (Map.Entry<MethodKey, MethodTarget> registration : registrations) {
+            MethodKey key = registration.getKey();
+            if (!key.owner().equals(redirectedClass)
+                    && !key.desc().contains("L" + redirectedClass + ";")) {
+                continue;
+            }
+            registerRemappedMethodAlias(
+                    key.owner(), key.name(), key.desc(), registration.getValue());
+        }
     }
 
     /**
@@ -566,6 +689,10 @@ public class RetromodTransformer implements ClassFileTransformer {
             return;
         }
         classRedirects.put(oldClass, newClass);
+        if (newClass.startsWith("com/retromod/")) {
+            recordCompiledOwnerKind(newClass);
+        }
+        refreshRemappedMethodAliases(oldClass);
         classRedirectsVersion.incrementAndGet(); // Invalidate cached remapper
         cachedRemapper = null;
         LOGGER.debug("Registered class redirect: {} -> {}", oldClass, newClass);
@@ -810,6 +937,11 @@ public class RetromodTransformer implements ClassFileTransformer {
         return staticFieldAccessors.size();
     }
 
+    /** Number of direct field-to-getter/setter bridges, exposed for diagnostics and tests. */
+    public int getFieldAccessorRedirectCount() {
+        return fieldAccessorRedirects.size();
+    }
+
     /**
      * Register a "hop" accessor for an instance field that moved onto an object reachable through a
      * PUBLIC sibling field of the same owner. {@code GETFIELD owner.name} becomes
@@ -889,6 +1021,21 @@ public class RetromodTransformer implements ClassFileTransformer {
      */
     public void registerEmbeddedShim(String className) {
         embeddedShimClasses.add(className);
+        recordCompiledOwnerKind(className.replace('.', '/'));
+    }
+
+    private void recordCompiledOwnerKind(String internalName) {
+        ClassLoader loader = RetromodTransformer.class.getClassLoader();
+        try {
+            Class<?> shimType = Class.forName(internalName.replace('/', '.'), false, loader);
+            if (shimType.isInterface()) {
+                interfaceSyntheticTargets.add(internalName);
+            } else {
+                classShimTargets.add(internalName);
+            }
+        } catch (ClassNotFoundException | LinkageError e) {
+            LOGGER.debug("Could not inspect redirect target kind for {}", internalName, e);
+        }
     }
 
     /**
@@ -910,6 +1057,8 @@ public class RetromodTransformer implements ClassFileTransformer {
             if ((new org.objectweb.asm.ClassReader(classBytes).getAccess()
                     & Opcodes.ACC_INTERFACE) != 0) {
                 interfaceSyntheticTargets.add(internalName);
+            } else {
+                classShimTargets.add(internalName);
             }
         } catch (Exception ignored) {
         }
@@ -984,6 +1133,7 @@ public class RetromodTransformer implements ClassFileTransformer {
     public void clearRedirectsForTesting() {
         methodRedirects.clear();
         interfaceSyntheticTargets.clear();
+        classShimTargets.clear();
         argDropRedirects.clear();
         argDropOwners.clear();
         convertingRedirects.clear();
@@ -1274,7 +1424,11 @@ public class RetromodTransformer implements ClassFileTransformer {
         // than a threaded "dirty" flag: ASM is deterministic, so same input = same output.
         byte[] current = originalBytes;
         for (int pass = 1; pass <= MAX_TRANSFORM_ITERATIONS; pass++) {
-            byte[] next = singleTransformPass(current, className);
+            // Constructor rewrites are resolved against the fully remapped owner during the
+            // first pass. Re-running the constructor pre-pass is both unnecessary and harmful:
+            // an unmatched overload has to be temporarily spilled below NEW, so every later
+            // pass used to add another redundant store/load pair (#70 acceptance profile).
+            byte[] next = singleTransformPass(current, className, pass == 1);
             totalPassesPerformed.incrementAndGet();
 
             if (pass == 1) {
@@ -1326,10 +1480,17 @@ public class RetromodTransformer implements ClassFileTransformer {
      * regardless of how many iterative passes it needed.
      */
     private byte[] postProcess(byte[] stableBytes, String className) {
-        if (!REFLECTION_REMAP_ENABLED) return stableBytes;
+        byte[] repaired = normalizeEmbeddedShimCalls(stableBytes);
+        repaired = com.retromod.shim.fabric.LegacyFabricItemIdRepair
+                .apply(repaired, className);
+        repaired = com.retromod.shim.fabric.LegacyPatchouliGsonRepair
+                .apply(repaired, className);
+        repaired = com.retromod.shim.fabric.LegacyPatchouliBufferRepair
+                .apply(repaired, className);
+        if (!REFLECTION_REMAP_ENABLED) return repaired;
         try {
-            byte[] remapped = getReflectionRemapper().remap(stableBytes);
-            if (remapped != stableBytes) {
+            byte[] remapped = getReflectionRemapper().remap(repaired);
+            if (remapped != repaired) {
                 // The remapper returns the same reference if nothing changed, so inequality
                 // means a rewrite happened. Count it for the diagnostic summary.
                 reflectionRemapPassesPerformed.incrementAndGet();
@@ -1338,8 +1499,56 @@ public class RetromodTransformer implements ClassFileTransformer {
         } catch (Exception e) {
             // Reflection remapping is advisory; a failure shouldn't break the transform.
             LOGGER.debug("Reflection remap skipped for {}: {}", className, e.getMessage());
-            return stableBytes;
+            return repaired;
         }
+    }
+
+    /**
+     * Correct invocation kind after class remapping has selected the final embedded owner.
+     * ASM preserves the old owner's interface flag during a plain class redirect. That produces
+     * an invalid InterfaceMethodref when an old API interface is replaced by a compiled class.
+     */
+    private byte[] normalizeEmbeddedShimCalls(byte[] bytes) {
+        if (classShimTargets.isEmpty() && interfaceSyntheticTargets.isEmpty()) {
+            return bytes;
+        }
+        ClassReader reader = new ClassReader(bytes);
+        ClassWriter writer = new ClassWriter(reader, 0);
+        AtomicBoolean changed = new AtomicBoolean(false);
+        ClassVisitor visitor = new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor,
+                    String signature, String[] exceptions) {
+                MethodVisitor delegate = super.visitMethod(
+                        access, name, descriptor, signature, exceptions);
+                return new MethodVisitor(Opcodes.ASM9, delegate) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String methodName,
+                            String methodDescriptor, boolean isInterface) {
+                        int correctedOpcode = opcode;
+                        boolean correctedInterface = isInterface;
+                        if (classShimTargets.contains(owner)) {
+                            if (opcode == Opcodes.INVOKEINTERFACE) {
+                                correctedOpcode = Opcodes.INVOKEVIRTUAL;
+                            }
+                            correctedInterface = false;
+                        } else if (interfaceSyntheticTargets.contains(owner)) {
+                            if (opcode == Opcodes.INVOKEVIRTUAL) {
+                                correctedOpcode = Opcodes.INVOKEINTERFACE;
+                            }
+                            correctedInterface = true;
+                        }
+                        if (correctedOpcode != opcode || correctedInterface != isInterface) {
+                            changed.set(true);
+                        }
+                        super.visitMethodInsn(correctedOpcode, owner, methodName,
+                                methodDescriptor, correctedInterface);
+                    }
+                };
+            }
+        };
+        reader.accept(visitor, 0);
+        return changed.get() ? writer.toByteArray() : bytes;
     }
 
     /**
@@ -1353,14 +1562,15 @@ public class RetromodTransformer implements ClassFileTransformer {
     private byte[] identityReserialize(byte[] originalBytes, String className) {
         try {
             ClassReader reader = new ClassReader(originalBytes);
+            Function<String, byte[]> classBytesProvider = currentJarClassBytesProvider();
             // mirror singleTransformPass's remapper-presence condition (line ~930)
             boolean hasClassRemaps = cachedRemapper != null
                     || !classRedirects.isEmpty()
                     || !intermediaryMethodNames.isEmpty() || !intermediaryFieldNames.isEmpty()
                     || !mojangMethodRenames.isEmpty();
             ClassWriter writer = hasClassRemaps
-                    ? new SafeClassWriter(ClassWriter.COMPUTE_FRAMES, jarClassBytes)
-                    : new SafeClassWriter(reader, ClassWriter.COMPUTE_FRAMES, jarClassBytes);
+                    ? new SafeClassWriter(ClassWriter.COMPUTE_FRAMES, classBytesProvider)
+                    : new SafeClassWriter(reader, ClassWriter.COMPUTE_FRAMES, classBytesProvider);
             // NO RetromodClassVisitor here: it consults the live redirect maps, which would make
             // the baseline equal pass 1 for changed classes too (false "unchanged"). When nothing
             // matches, RetromodClassVisitor is pure delegation, so leaving it out of the identity
@@ -1394,7 +1604,8 @@ public class RetromodTransformer implements ClassFileTransformer {
      * @param className     JVM internal name of the class, used only for logging
      * @return transformed bytes, or {@code originalBytes} if the visitor chain fails completely
      */
-    private byte[] singleTransformPass(byte[] originalBytes, String className) {
+    private byte[] singleTransformPass(byte[] originalBytes, String className,
+            boolean applyConstructorRedirects) {
         ClassReader reader = new ClassReader(originalBytes);
 
         // Use the cached remapper if class redirects haven't changed; the cache is invalidated
@@ -1523,9 +1734,29 @@ public class RetromodTransformer implements ClassFileTransformer {
         // flags) copies the reader's constant pool, so the remapper's name changes wouldn't reach
         // the output. A standalone ClassWriter forces ASM to build a fresh constant pool.
         boolean hasClassRemaps = (classRemapper != null);
+        boolean hasApplicableConstructorRedirect = applyConstructorRedirects
+                && hasMatchingConstructorRedirect(reader, classRemapper);
+
+        // Pre-26.1 Fabric keeps the intermediary hierarchy. Those Minecraft classes are not on
+        // the offline CLI classpath, so recomputing an Entity/ClientPlayer join widens it to
+        // Object and can make an otherwise unchanged call fail verification (#179, ENGRAM's
+        // offscreen camera restore). Preserve javac's precise frames whenever this pass only
+        // performs frame-neutral substitutions. Structural rewrites still use the normal
+        // COMPUTE_FRAMES path below.
+        if (!RetromodVersion.isUnobfuscatedTarget(RetromodVersion.TARGET_MC_VERSION)
+                && hasStackMapFrames(reader)) {
+            byte[] preserved = transformPreservingFrames(
+                    reader, className, classRemapper, hasClassRemaps,
+                    hasApplicableConstructorRedirect);
+            if (preserved != null) {
+                return preserved;
+            }
+        }
+
+        Function<String, byte[]> classBytesProvider = currentJarClassBytesProvider();
         ClassWriter writer = hasClassRemaps
-            ? new SafeClassWriter(ClassWriter.COMPUTE_FRAMES, jarClassBytes)
-            : new SafeClassWriter(reader, ClassWriter.COMPUTE_FRAMES, jarClassBytes);
+            ? new SafeClassWriter(ClassWriter.COMPUTE_FRAMES, classBytesProvider)
+            : new SafeClassWriter(reader, ClassWriter.COMPUTE_FRAMES, classBytesProvider);
 
         ClassVisitor visitor = writer;
 
@@ -1540,7 +1771,7 @@ public class RetromodTransformer implements ClassFileTransformer {
 
         // Constructor->factory rewriting runs OUTERMOST (upstream of the remapper) so it
         // sees pre-remap owner names; see CtorRedirectPrePass for why that matters.
-        if (!constructorRedirects.isEmpty()) {
+        if (hasApplicableConstructorRedirect) {
             visitor = new CtorRedirectPrePass(Opcodes.ASM9, visitor, classRemapper);
         }
 
@@ -1573,7 +1804,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                 if (classRemapper != null) {
                     fallbackVisitor = new ClassRemapper(fallbackVisitor, classRemapper);
                 }
-                if (!constructorRedirects.isEmpty()) {
+                if (hasApplicableConstructorRedirect) {
                     fallbackVisitor = new CtorRedirectPrePass(Opcodes.ASM9, fallbackVisitor,
                             classRemapper);
                 }
@@ -1601,6 +1832,85 @@ public class RetromodTransformer implements ClassFileTransformer {
                 LOGGER.warn("Transform failed for {}, returning original: {}", className, e2.getMessage());
                 return originalBytes;
             }
+        }
+    }
+
+    private static boolean hasStackMapFrames(ClassReader reader) {
+        boolean[] found = {false};
+        reader.accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor,
+                    String signature, String[] exceptions) {
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitFrame(int type, int numLocal, Object[] local,
+                            int numStack, Object[] stack) {
+                        found[0] = true;
+                    }
+                };
+            }
+        }, ClassReader.SKIP_DEBUG);
+        return found[0];
+    }
+
+    /** Whether this class contains a constructor invocation covered by the registered factories. */
+    private boolean hasMatchingConstructorRedirect(ClassReader reader, Remapper remapper) {
+        if (constructorRedirects.isEmpty()) return false;
+        boolean[] found = {false};
+        reader.accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor,
+                    String signature, String[] exceptions) {
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String methodName,
+                            String methodDesc, boolean isInterface) {
+                        if (found[0] || opcode != Opcodes.INVOKESPECIAL
+                                || !"<init>".equals(methodName)) return;
+                        String resolvedOwner = remapper == null ? owner : remapper.mapType(owner);
+                        String resolvedDesc = remapper == null
+                                ? methodDesc : remapper.mapMethodDesc(methodDesc);
+                        found[0] = constructorRedirects.containsKey(
+                                new ConstructorKey(resolvedOwner, resolvedDesc))
+                                || (!resolvedDesc.equals(methodDesc) && constructorRedirects.containsKey(
+                                        new ConstructorKey(resolvedOwner, methodDesc)))
+                                || (!resolvedOwner.equals(owner) && constructorRedirects.containsKey(
+                                        new ConstructorKey(owner, methodDesc)));
+                    }
+                };
+            }
+        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return found[0];
+    }
+
+    private byte[] transformPreservingFrames(ClassReader reader, String className,
+            Remapper classRemapper, boolean hasClassRemaps,
+            boolean applyConstructorRedirects) {
+        try {
+            ClassWriter writer = hasClassRemaps
+                    ? new SafeClassWriter(ClassWriter.COMPUTE_MAXS)
+                    : new SafeClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+            ClassVisitor visitor = writer;
+            RetromodClassVisitor bodyVisitor = new RetromodClassVisitor(Opcodes.ASM9, visitor);
+            visitor = bodyVisitor;
+            if (classRemapper != null) {
+                visitor = new ClassRemapper(visitor, classRemapper);
+            }
+            if (applyConstructorRedirects && !constructorRedirects.isEmpty()) {
+                visitor = new CtorRedirectPrePass(Opcodes.ASM9, visitor, classRemapper);
+            }
+
+            frameInvalidatingRewrite.set(Boolean.FALSE);
+            reader.accept(visitor, 0);
+            if (bodyVisitor.structurallyChangedFrames()) {
+                return null;
+            }
+            byte[] result = writer.toByteArray();
+            return hasClassRemaps ? deduplicateMethods(result, className) : result;
+        } catch (Exception e) {
+            return null;
+        } finally {
+            frameInvalidatingRewrite.set(Boolean.FALSE);
         }
     }
 
@@ -1895,7 +2205,8 @@ public class RetromodTransformer implements ClassFileTransformer {
 
         // Now rebuild, keeping only the first method whose access matches "best",
         // or the first occurrence if all have the same flags.
-        ClassWriter dedupWriter = new SafeClassWriter(ClassWriter.COMPUTE_FRAMES, jarClassBytes);
+        ClassWriter dedupWriter = new SafeClassWriter(
+                ClassWriter.COMPUTE_FRAMES, currentJarClassBytesProvider());
         cr.accept(new ClassVisitor(Opcodes.ASM9, dedupWriter) {
             @Override
             public MethodVisitor visitMethod(int access, String name, String descriptor,
@@ -2792,10 +3103,25 @@ public class RetromodTransformer implements ClassFileTransformer {
          * E.g., com.mojang.serialization.DataResult was a class, now an interface in newer DFU.
          */
         private int fixClassToInterfaceOpcode(int opcode, String owner) {
+            if (opcode == Opcodes.INVOKEINTERFACE && classShimTargets.contains(owner)) {
+                return Opcodes.INVOKEVIRTUAL;
+            }
             if (opcode == Opcodes.INVOKEVIRTUAL && isKnownInterface(owner)) {
                 return Opcodes.INVOKEINTERFACE;
             }
             return opcode;
+        }
+
+        /** Return the constant-pool owner kind after a redirect or class remap. */
+        private boolean isInterfaceTarget(int opcode, int originalOpcode, String owner,
+                boolean originalIsInterface) {
+            if (classShimTargets.contains(owner)) {
+                return false;
+            }
+            return opcode == Opcodes.INVOKEINTERFACE
+                    || originalIsInterface
+                    || interfaceSyntheticTargets.contains(owner)
+                    || (originalOpcode == Opcodes.INVOKESTATIC && isKnownInterface(owner));
         }
 
         /**
@@ -2971,6 +3297,7 @@ public class RetromodTransformer implements ClassFileTransformer {
             // with the reified event type appended as a Class constant.
             final String indyConsumerType = pendingIndyConsumerType;
             pendingIndyConsumerType = null;
+
             if (indyConsumerType != null && !indyTypedRewrites.isEmpty()
                     && indyTypedOwners.contains(owner)) {
                 MethodTarget typed = indyTypedRewrites.get(new MethodKey(owner, name, descriptor));
@@ -3073,7 +3400,8 @@ public class RetromodTransformer implements ClassFileTransformer {
                     PatternHeuristics.PatternResult patternMatch = patterns.resolveMethod(owner, name, descriptor);
                     if (patternMatch != null && patternMatch.confidence() >= 0.6) {
                         int patternOpcode = fixClassToInterfaceOpcode(opcode, patternMatch.newOwner());
-                        boolean patternIsInterface = patternOpcode == Opcodes.INVOKEINTERFACE || isInterface;
+                        boolean patternIsInterface = isInterfaceTarget(
+                                patternOpcode, opcode, patternMatch.newOwner(), isInterface);
                         emitMethodInsn(patternOpcode, patternMatch.newOwner(), patternMatch.newName(),
                                 patternMatch.newDescriptor(), patternIsInterface);
                         return;
@@ -3092,7 +3420,8 @@ public class RetromodTransformer implements ClassFileTransformer {
                                 fuzzyMatch.owner(), fuzzyMatch.name(), fuzzyMatch.descriptor(),
                                 fuzzyMatch.score());
                         int fuzzyOpcode = fixClassToInterfaceOpcode(opcode, fuzzyMatch.owner());
-                        boolean fuzzyIsInterface = fuzzyOpcode == Opcodes.INVOKEINTERFACE || isInterface;
+                        boolean fuzzyIsInterface = isInterfaceTarget(
+                                fuzzyOpcode, opcode, fuzzyMatch.owner(), isInterface);
                         emitMethodInsn(fuzzyOpcode, fuzzyMatch.owner(), fuzzyMatch.name(),
                                 fuzzyMatch.descriptor(), fuzzyIsInterface);
                         return;
@@ -3105,8 +3434,8 @@ public class RetromodTransformer implements ClassFileTransformer {
                 // the mismatch dies at datapack load with IncompatibleClassChangeError "must be
                 // InterfaceMethodref" (YungJigsawStructure on the 26.2 dedicated server).
                 int fixedOpcode = fixClassToInterfaceOpcode(opcode, owner);
-                boolean fixedIsInterface = fixedOpcode == Opcodes.INVOKEINTERFACE || isInterface
-                    || (opcode == Opcodes.INVOKESTATIC && isKnownInterface(owner));
+                boolean fixedIsInterface = isInterfaceTarget(
+                        fixedOpcode, opcode, owner, isInterface);
                 emitMethodInsn(fixedOpcode, owner, name, descriptor, fixedIsInterface);
                 return;
             }
@@ -3166,6 +3495,14 @@ public class RetromodTransformer implements ClassFileTransformer {
                                 conv.unwrapItf() ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL,
                                 conv.unwrapOwner(), conv.unwrapName(), conv.unwrapDesc(),
                                 conv.unwrapItf());
+                        String originalReturn = Type.getReturnType(descriptor).getDescriptor();
+                        String unwrapReturn = Type.getReturnType(conv.unwrapDesc()).getDescriptor();
+                        if ("Ljava/lang/Object;".equals(unwrapReturn)
+                                && originalReturn.startsWith("L")
+                                && !"Ljava/lang/Object;".equals(originalReturn)) {
+                            super.visitTypeInsn(Opcodes.CHECKCAST,
+                                    Type.getReturnType(descriptor).getInternalName());
+                        }
                     }
                     return;
                 }
@@ -3226,9 +3563,8 @@ public class RetromodTransformer implements ClassFileTransformer {
                     // but also force it for interface synthetics (WorldgenTypeBridge - a pre-1.19.3
                     // mod's itf=false Registry.register call otherwise emits a plain Methodref
                     // against the interface) and known-interface INVOKESTATIC targets.
-                    boolean targetIsInterface = fixedOpcode == Opcodes.INVOKEINTERFACE || isInterface
-                            || interfaceSyntheticTargets.contains(target.owner)
-                            || (opcode == Opcodes.INVOKESTATIC && isKnownInterface(target.owner));
+                    boolean targetIsInterface = isInterfaceTarget(
+                            fixedOpcode, opcode, target.owner, isInterface);
                     emitMethodInsn(fixedOpcode, target.owner, target.name,
                             target.desc, targetIsInterface);
                     // Emit CHECKCAST when return type changed (e.g., Object vs Event)
@@ -3255,7 +3591,8 @@ public class RetromodTransformer implements ClassFileTransformer {
                                 patternMatch.newOwner(), patternMatch.newName(), patternMatch.newDescriptor(),
                                 patternMatch.rule(), patternMatch.confidence());
                         int patternOpcode = fixClassToInterfaceOpcode(opcode, patternMatch.newOwner());
-                        boolean patternIsInterface = patternOpcode == Opcodes.INVOKEINTERFACE || isInterface;
+                        boolean patternIsInterface = isInterfaceTarget(
+                                patternOpcode, opcode, patternMatch.newOwner(), isInterface);
                         emitMethodInsn(patternOpcode, patternMatch.newOwner(), patternMatch.newName(),
                                 patternMatch.newDescriptor(), patternIsInterface);
                         return;
@@ -3275,7 +3612,8 @@ public class RetromodTransformer implements ClassFileTransformer {
                                 fuzzyMatch.owner(), fuzzyMatch.name(), fuzzyMatch.descriptor(),
                                 fuzzyMatch.score());
                         int fuzzyOpcode = fixClassToInterfaceOpcode(opcode, fuzzyMatch.owner());
-                        boolean fuzzyIsInterface = fuzzyOpcode == Opcodes.INVOKEINTERFACE || isInterface;
+                        boolean fuzzyIsInterface = isInterfaceTarget(
+                                fuzzyOpcode, opcode, fuzzyMatch.owner(), isInterface);
                         emitMethodInsn(fuzzyOpcode, fuzzyMatch.owner(), fuzzyMatch.name(),
                                 fuzzyMatch.descriptor(), fuzzyIsInterface);
                         return;
@@ -3290,8 +3628,8 @@ public class RetromodTransformer implements ClassFileTransformer {
                 // For KNOWN_INTERFACES (classes that became interfaces like DataResult):
                 // - INVOKEVIRTUAL → INVOKEINTERFACE (handled by fixClassToInterfaceOpcode)
                 // - INVOKESTATIC stays INVOKESTATIC but needs isInterface=true
-                boolean fixedIsInterface = fixedOpcode == Opcodes.INVOKEINTERFACE || isInterface
-                    || (opcode == Opcodes.INVOKESTATIC && isKnownInterface(owner));
+                boolean fixedIsInterface = isInterfaceTarget(
+                        fixedOpcode, opcode, owner, isInterface);
                 emitMethodInsn(fixedOpcode, owner, name, descriptor, fixedIsInterface);
             }
         }

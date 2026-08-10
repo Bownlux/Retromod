@@ -34,7 +34,7 @@ public class AotCompiler {
     private static final String AOT_MANIFEST_KEY = "Retromod-AOT-Version";
 
     // Bump this when transform behavior changes.
-    static final String AOT_VERSION = "1.3.0-snapshot.4";
+    static final String AOT_VERSION = RetromodVersion.RETROMOD_VERSION;
 
     // Development classpaths have no jar to hash, so this can be empty.
     private static String currentSelfHash() {
@@ -269,8 +269,24 @@ public class AotCompiler {
         MixinCompatibilityTransformer mixinTransformer = new MixinCompatibilityTransformer(transformer);
 
         try (JarFile jar = new JarFile(inputJar.toFile())) {
+            // Rebuilding a frame needs the mod's own class hierarchy, and those classes are not on
+            // the transform classpath. Reading them back out of the jar keeps a branch between two
+            // of the mod's own types from being typed as Object, which the JVM rejects as soon as
+            // that value is passed somewhere that wants a specific type. A precompiled result is
+            // cached, so a bad frame here would survive restarts.
+            transformer.setJarClassBytesProvider(name -> {
+                try {
+                    JarEntry e = jar.getJarEntry(name + ".class");
+                    if (e == null) return null;
+                    try (InputStream in = jar.getInputStream(e)) {
+                        return ZipSecurity.safeReadAllBytes(in);
+                    }
+                } catch (IOException io) {
+                    return null;
+                }
+            });
             Enumeration<JarEntry> entries = jar.entries();
-            
+
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
                 
@@ -304,8 +320,11 @@ public class AotCompiler {
                     }
                 }
             }
+        } finally {
+            // The provider reads through the jar handle above, so it has to go when that closes.
+            transformer.clearJarClassBytesProvider();
         }
-        
+
         Map<String, byte[]> embeddedShims = collectEmbeddedShims(modInfo);
 
         try (JarOutputStream jos = new JarOutputStream(
@@ -447,7 +466,9 @@ public class AotCompiler {
             var bais = new java.io.ByteArrayInputStream(jarData);
             var baos = new java.io.ByteArrayOutputStream(jarData.length);
             boolean modified = false;
-            try (var jis = new java.util.jar.JarInputStream(bais);
+            Map<String, byte[]> classBytes = RetromodTransformer.readJarClassBytes(jarData);
+            try (var hierarchyScope = transformer.pushJarClassBytesProvider(classBytes::get);
+                 var jis = new java.util.jar.JarInputStream(bais);
                  var jos = new JarOutputStream(baos)) {
                 java.util.jar.JarEntry e;
                 while ((e = jis.getNextJarEntry()) != null) {
@@ -883,6 +904,10 @@ public class AotCompiler {
                     block.contains("\"neoforge\"") || block.contains("\"forge\"");
 
                 // Widen Maven version ranges: [1.21,1.21.1) -> [1.21,)
+                block = block.replaceAll(
+                    "(versionRange\\s*=\\s*\")\\[([^,\\]\"]+)\\]\"",
+                    "$1[$2,)\""
+                );
                 block = block.replaceAll(
                     "(versionRange\\s*=\\s*\")\\[([^,\"]+),[^\"]*\"",
                     "$1[$2,)\""

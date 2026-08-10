@@ -12,6 +12,7 @@ import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.LivingEntityFeatureRendererRegistrationCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.TooltipComponentCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerEntityWorldChangeEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.fabricmc.fabric.api.registry.LandPathNodeTypesRegistry;
@@ -90,6 +91,29 @@ public final class BridgeVerification {
                     (player, origin, destination) -> fired("ServerEntityWorldChangeEvents.AFTER_PLAYER_CHANGE_WORLD"));
             ok("ServerEntityWorldChangeEvents.AFTER_PLAYER_CHANGE_WORLD"); // fires on dimension change only
         } catch (Throwable t) { fail("ServerEntityWorldChangeEvents.AFTER_PLAYER_CHANGE_WORLD", t); }
+
+        // Tick-event holder fields renamed World -> Level with their callback interfaces in 26.1.
+        // Pathmind hit START_WORLD_TICK during client init, so registration itself is the regression.
+        try {
+            ClientTickEvents.START_WORLD_TICK.register(world -> fired("ClientTickEvents.START_WORLD_TICK"));
+            ClientTickEvents.END_WORLD_TICK.register(world -> fired("ClientTickEvents.END_WORLD_TICK"));
+            ok("ClientTickEvents.START_WORLD_TICK");
+            ok("ClientTickEvents.END_WORLD_TICK");
+        } catch (Throwable t) {
+            fail("ClientTickEvents.START_WORLD_TICK", t);
+            fail("ClientTickEvents.END_WORLD_TICK", t);
+        }
+        try {
+            ServerTickEvents.START_WORLD_TICK.register(world ->
+                    fired("ServerTickEvents.START_WORLD_TICK"));
+            ServerTickEvents.END_WORLD_TICK.register(world ->
+                    fired("ServerTickEvents.END_WORLD_TICK"));
+            ok("ServerTickEvents.START_WORLD_TICK");
+            ok("ServerTickEvents.END_WORLD_TICK");
+        } catch (Throwable t) {
+            fail("ServerTickEvents.START_WORLD_TICK", t);
+            fail("ServerTickEvents.END_WORLD_TICK", t);
+        }
 
         // ── HudRenderCallback (extends-HudElement synthetic; fires every HUD frame in a world)
         try {

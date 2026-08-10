@@ -51,7 +51,9 @@ public class FabricClientNetworkingV1Shim implements VersionShim {
     private static final String BUF_INT = "Lnet/minecraft/class_2540;";
     private static final String BUF_MOJ = "Lnet/minecraft/network/FriendlyByteBuf;";
 
-    // Synthetic SAM receive() param types: Mojang only, matching the remapped lambda at runtime.
+    // Synthetic SAM receive() param types follow the runtime namespace.
+    private static final String MC_INT        = "Lnet/minecraft/class_310;";
+    private static final String LISTENER_INT  = "Lnet/minecraft/class_634;";
     private static final String MC_MOJ       = "Lnet/minecraft/client/Minecraft;";
     private static final String LISTENER_MOJ = "Lnet/minecraft/client/multiplayer/ClientPacketListener;";
     private static final String SENDER       = "Lnet/fabricmc/fabric/api/networking/v1/PacketSender;";
@@ -68,19 +70,17 @@ public class FabricClientNetworkingV1Shim implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
-        // 26.1+ hosts only (#9): the synthetic SAM's Mojang param types fail to link
-        // (LambdaConversionException) on a pre-26.1 intermediary runtime.
-        if (!com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
-                com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
-            LOGGER.debug("[Retromod] client-networking v1 bridge skipped (host {} < 26.1)",
-                    com.retromod.core.RetromodVersion.TARGET_MC_VERSION);
+        String host = com.retromod.core.RetromodVersion.TARGET_MC_VERSION;
+        if (com.retromod.core.RetromodVersion.compareMcVersions(host, "1.20.5") < 0) {
+            LOGGER.debug("[Retromod] client-networking v1 bridge skipped (host {} < 1.20.5)", host);
             return;
         }
+        boolean mojRuntime = com.retromod.core.RetromodVersion.isUnobfuscatedTarget(host);
 
         // Embed the bridge so the redirected static calls resolve.
         transformer.registerEmbeddedShim(BRIDGE.replace('/', '.'));
 
-        transformer.registerSyntheticClass(NEW_SAM, generateSamInterface());
+        transformer.registerSyntheticClass(NEW_SAM, generateSamInterface(mojRuntime));
         transformer.registerClassRedirect(OLD_SAM, NEW_SAM);
 
         // The PlayChannelHandler param is L_NEW_SAM on both paths (class redirect);
@@ -106,13 +106,15 @@ public class FabricClientNetworkingV1Shim implements VersionShim {
         t.registerMethodRedirect(OLD_CPN, oldName, oldDesc, BRIDGE, bridgeName, bridgeDesc, false);
     }
 
-    /** Functional interface with the 4-arg {@code receive} SAM in Mojang types. */
-    private static byte[] generateSamInterface() {
+    /** Functional interface with the old 4-arg {@code receive} SAM. */
+    private static byte[] generateSamInterface(boolean mojRuntime) {
         ClassWriter cw = new ClassWriter(0);
         cw.visit(Opcodes.V17,
                 Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT | Opcodes.ACC_INTERFACE,
                 NEW_SAM, null, "java/lang/Object", null);
-        String receiveDesc = "(" + MC_MOJ + LISTENER_MOJ + BUF_MOJ + SENDER + ")V";
+        String receiveDesc = mojRuntime
+                ? "(" + MC_MOJ + LISTENER_MOJ + BUF_MOJ + SENDER + ")V"
+                : "(" + MC_INT + LISTENER_INT + BUF_INT + SENDER + ")V";
         cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, "receive", receiveDesc, null, null)
                 .visitEnd();
         cw.visitEnd();

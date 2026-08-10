@@ -13,11 +13,11 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Host gate for the 26.1 Fabric API bridges (#9): below 26.1 the old APIs still exist so the
- * bridges register nothing, at 26.1+ they register their redirects. The shims' fabric-api-style
- * target versions parse below every MC version, so the {@code target <= host} gate alone would
- * let them register everywhere. The transformer is a JVM-wide singleton, so each test clears it
- * before re-registering.
+ * Host gate for Fabric API bridges (#9). Most old APIs still exist below 26.1, so their bridges
+ * register only on 26.1+. Raw channel networking was removed in 1.20.5 and activates earlier.
+ * The shims' fabric-api-style target versions parse below every MC version, so the
+ * {@code target <= host} gate alone would let them register everywhere. The transformer is a
+ * JVM-wide singleton, so each test clears it before re-registering.
  */
 class Fabric26ApiBridgeGateTest {
 
@@ -27,7 +27,6 @@ class Fabric26ApiBridgeGateTest {
         "net/fabricmc/fabric/api/event/lifecycle/v1/ServerWorldEvents",
         "net/fabricmc/fabric/api/event/lifecycle/v1/ServerWorldEvents$Load",
         "net/fabricmc/fabric/api/client/rendering/v1/EntityModelLayerRegistry",
-        "net/fabricmc/fabric/api/client/networking/v1/ClientPlayNetworking$PlayChannelHandler",
     };
 
     private static void registerAllGatedShims(RetromodTransformer t) {
@@ -56,8 +55,12 @@ class Fabric26ApiBridgeGateTest {
             assertFalse(t.getClassRedirects().containsKey(old),
                     old + " must not be redirected on a 1.21.11 host where the API still exists");
         }
-        assertTrue(t.getClassRedirects().isEmpty(), "no class redirects from gated shims below 26.1");
-        assertTrue(t.getMethodRedirects().isEmpty(), "no method redirects from gated shims below 26.1");
+        assertEquals("com/retromod/generated/legacynet/LegacyPlayChannelHandler",
+                t.getClassRedirects().get(
+                        "net/fabricmc/fabric/api/client/networking/v1/ClientPlayNetworking$PlayChannelHandler"),
+                "the raw networking API was removed in 1.20.5 and needs its intermediary bridge");
+        assertFalse(t.getMethodRedirects().isEmpty(),
+                "the pre-26.1 raw networking bridge must register its call redirects");
     }
 
     @Test

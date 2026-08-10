@@ -161,24 +161,16 @@ public class EnvironmentDetector {
             };
         }
 
-        try {
-            Class.forName("org.lwjgl.vulkan.VK10");
-            try {
-                Class.forName("com.mojang.blaze3d.platform.VulkanStateManager");
-                return RenderingBackend.VULKAN;
-            } catch (ClassNotFoundException ignored) {}
-            try {
-                Class.forName("net.minecraft.client.render.VulkanRenderer");
-                return RenderingBackend.VULKAN;
-            } catch (ClassNotFoundException ignored) {}
-        } catch (ClassNotFoundException ignored) {
+        if (classExists("org.lwjgl.vulkan.VK10")
+                && (classExists("com.mojang.blaze3d.platform.VulkanStateManager")
+                    || classExists("net.minecraft.client.render.VulkanRenderer"))) {
+            return RenderingBackend.VULKAN;
         }
 
         if (getOsFamily() == OsFamily.MACOS) {
-            try {
-                Class.forName("com.mojang.blaze3d.platform.MetalStateManager");
+            if (classExists("com.mojang.blaze3d.platform.MetalStateManager")) {
                 return RenderingBackend.METAL;
-            } catch (ClassNotFoundException ignored) {}
+            }
 
             // MoltenVK routes Vulkan over Metal
             String vulkanICD = System.getenv("VK_ICD_FILENAMES");
@@ -188,10 +180,9 @@ public class EnvironmentDetector {
         }
 
         if (getOsFamily() == OsFamily.WINDOWS) {
-            try {
-                Class.forName("com.mojang.blaze3d.platform.DirectXStateManager");
+            if (classExists("com.mojang.blaze3d.platform.DirectXStateManager")) {
                 return RenderingBackend.DIRECTX;
-            } catch (ClassNotFoundException ignored) {}
+            }
         }
 
         // OpenGL is MC's only backend through 26.1.x. GlStateManager was dropped
@@ -201,10 +192,9 @@ public class EnvironmentDetector {
                 "com.mojang.blaze3d.systems.RenderSystem",       // 1.15+ incl 26.1
                 "com.mojang.blaze3d.opengl.GlStateManager"       // possible 26.1 relocation
         }) {
-            try {
-                Class.forName(glSignal);
+            if (classExists(glSignal)) {
                 return RenderingBackend.OPENGL;
-            } catch (ClassNotFoundException ignored) {}
+            }
         }
 
         return RenderingBackend.UNKNOWN;
@@ -236,28 +226,16 @@ public class EnvironmentDetector {
     }
 
     /**
-     * Tests class presence without initializing it (#46). The single-arg
-     * {@link Class#forName(String)} runs the target's {@code <clinit>}; probing an
-     * MC bootstrap class that way during mod construction ran it far too early and
-     * crashed otherwise-working mods, so we use the three-arg form with
-     * {@code initialize = false}.
+     * Tests class presence without defining or initializing it (#46). Even the three-arg
+     * {@link Class#forName(String, boolean, ClassLoader)} defines the target through Knot,
+     * which makes Mixin apply untransformed mod mixins during Retromod's pre-launch pass.
      */
     static boolean classExists(String name) {
-        try {
-            ClassLoader cl = EnvironmentDetector.class.getClassLoader();
-            if (cl == null) {
-                cl = Thread.currentThread().getContextClassLoader();
-            }
-            Class.forName(name, false, cl);
-            return true;
-        } catch (Throwable ignored) {
-            // absent, or any LinkageError: treat as absent
-            return false;
-        }
+        return ClassResourceInspector.exists(name.replace('.', '/'));
     }
 
     /**
-     * Non-initializing host-class probe (same contract as {@link #classExists(String)}).
+     * Non-defining host-class probe (same contract as {@link #classExists(String)}).
      * The mixin compat layer uses it to neutralize a {@code @Mixin} whose target was
      * removed on the host MC.
      */

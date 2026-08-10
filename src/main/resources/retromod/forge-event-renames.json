@@ -35,7 +35,7 @@
   "net/minecraftforge/client/event/MovementInputUpdateEvent": "net/neoforged/neoforge/client/event/MovementInputUpdateEvent",
   "net/minecraftforge/client/event/RecipesUpdatedEvent": "net/neoforged/neoforge/client/event/RecipesUpdatedEvent",
   "net/minecraftforge/client/event/RegisterClientCommandsEvent": "net/neoforged/neoforge/client/event/RegisterClientCommandsEvent",
-  "net/minecraftforge/client/event/RegisterClientReloadListenersEvent": "net/neoforged/neoforge/client/event/RegisterClientReloadListenersEvent",
+  "net/minecraftforge/client/event/RegisterClientReloadListenersEvent": "net/neoforged/neoforge/client/event/AddClientReloadListenersEvent",
   "net/minecraftforge/client/event/RegisterClientTooltipComponentFactoriesEvent": "net/neoforged/neoforge/client/event/RegisterClientTooltipComponentFactoriesEvent",
   "net/minecraftforge/client/event/RegisterColorHandlersEvent": "net/neoforged/neoforge/client/event/RegisterColorHandlersEvent",
   "net/minecraftforge/client/event/RegisterColorHandlersEvent$Block": "net/neoforged/neoforge/client/event/RegisterColorHandlersEvent$Block",

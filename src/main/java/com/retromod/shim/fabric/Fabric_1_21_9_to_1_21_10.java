@@ -32,6 +32,20 @@ public class Fabric_1_21_9_to_1_21_10 implements VersionShim {
     
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // Fabric restored world rendering events under a new world/ package in 1.21.10.
+        // AFTER_ENTITIES kept the same one-argument contract, so route it to the live event
+        // instead of the dormant 1.21.9 compatibility holder (#179, ENGRAM).
+        String oldEvents = "net/fabricmc/fabric/api/client/rendering/v1/WorldRenderEvents";
+        String newEvents = "net/fabricmc/fabric/api/client/rendering/v1/world/WorldRenderEvents";
+        transformer.registerClassRedirect(oldEvents, newEvents);
+        transformer.registerClassRedirect(
+            oldEvents + "$AfterEntities", newEvents + "$AfterEntities");
+        transformer.registerClassRedirect(
+            oldEvents + "$BeforeEntities", newEvents + "$BeforeEntities");
+        transformer.registerClassRedirect(
+            "net/fabricmc/fabric/api/client/rendering/v1/WorldRenderContext",
+            "net/fabricmc/fabric/api/client/rendering/v1/world/WorldRenderContext");
+
         transformer.registerMethodRedirect(
             "net/minecraft/entity/Entity", 
             "getWorld", 

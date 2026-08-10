@@ -65,14 +65,14 @@ public final class RetroEntityTypeBuild {
                 }
             }
 
-            // Identifier.parse: the sole public static (String) -> Identifier.
+            // Identifier.parse has a stable intermediary ID on 1.21.2-1.21.11. Prefer it
+            // because Identifier also has withDefaultNamespace and tryParse with the same
+            // erased shape.
             java.lang.reflect.Method idf = null;
-            for (java.lang.reflect.Method m : idCls.getMethods()) {
-                if (java.lang.reflect.Modifier.isStatic(m.getModifiers())
-                        && m.getParameterCount() == 1 && m.getParameterTypes()[0] == String.class
-                        && m.getReturnType() == idCls) {
-                    idf = m; break;
-                }
+            try {
+                idf = idCls.getMethod("method_60654", String.class);
+            } catch (NoSuchMethodException ignored) {
+                // Unexpected intermediary drift: fail safely below.
             }
 
             // ResourceKey.create: the sole public static (ResourceKey, Identifier) -> ResourceKey.
@@ -90,14 +90,9 @@ public final class RetroEntityTypeBuild {
             for (java.lang.reflect.Field f : regsCls.getFields()) {
                 if (java.lang.reflect.Modifier.isStatic(f.getModifiers()) && f.getType() == rkCls) {
                     Object v = f.get(null);
-                    if (v != null && String.valueOf(v).contains("entity_type")
-                            && !String.valueOf(v).contains("point_of_interest")) {
-                        // "minecraft:root / minecraft:entity_type" and not the block/poi variants
-                        // (point_of_interest_type contains no bare "entity_type";
-                        //  villager profession etc. don't either; the double-check is cheap).
-                        if (String.valueOf(v).endsWith("entity_type")) {
-                            root = v; break;
-                        }
+                    if (v != null && isEntityTypeRoot(String.valueOf(v))) {
+                        root = v;
+                        break;
                     }
                 }
             }
@@ -115,5 +110,10 @@ public final class RetroEntityTypeBuild {
             unresolvable = true;
             return false;
         }
+    }
+
+    static boolean isEntityTypeRoot(String value) {
+        return value.endsWith("minecraft:entity_type")
+                || value.endsWith("minecraft:entity_type]");
     }
 }

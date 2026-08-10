@@ -59,6 +59,19 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             "net/fabricmc/fabric/api/networking/v1/C2SPlayChannelEvents",
             "net/fabricmc/fabric/api/client/networking/v1/ServerboundPlayChannelEvents"
         );
+        // Client-side Fabric API already kept C2S channel events in client/networking before the
+        // direction terminology changed. The original redirects above cover the older common
+        // package, but not Pathmind's 1.21.11 spelling. Register the holder and callback types so
+        // both GETSTATIC and the lambda's invokedynamic descriptor move together (#208).
+        for (String kind : new String[]{"Configuration", "Play"}) {
+            String oldOwner = "net/fabricmc/fabric/api/client/networking/v1/C2S"
+                    + kind + "ChannelEvents";
+            String newOwner = "net/fabricmc/fabric/api/client/networking/v1/Serverbound"
+                    + kind + "ChannelEvents";
+            transformer.registerClassRedirect(oldOwner, newOwner);
+            transformer.registerClassRedirect(oldOwner + "$Register", newOwner + "$Register");
+            transformer.registerClassRedirect(oldOwner + "$Unregister", newOwner + "$Unregister");
+        }
         transformer.registerClassRedirect(
             "net/fabricmc/fabric/api/networking/v1/S2CConfigurationChannelEvents",
             "net/fabricmc/fabric/api/networking/v1/ClientboundConfigurationChannelEvents"
@@ -133,6 +146,15 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             "net/fabricmc/fabric/api/event/lifecycle/v1/ServerTickEvents$EndWorldTick",
             "net/fabricmc/fabric/api/event/lifecycle/v1/ServerTickEvents$EndLevelTick"
         );
+        // The outer event holders renamed with their callback types. Redirecting only the nested
+        // interfaces leaves GETSTATIC START_WORLD_TICK/END_WORLD_TICK intact, so the callback lambda
+        // links but client initialization still aborts with NoSuchFieldError (#208, Pathmind).
+        String clientTicks = "net/fabricmc/fabric/api/client/event/lifecycle/v1/ClientTickEvents";
+        String serverTicks = "net/fabricmc/fabric/api/event/lifecycle/v1/ServerTickEvents";
+        for (String owner : new String[]{clientTicks, serverTicks}) {
+            transformer.registerFieldRedirect(owner, "START_WORLD_TICK", owner, "START_LEVEL_TICK");
+            transformer.registerFieldRedirect(owner, "END_WORLD_TICK", owner, "END_LEVEL_TICK");
+        }
 
         // ScreenHandler -> Menu renames
         transformer.registerClassRedirect(

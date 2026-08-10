@@ -105,6 +105,10 @@ public final class MixinCompatibilityTransformer {
 
         LOGGER.debug("Transforming Mixin class: {}", classNode.name);
 
+        // A field redirect may move a static field to a different class. Move a matching
+        // accessor mixin before the ordinary annotation pass records its target owner.
+        modified |= transformAccessorOwnerMove(classNode);
+
         // Some mixins add state outside their handlers, so the whole mixin must
         // be skipped instead of deleting only its injection methods.
         if (MixinBlocklist.isFullStrip(classNode.name)) {
@@ -856,6 +860,111 @@ public final class MixinCompatibilityTransformer {
         }
 
         return modified;
+    }
+
+    /** Moves a single-target accessor mixin when its registered field moved to another owner. */
+    private boolean transformAccessorOwnerMove(ClassNode classNode) {
+        AnnotationNode mixin = findMixinAnnotation(classNode);
+        String owner = singleMixinTarget(mixin);
+        if (owner == null) return false;
+
+        List<AnnotationNode> accessors = new ArrayList<>();
+        RetromodTransformer.FieldTarget move = null;
+        for (MethodNode method : classNode.methods) {
+            for (List<AnnotationNode> annotations : List.of(
+                    method.visibleAnnotations != null ? method.visibleAnnotations : List.<AnnotationNode>of(),
+                    method.invisibleAnnotations != null ? method.invisibleAnnotations : List.<AnnotationNode>of())) {
+                for (AnnotationNode annotation : annotations) {
+                    if (!ACCESSOR_DESC.equals(annotation.desc)) continue;
+                    String fieldName = annotationString(annotation, "value");
+                    if (fieldName == null) continue;
+                    RetromodTransformer.FieldTarget candidate = transformer.getFieldRedirects().entrySet().stream()
+                            .filter(e -> e.getKey().owner().equals(owner)
+                                    && e.getKey().name().equals(fieldName)
+                                    && !e.getValue().owner().equals(owner))
+                            .map(Map.Entry::getValue)
+                            .findFirst().orElse(null);
+                    if (candidate == null) continue;
+                    if (move != null && (!move.owner().equals(candidate.owner())
+                            || !move.name().equals(candidate.name()))) {
+                        return false;
+                    }
+                    move = candidate;
+                    accessors.add(annotation);
+                }
+            }
+        }
+        if (move == null) return false;
+
+        replaceMixinTarget(mixin, move.owner());
+        for (AnnotationNode accessor : accessors) {
+            setAnnotationValue(accessor, "value", move.name());
+            setAnnotationValue(accessor, "remap", false);
+        }
+        LOGGER.info("Moved accessor mixin {} target {} -> {} for field {}",
+                classNode.name, owner, move.owner(), move.name());
+        return true;
+    }
+
+    private static AnnotationNode findMixinAnnotation(ClassNode classNode) {
+        for (List<AnnotationNode> annotations : List.of(
+                classNode.visibleAnnotations != null ? classNode.visibleAnnotations : List.<AnnotationNode>of(),
+                classNode.invisibleAnnotations != null ? classNode.invisibleAnnotations : List.<AnnotationNode>of())) {
+            for (AnnotationNode annotation : annotations) {
+                if (MIXIN_DESC.equals(annotation.desc)) return annotation;
+            }
+        }
+        return null;
+    }
+
+    private static String singleMixinTarget(AnnotationNode mixin) {
+        if (mixin == null || mixin.values == null) return null;
+        for (int i = 0; i < mixin.values.size(); i += 2) {
+            Object value = mixin.values.get(i + 1);
+            if (!(value instanceof List<?> targets) || targets.size() != 1) continue;
+            Object target = targets.get(0);
+            if (target instanceof org.objectweb.asm.Type type) return type.getInternalName();
+            if (target instanceof String name) return name.replace('.', '/');
+        }
+        return null;
+    }
+
+    private static void replaceMixinTarget(AnnotationNode mixin, String newOwner) {
+        for (int i = 0; i < mixin.values.size(); i += 2) {
+            Object value = mixin.values.get(i + 1);
+            if (!(value instanceof List<?> targets) || targets.size() != 1) continue;
+            Object old = targets.get(0);
+            if (old instanceof org.objectweb.asm.Type) {
+                mixin.values.set(i + 1, new ArrayList<>(List.of(
+                        org.objectweb.asm.Type.getObjectType(newOwner))));
+            } else if (old instanceof String name) {
+                String replacement = name.contains(".") ? newOwner.replace('/', '.') : newOwner;
+                mixin.values.set(i + 1, new ArrayList<>(List.of(replacement)));
+            }
+            return;
+        }
+    }
+
+    private static String annotationString(AnnotationNode annotation, String key) {
+        if (annotation.values == null) return null;
+        for (int i = 0; i < annotation.values.size(); i += 2) {
+            if (key.equals(annotation.values.get(i)) && annotation.values.get(i + 1) instanceof String s) {
+                return s;
+            }
+        }
+        return null;
+    }
+
+    private static void setAnnotationValue(AnnotationNode annotation, String key, Object value) {
+        if (annotation.values == null) annotation.values = new ArrayList<>();
+        for (int i = 0; i < annotation.values.size(); i += 2) {
+            if (key.equals(annotation.values.get(i))) {
+                annotation.values.set(i + 1, value);
+                return;
+            }
+        }
+        annotation.values.add(key);
+        annotation.values.add(value);
     }
     
     /**

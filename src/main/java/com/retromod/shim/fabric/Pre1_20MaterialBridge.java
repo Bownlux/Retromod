@@ -5,6 +5,7 @@
 package com.retromod.shim.fabric;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.ClassResourceInspector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,7 +28,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Host-introspecting: registers only when the host actually LOST {@code class_3614}
  * (1.20+) while still being an intermediary host ({@code class_2680} present), so 1.16.x-1.19.x
- * hosts (Material intact) are untouched. Probes never initialize (pitfall #14).
+ * hosts (Material intact) are untouched. Probes read class resources without defining classes.
  */
 public final class Pre1_20MaterialBridge {
 
@@ -41,20 +42,8 @@ public final class Pre1_20MaterialBridge {
 
     /** Register the Material polyfill redirects when the host lost the class. */
     public static void register(RetromodTransformer transformer) {
-        ClassLoader loader = Thread.currentThread().getContextClassLoader();
-        try {
-            Class.forName("net.minecraft.class_2680", false, loader); // intermediary host?
-        } catch (Throwable t) {
-            return; // not an intermediary host: never guess
-        }
-        try {
-            Class.forName("net.minecraft.class_3614", false, loader);
-            return; // pre-1.20 host: Material still exists, direct references work
-        } catch (ClassNotFoundException expected) {
-            // 1.20+: Material is gone, bridge it
-        } catch (Throwable t) {
-            return;
-        }
+        if (!ClassResourceInspector.exists(BLOCK_STATE)) return;
+        if (ClassResourceInspector.exists(MATERIAL)) return;
 
         // Every reference (field owners/types, array types, casts, signatures) retypes to
         // the polyfill; its 44 constants carry the exact 1.16.5 intermediary field ids.

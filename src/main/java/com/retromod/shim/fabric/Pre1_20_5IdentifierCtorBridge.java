@@ -5,11 +5,12 @@
 package com.retromod.shim.fabric;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.ClassResourceInspector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
 
 /**
  * Redirects pre-1.20.5 {@code Identifier} (ResourceLocation) constructor calls to the
@@ -21,8 +22,8 @@ import java.lang.reflect.Modifier;
  * {@code RegistryPolyfill} handles the Mojang-named classes, but the intermediary&rarr;Mojang
  * remap is gated off on pre-26.1 Fabric hosts (#21), so the bytecode still says {@code class_2960}.
  *
- * <p>The factory intermediary IDs drift between MC versions, so the bridge reflectively probes
- * the host's {@code class_2960} for its static {@code (String)} and {@code (String,String)}
+ * <p>The factory intermediary IDs drift between MC versions, so the bridge inspects the host's
+ * {@code class_2960} resource for its static {@code (String)} and {@code (String,String)}
  * factories rather than carrying a per-version table.
  */
 public final class Pre1_20_5IdentifierCtorBridge {
@@ -30,26 +31,21 @@ public final class Pre1_20_5IdentifierCtorBridge {
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 
     private static final String IDENTIFIER = "net/minecraft/class_2960";
-    private static final String IDENTIFIER_FQN = "net.minecraft.class_2960";
     private static final String L_IDENTIFIER = "L" + IDENTIFIER + ";";
 
     private Pre1_20_5IdentifierCtorBridge() {}
 
-    /** Wire constructor to factory redirects, discovering the host's factory names by reflection. */
+    /** Wire constructor to factory redirects, discovering the host's factory names from bytecode. */
     public static void register(RetromodTransformer transformer) {
-        Class<?> identifier;
-        try {
-            identifier = Class.forName(IDENTIFIER_FQN, false,
-                    Pre1_20_5IdentifierCtorBridge.class.getClassLoader());
-        } catch (Throwable t) {
-            LOGGER.debug("Identifier constructor support is not needed because class_2960 "
-                            + "is unavailable ({})",
-                    t.getClass().getSimpleName());
+        ClassNode identifier = ClassResourceInspector.read(IDENTIFIER);
+        if (identifier == null) {
+            LOGGER.debug("Identifier constructor support is not needed because class_2960 is unavailable");
             return;
         }
 
-        String parseName = findStaticFactory(identifier, String.class);
-        String fromNsPathName = findStaticFactory(identifier, String.class, String.class);
+        String parseName = findStaticFactory(identifier, "(Ljava/lang/String;)" + L_IDENTIFIER);
+        String fromNsPathName = findStaticFactory(identifier,
+                "(Ljava/lang/String;Ljava/lang/String;)" + L_IDENTIFIER);
 
         int registered = 0;
         if (parseName != null) {
@@ -79,26 +75,18 @@ public final class Pre1_20_5IdentifierCtorBridge {
      * Name of the one public-static {@code (paramTypes...) -> cls} method on {@code cls}, or null
      * if there are zero or several. Don't guess: the wrong factory corrupts every Identifier built.
      */
-    private static String findStaticFactory(Class<?> cls, Class<?>... paramTypes) {
+    private static String findStaticFactory(ClassNode cls, String descriptor) {
         String match = null;
-        for (Method m : cls.getDeclaredMethods()) {
-            int mods = m.getModifiers();
-            if (!Modifier.isStatic(mods) || !Modifier.isPublic(mods)) continue;
-            if (m.getReturnType() != cls) continue;
-            Class<?>[] p = m.getParameterTypes();
-            if (p.length != paramTypes.length) continue;
-            boolean ok = true;
-            for (int i = 0; i < p.length; i++) {
-                if (p[i] != paramTypes[i]) { ok = false; break; }
-            }
-            if (!ok) continue;
+        for (var m : cls.methods) {
+            int required = Opcodes.ACC_STATIC | Opcodes.ACC_PUBLIC;
+            if ((m.access & required) != required || !m.desc.equals(descriptor)) continue;
             if (match != null) {
                 LOGGER.warn("Found two possible Identifier factories, {} and {}. Retromod will "
                                 + "leave this constructor unchanged because it cannot choose safely.",
-                        match, m.getName());
+                        match, m.name);
                 return null;
             }
-            match = m.getName();
+            match = m.name;
         }
         return match;
     }

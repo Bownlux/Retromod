@@ -256,6 +256,33 @@ class ModDataMigratorTest {
     }
 
     @Test
+    void legacyItemVertexShaderMatchesThe26_2ItemFragmentContract() {
+        String name = "assets/old-2d-items/shaders/core/"
+                + "rendertype_item_entity_no_cardinal_shading.vsh";
+        String in = "#moj_import <minecraft:projection.glsl>\r\n"
+                + "in vec2 UV1;\r\n"
+                + "out vec4 vertexColor;\r\n"
+                + "out vec2 texCoord0;\r\n"
+                + "out vec2 texCoord1;\r\n"
+                + "out vec2 texCoord2;\r\n"
+                + "vertexColor = Color * texelFetch(Sampler2, UV2 / 16, 0);\r\n"
+                + "texCoord0 = UV0;\r\n"
+                + "    texCoord1 = UV1;\r\n"
+                + "    texCoord2 = UV2;\r\n";
+        String out = mig(name, in, "26.2");
+
+        assertTrue(out.contains("#moj_import <minecraft:sample_lightmap.glsl>"));
+        assertTrue(out.contains("in ivec2 UV1;"));
+        assertTrue(out.contains("sample_lightmap(Sampler2, UV2)"));
+        assertTrue(out.contains("out vec4 lightMapColor;"));
+        assertTrue(out.contains("out vec4 overlayColor;"));
+        assertTrue(out.contains("overlayColor = vec4(0.0);"));
+        assertFalse(out.contains("texCoord1"));
+        assertFalse(out.contains("texCoord2"));
+        assertEquals(in, mig(name, in, "26.1"), "26.1 still provides the old fragment shader");
+    }
+
+    @Test
     void normalizeIsGatedOffForPre26() {
         String in = "{\n // c\n \"a\":1\n}";
         assertEquals(in, mig("data/m/worldgen/template_pool/x.json", in, "1.21.1"),

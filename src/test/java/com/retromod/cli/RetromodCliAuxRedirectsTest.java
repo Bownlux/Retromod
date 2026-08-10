@@ -76,6 +76,31 @@ class RetromodCliAuxRedirectsTest {
         assertFalse(memberCount(fabric) == 0, "Fabric MUST get the intermediary member mappings");
     }
 
+    @Test
+    void offlineForgeTransformsApplySrgMemberNames() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        try {
+            String summary = RetromodCli.registerAuxiliaryRedirects(
+                    transformer, info("forge"), List.of());
+            assertTrue(summary.matches(".* [1-9][0-9]* SRG mapping\\(s\\).*"), summary);
+
+            byte[] output = transformer.transformClass(oldPropertiesFactory(),
+                    "test/OldPropertiesFactory");
+            ClassNode node = new ClassNode();
+            new ClassReader(output).accept(node, 0);
+            List<MethodInsnNode> calls = node.methods.stream()
+                    .flatMap(method -> Arrays.stream(method.instructions.toArray()))
+                    .filter(MethodInsnNode.class::isInstance)
+                    .map(MethodInsnNode.class::cast)
+                    .toList();
+            assertTrue(calls.stream().anyMatch(call -> "of".equals(call.name)));
+            assertFalse(calls.stream().anyMatch(call -> "func_200945_a".equals(call.name)));
+        } finally {
+            transformer.clearRedirectsForTesting();
+        }
+    }
+
     /**
      * CLI == runtime: the CLI/AOT paths must apply the ResourceLocation/Identifier ctor -> factory
      * redirect the in-game boot applies. Before this was wired, CLI/AOT emitted a raw
@@ -137,5 +162,27 @@ class RetromodCliAuxRedirectsTest {
         mv.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    private static byte[] oldPropertiesFactory() {
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/OldPropertiesFactory", null,
+                "java/lang/Object", null);
+        MethodVisitor method = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "create", "(Lnet/minecraft/block/material/Material;)V", null, null);
+        method.visitCode();
+        method.visitVarInsn(Opcodes.ALOAD, 0);
+        method.visitMethodInsn(Opcodes.INVOKESTATIC,
+                "net/minecraft/world/level/block/state/BlockBehaviour$Properties",
+                "func_200945_a",
+                "(Lnet/minecraft/block/material/Material;)"
+                        + "Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;",
+                false);
+        method.visitInsn(Opcodes.POP);
+        method.visitInsn(Opcodes.RETURN);
+        method.visitMaxs(0, 0);
+        method.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
     }
 }

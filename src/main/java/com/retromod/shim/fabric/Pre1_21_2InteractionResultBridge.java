@@ -5,11 +5,10 @@
 package com.retromod.shim.fabric;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.ClassResourceInspector;
+import org.objectweb.asm.Opcodes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 
 /**
  * Pre-1.21.2 {@code InteractionResult} field-descriptor bridge (Fabric, pre-26.1, intermediary names).
@@ -23,15 +22,13 @@ import java.lang.reflect.Modifier;
  *
  * <p>We rewrite the GETSTATIC descriptor to whatever the host field declares; the value pushed is a
  * {@code class_1269} subtype, so downstream code verifies without a CHECKCAST. Targets are discovered
- * reflectively since the nested-type intermediary IDs shift between versions.
+ * from class resources since the nested-type intermediary IDs shift between versions.
  */
 public final class Pre1_21_2InteractionResultBridge {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 
     private static final String INTERACTION_RESULT = "net/minecraft/class_1269";
-
-    private static final String INTERACTION_RESULT_FQN = "net.minecraft.class_1269";
 
     /** Descriptor the pre-1.21.2 constants were compiled with. */
     private static final String OLD_DESC = "L" + INTERACTION_RESULT + ";";
@@ -44,37 +41,31 @@ public final class Pre1_21_2InteractionResultBridge {
      * {@code class_1269} isn't on the classpath.
      */
     public static void register(RetromodTransformer transformer) {
-        Class<?> ir;
-        try {
-            ir = Class.forName(INTERACTION_RESULT_FQN, false,
-                    Pre1_21_2InteractionResultBridge.class.getClassLoader());
-        } catch (Throwable t) {
-            LOGGER.debug("InteractionResult support is not needed because class_1269 is "
-                            + "unavailable ({})",
-                    t.getClass().getSimpleName());
+        var ir = ClassResourceInspector.read(INTERACTION_RESULT);
+        if (ir == null) {
+            LOGGER.debug("InteractionResult support is not needed because class_1269 is unavailable");
             return;
         }
 
         int registered = 0;
         StringBuilder summary = new StringBuilder();
-        for (Field f : ir.getDeclaredFields()) {
-            int mods = f.getModifiers();
-            if (!(Modifier.isPublic(mods) && Modifier.isStatic(mods) && Modifier.isFinal(mods))) {
+        for (var f : ir.fields) {
+            int required = Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL;
+            if ((f.access & required) != required) {
                 continue;
             }
-            Class<?> fieldType = f.getType();
             // Lclass_1269; fields already resolve; rewriting them would break a pre-1.21.2 host.
-            if (fieldType == ir) continue;
+            if (OLD_DESC.equals(f.desc)) continue;
+            if (!f.desc.startsWith("L" + INTERACTION_RESULT + "$") || !f.desc.endsWith(";")) {
+                continue;
+            }
 
-            if (!ir.isAssignableFrom(fieldType)) continue;
-
-            String actualDesc = "L" + fieldType.getName().replace('.', '/') + ";";
             transformer.registerFieldRedirect(
-                    INTERACTION_RESULT, f.getName(), OLD_DESC,
-                    INTERACTION_RESULT, f.getName(), actualDesc);
+                    INTERACTION_RESULT, f.name, OLD_DESC,
+                    INTERACTION_RESULT, f.name, f.desc);
             registered++;
             if (summary.length() > 0) summary.append(", ");
-            summary.append(f.getName()).append("→").append(actualDesc);
+            summary.append(f.name).append(" -> ").append(f.desc);
         }
 
         if (registered == 0) {

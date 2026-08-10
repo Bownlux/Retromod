@@ -39,6 +39,11 @@ public final class Mc26_1To26_2CoreMoves {
         // (and their buffer-building code working); frame submission is staged.
         RenderBufferSynthetics.register(t);
 
+        // RenderPipeline.Builder replaced named samplers, the blend shortcut, and its combined
+        // vertex-format call in 26.2. Adapt the whole builder chain so a custom pipeline does not
+        // fail in its static initializer before Minecraft creates the window (#190).
+        LegacyRenderPipelineBuilderBridge.register(t);
+
         // StructureProcessor itself became an INTERFACE on 26.2 (26.1: abstract class), so a
         // 1.21.x processor's `extends StructureProcessor` dies at class definition with
         // IncompatibleClassChangeError "has interface ... as super class" (YUNG's Better
@@ -414,6 +419,13 @@ public final class Mc26_1To26_2CoreMoves {
 
         t.registerClassRedirect("net/minecraft/client/renderer/feature/BlockFeatureRenderer",
                 "net/minecraft/client/renderer/feature/MovingBlockFeatureRenderer");
+
+        // The entity vertex layout kept the same contents but lost its NEW_ prefix in 26.2.
+        // Older render pipeline builders read this field before invoking the builder bridge below.
+        t.registerFieldRedirect("com/mojang/blaze3d/vertex/DefaultVertexFormat", "NEW_ENTITY",
+                "Lcom/mojang/blaze3d/vertex/VertexFormat;",
+                "com/mojang/blaze3d/vertex/DefaultVertexFormat", "ENTITY",
+                "Lcom/mojang/blaze3d/vertex/VertexFormat;");
 
         // 26.2 corrected the long-standing spelling typo InstantenousMobEffect ->
         // InstantaneousMobEffect (present on 26.1, gone on 26.2; same abstract instant-effect base,

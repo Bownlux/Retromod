@@ -135,8 +135,8 @@ public class ShimRegistry {
             return Collections.emptyList();
         }
 
-        String resolvedSource = resolveVersion(sourceVersion);
-        String resolvedTarget = resolveVersion(targetVersion);
+        String resolvedSource = resolveVersionForLoader(modLoader, sourceVersion);
+        String resolvedTarget = resolveVersionForLoader(modLoader, targetVersion);
 
         if (!resolvedSource.equals(sourceVersion)) {
             LOGGER.info("Resolved source version " + sourceVersion + " → " + resolvedSource
@@ -179,6 +179,19 @@ public class ShimRegistry {
         }
 
         return Collections.emptyList();
+    }
+
+    /**
+     * Forge has one 1.20 milestone shim and no patch-release API shims. Treat its 1.20.x source
+     * and host versions as that milestone, while leaving Fabric and NeoForge alone because they
+     * have real patch-to-patch transitions in this range.
+     */
+    private static String resolveVersionForLoader(String modLoader, String version) {
+        String resolved = resolveVersion(version);
+        if ("forge".equalsIgnoreCase(modLoader) && resolved.matches("1\\.20\\.[1-6]")) {
+            return "1.20";
+        }
+        return resolved;
     }
 
     public List<VersionShim> getAllShims() {

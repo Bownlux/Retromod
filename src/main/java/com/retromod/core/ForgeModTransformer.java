@@ -274,7 +274,8 @@ public class ForgeModTransformer {
         return written;
     }
 
-    private int transformClasses(Path dir) throws IOException {
+    // Package-private for ForgeFrameMergeTest, which pins the frames this rebuilds.
+    int transformClasses(Path dir) throws IOException {
         final java.util.List<Path> classFiles;
         try (var stream = Files.walk(dir)) {
             classFiles = stream
@@ -287,50 +288,69 @@ public class ForgeModTransformer {
         final java.util.concurrent.atomic.AtomicInteger counter =
                 new java.util.concurrent.atomic.AtomicInteger();
 
-        com.retromod.core.parallel.RetromodExecutors.parallelForEach(classFiles, classFile -> {
+        // Rebuilding a frame needs the mod's own class hierarchy, and those classes are not on the
+        // transform classpath. Without this a branch between two of the mod's own types is typed as
+        // Object, and the JVM rejects the method as soon as that value is passed somewhere that
+        // wants a specific type. The Fabric pass has always done this; Forge and NeoForge did not.
+        bytecodeTransformer.setJarClassBytesProvider(name -> {
             try {
-                byte[] original = Files.readAllBytes(classFile);
-                String className = dir.relativize(classFile).toString()
-                    .replace(".class", "")
-                    .replace(File.separator, "/");
-
-                // Remove handlers that cannot be translated before changing their bytecode.
-                byte[] preStripped = mixinTransformer.stripBlocklistedHandlers(original);
-                // GUI migration needs the old GuiGraphics owner, before the class redirect.
-                if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
-                        com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
-                    preStripped = com.retromod.shim.common.Gui2DTransformMigration.migrate(preStripped);
-                }
-                byte[] transformed = bytecodeTransformer.transformClass(preStripped, className);
-                // Keep the ValueIO repair in the same post-remap position on every loader.
-                if (transformed != null) {
-                    transformed = mixinTransformer.applyLegacyMemberBridges(transformed);
-                    transformed = mixinTransformer.adaptValueIoHandlers(transformed);
-                }
-                // These helpers inspect the class and leave unrelated versions unchanged.
-                transformed = com.retromod.shim.forge.ForgeEventBusSynthetics
-                        .stripLenientAutoSubscriber(transformed);
-                transformed = com.retromod.shim.forge.Forge1122LifecycleSynthetics
-                        .upgradeLegacyModClass(transformed);
-                boolean wroteFirst = false;
-                if (transformed != null && transformed != original) {
-                    Files.write(classFile, transformed);
-                    counter.incrementAndGet();
-                    wroteFirst = true;
-                }
-
-                // Inject missing abstract methods for Button subclasses.
-                byte[] current = (transformed != null && transformed != original) ? transformed : original;
-                byte[] patched = injectMissingAbstractMethods(current, className);
-                if (patched != null && patched != current) {
-                    Files.write(classFile, patched);
-                    if (!wroteFirst) counter.incrementAndGet();
-                }
-            } catch (Exception e) {
-                LOGGER.warn("Could not transform class: {} ({}: {})",
-                        classFile.getFileName(), e.getClass().getSimpleName(), e.getMessage());
+                Path cf = dir.resolve(name + ".class");
+                return Files.exists(cf) ? Files.readAllBytes(cf) : null;
+            } catch (IOException e) {
+                return null;
             }
         });
+        try {
+            com.retromod.core.parallel.RetromodExecutors.parallelForEach(classFiles, classFile -> {
+                try {
+                    byte[] original = Files.readAllBytes(classFile);
+                    String className = dir.relativize(classFile).toString()
+                        .replace(".class", "")
+                        .replace(File.separator, "/");
+
+                    // Remove handlers that cannot be translated before changing their bytecode.
+                    byte[] preStripped = mixinTransformer.stripBlocklistedHandlers(original);
+                    // GUI migration needs the old GuiGraphics owner, before the class redirect.
+                    if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
+                            com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+                        preStripped = com.retromod.shim.common.Gui2DTransformMigration.migrate(preStripped);
+                    }
+                    byte[] transformed = bytecodeTransformer.transformClass(preStripped, className);
+                    // Keep the ValueIO repair in the same post-remap position on every loader.
+                    if (transformed != null) {
+                        transformed = mixinTransformer.applyLegacyMemberBridges(transformed);
+                        transformed = mixinTransformer.adaptValueIoHandlers(transformed);
+                    }
+                    // These helpers inspect the class and leave unrelated versions unchanged.
+                    transformed = com.retromod.shim.forge.ForgeEventBusSynthetics
+                            .stripLenientAutoSubscriber(transformed);
+                    transformed = com.retromod.shim.forge.Forge1122LifecycleSynthetics
+                            .upgradeLegacyModClass(transformed);
+                    boolean wroteFirst = false;
+                    if (transformed != null && transformed != original) {
+                        Files.write(classFile, transformed);
+                        counter.incrementAndGet();
+                        wroteFirst = true;
+                    }
+
+                    // Inject missing abstract methods for Button subclasses.
+                    byte[] current = (transformed != null && transformed != original) ? transformed : original;
+                    byte[] patched = com.retromod.shim.common.LegacyAbstractButtonBridge
+                            .apply(current);
+                    if (patched != null && patched != current) {
+                        Files.write(classFile, patched);
+                        if (!wroteFirst) counter.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    LOGGER.warn("Could not transform class: {} ({}: {})",
+                            classFile.getFileName(), e.getClass().getSimpleName(), e.getMessage());
+                }
+            });
+        } finally {
+            // A nested jar transforms through this same method, so the provider has to be dropped
+            // again or the inner jar's directory would answer for the outer one's classes.
+            bytecodeTransformer.clearJarClassBytesProvider();
+        }
 
         return counter.get();
     }

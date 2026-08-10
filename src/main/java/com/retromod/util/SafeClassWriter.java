@@ -32,12 +32,15 @@ import org.objectweb.asm.ClassWriter;
  * </ul>
  *
  * <h3>The fix</h3>
- * <p>Catch any throwable from the superclass call and return
- * {@code "java/lang/Object"}, the universal common-superclass answer.
- * This is occasionally less optimal than the "real" answer (the resulting
- * stack-map frames are wider than they could be), but it's always
- * <em>correct</em> from a bytecode-verifier standpoint, and the size
- * overhead is negligible against losing the entire AOT pass.
+ * <p>Catch any throwable from the superclass call and ask
+ * {@link com.retromod.core.RetromodTransformer#resolveCommonSuperClass} instead, which reads the
+ * hierarchy out of the jar being transformed when it can and otherwise guesses conservatively.
+ *
+ * <p>This used to answer {@code "java/lang/Object"} unconditionally. That is always accepted for
+ * the merge itself, but it is not always safe: a value typed {@code Object} is rejected the moment
+ * it is passed somewhere that wants a specific type, which is how a mod that branched between two
+ * of its own screens ended up failing verification on {@code setScreen} (#180). Widening is a last
+ * resort, not a default.
  *
  * <h3>Use whenever</h3>
  * <p>any {@code ClassWriter} is constructed with {@link #COMPUTE_FRAMES}
@@ -61,10 +64,14 @@ public class SafeClassWriter extends ClassWriter {
         try {
             return super.getCommonSuperClass(type1, type2);
         } catch (Exception | LinkageError e) {
-            // Includes TypeNotPresentException, ClassNotFoundException,
-            // NoClassDefFoundError. java/lang/Object is always a valid
-            // (if conservative) common superclass.
-            return "java/lang/Object";
+            // Includes TypeNotPresentException, ClassNotFoundException, NoClassDefFoundError.
+            //
+            // java/lang/Object is always accepted by the verifier for the merge itself, but it is
+            // not always safe: if the merged value is then passed somewhere that wants a specific
+            // type, the method is rejected (#180). So ask the transformer, which can read the
+            // hierarchy out of the jar being transformed and falls back to the naming-based guess
+            // that keeps exception merges intact (#94).
+            return com.retromod.core.RetromodTransformer.resolveCommonSuperClass(type1, type2);
         }
     }
 }

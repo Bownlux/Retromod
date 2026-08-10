@@ -65,26 +65,8 @@ public class Fabric_1_21_8_to_1_21_9 implements VersionShim {
             "net/minecraft/client/network/ClientPlayerEntity", "getEntityWorld", "()Lnet/minecraft/world/World;"
         );
         
-        // Resource Loader rework: route the old ResourceManagerHelper.get(...).registerReloadListener(...)
-        // through a shim that calls the new ResourceLoader.get(...).registerReloader(id, ...).
-        transformer.registerClassRedirect(
-            "net/fabricmc/fabric/api/resource/ResourceManagerHelper",
-            "com/retromod/shim/fabric/embedded/ResourceManagerHelperShim"
-        );
-        
-        transformer.registerMethodRedirect(
-            "net/fabricmc/fabric/api/resource/ResourceManagerHelper", "get",
-            "(Lnet/minecraft/resource/ResourceType;)Lnet/fabricmc/fabric/api/resource/ResourceManagerHelper;",
-            "com/retromod/shim/fabric/embedded/ResourceManagerHelperShim", "get",
-            "(Lnet/minecraft/resource/ResourceType;)Lcom/retromod/shim/fabric/embedded/ResourceManagerHelperShim;"
-        );
-        
-        transformer.registerMethodRedirect(
-            "net/fabricmc/fabric/api/resource/ResourceManagerHelper", "registerReloadListener",
-            "(Lnet/fabricmc/fabric/api/resource/IdentifiableResourceReloadListener;)V",
-            "com/retromod/shim/fabric/embedded/ResourceManagerHelperShim", "registerReloadListener",
-            "(Ljava/lang/Object;)V"
-        );
+        // Resource Loader v1 was added alongside v0. ResourceManagerHelper remains available,
+        // so old listener registrations should stay on Fabric's native compatibility path.
         
         // WorldRenderEvents has no 1.21.9 replacement yet; redirect to a no-op shim.
         transformer.registerClassRedirect(
@@ -107,7 +89,6 @@ public class Fabric_1_21_8_to_1_21_9 implements VersionShim {
     @Override
     public String[] getShimClasses() {
         return new String[] {
-            "com.retromod.shim.fabric.embedded.ResourceManagerHelperShim",
             "com.retromod.shim.fabric.embedded.WorldRenderEventsShim",
             "com.retromod.shim.fabric.embedded.EntityWorldShim",
             "com.retromod.shim.fabric.embedded.KeyBindingShim"

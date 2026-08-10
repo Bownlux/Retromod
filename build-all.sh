@@ -4,7 +4,7 @@
 #
 # Builds Retromod for each supported host:
 #   - Fabric (1.20 through 26.2)
-#   - Forge (1.20 through 26.1)
+#   - Forge (1.20 through 26.2)
 #   - NeoForge (1.20.1 through 26.2)
 #   - Standalone CLI
 # Older mods are translated at runtime and do not need separate host jars.
@@ -12,7 +12,7 @@
 # Keep building after one target fails so the final report can list every failure.
 # set -e
 
-VERSION="1.3.0-snapshot.4"
+VERSION="1.3.0-snapshot.5"
 # Older mods are translated at runtime, so only 1.20 and newer need host jars.
 # Security-only updates for versions before 26.1.
 MC_VERSIONS=("1.20" "1.20.1" "1.20.2" "1.20.3" "1.20.4" "1.20.5" "1.20.6" "1.21" "1.21.1" "1.21.2" "1.21.3" "1.21.4" "1.21.5" "1.21.6" "1.21.7" "1.21.8" "1.21.9" "1.21.10" "1.21.11" "26.1" "26.1.1" "26.1.2" "26.2")
@@ -96,7 +96,9 @@ done
 if [ "$SKIP_BUILD" = false ]; then
     # Build the base JAR first
     echo "[Step 1/4] Building base JAR with Maven..."
-    mvn clean package -DskipTests
+    # The exec plugin calls this script with --skip-build to create dist/. Skipping it here avoids
+    # running the entire 67-jar distribution phase once inside Maven and then again below.
+    mvn clean package -DskipTests -Dexec.skip=true
 else
     echo "[Step 1/4] Skipping Maven build (--skip-build flag)"
 fi

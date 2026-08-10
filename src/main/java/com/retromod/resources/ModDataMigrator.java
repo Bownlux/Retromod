@@ -80,11 +80,12 @@ public final class ModDataMigrator {
     private ModDataMigrator() {}
 
     /**
-     * True for data entries this migrator can act on (cheap pre-filter). Covers all datapack
-     * JSON, since the strict-JSON comment fix applies to any data file.
+     * True for bundled resources this migrator can act on (cheap pre-filter). Covers all datapack
+     * JSON plus the legacy item-entity vertex shader removed in 26.2.
      */
     public static boolean isMigratableData(String entryName) {
-        return entryName.endsWith(".json")
+        return isLegacyItemVertexShader(entryName)
+                || entryName.endsWith(".json")
                 && (entryName.startsWith("data/")         // datapack JSON (worldgen, loot, tags, ...)
                  || entryName.contains("/data/")          // same, with a path prefix
                  || entryName.contains("/loot_table")     // fallback for layouts that don't sit
@@ -100,6 +101,9 @@ public final class ModDataMigrator {
     public static byte[] migrate(String entryName, byte[] json, String targetMcVersion) {
         if (!RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) return json;
         if (!isMigratableData(entryName)) return json;
+        if (isLegacyItemVertexShader(entryName)) {
+            return migrateLegacyItemVertexShader(json, targetMcVersion);
+        }
 
         // Make the file parse under 26.1's strict gson (strip // /* */ comments and trailing
         // commas). A clean file comes back as the same array, so the rewrites below still see
@@ -135,6 +139,38 @@ public final class ModDataMigrator {
         if (out.equals(in)) return normalized;
         LOGGER.debug("Migrated 26.x data formats in {}", entryName);
         return out.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static boolean isLegacyItemVertexShader(String entryName) {
+        return entryName.endsWith("/shaders/core/rendertype_item_entity_no_cardinal_shading.vsh");
+    }
+
+    /** Updates the old item shader outputs to match 26.2's consolidated core/item fragment shader. */
+    static byte[] migrateLegacyItemVertexShader(byte[] shader, String targetMcVersion) {
+        if (RetromodVersion.mcVersionExceeds("26.2", targetMcVersion)) return shader;
+        String in = new String(shader, StandardCharsets.UTF_8);
+        if (!in.contains("texelFetch(Sampler2, UV2 / 16, 0)")) return shader;
+        String out = in.replace(
+                "#moj_import <minecraft:projection.glsl>",
+                "#moj_import <minecraft:projection.glsl>\n"
+                        + "#moj_import <minecraft:sample_lightmap.glsl>")
+                .replace("in vec2 UV1;", "in ivec2 UV1;")
+                .replace("out vec2 texCoord1;\r\n", "")
+                .replace("out vec2 texCoord1;\n", "")
+                .replace("out vec2 texCoord2;\r\n", "")
+                .replace("out vec2 texCoord2;\n", "")
+                .replace("out vec4 vertexColor;", "out vec4 vertexColor;\n"
+                        + "out vec4 lightMapColor;\n"
+                        + "out vec4 overlayColor;")
+                .replace("Color * texelFetch(Sampler2, UV2 / 16, 0)",
+                        "Color;\n"
+                                + "    lightMapColor = sample_lightmap(Sampler2, UV2);\n"
+                                + "    overlayColor = vec4(0.0)")
+                .replace("    texCoord1 = UV1;\r\n", "")
+                .replace("    texCoord1 = UV1;\n", "")
+                .replace("    texCoord2 = UV2;\r\n", "")
+                .replace("    texCoord2 = UV2;\n", "");
+        return out.equals(in) ? shader : out.getBytes(StandardCharsets.UTF_8);
     }
 
     /**

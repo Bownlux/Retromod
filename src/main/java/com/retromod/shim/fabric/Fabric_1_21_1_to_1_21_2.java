@@ -35,6 +35,48 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
 
+        // Vanilla attributes became Holder<Attribute>. Distributed Fabric mods use these
+        // intermediary names, so retype both the constants and AttributeSupplier.Builder.add.
+        String attributes = "net/minecraft/class_5134";
+        String attribute = "Lnet/minecraft/class_1320;";
+        String holder = "Lnet/minecraft/class_6880;";
+        for (String field : new String[]{
+                "field_23716", "field_23717", "field_23718", "field_23719", "field_23720",
+                "field_23721", "field_23722", "field_23723", "field_23724", "field_23725",
+                "field_23726", "field_23727", "field_23728"}) {
+            transformer.registerFieldRedirect(
+                    attributes, field, attribute, attributes, field, holder);
+        }
+        String builder = "net/minecraft/class_5132$class_5133";
+        String returnsBuilder = "L" + builder + ";";
+        transformer.registerMethodRedirect(
+                builder, "method_26867", "(" + attribute + ")" + returnsBuilder,
+                builder, "method_26867", "(" + holder + ")" + returnsBuilder);
+        transformer.registerMethodRedirect(
+                builder, "method_26868", "(" + attribute + "D)" + returnsBuilder,
+                builder, "method_26868", "(" + holder + "D)" + returnsBuilder);
+
+        // Smithing transform recipes made template and addition Optional. Patchouli exposes the
+        // old fields through an accessor mixin. Its accessor methods are retyped by the mixin
+        // repair, while these call-site adapters preserve the Ingredient-returning API it uses.
+        String patchouliSmithing =
+                "vazkii/patchouli/mixin/AccessorSmithingTransformRecipe";
+        String ingredient = "Lnet/minecraft/class_1856;";
+        for (String method : new String[]{"getTemplate", "getAddition"}) {
+            transformer.registerReturnUnwrapRedirect(
+                    patchouliSmithing, method, "()" + ingredient,
+                    "retromod$" + method + "Optional", "()Ljava/util/Optional;",
+                    "java/util/Optional", "orElseThrow", "()Ljava/lang/Object;", false);
+        }
+
+        // SoundEvent became a record. The removed getId intermediary name has no mapping entry,
+        // so old Fabric mods otherwise keep calling a method that no longer exists.
+        transformer.registerMethodRedirect(
+                "net/minecraft/class_3414", "method_14833",
+                "()Lnet/minecraft/class_2960;",
+                "net/minecraft/class_3414", "comp_3319",
+                "()Lnet/minecraft/class_2960;");
+
         // PathType refactor: DAMAGE_X/DANGER_X -> X/X_IN_NEIGHBOR, OTHER -> DAMAGING.
         String pathType = "net/minecraft/world/level/pathfinder/PathType";
         transformer.registerFieldRedirect(pathType, "DAMAGE_FIRE", pathType, "FIRE");

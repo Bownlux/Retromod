@@ -31,6 +31,7 @@ class MixinLegacyMemberBridgeTest {
     private static final String MIXIN = "Lorg/spongepowered/asm/mixin/Mixin;";
     private static final String SHADOW = "Lorg/spongepowered/asm/mixin/Shadow;";
     private static final String INVOKER = "Lorg/spongepowered/asm/mixin/gen/Invoker;";
+    private static final String ACCESSOR = "Lorg/spongepowered/asm/mixin/gen/Accessor;";
     private static final String UNIQUE = "Lorg/spongepowered/asm/mixin/Unique;";
     private static final String MOB_EFFECT = "net/minecraft/world/effect/MobEffect";
     private static final String LIVING_ENTITY = "net/minecraft/world/entity/LivingEntity";
@@ -214,6 +215,59 @@ class MixinLegacyMemberBridgeTest {
         return cw.toByteArray();
     }
 
+    private static byte[] smithingTransformAccessor() {
+        String target = "net/minecraft/class_8060";
+        String ingredient = "Lnet/minecraft/class_1856;";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT | Opcodes.ACC_INTERFACE,
+                "test/AccessorSmithingTransformRecipe", null, "java/lang/Object", null);
+        var mixin = cw.visitAnnotation(MIXIN, false);
+        var values = mixin.visitArray("value");
+        values.visit(null, Type.getObjectType(target));
+        values.visitEnd();
+        mixin.visitEnd();
+
+        for (String accessor : List.of("getTemplate", "getBase", "getAddition")) {
+            MethodVisitor method = cw.visitMethod(
+                    Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, accessor, "()" + ingredient,
+                    null, null);
+            method.visitAnnotation(ACCESSOR, false).visitEnd();
+            method.visitEnd();
+        }
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    private static byte[] legacyInventoryScreenMixin() {
+        String target = "net/minecraft/class_490";
+        String oldSuper = "net/minecraft/class_485";
+        String constructor = "(Lnet/minecraft/class_1703;Lnet/minecraft/class_1661;"
+                + "Lnet/minecraft/class_2561;)V";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                "test/MixinInventoryScreen", null, oldSuper, null);
+        var mixin = cw.visitAnnotation(MIXIN, false);
+        var values = mixin.visitArray("value");
+        values.visit(null, Type.getObjectType(target));
+        values.visitEnd();
+        mixin.visitEnd();
+
+        MethodVisitor constructorMethod = cw.visitMethod(
+                Opcodes.ACC_PUBLIC, "<init>", constructor, null, null);
+        constructorMethod.visitCode();
+        constructorMethod.visitVarInsn(Opcodes.ALOAD, 0);
+        constructorMethod.visitVarInsn(Opcodes.ALOAD, 1);
+        constructorMethod.visitVarInsn(Opcodes.ALOAD, 2);
+        constructorMethod.visitVarInsn(Opcodes.ALOAD, 3);
+        constructorMethod.visitMethodInsn(
+                Opcodes.INVOKESPECIAL, oldSuper, "<init>", constructor, false);
+        constructorMethod.visitInsn(Opcodes.RETURN);
+        constructorMethod.visitMaxs(0, 0);
+        constructorMethod.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
     private static ClassNode read(byte[] bytes) {
         ClassNode classNode = new ClassNode();
         new ClassReader(bytes).accept(classNode, 0);
@@ -231,6 +285,20 @@ class MixinLegacyMemberBridgeTest {
         if (method.visibleAnnotations != null) annotations.addAll(method.visibleAnnotations);
         if (method.invisibleAnnotations != null) annotations.addAll(method.invisibleAnnotations);
         return annotations.stream().anyMatch(a -> desc.equals(a.desc));
+    }
+
+    @Test
+    @DisplayName("Patchouli inventory mixin follows the current screen hierarchy")
+    void legacyInventoryScreenMixinUsesStableContainerScreenAncestor() {
+        ClassNode classNode = read(legacyInventoryScreenMixin());
+
+        assertTrue(MixinLegacyMemberBridge.apply(classNode));
+        assertEquals("net/minecraft/class_465", classNode.superName);
+        MethodNode constructor = classNode.methods.stream()
+                .filter(method -> "<init>".equals(method.name))
+                .findFirst().orElseThrow();
+        assertTrue(calls(constructor, "net/minecraft/class_465", "<init>", constructor.desc));
+        assertFalse(calls(constructor, "net/minecraft/class_485", "<init>", constructor.desc));
     }
 
     @Test
@@ -339,6 +407,29 @@ class MixinLegacyMemberBridgeTest {
     }
 
     @Test
+    @DisplayName("Patchouli smithing accessors unwrap optional template and addition ingredients")
+    void bridgesOptionalSmithingIngredients() {
+        ClassNode classNode = read(smithingTransformAccessor());
+        assertTrue(MixinLegacyMemberBridge.apply(classNode));
+
+        for (String methodName : List.of("getTemplate", "getAddition")) {
+            assertTrue(classNode.methods.stream().noneMatch(m -> methodName.equals(m.name)
+                            && "()Lnet/minecraft/class_1856;".equals(m.desc)),
+                    "the stale Ingredient accessor must be replaced, not left for Mixin to bind");
+
+            MethodNode optional = method(classNode, "retromod$" + methodName + "Optional",
+                    "()Ljava/util/Optional;");
+            assertTrue(hasAnnotation(optional, ACCESSOR));
+            assertEquals(Opcodes.ACC_ABSTRACT, optional.access & Opcodes.ACC_ABSTRACT);
+            assertEquals(methodName.equals("getTemplate") ? "field_42030" : "field_42032",
+                    annotationStringValue(optional, ACCESSOR, "value"));
+        }
+
+        MethodNode base = method(classNode, "getBase", "()Lnet/minecraft/class_1856;");
+        assertTrue(hasAnnotation(base, ACCESSOR), "the unchanged base field stays a normal accessor");
+    }
+
+    @Test
     @DisplayName("An accessor interface keeps its invoker, because a bridge there could not reach the private member")
     void leavesAccessorInterfaceAlone() {
         ClassNode classNode = read(treeDecoratorTypeAccessorInterface());
@@ -406,5 +497,17 @@ class MixinLegacyMemberBridgeTest {
                 .filter(MethodInsnNode.class::isInstance)
                 .map(MethodInsnNode.class::cast)
                 .anyMatch(call -> owner.equals(call.owner) && name.equals(call.name) && desc.equals(call.desc));
+    }
+
+    private static String annotationStringValue(MethodNode method, String desc, String key) {
+        List<AnnotationNode> annotations = new ArrayList<>();
+        if (method.visibleAnnotations != null) annotations.addAll(method.visibleAnnotations);
+        if (method.invisibleAnnotations != null) annotations.addAll(method.invisibleAnnotations);
+        AnnotationNode annotation = annotations.stream()
+                .filter(a -> desc.equals(a.desc)).findFirst().orElseThrow();
+        for (int i = 0; annotation.values != null && i + 1 < annotation.values.size(); i += 2) {
+            if (key.equals(annotation.values.get(i))) return (String) annotation.values.get(i + 1);
+        }
+        return null;
     }
 }

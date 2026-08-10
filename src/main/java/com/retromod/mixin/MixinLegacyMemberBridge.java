@@ -28,6 +28,7 @@ final class MixinLegacyMemberBridge {
     private static final String MIXIN_DESC = "Lorg/spongepowered/asm/mixin/Mixin;";
     private static final String SHADOW_DESC = "Lorg/spongepowered/asm/mixin/Shadow;";
     private static final String INVOKER_DESC = "Lorg/spongepowered/asm/mixin/gen/Invoker;";
+    private static final String ACCESSOR_DESC = "Lorg/spongepowered/asm/mixin/gen/Accessor;";
     private static final String UNIQUE_DESC = "Lorg/spongepowered/asm/mixin/Unique;";
 
     private static final String LIVING_ENTITY = "net/minecraft/world/entity/LivingEntity";
@@ -45,6 +46,11 @@ final class MixinLegacyMemberBridge {
     private static final String CODEC = "com/mojang/serialization/Codec";
     private static final String MAP_CODEC = "com/mojang/serialization/MapCodec";
     private static final String MAP_CODEC_CODEC = "com/mojang/serialization/MapCodec$MapCodecCodec";
+    private static final String SMITHING_TRANSFORM_INTERMEDIARY = "net/minecraft/class_8060";
+    private static final String INGREDIENT_INTERMEDIARY = "net/minecraft/class_1856";
+    private static final String INVENTORY_SCREEN_INTERMEDIARY = "net/minecraft/class_490";
+    private static final String OLD_EFFECTS_INVENTORY_SCREEN_INTERMEDIARY = "net/minecraft/class_485";
+    private static final String CONTAINER_SCREEN_INTERMEDIARY = "net/minecraft/class_465";
 
     /**
      * Worldgen type wrappers whose registrar takes a {@code MapCodec} on current hosts.
@@ -81,6 +87,12 @@ final class MixinLegacyMemberBridge {
         if (targets.contains(GUI)) {
             modified |= bridgeGuiCameraPlayer(classNode);
         }
+        if (targets.contains(SMITHING_TRANSFORM_INTERMEDIARY)) {
+            modified |= bridgeOptionalSmithingIngredients(classNode);
+        }
+        if (targets.contains(INVENTORY_SCREEN_INTERMEDIARY)) {
+            modified |= rebaseLegacyInventoryScreenMixin(classNode);
+        }
         // Each bridge below calls a private member of the target, which is only legal once the
         // mixin has been merged into it.
         if (!mergesIntoTarget(classNode)) return modified;
@@ -94,6 +106,65 @@ final class MixinLegacyMemberBridge {
             }
         }
         return modified;
+    }
+
+    /**
+     * The effects panel stopped being an InventoryScreen superclass and became a composed helper.
+     * Patchouli's mixin does not use that old superclass directly, but Mixin still rejects the
+     * class before applying any mods. Rebase it to the nearest stable screen ancestor. Its old
+     * constructor already has that ancestor's descriptor, so only the invocation owner changes.
+     */
+    private static boolean rebaseLegacyInventoryScreenMixin(ClassNode classNode) {
+        if (!OLD_EFFECTS_INVENTORY_SCREEN_INTERMEDIARY.equals(classNode.superName)) return false;
+
+        classNode.superName = CONTAINER_SCREEN_INTERMEDIARY;
+        for (MethodNode method : classNode.methods) {
+            if (!"<init>".equals(method.name)) continue;
+            for (var instruction : method.instructions) {
+                if (instruction instanceof MethodInsnNode call
+                        && call.getOpcode() == Opcodes.INVOKESPECIAL
+                        && "<init>".equals(call.name)
+                        && OLD_EFFECTS_INVENTORY_SCREEN_INTERMEDIARY.equals(call.owner)) {
+                    call.owner = CONTAINER_SCREEN_INTERMEDIARY;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Minecraft 1.21.2 made the smithing transform recipe's template and addition ingredients
+     * optional. Patchouli 1.20.1 accesses the old fields through an accessor interface, so Mixin
+     * rejects the interface before recipe registration completes. Retype the generated accessors;
+     * the version shim adapts Patchouli's old call sites back to Ingredient.
+     */
+    private static boolean bridgeOptionalSmithingIngredients(ClassNode classNode) {
+        if ((classNode.access & Opcodes.ACC_INTERFACE) == 0) return false;
+        boolean modified = false;
+        modified |= bridgeOptionalSmithingIngredient(
+                classNode, "getTemplate", "field_42030");
+        modified |= bridgeOptionalSmithingIngredient(
+                classNode, "getAddition", "field_42032");
+        return modified;
+    }
+
+    private static boolean bridgeOptionalSmithingIngredient(ClassNode classNode,
+            String oldMethodName, String fieldName) {
+        String ingredientDesc = "L" + INGREDIENT_INTERMEDIARY + ";";
+        MethodNode accessor = findAnnotatedMethod(
+                classNode, oldMethodName, "()" + ingredientDesc, ACCESSOR_DESC);
+        if (accessor == null) return false;
+
+        String optionalAccessorName = "retromod$" + oldMethodName + "Optional";
+        accessor.name = optionalAccessorName;
+        accessor.desc = "()Ljava/util/Optional;";
+        accessor.signature = "()Ljava/util/Optional<" + ingredientDesc + ">;";
+        // Patchouli relies on name inference plus its refmap. Renaming the accessor would make
+        // that inference point at a fictional field, so pin the live intermediary field name.
+        AnnotationNode accessorAnnotation = findAnnotation(accessor, ACCESSOR_DESC);
+        accessorAnnotation.values = new ArrayList<>(List.of("value", fieldName));
+
+        return true;
     }
 
     /**

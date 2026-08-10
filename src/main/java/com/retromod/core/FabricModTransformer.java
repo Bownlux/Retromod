@@ -519,7 +519,8 @@ public class FabricModTransformer {
 
                     // Inject missing abstract methods for Button subclasses.
                     byte[] current = (transformed != null && transformed != original) ? transformed : original;
-                    byte[] patched = injectMissingAbstractMethods(current, className);
+                    byte[] patched = com.retromod.shim.common.LegacyAbstractButtonBridge
+                            .apply(current);
                     if (patched != null && patched != current) {
                         Files.write(classFile, patched);
                         if (!wroteFirst) counter.incrementAndGet();
@@ -602,11 +603,24 @@ public class FabricModTransformer {
      * Wrap Fabric entrypoint methods (onInitialize/Client/Server) in try-catch so
      * one mod referencing a removed class during init doesn't take down the game.
      */
-    private void wrapEntrypoints(Path dir) {
+    // Package-private for AutoClickyFrameMergeTest, which pins the frame merge this rebuilds.
+    void wrapEntrypoints(Path dir) {
         Set<String> entrypointMethods = Set.of(
             "onInitialize", "onInitializeClient", "onInitializeServer",
             "onPreLaunch"
         );
+
+        // Rebuilding a frame needs the mod's own class hierarchy, and those classes are not on the
+        // transform classpath. Reading them from the jar being unpacked is what keeps a merge of two
+        // mod-owned types from widening to Object.
+        final java.util.function.Function<String, byte[]> ownClasses = name -> {
+            try {
+                Path cf = dir.resolve(name + ".class");
+                return Files.exists(cf) ? Files.readAllBytes(cf) : null;
+            } catch (IOException e) {
+                return null;
+            }
+        };
 
         try (var stream = Files.walk(dir)) {
             var classFiles = stream
@@ -679,6 +693,16 @@ public class FabricModTransformer {
                                 try {
                                     return super.getCommonSuperClass(type1, type2);
                                 } catch (Exception | LinkageError e) {
+                                    // Two of the mod's own types merge here when it branches between
+                                    // them. Their shared type is in the jar, so read it rather than
+                                    // widening to Object, which the verifier rejects as soon as the
+                                    // value is passed somewhere typed (#180: two screens handed to
+                                    // Minecraft.setScreen).
+                                    String shared = RetromodTransformer.commonSuperViaBytes(
+                                            type1, type2, ownClasses);
+                                    if (shared != null) {
+                                        return shared;
+                                    }
                                     return RetromodTransformer.commonSuperFallback(type1, type2);
                                 }
                             }
@@ -1651,7 +1675,10 @@ public class FabricModTransformer {
                         bytecodeTransformer);
 
                 // Transform class files (intermediary→Mojang remapping)
-                try (var classStream = Files.walk(tempDir)) {
+                Map<String, byte[]> hierarchyClassLookup = buildClassLookup(tempDir);
+                try (var hierarchyScope = bytecodeTransformer
+                            .pushJarClassBytesProvider(hierarchyClassLookup::get);
+                     var classStream = Files.walk(tempDir)) {
                     for (Path file : classStream.filter(f -> f.toString().endsWith(".class")).toList()) {
                         try {
                             byte[] original = Files.readAllBytes(file);

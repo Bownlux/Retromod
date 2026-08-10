@@ -5,6 +5,7 @@
 package com.retromod.shim.fabric;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.ClassResourceInspector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,7 +38,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Host-introspecting like the other Pre* bridges: registers only when the host actually
  * lost the constructor and has the factories, so 1.16.x-1.18.x hosts (constructor intact)
- * are untouched. Trade-off: a 1.19+ mod on this host that references {@code class_2588} as a
+ * are untouched. It reads class resources without defining Minecraft classes during pre-launch.
+ * Trade-off: a 1.19+ mod on this host that references {@code class_2588} as a
  * CONTENT class ({@code TranslatableTextContent}) would be mis-redirected, but such mods use
  * {@code Text.translatable} and never touch the content class directly in practice.
  */
@@ -54,27 +56,22 @@ public final class Pre1_19TextBridge {
 
     /** Register the constructor bridges when the host's Text shape needs them. */
     public static void register(RetromodTransformer transformer) {
-        ClassLoader loader = Thread.currentThread().getContextClassLoader();
-        try {
-            // Host introspection: on <=1.18.x the one-arg constructor still exists, so the
-            // bridge must no-op; on 1.19+ it is gone and the factories exist.
-            Class<?> translatable = Class.forName("net.minecraft.class_2588", false, loader);
-            boolean ctorGone;
-            try {
-                translatable.getConstructor(String.class);
-                ctorGone = false;
-            } catch (NoSuchMethodException e) {
-                ctorGone = true;
-            }
-            if (!ctorGone) {
-                return; // pre-1.19 host: the legacy shape is intact
-            }
-            Class<?> text = Class.forName("net.minecraft.class_2561", false, loader);
-            text.getMethod("method_43471", String.class); // Text.translatable, throws if absent
-            text.getMethod("method_43470", String.class); // Text.literal
-        } catch (Throwable t) {
-            return; // not an intermediary host, or an unexpected shape: never guess
-        }
+        var translatable = ClassResourceInspector.read(TRANSLATABLE);
+        if (translatable == null) return;
+        boolean legacyCtorExists = translatable.methods.stream()
+                .anyMatch(m -> m.name.equals("<init>")
+                        && m.desc.equals("(Ljava/lang/String;)V"));
+        if (legacyCtorExists) return;
+
+        var text = ClassResourceInspector.read(TEXT);
+        if (text == null) return;
+        boolean hasTranslatable = text.methods.stream()
+                .anyMatch(m -> m.name.equals("method_43471")
+                        && m.desc.equals("(Ljava/lang/String;)L" + MUTABLE + ";"));
+        boolean hasLiteral = text.methods.stream()
+                .anyMatch(m -> m.name.equals("method_43470")
+                        && m.desc.equals("(Ljava/lang/String;)L" + MUTABLE + ";"));
+        if (!hasTranslatable || !hasLiteral) return;
 
         // Creation sites: constructor -> factory (isInterface=true: class_2561 Text is an
         // INTERFACE on 1.19+, so the static factory call needs an InterfaceMethodref).

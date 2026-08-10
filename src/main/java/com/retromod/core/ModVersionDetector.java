@@ -146,9 +146,14 @@ public class ModVersionDetector {
             Map<String, String> toml = parseSimpleToml(
                 new BufferedReader(new java.io.StringReader(tomlContent)));
 
-            String modId = toml.getOrDefault("modId", "unknown");
-            String modVersion = toml.getOrDefault("version", "unknown");
+            String modId = extractPrimaryModValue(tomlContent, "modId",
+                    toml.getOrDefault("modId", "unknown"));
+            String modVersion = extractPrimaryModValue(tomlContent, "version",
+                    toml.getOrDefault("version", "unknown"));
             String mcVersion = extractMcVersionFromToml(tomlContent);
+            if (mcVersion == null) {
+                mcVersion = inferMcVersionFromModVersion(modVersion);
+            }
             String forgeVersion = toml.get("forge");
 
             Set<String> packages = scanModPackages(jar, modId);
@@ -210,9 +215,14 @@ public class ModVersionDetector {
             Map<String, String> toml = parseSimpleToml(
                 new BufferedReader(new java.io.StringReader(tomlContent)));
 
-            String modId = toml.getOrDefault("modId", "unknown");
-            String modVersion = toml.getOrDefault("version", "unknown");
+            String modId = extractPrimaryModValue(tomlContent, "modId",
+                    toml.getOrDefault("modId", "unknown"));
+            String modVersion = extractPrimaryModValue(tomlContent, "version",
+                    toml.getOrDefault("version", "unknown"));
             String mcVersion = extractMcVersionFromToml(tomlContent);
+            if (mcVersion == null) {
+                mcVersion = inferMcVersionFromModVersion(modVersion);
+            }
             String neoforgeVersion = toml.get("neoforge");
 
             Set<String> packages = scanModPackages(jar, modId);
@@ -254,6 +264,47 @@ public class ModVersionDetector {
         }
 
         return null;
+    }
+
+    /**
+     * Reads a value from the first [[mods]] block. The simple TOML reader deliberately cannot
+     * model arrays of tables, so allowing later dependency blocks to overwrite modId made old
+     * Forge mods appear to be their final dependency instead of the mod itself.
+     */
+    private String extractPrimaryModValue(String tomlContent, String key, String fallback) {
+        java.util.regex.Matcher blockMatcher = java.util.regex.Pattern
+                .compile("(?ms)^\\s*\\[\\[mods]]\\s*$.*?(?=^\\s*\\[\\[|\\z)")
+                .matcher(tomlContent);
+        if (!blockMatcher.find()) {
+            return fallback;
+        }
+        java.util.regex.Matcher valueMatcher = java.util.regex.Pattern
+                .compile("(?m)^\\s*" + java.util.regex.Pattern.quote(key)
+                        + "\\s*=\\s*[\"']([^\"']+)[\"']")
+                .matcher(blockMatcher.group());
+        return valueMatcher.find() ? valueMatcher.group(1).trim() : fallback;
+    }
+
+    /**
+     * Old Forge metadata sometimes omits the minecraft dependency entirely. Accept the common
+     * version shape where the mod version starts with a supported Minecraft version followed by
+     * a separator, for example 1.16.4-0.3.9. Plain mod semver such as 1.3.0 is not inferred.
+     */
+    private String inferMcVersionFromModVersion(String modVersion) {
+        if (modVersion == null) {
+            return null;
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("^(?:mc)?((?:1\\.(?:1[2-9]|2[0-1])(?:\\.\\d+)?|26\\.\\d+(?:\\.\\d+)?))(?=[+_-])",
+                        java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(modVersion.trim());
+        if (!matcher.find()) {
+            return null;
+        }
+        String inferred = matcher.group(1);
+        LOGGER.info("Inferred Minecraft {} from mod version {} because its metadata has no "
+                + "minecraft dependency", inferred, modVersion);
+        return inferred;
     }
 
     /**

@@ -17,7 +17,7 @@ public class ResourceManagerHelperShim {
 
     private static final Map<Object, ResourceManagerHelperShim> INSTANCES = new ConcurrentHashMap<>();
     private static final AtomicInteger COUNTER = new AtomicInteger(0);
-    
+
     private final Object resourceType;
     private Object realLoader;
 
@@ -119,7 +119,7 @@ public class ResourceManagerHelperShim {
         }
         return null;
     }
-    
+
     /** New API only; the old API has no ordering, so this is a no-op there. */
     public void addReloaderOrdering(Object first, Object second) {
         try {

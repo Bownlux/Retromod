@@ -10,6 +10,23 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.3.0 Snapshot Line
 
+### Snapshot 5, in development
+
+- Fixed mod-owned stack-frame merges in the standalone CLI, full AOT worker pool, and recursively nested libraries. Each transform now reads the hierarchy from the jar it is actually rewriting.
+- Fixed Patchouli 1.20.1 on Fabric 1.21.11 across its recipe accessors, screen hierarchy, sound accessor, item setup, and old Gson registration. Replaced APIs for ghost buffers, resource-pack books, the animated guide-book model, and its completion predicate are disabled safely; built-in books and normal rendering remain available.
+- Fixed constructor transforms repeatedly spilling unmatched overloads and falsely hitting the five-pass redirect-cycle cap. The Arcanus report now transforms without any cap warnings.
+- Fixed ENGRAM 0.8 on Fabric 1.21.11 by translating its entity registration, moved player accessor, attribute holders, raw networking channels, world render event, and verifier-sensitive frames. Its optional offscreen screenshot helper still logs a soft warning for a removed render-hand field.
+- Fixed Old 2D Items crashing on Fabric 26.2 by translating its removed render-pipeline builder chain, renamed entity vertex format, and legacy custom shader interface.
+- Fixed Pathmind aborting its Fabric client initializer after world tick fields became level tick fields and C2S networking events became serverbound events, plus its custom title button crashing the first menu frame after an offline transform.
+- Fixed Caelum's removed NeoForge client reload event and registration call, including packaging its required bridge into offline output jars.
+- Fixed exact NeoForge Minecraft ranges such as `[1.21.1]` remaining too strict after an offline transform.
+- Fixed mod-owned stack-frame merges in Fabric entrypoint wrapping, Forge and NeoForge transforms, and AOT compilation.
+- Added a Forge tick-event split bridge for mods whose listeners were rejected after NeoForge made the shared event abstract.
+- Fixed old Forge jars with no explicit Minecraft dependency being misidentified and then receiving no shim chain on patch targets such as Forge 1.20.1.
+- Restored offline SRG member remapping for Forge and NeoForge mods targeting the unobfuscated 26.x namespace.
+- Added release consistency checks so the CLI, AOT cache, presence packet, POM, build script, badge, and changelog cannot silently disagree on the snapshot version.
+- Fixed the release script building all 67 distribution jars twice.
+
 ### Snapshot 4, August 2, 2026
 
 - Added real mixin bridges for legacy `MobEffect` shadows and custom `Pose` constructor invokers.

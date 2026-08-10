@@ -10,7 +10,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.SyntheticEmbedder;
 import com.retromod.core.VersionShim;
+import com.retromod.shim.forge.embedded.TickEventPhaseSynthetic;
 import com.retromod.util.McReflect;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,6 +59,11 @@ public class ForgeEventApiShim implements VersionShim {
             LOGGER.debug("Skipping Forge → NeoForge event API migration (runtime is not NeoForge)");
             return;
         }
+
+        SyntheticEmbedder.registerClassResource(
+                transformer,
+                "com/retromod/shim/neoforge/embedded/ReloadListenerEventShim",
+                ForgeEventApiShim.class);
 
         // Bulk package renames first; the hand-listed special cases below run after, so a rename
         // (LivingHurtEvent -> LivingDamageEvent, world/* -> level/*) wins over a same-name bulk entry.
@@ -105,42 +112,9 @@ public class ForgeEventApiShim implements VersionShim {
         );
 
         // common events
-        //
-        // Known gap, verified in game on 26.2 with S33R More Food (#184): the five tick events
-        // below are mapped to their abstract parents, and NeoForge refuses a listener on those
-        // ("Cannot register listeners for abstract class ... Register a listener to one of its
-        // subclasses instead"), which kills the whole mod at construction. Each one really has
-        // Pre and Post subclasses. Repointing them is not enough on its own, because a Forge mod
-        // also reads the removed TickEvent.phase field and compares it against the removed
-        // TickEvent.Phase enum, so the split has to be handled together with those two.
-        transformer.registerClassRedirect(
-            "net/minecraftforge/event/TickEvent",
-            "net/neoforged/neoforge/event/tick/TickEvent"
-        );
-        
-        transformer.registerClassRedirect(
-            "net/minecraftforge/event/TickEvent$ServerTickEvent",
-            "net/neoforged/neoforge/event/tick/ServerTickEvent"
-        );
-        
-        // The client one sits with the other client events, not beside its siblings in
-        // event/tick. Verified against neoforge-26.2.0.0-beta: there is no
-        // event/tick/ClientTickEvent, so the old target could never resolve.
-        transformer.registerClassRedirect(
-            "net/minecraftforge/event/TickEvent$ClientTickEvent",
-            "net/neoforged/neoforge/client/event/ClientTickEvent"
-        );
-        
-        transformer.registerClassRedirect(
-            "net/minecraftforge/event/TickEvent$LevelTickEvent",
-            "net/neoforged/neoforge/event/tick/LevelTickEvent"
-        );
-        
-        transformer.registerClassRedirect(
-            "net/minecraftforge/event/TickEvent$PlayerTickEvent",
-            "net/neoforged/neoforge/event/tick/PlayerTickEvent"
-        );
-        
+        registerTickEventSplit(transformer);
+        registerClientReloadListenerMove(transformer);
+
         // entity events
         transformer.registerClassRedirect(
             "net/minecraftforge/event/entity/EntityEvent",
@@ -297,6 +271,98 @@ public class ForgeEventApiShim implements VersionShim {
         );
     }
 
+    /**
+     * Forge fired one tick event twice, carrying a {@code phase} of {@code START} then {@code END}.
+     * NeoForge split that into two events, {@code Pre} and {@code Post}, made the shared parent
+     * abstract, and deleted both the {@code phase} field and the {@code TickEvent.Phase} enum.
+     *
+     * <p>Three things therefore have to move together, or the mod is left worse off than before:
+     *
+     * <ul>
+     *   <li>the listener's parameter, because NeoForge refuses a listener registered on an abstract
+     *       event ("Register a listener to one of its subclasses instead") and fails the whole mod
+     *       at construction, which is what stopped S33R More Food from starting (#184);</li>
+     *   <li>the {@code phase} read, which no longer has a field to read;</li>
+     *   <li>the {@code Phase} constants it is compared against, which no longer exist.</li>
+     * </ul>
+     *
+     * <p>The listener goes to {@code Post}, because that is where Forge's {@code END} fired, and
+     * {@code END} is the phase essentially every Forge mod guards on. A mod that guarded on
+     * {@code START} instead now runs at the end of the tick rather than the beginning: later than
+     * it asked for, but on the same tick, which is a far smaller change than not loading at all.
+     * Verified against neoforge-26.2.0.0-beta.
+     */
+    void registerTickEventSplit(RetromodTransformer transformer) {
+        // The Forge name, then the NeoForge parent whose concrete Post subclass a listener binds to.
+        String[][] tickEvents = {
+            {"net/minecraftforge/event/TickEvent$ServerTickEvent",
+             "net/neoforged/neoforge/event/tick/ServerTickEvent"},
+            // The client one lives with the other client events, not beside its siblings in
+            // event/tick. There is no event/tick/ClientTickEvent to point at.
+            {"net/minecraftforge/event/TickEvent$ClientTickEvent",
+             "net/neoforged/neoforge/client/event/ClientTickEvent"},
+            {"net/minecraftforge/event/TickEvent$LevelTickEvent",
+             "net/neoforged/neoforge/event/tick/LevelTickEvent"},
+            {"net/minecraftforge/event/TickEvent$PlayerTickEvent",
+             "net/neoforged/neoforge/event/tick/PlayerTickEvent"},
+        };
+
+        transformer.registerSyntheticClass(
+                TickEventPhaseSynthetic.INTERNAL, TickEventPhaseSynthetic.generate());
+        transformer.registerClassRedirect(
+                "net/minecraftforge/event/TickEvent$Phase", TickEventPhaseSynthetic.INTERNAL);
+
+        // Forge's bare TickEvent parent has no NeoForge counterpart under any name, so it is left
+        // alone rather than pointed at a class that was never there.
+        for (String[] pair : tickEvents) {
+            String forgeName = pair[0];
+            String neoParent = pair[1];
+            transformer.registerClassRedirect(forgeName, neoParent + "$Post");
+
+            // The phase read is matched under every spelling the owner can carry, because the class
+            // redirect may reach the owner before or after this bridge is consulted.
+            for (String owner : new String[]{forgeName, neoParent, neoParent + "$Post"}) {
+                transformer.registerFieldStaticBridge(
+                        owner, "phase",
+                        TickEventPhaseSynthetic.INTERNAL,
+                        TickEventPhaseSynthetic.PHASE_OF_NAME, TickEventPhaseSynthetic.PHASE_OF_DESC,
+                        TickEventPhaseSynthetic.PHASE_SET_NAME, TickEventPhaseSynthetic.PHASE_SET_DESC);
+            }
+        }
+
+        // PlayerTickEvent.player became the inherited PlayerEvent.getEntity(). The field was final,
+        // so a write from another class could not exist and the setter slot is unreachable.
+        String playerDesc = "()Lnet/minecraft/world/entity/player/Player;";
+        for (String owner : new String[]{
+                "net/minecraftforge/event/TickEvent$PlayerTickEvent",
+                "net/neoforged/neoforge/event/tick/PlayerTickEvent",
+                "net/neoforged/neoforge/event/tick/PlayerTickEvent$Post"}) {
+            transformer.registerFieldAccessorRedirect(
+                    owner, "player", "getEntity", playerDesc, "getEntity", playerDesc);
+        }
+
+        LOGGER.debug("Registered the Forge tick event split (listener -> Post, phase -> bridge)");
+    }
+
+    /** Forge and early NeoForge client reload registration onto the 26.x sorted event. */
+    void registerClientReloadListenerMove(RetromodTransformer transformer) {
+        String forgeEvent =
+                "net/minecraftforge/client/event/RegisterClientReloadListenersEvent";
+        String oldNeoEvent =
+                "net/neoforged/neoforge/client/event/RegisterClientReloadListenersEvent";
+        String newNeoEvent =
+                "net/neoforged/neoforge/client/event/AddClientReloadListenersEvent";
+        transformer.registerClassRedirect(forgeEvent, newNeoEvent);
+        transformer.registerClassRedirect(oldNeoEvent, newNeoEvent);
+        for (String owner : new String[]{forgeEvent, oldNeoEvent, newNeoEvent}) {
+            transformer.registerMethodRedirect(
+                    owner, "registerReloadListener",
+                    "(Lnet/minecraft/server/packs/resources/PreparableReloadListener;)V",
+                    "com/retromod/shim/neoforge/embedded/ReloadListenerEventShim", "addListener",
+                    "(Ljava/lang/Object;Ljava/lang/Object;)V", true);
+        }
+    }
+
     static final String EVENT_RENAMES_RESOURCE = "/retromod/forge-event-renames.json";
 
     static final String FML_RENAMES_RESOURCE = "/retromod/forge-fml-renames.json";
@@ -347,6 +413,9 @@ public class ForgeEventApiShim implements VersionShim {
 
     @Override
     public String[] getShimClasses() {
-        return new String[] {};
+        return new String[] {
+            TickEventPhaseSynthetic.INTERNAL.replace('/', '.'),
+            "com.retromod.shim.neoforge.embedded.ReloadListenerEventShim"
+        };
     }
 }

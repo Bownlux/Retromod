@@ -5,7 +5,7 @@ Run older Minecraft mods on newer game versions.
 [![Java 25+](https://img.shields.io/badge/Java-25+-blue.svg)](https://adoptium.net/)
 [![Minecraft 1.20 - 26.2](https://img.shields.io/badge/Minecraft-1.20%20--%2026.2-green.svg)](https://minecraft.net/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.3.0--snapshot.4-blueviolet.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.3.0--snapshot.5-blueviolet.svg)]()
 [![Modrinth](https://img.shields.io/badge/Download-Modrinth-00AF5C.svg)](https://modrinth.com/mod/retromod)
 [![CurseForge](https://img.shields.io/badge/Download-CurseForge-F16436.svg)](https://www.curseforge.com/minecraft/mc-mods/retromod)
 

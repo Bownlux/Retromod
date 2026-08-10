@@ -277,85 +277,44 @@ public final class TransformVerifier {
     }
 
     private static boolean canResolveClass(String internalName) {
-        try {
-            Class.forName(internalName.replace('/', '.'), false,
-                    TransformVerifier.class.getClassLoader());
-            return true;
-        } catch (ClassNotFoundException | NoClassDefFoundError e) {
-            // classloader-visibility miss (client class on a server, other-module class
-            // under NeoForge): confirm against the mapping before declaring a gap.
-            return isKnownTargetClass(internalName);
-        } catch (Throwable t) {
-            // can't tell, so assume resolvable rather than crash. Mixin throws
-            // IllegalClassLoadError (an Error) when a @Mixin-package class is loaded
-            // directly (#102); the probe swallows it.
-            return true;
-        }
+        return ClassResourceInspector.exists(internalName) || isKnownTargetClass(internalName);
     }
 
     private static boolean canResolveMethod(String ownerInternal, String name, String desc) {
-        try {
-            Class<?> cls = Class.forName(ownerInternal.replace('/', '.'), false,
-                    TransformVerifier.class.getClassLoader());
-            int paramCount = countParameters(desc);
-
-            if ("<init>".equals(name)) {
-                for (var ctor : cls.getDeclaredConstructors()) {
-                    if (ctor.getParameterCount() == paramCount) return true;
-                }
-                Class<?> sup = cls.getSuperclass();
-                while (sup != null) {
-                    for (var ctor : sup.getDeclaredConstructors()) {
-                        if (ctor.getParameterCount() == paramCount) return true;
-                    }
-                    sup = sup.getSuperclass();
-                }
-                return false;
-            }
-
-            Class<?> current = cls;
-            while (current != null) {
-                for (var m : current.getDeclaredMethods()) {
-                    if (m.getName().equals(name) && m.getParameterCount() == paramCount) {
-                        return true;
-                    }
-                }
-                current = current.getSuperclass();
-            }
-            for (var iface : cls.getInterfaces()) {
-                for (var m : iface.getMethods()) {
-                    if (m.getName().equals(name) && m.getParameterCount() == paramCount) {
-                        return true;
-                    }
-                }
-            }
-            return false;
-        } catch (ClassNotFoundException | NoClassDefFoundError e) {
-            return true; // don't double-report
-        } catch (Throwable t) {
-            return true; // #102: the probe (Mixin's IllegalClassLoadError) must not crash the transform
-        }
+        if (ClassResourceInspector.read(ownerInternal) == null) return true;
+        return canResolveMethod(ownerInternal, name, countParameters(desc), new HashSet<>());
     }
 
     private static boolean canResolveField(String ownerInternal, String fieldName) {
-        try {
-            Class<?> cls = Class.forName(ownerInternal.replace('/', '.'), false,
-                    TransformVerifier.class.getClassLoader());
-            Class<?> current = cls;
-            while (current != null) {
-                try {
-                    current.getDeclaredField(fieldName);
-                    return true;
-                } catch (NoSuchFieldException e) {
-                    current = current.getSuperclass();
-                }
-            }
-            return false;
-        } catch (ClassNotFoundException | NoClassDefFoundError e) {
-            return true;
-        } catch (Throwable t) {
-            return true; // #102: probe must not crash the transform
+        if (ClassResourceInspector.read(ownerInternal) == null) return true;
+        return canResolveField(ownerInternal, fieldName, new HashSet<>());
+    }
+
+    private static boolean canResolveMethod(
+            String owner, String name, int paramCount, Set<String> visited) {
+        if (owner == null || !visited.add(owner)) return false;
+        var node = ClassResourceInspector.read(owner);
+        if (node == null) return false;
+        for (var method : node.methods) {
+            if (method.name.equals(name) && countParameters(method.desc) == paramCount) return true;
         }
+        if (canResolveMethod(node.superName, name, paramCount, visited)) return true;
+        for (String iface : node.interfaces) {
+            if (canResolveMethod(iface, name, paramCount, visited)) return true;
+        }
+        return false;
+    }
+
+    private static boolean canResolveField(String owner, String name, Set<String> visited) {
+        if (owner == null || !visited.add(owner)) return false;
+        var node = ClassResourceInspector.read(owner);
+        if (node == null) return false;
+        if (node.fields.stream().anyMatch(field -> field.name.equals(name))) return true;
+        if (canResolveField(node.superName, name, visited)) return true;
+        for (String iface : node.interfaces) {
+            if (canResolveField(iface, name, visited)) return true;
+        }
+        return false;
     }
 
     private static int countParameters(String desc) {

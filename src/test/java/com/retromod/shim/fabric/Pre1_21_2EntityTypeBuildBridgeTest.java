@@ -93,4 +93,5 @@ class Pre1_21_2EntityTypeBuildBridgeTest {
         assertNull(com.retromod.polyfill.minecraft.RetroEntityTypeBuild.build(new Object(), "x"));
         assertNull(com.retromod.polyfill.minecraft.RetroEntityTypeBuild.build(null, "x"));
     }
+
 }

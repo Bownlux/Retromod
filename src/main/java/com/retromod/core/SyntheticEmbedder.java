@@ -40,6 +40,33 @@ public final class SyntheticEmbedder {
     private SyntheticEmbedder() {}
 
     /**
+     * Register one of Retromod's compiled helper classes for per-mod embedding.
+     *
+     * <p>{@link VersionShim#getShimClasses()} is useful for reporting, but the embedder works from
+     * the transformer's registered byte arrays. A redirect to a compiled helper therefore has to
+     * register that helper here as well or an offline transform leaves a Retromod-only call owner
+     * in the output jar.
+     *
+     * @return true when the class was already registered or its bytes were loaded successfully
+     */
+    public static boolean registerClassResource(
+            RetromodTransformer transformer, String internalName, Class<?> resourceAnchor) {
+        if (transformer == null || internalName == null || resourceAnchor == null) return false;
+        if (transformer.getSyntheticClasses().containsKey(internalName)) return true;
+        try (var in = resourceAnchor.getClassLoader().getResourceAsStream(internalName + ".class")) {
+            if (in == null) {
+                LOGGER.warn("Could not find compatibility class resource {}.class", internalName);
+                return false;
+            }
+            transformer.registerSyntheticClass(internalName, in.readAllBytes());
+            return true;
+        } catch (IOException e) {
+            LOGGER.warn("Could not register compatibility class {}: {}", internalName, e.toString());
+            return false;
+        }
+    }
+
+    /**
      * Embed every registered synthetic that {@code modDir}'s classes reference and rewrite those
      * references to the embedded copies.
      *

@@ -304,6 +304,37 @@ public class RetromodTest {
     }
 
     @Test
+    @DisplayName("Unmatched constructor overloads do not trigger repeated spill rewrites")
+    void unmatchedConstructorOverloadStaysStable() {
+        String owner = "test/ctor/OverloadedType";
+        transformer.registerConstructorRedirect(owner, "(II)V",
+                "test/ctor/Factories", "create", "(II)Ltest/ctor/OverloadedType;");
+        byte[] original = createUnmatchedConstructorCaller(owner);
+
+        transformer.resetIterationMetrics();
+        byte[] transformed = transformer.transformClass(original, "test/ctor/Caller");
+
+        assertArrayEquals(original, transformed,
+                "a String constructor must remain byte-identical when only the int overload moves");
+        assertEquals(0, transformer.getClassesHittingIterationCap());
+        assertEquals(1, transformer.getTotalPassesPerformed(),
+                "an unmatched overload must be recognized as untouched on the first pass");
+    }
+
+    @Test
+    @DisplayName("Identity method redirects are ignored")
+    void identityMethodRedirectIsIgnored() {
+        var key = new RetromodTransformer.MethodKey(
+                "test/identity/Api", "same", "()V");
+
+        transformer.registerMethodRedirect(
+                key.owner(), key.name(), key.desc(), key.owner(), key.name(), key.desc());
+
+        assertFalse(transformer.getMethodRedirects().containsKey(key),
+                "an identity entry can never transform a call and would keep the pass dirty");
+    }
+
+    @Test
     @DisplayName("Mixin method targets are retargeted")
     void testMixinMethodRetargeting() {
         transformer.registerMethodRedirect(
@@ -382,6 +413,26 @@ public class RetromodTest {
 
         cw.visitField(Opcodes.ACC_PRIVATE, "field", "L" + typeName + ";", null, null);
         
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    private byte[] createUnmatchedConstructorCaller(String owner) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/ctor/Caller", null,
+                "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(
+                Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "create", "()V", null, null);
+        mv.visitCode();
+        mv.visitTypeInsn(Opcodes.NEW, owner);
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitLdcInsn("unchanged");
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, owner, "<init>",
+                "(Ljava/lang/String;)V", false);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
     }

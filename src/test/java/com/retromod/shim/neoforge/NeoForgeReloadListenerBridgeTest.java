@@ -9,6 +9,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
@@ -19,6 +20,13 @@ import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
 import java.util.Arrays;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
+import java.util.zip.ZipFile;
+
+import com.retromod.core.SyntheticEmbedder;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -35,6 +43,10 @@ class NeoForgeReloadListenerBridgeTest {
     private static final String NEW_EVENT = "net/neoforged/neoforge/event/AddServerReloadListenersEvent";
     private static final String SHIM = "com/retromod/shim/neoforge/embedded/ReloadListenerEventShim";
     private static final String LISTENER = "net/minecraft/server/packs/resources/PreparableReloadListener";
+    private static final String OLD_CLIENT_EVENT =
+            "net/neoforged/neoforge/client/event/RegisterClientReloadListenersEvent";
+    private static final String NEW_CLIENT_EVENT =
+            "net/neoforged/neoforge/client/event/AddClientReloadListenersEvent";
 
     private RetromodTransformer transformer;
 
@@ -58,6 +70,8 @@ class NeoForgeReloadListenerBridgeTest {
         assertTrue(Arrays.asList(new NeoForge_1_21_11_to_26_1().getShimClasses())
                         .contains("com.retromod.shim.neoforge.embedded.ReloadListenerEventShim"),
                 "the reload-listener bridge shim must be declared for embedding");
+        assertTrue(transformer.getSyntheticClasses().containsKey(SHIM),
+                "the compiled reload bridge must be registered with the per-mod embedder");
     }
 
     @Test
@@ -88,6 +102,62 @@ class NeoForgeReloadListenerBridgeTest {
         assertFalse(on.desc.contains(OLD_EVENT), "the old event type must not survive in the descriptor");
     }
 
+    @Test
+    @DisplayName("#188: client reload event and one-argument registration move together")
+    void clientReloadListenerCallBridged() {
+        byte[] out = transformer.transformClass(clientSubscriber(), "test/mod/CaelumClient.class");
+        assertNotNull(out);
+
+        ClassNode cn = new ClassNode();
+        new ClassReader(out).accept(cn, 0);
+        MethodNode on = cn.methods.stream().filter(m -> m.name.equals("onClient")).findFirst().orElseThrow();
+        assertTrue(on.desc.contains(NEW_CLIENT_EVENT),
+                "the deleted client event must become AddClientReloadListenersEvent: " + on.desc);
+        assertFalse(on.desc.contains(OLD_CLIENT_EVENT));
+
+        boolean bridged = false;
+        for (AbstractInsnNode insn : on.instructions.toArray()) {
+            if (insn instanceof MethodInsnNode method
+                    && method.getOpcode() == Opcodes.INVOKESTATIC
+                    && method.owner.equals(SHIM)
+                    && method.name.equals("addListener")) {
+                bridged = true;
+            }
+        }
+        assertTrue(bridged,
+                "registerReloadListener(listener) must use the id-synthesizing reload bridge");
+    }
+
+    @Test
+    @DisplayName("#188: the reload bridge is relocated into an offline transformed jar")
+    void clientReloadBridgeEmbedded(@TempDir Path tempDir) throws Exception {
+        byte[] transformed = transformer.transformClass(
+                clientSubscriber(), "test/mod/CaelumClient.class");
+        Path jar = tempDir.resolve("caelum.jar");
+        try (var out = new JarOutputStream(Files.newOutputStream(jar))) {
+            out.putNextEntry(new JarEntry("test/mod/CaelumClient.class"));
+            out.write(transformed);
+            out.closeEntry();
+        }
+
+        assertEquals(1, SyntheticEmbedder.embedIntoJar(jar, "caelum.jar", transformer));
+        String embedded = SyntheticEmbedder.PREFIX + "caelum/ReloadListenerEventShim";
+        try (var zip = new ZipFile(jar.toFile())) {
+            assertNotNull(zip.getEntry(embedded + ".class"),
+                    "the output jar must contain its private reload-listener bridge");
+            byte[] caller = zip.getInputStream(zip.getEntry("test/mod/CaelumClient.class"))
+                    .readAllBytes();
+            ClassNode node = new ClassNode();
+            new ClassReader(caller).accept(node, 0);
+            assertTrue(node.methods.stream()
+                    .flatMap(method -> Arrays.stream(method.instructions.toArray()))
+                    .filter(MethodInsnNode.class::isInstance)
+                    .map(MethodInsnNode.class::cast)
+                    .anyMatch(call -> call.owner.equals(embedded) && call.name.equals("addListener")),
+                    "the caller must use its relocated bridge, not Retromod's package");
+        }
+    }
+
     /** A mod handler `void on(AddReloadListenerEvent event, PreparableReloadListener listener)` calling event.addListener(listener). */
     private static byte[] subscriber() {
         ClassWriter cw = new ClassWriter(0);
@@ -98,6 +168,24 @@ class NeoForgeReloadListenerBridgeTest {
         mv.visitVarInsn(Opcodes.ALOAD, 1); // event
         mv.visitVarInsn(Opcodes.ALOAD, 2); // listener
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, OLD_EVENT, "addListener",
+                "(L" + LISTENER + ";)V", false);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(2, 3);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    private static byte[] clientSubscriber() {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/mod/CaelumClient", null,
+                "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "onClient",
+                "(L" + OLD_CLIENT_EVENT + ";L" + LISTENER + ";)V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, OLD_CLIENT_EVENT, "registerReloadListener",
                 "(L" + LISTENER + ";)V", false);
         mv.visitInsn(Opcodes.RETURN);
         mv.visitMaxs(2, 3);

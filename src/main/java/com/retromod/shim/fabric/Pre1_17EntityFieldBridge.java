@@ -5,10 +5,11 @@
 package com.retromod.shim.fabric;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.ClassResourceInspector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.reflect.Modifier;
+import org.objectweb.asm.Opcodes;
 
 /**
  * Pre-1.17 Entity field-access bridge for Fabric on pre-26.1 hosts (intermediary names).
@@ -23,7 +24,8 @@ import java.lang.reflect.Modifier;
  *
  * <p>Host-introspecting like the other Pre* bridges: registers only when the field actually
  * lost its public access and both accessors exist, so 1.16.x hosts are untouched. The probe
- * uses {@code Class.forName(name, false, loader)} (never initialize, pitfall #14).
+ * reads the class resource without defining it, because defining a Minecraft class during
+ * pre-launch makes Mixin apply untransformed mod mixins too early.
  */
 public final class Pre1_17EntityFieldBridge {
 
@@ -35,18 +37,17 @@ public final class Pre1_17EntityFieldBridge {
 
     /** Register the field-to-accessor rewrites when the host's Entity shape needs them. */
     public static void register(RetromodTransformer transformer) {
-        ClassLoader loader = Thread.currentThread().getContextClassLoader();
-        try {
-            Class<?> entity = Class.forName("net.minecraft.class_1297", false, loader);
-            java.lang.reflect.Field onGround = entity.getDeclaredField("field_5952");
-            if (Modifier.isPublic(onGround.getModifiers())) {
-                return; // pre-1.17 host: the field is still public, direct access works
-            }
-            entity.getMethod("method_24828");                // isOnGround, throws if absent
-            entity.getMethod("method_24830", boolean.class); // setOnGround
-        } catch (Throwable t) {
-            return; // not an intermediary host, or an unexpected shape: never guess
-        }
+        var entity = ClassResourceInspector.read(ENTITY);
+        if (entity == null) return;
+        var onGround = entity.fields.stream()
+                .filter(f -> f.name.equals("field_5952") && f.desc.equals("Z"))
+                .findFirst().orElse(null);
+        if (onGround == null || (onGround.access & Opcodes.ACC_PUBLIC) != 0) return;
+        boolean hasGetter = entity.methods.stream()
+                .anyMatch(m -> m.name.equals("method_24828") && m.desc.equals("()Z"));
+        boolean hasSetter = entity.methods.stream()
+                .anyMatch(m -> m.name.equals("method_24830") && m.desc.equals("(Z)V"));
+        if (!hasGetter || !hasSetter) return;
 
         transformer.registerFieldAccessorRedirect(ENTITY, "field_5952",
                 "method_24828", "()Z", "method_24830", "(Z)V");

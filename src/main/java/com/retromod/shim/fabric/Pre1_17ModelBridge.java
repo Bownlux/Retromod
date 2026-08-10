@@ -9,8 +9,6 @@ import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Lets pre-1.17 Fabric entity models use the model system introduced in Minecraft 1.17.
@@ -23,8 +21,6 @@ import org.slf4j.LoggerFactory;
  * This bridge is only registered on intermediary-named Fabric hosts before 26.1.
  */
 public final class Pre1_17ModelBridge {
-
-    private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 
     private Pre1_17ModelBridge() {}
 
@@ -152,7 +148,6 @@ public final class Pre1_17ModelBridge {
         transformer.registerClassRedirect(COMPOSITE_MODEL, GEN_COMPOSITE);
         transformer.registerClassRedirect(TINTED_MODEL, GEN_TINTED);
 
-        probeHostModelApi();
     }
 
     private static void devirtual(RetromodTransformer t, String oldName, String oldDesc,
@@ -179,144 +174,6 @@ public final class Pre1_17ModelBridge {
     //     translate=method_46416 mulPose=method_22907 last=method_23760. VertexConsumer
     //     class_4588 (chainable) addVertex=method_56824 setColor=method_39415 setUv=method_22913
     //     setOverlay=method_60803 setLight=method_22922 setNormal=method_22914.
-
-    /** Vanilla model classes seen as super() targets in pre-1.17 mods. */
-    private static final String[] PROBE_CLASSES = {
-        MODEL_PART,
-        MODEL,
-        "net/minecraft/class_4592",
-        "net/minecraft/class_4593",
-        "net/minecraft/class_4595",
-        "net/minecraft/class_560",
-        "net/minecraft/class_583",
-        "net/minecraft/class_597",
-        "net/minecraft/class_601",
-        "net/minecraft/class_620",
-        "net/minecraft/class_623",
-    };
-
-    private static void probeHostModelApi() {
-        if (!LOGGER.isDebugEnabled()) {
-            return;
-        }
-
-        ClassLoader cl = Thread.currentThread().getContextClassLoader();
-        if (cl == null) cl = Pre1_17ModelBridge.class.getClassLoader();
-        LOGGER.debug("Checking host classes used by the pre-1.17 model bridge");
-        for (String internal : PROBE_CLASSES) {
-            try {
-                Class<?> c = Class.forName(internal.replace('/', '.'), false, cl);
-                StringBuilder sb = new StringBuilder();
-                for (java.lang.reflect.Constructor<?> ctor : c.getDeclaredConstructors()) {
-                    sb.append("\n      <init>").append(descriptorOf(ctor.getParameterTypes(), void.class));
-                }
-                LOGGER.debug("{} ({}){}", internal, c.getName(),
-                        sb.length() == 0 ? " has no declared constructors" : sb);
-                if (internal.equals(MODEL_PART)) {
-                    for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
-                        Class<?>[] p = m.getParameterTypes();
-                        Class<?> r = m.getReturnType();
-                        boolean returnsSelf = r.getName().equals(c.getName());
-                        boolean takesString = p.length == 1 && p[0] == String.class;
-                        boolean rendersLike = p.length >= 2 && p[0].getName().contains("class_4587");
-                        if (returnsSelf || takesString || rendersLike) {
-                            LOGGER.debug("  method {}{}", m.getName(),
-                                    descriptorOf(p, r));
-                        }
-                    }
-                }
-            } catch (Throwable t) {
-                logUnavailableClass(internal, t);
-            }
-        }
-        for (String internal : new String[]{VERTEX_CONSUMER, POSE_STACK, "net/minecraft/class_4597"}) {
-            try {
-                Class<?> c = Class.forName(internal.replace('/', '.'), false, cl);
-                StringBuilder sb = new StringBuilder();
-                for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
-                    if (java.lang.reflect.Modifier.isPublic(m.getModifiers())) {
-                        sb.append("\n      ").append(m.getName())
-                          .append(descriptorOf(m.getParameterTypes(), m.getReturnType()));
-                    }
-                }
-                LOGGER.debug("{} ({}){}", internal, c.getName(),
-                        sb.length() == 0 ? " has no public methods" : sb);
-            } catch (Throwable t) {
-                logUnavailableClass(internal, t);
-            }
-        }
-        // The old PASS enum constant disappeared in 1.21.11. This shape helps diagnose mods that
-        // still return the old InteractionResult from an interaction handler.
-        try {
-            Class<?> c = Class.forName("net.minecraft.class_1269", false, cl);
-            LOGGER.debug("net/minecraft/class_1269 ({}) InteractionResult details:",
-                    c.getName());
-            LOGGER.debug("  enum={}, interface={}, sealed={}, superclass={}",
-                    c.isEnum(), c.isInterface(), c.isSealed(),
-                    c.getSuperclass() == null ? "none" : c.getSuperclass().getName());
-            Class<?>[] ifaces = c.getInterfaces();
-            if (ifaces.length > 0) {
-                StringBuilder sb = new StringBuilder();
-                for (Class<?> i : ifaces) {
-                    if (sb.length() > 0) sb.append(", ");
-                    sb.append(i.getName());
-                }
-                LOGGER.debug("  interfaces: {}", sb);
-            }
-            for (java.lang.reflect.Field f : c.getDeclaredFields()) {
-                if (java.lang.reflect.Modifier.isPublic(f.getModifiers())) {
-                    LOGGER.debug("  field {} {} {}",
-                            java.lang.reflect.Modifier.toString(f.getModifiers()),
-                            f.getName(), typeDesc(f.getType()));
-                }
-            }
-            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
-                if (java.lang.reflect.Modifier.isPublic(m.getModifiers())) {
-                    LOGGER.debug("  method {} {}{}",
-                            java.lang.reflect.Modifier.toString(m.getModifiers()),
-                            m.getName(),
-                            descriptorOf(m.getParameterTypes(), m.getReturnType()));
-                }
-            }
-            Class<?>[] nested = c.getDeclaredClasses();
-            if (nested.length > 0) {
-                StringBuilder sb = new StringBuilder();
-                for (Class<?> n : nested) {
-                    if (sb.length() > 0) sb.append(", ");
-                    sb.append(n.getName());
-                }
-                LOGGER.debug("  nested classes: {}", sb);
-            }
-        } catch (Throwable t) {
-            logUnavailableClass("net/minecraft/class_1269", t);
-        }
-    }
-
-    private static void logUnavailableClass(String internalName, Throwable error) {
-        LOGGER.debug("Host class {} is unavailable ({})",
-                internalName, error.getClass().getSimpleName());
-    }
-
-    private static String descriptorOf(Class<?>[] params, Class<?> ret) {
-        StringBuilder sb = new StringBuilder("(");
-        for (Class<?> p : params) sb.append(typeDesc(p));
-        sb.append(')').append(typeDesc(ret));
-        return sb.toString();
-    }
-
-    private static String typeDesc(Class<?> c) {
-        if (c == void.class) return "V";
-        if (c == boolean.class) return "Z";
-        if (c == byte.class) return "B";
-        if (c == char.class) return "C";
-        if (c == short.class) return "S";
-        if (c == int.class) return "I";
-        if (c == long.class) return "J";
-        if (c == float.class) return "F";
-        if (c == double.class) return "D";
-        if (c.isArray()) return "[" + typeDesc(c.getComponentType());
-        return "L" + c.getName().replace('.', '/') + ";";
-    }
 
     /** Generate com/retromod/generated/LegacyModelPart extends class_630. */
     static byte[] generateLegacyModelPart() {

@@ -5,6 +5,7 @@
 package com.retromod.shim.fabric;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.ClassResourceInspector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,33 +36,27 @@ public final class Pre1_21_2EntityTypeBuildBridge {
 
     /** Probe the host builder's {@code method_5905} shape; bridge only the renamed-desc host. */
     public static void register(RetromodTransformer transformer) {
-        try {
-            Class<?> builder = Class.forName("net.minecraft.class_1299$class_1300", false,
-                    Pre1_21_2EntityTypeBuildBridge.class.getClassLoader());
-            Class<?> resourceKey = Class.forName("net.minecraft.class_5321", false,
-                    Pre1_21_2EntityTypeBuildBridge.class.getClassLoader());
-            boolean takesKey = false;
-            boolean takesString = false;
-            for (java.lang.reflect.Method m : builder.getMethods()) {
-                if (!m.getName().equals("method_5905") || m.getParameterCount() != 1) continue;
-                if (m.getParameterTypes()[0] == resourceKey) takesKey = true;
-                if (m.getParameterTypes()[0] == String.class) takesString = true;
-            }
-            if (!takesKey || takesString) {
-                LOGGER.debug("The host still supports EntityType.Builder.build(String)");
-                return;
-            }
-        } catch (Throwable t) {
-            LOGGER.debug("EntityType.Builder support is not needed because intermediary host "
-                    + "classes are unavailable ({})", t.getClass().getSimpleName());
+        var builder = ClassResourceInspector.read(BUILDER);
+        if (builder == null || !ClassResourceInspector.exists("net/minecraft/class_5321")) {
+            LOGGER.debug("EntityType.Builder support is not needed because intermediary host classes are unavailable");
+            return;
+        }
+        boolean takesKey = builder.methods.stream()
+                .anyMatch(m -> m.name.equals("method_5905")
+                        && m.desc.startsWith("(Lnet/minecraft/class_5321;)"));
+        boolean takesString = builder.methods.stream()
+                .anyMatch(m -> m.name.equals("method_5905")
+                        && m.desc.startsWith("(Ljava/lang/String;)"));
+        if (!takesKey || takesString) {
+            LOGGER.debug("The host still supports EntityType.Builder.build(String)");
             return;
         }
         registerRedirects(transformer);
         LOGGER.debug("Added support for the old EntityType.Builder.build(String) method");
     }
 
-    /** The unconditional registration (package-visible for the transform-shape test). */
-    static void registerRedirects(RetromodTransformer transformer) {
+    /** Unconditional registration for offline transforms and transform-shape tests. */
+    public static void registerRedirects(RetromodTransformer transformer) {
         // Ship the polyfill as an embeddable synthetic so the redirect target resolves from the
         // mod's context too (Fabric injects; the class is also jar-resident).
         try (java.io.InputStream in = Pre1_21_2EntityTypeBuildBridge.class.getClassLoader()

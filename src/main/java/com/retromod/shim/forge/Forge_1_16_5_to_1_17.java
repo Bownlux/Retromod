@@ -17,6 +17,26 @@ public class Forge_1_16_5_to_1_17 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // 1.16.5 still uses the legacy Forge/MCP class namespace. Reuse the host-validated
+        // direct move table so the entire package migration runs, not only member shims.
+        new Forge_1_12_2_to_1_13_2().loadDirectClassMoves(transformer);
+        transformer.registerClassRedirect(
+            "net/minecraft/block/FlowingFluidBlock",
+            "net/minecraft/world/level/block/LiquidBlock"
+        );
+        String properties = "net/minecraft/world/level/block/state/BlockBehaviour$Properties";
+        String result = "L" + properties + ";";
+        transformer.registerArgDropMethodRedirect(
+            properties, "of",
+            "(Lnet/minecraft/block/material/Material;)" + result,
+            properties, "of", "()" + result
+        );
+        transformer.registerArgDropMethodRedirect(
+            properties, "of",
+            "(Lnet/minecraft/block/material/Material;"
+                    + "Lnet/minecraft/world/level/material/MapColor;)" + result,
+            properties, "of", "()" + result
+        );
         transformer.registerMethodRedirect(
             "net/minecraft/tags/BlockTags", "getAllTags",
             "()Lnet/minecraft/tags/TagCollection;",

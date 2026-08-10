@@ -3,6 +3,9 @@
 net/minecraft/advancements/ICriterionTrigger	net/minecraft/advancements/CriterionTrigger
 net/minecraft/advancements/ICriterionTrigger$Listener	net/minecraft/advancements/CriterionTrigger$Listener
 net/minecraft/block/Block	net/minecraft/world/level/block/Block
+net/minecraft/block/AbstractBlock	net/minecraft/world/level/block/state/BlockBehaviour
+net/minecraft/block/AbstractBlock$Properties	net/minecraft/world/level/block/state/BlockBehaviour$Properties
+net/minecraft/block/AbstractBlock$IPositionPredicate	net/minecraft/world/level/block/state/BlockBehaviour$StatePredicate
 net/minecraft/block/BlockBreakable	net/minecraft/world/level/block/HalfTransparentBlock
 net/minecraft/block/BlockBush	net/minecraft/world/level/block/BushBlock
 net/minecraft/block/BlockCrops	net/minecraft/world/level/block/CropBlock
@@ -11,6 +14,9 @@ net/minecraft/block/BlockHorizontal	net/minecraft/world/level/block/HorizontalDi
 net/minecraft/block/BlockLeaves	net/minecraft/world/level/block/LeavesBlock
 net/minecraft/block/BlockState	net/minecraft/world/level/block/state/BlockState
 net/minecraft/block/BlockStaticLiquid	net/minecraft/world/level/block/LiquidBlock
+net/minecraft/block/ContainerBlock	net/minecraft/world/level/block/BaseEntityBlock
+net/minecraft/block/FlowingFluidBlock	net/minecraft/world/level/block/LiquidBlock
+net/minecraft/block/PortalSize	net/minecraft/world/level/portal/PortalShape
 net/minecraft/block/BlockTNT	net/minecraft/world/level/block/TntBlock
 net/minecraft/block/BlockTallGrass	net/minecraft/world/level/block/TallGrassBlock
 net/minecraft/block/BlockVine	net/minecraft/world/level/block/VineBlock
@@ -18,6 +24,7 @@ net/minecraft/block/Blocks	net/minecraft/world/level/block/Blocks
 net/minecraft/block/IGrowable	net/minecraft/world/level/block/BonemealableBlock
 net/minecraft/block/SoundType	net/minecraft/world/level/block/SoundType
 net/minecraft/block/material/EnumPushReaction	net/minecraft/world/level/material/PushReaction
+net/minecraft/block/material/MaterialColor	net/minecraft/world/level/material/MapColor
 net/minecraft/block/material/MapColor	net/minecraft/world/level/material/MapColor
 net/minecraft/block/properties/IProperty	net/minecraft/world/level/block/state/properties/Property
 net/minecraft/creativetab/CreativeTabs	net/minecraft/world/item/CreativeModeTab
@@ -42,6 +49,10 @@ net/minecraft/entity/monster/EntityEnderman	net/minecraft/world/entity/monster/E
 net/minecraft/entity/monster/EntityShulker	net/minecraft/world/entity/monster/Shulker
 net/minecraft/entity/player/PlayerEntity	net/minecraft/world/entity/player/Player
 net/minecraft/entity/player/ServerPlayerEntity	net/minecraft/server/level/ServerPlayer
+net/minecraft/client/entity/player/AbstractClientPlayerEntity	net/minecraft/client/player/AbstractClientPlayer
+net/minecraft/client/entity/player/ClientPlayerEntity	net/minecraft/client/player/LocalPlayer
+net/minecraft/client/world/ClientWorld	net/minecraft/client/multiplayer/ClientLevel
+net/minecraft/fluid/FlowingFluid	net/minecraft/world/level/material/FlowingFluid
 net/minecraft/inventory/ContainerPlayer	net/minecraft/world/inventory/InventoryMenu
 net/minecraft/inventory/EntityEquipmentSlot	net/minecraft/world/entity/EquipmentSlot
 net/minecraft/inventory/IInventory	net/minecraft/world/Container
@@ -74,6 +85,8 @@ net/minecraft/item/crafting/Ingredient	net/minecraft/world/item/crafting/Ingredi
 net/minecraft/nbt/CompoundNBT	net/minecraft/nbt/CompoundTag
 net/minecraft/nbt/ListNBT	net/minecraft/nbt/ListTag
 net/minecraft/potion/Effects	net/minecraft/world/effect/MobEffects
+net/minecraft/potion/Effect	net/minecraft/world/effect/MobEffect
+net/minecraft/potion/EffectInstance	net/minecraft/world/effect/MobEffectInstance
 net/minecraft/potion/Potion	net/minecraft/world/effect/MobEffect
 net/minecraft/potion/PotionEffect	net/minecraft/world/effect/MobEffectInstance
 net/minecraft/state/BooleanProperty	net/minecraft/world/level/block/state/properties/BooleanProperty
@@ -119,6 +132,7 @@ net/minecraft/world/EnumDifficulty	net/minecraft/world/Difficulty
 net/minecraft/world/Explosion	net/minecraft/world/level/Explosion
 net/minecraft/world/GameRules	net/minecraft/world/level/GameRules
 net/minecraft/world/IBlockAccess	net/minecraft/world/level/BlockGetter
+net/minecraft/world/IWorld	net/minecraft/world/level/LevelAccessor
 net/minecraft/world/World	net/minecraft/world/level/Level
 net/minecraft/world/WorldProvider	net/minecraft/world/level/dimension/DimensionType
 net/minecraft/world/biome/Biome	net/minecraft/world/level/biome/Biome

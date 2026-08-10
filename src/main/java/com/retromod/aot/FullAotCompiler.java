@@ -218,6 +218,16 @@ public class FullAotCompiler {
                     classEntries.add(entry);
                 }
             }
+
+            final java.util.function.Function<String, byte[]> classBytesProvider = name -> {
+                JarEntry classEntry = jar.getJarEntry(name + ".class");
+                if (classEntry == null) return null;
+                try (InputStream input = jar.getInputStream(classEntry)) {
+                    return com.retromod.util.ZipSecurity.safeReadAllBytes(input);
+                } catch (IOException e) {
+                    return null;
+                }
+            };
             
             int batchSize = Math.max(10, classEntries.size() / threads);
             List<Future<?>> futures = new ArrayList<>();
@@ -231,6 +241,8 @@ public class FullAotCompiler {
                 List<JarEntry> batch = classEntries.subList(start, end);
                 
                 futures.add(executor.submit(() -> {
+                    try (var hierarchyScope = transformer
+                            .pushJarClassBytesProvider(classBytesProvider)) {
                     for (JarEntry entry : batch) {
                         if (wasCancelled) return;
                         
@@ -269,6 +281,7 @@ public class FullAotCompiler {
                         } catch (Exception e) {
                             LOGGER.debug("Could not compile class: {}", className);
                         }
+                    }
                     }
                 }));
             }

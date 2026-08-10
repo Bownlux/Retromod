@@ -5,6 +5,7 @@
 package com.retromod.shim.fabric;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.ClassResourceInspector;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -63,13 +64,8 @@ public final class Pre1_18_2BiomeCategoryBridge {
     /** Wire the synthetic, class redirect, and Biome.getCategory rewrite. */
     public static void register(RetromodTransformer transformer) {
         // Nothing to do when Biome isn't on the host (unit test / headless tool).
-        try {
-            Class.forName("net." + "minecraft.class_1959", false,
-                    Pre1_18_2BiomeCategoryBridge.class.getClassLoader());
-        } catch (Throwable t) {
-            LOGGER.debug("Biome.Category support is not needed because class_1959 is "
-                            + "unavailable ({})",
-                    t.getClass().getSimpleName());
+        if (!ClassResourceInspector.exists(BIOME)) {
+            LOGGER.debug("Biome.Category support is not needed because class_1959 is unavailable");
             return;
         }
 
