@@ -97,6 +97,9 @@ public class PatternHeuristics {
      * @return the pattern match result, or null if no pattern applies
      */
     public PatternResult resolveMethod(String owner, String name, String descriptor) {
+        // Constructors and class initializers are not ordinary methods. Rewriting <init>
+        // to a pattern-matched method leaves an uninitialized object on the operand stack.
+        if (name != null && name.startsWith("<")) return null;
         totalAttempts.incrementAndGet();
         for (PatternRule rule : methodRules) {
             PatternResult result = rule.tryMatch(owner, name, descriptor);

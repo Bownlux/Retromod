@@ -20,17 +20,19 @@ public class Forge_1_18_2_to_1_19 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
-        transformer.registerMethodRedirect(
-            "net/minecraft/network/chat/TextComponent", "<init>",
+        transformer.registerConstructorRedirect(
+            "net/minecraft/network/chat/TextComponent",
             "(Ljava/lang/String;)V",
             "net/minecraft/network/chat/Component", "literal",
-            "(Ljava/lang/String;)Lnet/minecraft/network/chat/MutableComponent;"
+            "(Ljava/lang/String;)Lnet/minecraft/network/chat/MutableComponent;",
+            true
         );
-        transformer.registerMethodRedirect(
-            "net/minecraft/network/chat/TranslatableComponent", "<init>",
+        transformer.registerConstructorRedirect(
+            "net/minecraft/network/chat/TranslatableComponent",
             "(Ljava/lang/String;[Ljava/lang/Object;)V",
             "net/minecraft/network/chat/Component", "translatable",
-            "(Ljava/lang/String;[Ljava/lang/Object;)Lnet/minecraft/network/chat/MutableComponent;"
+            "(Ljava/lang/String;[Ljava/lang/Object;)Lnet/minecraft/network/chat/MutableComponent;",
+            true
         );
         transformer.registerClassRedirect(
             "net/minecraft/network/chat/TextComponent",

@@ -122,8 +122,8 @@ public class Fabric_1_16_5_to_1_17 implements VersionShim {
             "net/minecraft/registry/tag/FluidTags"
         );
         // OreFeatureConfig ctor changed shape
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/gen/feature/OreFeatureConfig", "<init>",
+        transformer.registerConstructorRedirect(
+            "net/minecraft/world/gen/feature/OreFeatureConfig",
             "(Lnet/minecraft/structure/rule/RuleTest;Lnet/minecraft/block/BlockState;I)V",
             "com/retromod/shim/fabric/embedded/OreFeatureShim", "create",
             "(Ljava/lang/Object;Ljava/lang/Object;I)Ljava/lang/Object;"

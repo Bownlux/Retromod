@@ -105,7 +105,12 @@ public class FuzzyMethodResolver {
      *
      * @param descriptor JVM method descriptor, e.g. "(IIF)V"
      */
-    public record MethodInfo(String owner, String name, String descriptor, int score) {}
+    public record MethodInfo(String owner, String name, String descriptor, int score, int access) {
+        /** Keeps the original four-argument API for callers that only need a scored signature. */
+        public MethodInfo(String owner, String name, String descriptor, int score) {
+            this(owner, name, descriptor, score, -1);
+        }
+    }
 
     /**
      * A field in the target MC JAR. {@code score} is -1 in the index, set when returned as a fuzzy match.
@@ -178,7 +183,7 @@ public class FuzzyMethodResolver {
                                 String descriptor, String signature, String[] exceptions) {
                             // constructors/initializers aren't fuzzy-match candidates
                             if (!"<init>".equals(name) && !"<clinit>".equals(name)) {
-                                classMethods.add(new MethodInfo(className, name, descriptor, -1));
+                                classMethods.add(new MethodInfo(className, name, descriptor, -1, access));
                             }
                             return null;
                         }
@@ -329,6 +334,28 @@ public class FuzzyMethodResolver {
     }
 
     /**
+     * Methods declared directly by {@code owner}. The returned list is immutable and empty when
+     * the target JAR is unavailable. This is intentionally separate from fuzzy resolution: Mixin
+     * injection targets are declared methods, and an automatic repair must inspect every candidate
+     * before it can reject an overloaded or otherwise ambiguous match.
+     */
+    public List<MethodInfo> getDeclaredMethods(String owner) {
+        if (!indexed || owner == null) return List.of();
+        List<MethodInfo> methods = methodIndex.get(owner);
+        return methods == null ? List.of() : List.copyOf(methods);
+    }
+
+    /**
+     * Methods visible on {@code owner}, including its superclasses and interfaces. The returned
+     * list is immutable. Callers must still deduplicate overridden signatures when declaration
+     * identity is not important.
+     */
+    public List<MethodInfo> getMethodsInHierarchy(String owner) {
+        if (!indexed || owner == null) return List.of();
+        return List.copyOf(gatherMethodCandidates(owner));
+    }
+
+    /**
      * Fuzzy-match an unresolved method reference against the target MC JAR. Returns the best match
      * at or above {@link #THRESHOLD_AUTO_APPLY}; warns (returning null) in the 50-84 band; null below.
      *
@@ -337,7 +364,7 @@ public class FuzzyMethodResolver {
      * @param descriptor the JVM method descriptor of the call
      */
     public MethodInfo resolveMethod(String owner, String name, String descriptor) {
-        if (!indexed) return null;
+        if (!indexed || isJvmSpecialMethod(name)) return null;
 
         // A reference that already resolves (hierarchy-aware) needs no fixing. Without this
         // guard the scorer can rewrite a VALID call: an inherited method has no exact-owner
@@ -376,7 +403,7 @@ public class FuzzyMethodResolver {
                 bestScore = score;
                 bestMatch = new MethodInfo(
                         candidate.owner(), candidate.name(),
-                        candidate.descriptor(), score
+                        candidate.descriptor(), score, candidate.access()
                 );
             }
         }
@@ -423,6 +450,14 @@ public class FuzzyMethodResolver {
 
         boundedCachePut(methodResolveCache, cacheKey, EMPTY_METHOD_INFO);
         return null;
+    }
+
+    /**
+     * Constructors and class initializers have JVM-defined linkage rules. They cannot be
+     * replaced with an ordinary same-shaped method, even when that method scores highly.
+     */
+    private static boolean isJvmSpecialMethod(String name) {
+        return name != null && name.startsWith("<");
     }
 
     /** Methods on {@code owner} plus all inherited from its superclasses and interfaces. */

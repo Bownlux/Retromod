@@ -98,4 +98,23 @@ public final class RetromodConfig {
             return null;
         }
     }
+
+    /** Read one boolean setting, returning its documented default when it is absent or invalid. */
+    public static boolean getBoolean(String key, boolean defaultValue) {
+        return booleanValue(loadOrNull(), key, defaultValue);
+    }
+
+    static boolean booleanValue(JsonObject config, String key, boolean defaultValue) {
+        if (config == null || key == null || !config.has(key)) return defaultValue;
+        try {
+            var value = config.get(key);
+            if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isBoolean()) {
+                throw new IllegalStateException("not a JSON boolean");
+            }
+            return value.getAsBoolean();
+        } catch (Exception e) {
+            LOGGER.warn("Config setting '{}' is not a boolean; using {}", key, defaultValue);
+            return defaultValue;
+        }
+    }
 }

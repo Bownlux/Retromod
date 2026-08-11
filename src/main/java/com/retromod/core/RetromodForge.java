@@ -50,18 +50,30 @@ public class RetromodForge {
         try {
             com.retromod.polyfill.PolyfillRegistry polyfillRegistry =
                     new com.retromod.polyfill.PolyfillRegistry();
+            polyfillRegistry.setEnabled(
+                    RetromodConfig.getBoolean("polyfills_enabled", true));
             polyfillRegistry.setCategoryEnabled("neoforge", false);
             polyfillRegistry.loadAndRegister(transformer);
         } catch (Exception e) {
             LOGGER.warn("Could not load polyfills", e);
         }
 
-        // Forge 64.x no longer remaps the SRG names produced by older ForgeGradle builds.
+        // Forge 26.x needs SRG -> Mojang. Older Forge targets instead need
+        // source SRG -> Mojang -> the target version's SRG namespace.
         try {
-            int srgEntries = com.retromod.mapping.SrgToMojangMapper.getInstance()
-                    .applyTo(transformer);
+            int srgEntries = 0;
+            boolean officialTarget = RetromodVersion.isUnobfuscatedTarget(
+                    RetromodVersion.TARGET_MC_VERSION);
+            var targetSrg = com.retromod.mapping.TargetSrgMapper.forVersion(
+                    RetromodVersion.TARGET_MC_VERSION);
+            int targetEntries = officialTarget ? 0 : targetSrg.applyTo(transformer);
+            if (officialTarget || targetEntries > 0) {
+                srgEntries = com.retromod.mapping.SrgToMojangMapper.getInstance()
+                        .applyTo(transformer);
+                srgEntries += targetEntries;
+            }
             if (srgEntries > 0) {
-                LOGGER.info("Registered {} SRG → Mojang mapping(s)", srgEntries);
+                LOGGER.info("Registered {} cross-version SRG mapping(s)", srgEntries);
             }
         } catch (Exception e) {
             LOGGER.warn("Could not register SRG mappings", e);

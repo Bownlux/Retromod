@@ -16,8 +16,12 @@ import com.retromod.shim.forge.*;
 import com.retromod.legacy.*;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+import java.util.jar.JarFile;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Standalone command-line tool for processing mods. Run with no args (or {@code help}) for the
@@ -28,6 +32,12 @@ public class RetromodCli {
     private static final String VERSION = RetromodVersion.RETROMOD_VERSION;
     // Each command can override this with --target.
     private static String TARGET_MC_VERSION = "26.1";
+    private static boolean targetMcVersionExplicit;
+    private static final Pattern CLIENT_JAR_VERSION = Pattern.compile(
+            "^minecraft-(.+)-client\\.jar$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MINECRAFT_VERSION = Pattern.compile(
+            "[0-9]+(?:\\.[0-9]+){1,2}(?:-(?:pre|rc)-?[0-9]+)?",
+            Pattern.CASE_INSENSITIVE);
     
     private static ShimRegistry shimRegistry;
     private static ModVersionDetector detector;
@@ -60,6 +70,7 @@ public class RetromodCli {
                 String v = args[i + 1].trim();
                 if (!v.isEmpty()) {
                     TARGET_MC_VERSION = v;
+                    targetMcVersionExplicit = true;
                     com.retromod.core.RetromodVersion.TARGET_MC_VERSION = v;
                     System.out.println("Target Minecraft version: " + TARGET_MC_VERSION);
                 }
@@ -295,31 +306,123 @@ public class RetromodCli {
         }
     }
 
+    /**
+     * Loads the exact target-method index used by automatic Mixin translation. A normal game launch
+     * discovers this JAR from its classpath. Offline commands need an explicit path because Maven,
+     * a packaged CLI, and third-party launchers arrange Minecraft files differently.
+     */
+    private static void initializeMixinTargetIndex(
+            RetromodTransformer transformer, Path mcJarPath) {
+        if (mcJarPath == null) return;
+        if (!Files.isRegularFile(mcJarPath)) {
+            throw new IllegalArgumentException("Target Minecraft JAR not found: " + mcJarPath);
+        }
+        transformer.initFuzzyResolver(mcJarPath);
+        var resolver = transformer.getFuzzyResolver();
+        if (resolver == null || !resolver.isIndexed()) {
+            throw new IllegalArgumentException(
+                    "Could not index target Minecraft JAR: " + mcJarPath);
+        }
+        System.out.println("Loaded target method index: " + mcJarPath.getFileName()
+                + " (" + resolver.getIndexedMethodCount() + " methods)");
+    }
+
+    /**
+     * Keep version-gated shims and polyfills aligned with the exact Minecraft JAR used by the
+     * automatic Mixin translator. If both inputs identify a version, they must agree.
+     */
+    static void configureTargetFromMinecraftJar(Path mcJarPath) {
+        if (mcJarPath == null) return;
+        String inferred = inferMinecraftVersion(mcJarPath);
+        if (targetMcVersionExplicit) {
+            if (inferred == null) {
+                System.err.println("WARN: could not infer a Minecraft version from "
+                        + mcJarPath.getFileName() + "; using explicit --target "
+                        + TARGET_MC_VERSION + ".");
+                return;
+            }
+            if (!inferred.equals(TARGET_MC_VERSION)) {
+                throw new IllegalArgumentException("--target " + TARGET_MC_VERSION
+                        + " does not match Minecraft JAR version " + inferred
+                        + ": " + mcJarPath);
+            }
+            return;
+        }
+        if (inferred == null) {
+            System.err.println("WARN: could not infer a Minecraft version from "
+                    + mcJarPath.getFileName() + "; using default target "
+                    + TARGET_MC_VERSION + ".");
+            return;
+        }
+        if (inferred.equals(TARGET_MC_VERSION)) return;
+        TARGET_MC_VERSION = inferred;
+        RetromodVersion.TARGET_MC_VERSION = inferred;
+        System.out.println("Target Minecraft version: " + inferred
+                + " (read from " + mcJarPath.getFileName() + ")");
+    }
+
+    /** Reads the official version.json, with a standard client filename as a fallback. */
+    static String inferMinecraftVersion(Path mcJarPath) {
+        if (mcJarPath == null || !Files.isRegularFile(mcJarPath)) return null;
+        try (JarFile jar = new JarFile(mcJarPath.toFile())) {
+            var entry = jar.getJarEntry("version.json");
+            if (entry != null) {
+                try (Reader reader = new InputStreamReader(
+                        jar.getInputStream(entry), StandardCharsets.UTF_8)) {
+                    var root = com.google.gson.JsonParser.parseReader(reader).getAsJsonObject();
+                    if (root.has("id")) {
+                        String id = root.get("id").getAsString();
+                        if (MINECRAFT_VERSION.matcher(id).matches()) return id;
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // A readable class JAR without version.json can still use the filename fallback.
+        }
+
+        Matcher filename = CLIENT_JAR_VERSION.matcher(mcJarPath.getFileName().toString());
+        if (!filename.matches()) return null;
+        String version = filename.group(1);
+        return MINECRAFT_VERSION.matcher(version).matches() ? version : null;
+    }
+
     /** Prepares a mod with the AOT compiler. */
     private static void aotCommand(String[] args) throws Exception {
         if (args.length < 2) {
-            System.err.println("Usage: aot [--force] <mod.jar> [--output <output.jar>]");
+            System.err.println("Usage: aot [--force] <mod.jar> [--output <output.jar>] "
+                    + "[--mc-jar <target.jar>]");
             System.exit(1);
         }
 
         boolean forceTranslate = false;
         Path modPath = null;
         Path outputPath = null;
+        Path mcJarPath = null;
 
         for (int i = 1; i < args.length; i++) {
             if ("--force".equals(args[i])) {
                 forceTranslate = true;
             } else if ("--output".equals(args[i]) && i + 1 < args.length) {
                 outputPath = Path.of(args[++i]);
+            } else if ("--mc-jar".equals(args[i]) && i + 1 < args.length) {
+                mcJarPath = Path.of(args[++i]);
             } else if (modPath == null) {
                 modPath = Path.of(args[i]);
             }
         }
 
         if (modPath == null) {
-            System.err.println("Usage: aot [--force] <mod.jar> [--output <output.jar>]");
+            System.err.println("Usage: aot [--force] <mod.jar> [--output <output.jar>] "
+                    + "[--mc-jar <target.jar>]");
             System.exit(1);
         }
+
+        if (outputPath != null) {
+            requireDistinctPaths(modPath, outputPath, "AOT output");
+        }
+
+        configureTargetFromMinecraftJar(mcJarPath);
+        initializeMixinTargetIndex(RetromodTransformer.getInstance(), mcJarPath);
 
         System.out.println("Preparing " + modPath.getFileName());
 
@@ -386,7 +489,8 @@ public class RetromodCli {
     /** Transform a mod using JIT-style transformation (writes to a new JAR). */
     private static void transformCommand(String[] args) throws Exception {
         if (args.length < 2) {
-            System.err.println("Usage: transform <mod.jar> [--output <output.jar>]");
+            System.err.println("Usage: transform <mod.jar> [--output <output.jar>] "
+                    + "[--mc-jar <target.jar>]");
             System.exit(1);
         }
         
@@ -394,13 +498,19 @@ public class RetromodCli {
         Path outputPath = modPath.resolveSibling(
             modPath.getFileName().toString().replace(".jar", "-transformed.jar")
         );
+        Path mcJarPath = null;
         
         for (int i = 2; i < args.length; i++) {
             if ("--output".equals(args[i]) && i + 1 < args.length) {
                 outputPath = Path.of(args[++i]);
+            } else if ("--mc-jar".equals(args[i]) && i + 1 < args.length) {
+                mcJarPath = Path.of(args[++i]);
             }
         }
+
+        requireDistinctPaths(modPath, outputPath, "transform output");
         
+        configureTargetFromMinecraftJar(mcJarPath);
         System.out.println("Updating " + modPath.getFileName() + " for Minecraft " + TARGET_MC_VERSION);
         System.out.println("Output: " + outputPath.getFileName());
         
@@ -410,12 +520,13 @@ public class RetromodCli {
             System.exit(1);
         }
 
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        initializeMixinTargetIndex(transformer, mcJarPath);
+
         String sourceMcVersion = info.targetMcVersion();
         if (sourceMcVersion == null || sourceMcVersion.isEmpty()) {
             System.err.println("Retromod could not determine the source Minecraft version.");
             System.err.println("It will try every shim that applies to the target.");
-            RetromodTransformer transformer = RetromodTransformer.getInstance();
-            registerOfflineSrgMappings(transformer, info);
             registerAllShimsGated(transformer);
             // Offline output needs the same removed API replacements as a normal launch.
             new com.retromod.polyfill.PolyfillRegistry().loadAndRegister(transformer);
@@ -435,8 +546,6 @@ public class RetromodCli {
             TARGET_MC_VERSION
         );
 
-        RetromodTransformer transformer = RetromodTransformer.getInstance();
-        registerOfflineSrgMappings(transformer, info);
         for (VersionShim shim : chain) {
             System.out.println("Applying: " + shim.getShimName());
             shim.registerRedirects(transformer);
@@ -502,6 +611,13 @@ public class RetromodCli {
 
     /** Registers the extra mappings and bridges required by unobfuscated hosts. */
     static int register26xTargetMappings(RetromodTransformer transformer, ModVersionInfo info) {
+        var loaderMappings = com.retromod.mapping.OfflineLoaderNameMappings.configure(
+                transformer, info.modLoaderType(), TARGET_MC_VERSION,
+                com.retromod.util.McReflect.isNeoForge());
+        if (loaderMappings.intermediaryMappings() > 0) {
+            System.out.println("Applied intermediary->Mojang member mappings ("
+                    + loaderMappings.intermediaryMappings() + ").");
+        }
         int classMovesApplied = 0;
         if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)) {
             try {
@@ -530,18 +646,6 @@ public class RetromodCli {
             }
             // Keep constructor handling consistent with a normal game launch.
             com.retromod.mapping.IntermediaryToMojangMapper.registerIdentifierCtorRedirects(transformer);
-            // Only distributed Fabric mods carry intermediary member names.
-            if ("fabric".equalsIgnoreCase(info.modLoaderType())) {
-                try {
-                    int memberMappings = com.retromod.mapping.IntermediaryToMojangMapper.applyTo(transformer);
-                    if (memberMappings > 0) {
-                        System.out.println("Applied intermediary->Mojang member mappings ("
-                                + memberMappings + ").");
-                    }
-                } catch (Exception e) {
-                    // Class moves above still apply.
-                }
-            }
             // A cross-loader jar can be detected as Forge and later run on NeoForge.
             // Reference scanning decides whether these bridges are embedded.
             String synLoaderT = info.modLoaderType();
@@ -587,7 +691,10 @@ public class RetromodCli {
             RetromodTransformer transformer, ModVersionInfo info, List<VersionShim> chain) {
         // Batch and ahead-of-time paths both reach polyfills through this helper.
         new com.retromod.polyfill.PolyfillRegistry().loadAndRegister(transformer);
-        int srgMappings = registerOfflineSrgMappings(transformer, info);
+        var loaderMappings = com.retromod.mapping.OfflineLoaderNameMappings.configure(
+                transformer, info.modLoaderType(), TARGET_MC_VERSION,
+                com.retromod.util.McReflect.isNeoForge());
+        int srgMappings = loaderMappings.srgMappings();
         java.util.Set<VersionShim> chainSet = new java.util.HashSet<>(chain);
         int apiApplied = 0;
         // Unit tests can exercise this helper without starting the CLI.
@@ -614,7 +721,7 @@ public class RetromodCli {
         registerOfflinePre26FabricBridges(transformer, info);
 
         int classMovesApplied = 0;
-        int memberMappings = 0;
+        int memberMappings = loaderMappings.intermediaryMappings();
         if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)) {
             // Vanilla class moves apply to every loader.
             try {
@@ -643,14 +750,6 @@ public class RetromodCli {
             }
             // Every loader can construct ResourceLocation, so keep this shared.
             com.retromod.mapping.IntermediaryToMojangMapper.registerIdentifierCtorRedirects(transformer);
-            // NeoForge and Forge already use Mojang member names.
-            if ("fabric".equalsIgnoreCase(info.modLoaderType())) {
-                try {
-                    memberMappings = com.retromod.mapping.IntermediaryToMojangMapper.applyTo(transformer);
-                } catch (Exception e) {
-                    // Class moves above still apply.
-                }
-            }
             // Reference scanning keeps these cross-loader bridges out of pure Forge mods.
             String synLoader = info.modLoaderType();
             if ("neoforge".equalsIgnoreCase(synLoader) || "forge".equalsIgnoreCase(synLoader)) {
@@ -680,43 +779,32 @@ public class RetromodCli {
         }
     }
 
-    /** Mirrors the Forge and NeoForge entry points for offline transforms. */
-    private static int registerOfflineSrgMappings(
-            RetromodTransformer transformer, ModVersionInfo info) {
-        String loader = info.modLoaderType();
-        if (!"forge".equalsIgnoreCase(loader) && !"neoforge".equalsIgnoreCase(loader)) {
-            return 0;
-        }
-        // Pre-26 Forge runtimes still expose their current SRG member names. Mapping an
-        // old SRG name to Mojang here would bypass Forge's normal reobfuscation path and
-        // leave an official member name that does not exist in the runtime jar.
-        if (!com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)) {
-            return 0;
-        }
-        try {
-            return com.retromod.mapping.SrgToMojangMapper.getInstance().applyTo(transformer);
-        } catch (Exception e) {
-            return 0;
-        }
-    }
-
     private static void batchCommand(String[] args) throws Exception {
         if (args.length < 2) {
-            System.err.println("Usage: batch <mods-folder> [--output <output-folder>] [--aot]");
+            System.err.println("Usage: batch <mods-folder> [--output <output-folder>] [--aot] "
+                    + "[--mc-jar <target.jar>]");
             System.exit(1);
         }
         
         Path modsFolder = Path.of(args[1]);
         Path outputFolder = modsFolder.resolve("retromod-output");
         boolean useAot = false;
+        Path mcJarPath = null;
         
         for (int i = 2; i < args.length; i++) {
             if ("--output".equals(args[i]) && i + 1 < args.length) {
                 outputFolder = Path.of(args[++i]);
             } else if ("--aot".equals(args[i])) {
                 useAot = true;
+            } else if ("--mc-jar".equals(args[i]) && i + 1 < args.length) {
+                mcJarPath = Path.of(args[++i]);
             }
         }
+
+        requireDistinctPaths(modsFolder, outputFolder, "batch output directory");
+
+        configureTargetFromMinecraftJar(mcJarPath);
+        initializeMixinTargetIndex(RetromodTransformer.getInstance(), mcJarPath);
         
         Files.createDirectories(outputFolder);
         
@@ -793,6 +881,7 @@ public class RetromodCli {
                 } else if (!needs26Patch) {
                     Files.copy(modFile.toPath(), outputPath,
                         StandardCopyOption.REPLACE_EXISTING);
+                    verifyIfRequested(outputPath, modFile.getName(), args);
                     System.out.println("copied: no changes needed");
                     skipped++;
                     continue;
@@ -817,6 +906,8 @@ public class RetromodCli {
                         // The rest of the updated jar is still usable.
                     }
                 }
+
+                verifyIfRequested(outputPath, modFile.getName(), args);
 
                 long elapsed = System.currentTimeMillis() - start;
                 totalTime += elapsed;
@@ -1007,13 +1098,28 @@ public class RetromodCli {
     private static void transformJar(Path input, Path output,
             RetromodTransformer transformer, ModVersionInfo info) throws Exception {
 
-        try (var inJar = new java.util.jar.JarFile(input.toFile());
-             var outJar = new java.util.jar.JarOutputStream(
-                     new FileOutputStream(output.toFile()))) {
+        requireDistinctPaths(input, output, "transform output");
+        Path absoluteOutput = output.toAbsolutePath().normalize();
+        Path outputParent = absoluteOutput.getParent();
+        if (outputParent == null) {
+            throw new IOException("Transform output has no parent directory: " + output);
+        }
+        Files.createDirectories(outputParent);
+        Path tempOutput = Files.createTempFile(outputParent,
+                "." + absoluteOutput.getFileName() + ".", ".tmp");
+
+        try {
+            try (var inJar = new java.util.jar.JarFile(input.toFile());
+                 var outJar = new java.util.jar.JarOutputStream(
+                         Files.newOutputStream(tempOutput))) {
 
             // Offline analogue of the runtime mixin blocklist: neutralize blocklisted mixin
             // handlers / classes that fatally fail on the target MC.
             var mixinStripper = new com.retromod.mixin.MixinCompatibilityTransformer(transformer);
+            boolean forgeRefmaps = "forge".equalsIgnoreCase(info.modLoaderType())
+                    || "neoforge".equalsIgnoreCase(info.modLoaderType());
+            var nestedTraversalBudget = RetromodTransformer.NestedArchiveBudget.defaults();
+            var nestedLookupBudget = RetromodTransformer.NestedArchiveBudget.defaults();
 
             // Forge -> NeoForge toml promotion: on a NeoForge target (real host or the offline
             // --target-loader neoforge override) a Forge mod's META-INF/mods.toml must be renamed
@@ -1076,8 +1182,7 @@ public class RetromodCli {
                             data = mixinStripper.stripBlocklistedHandlers(data);
                             // The member bridges and ValueIO matching need the Mojang
                             // descriptors produced above.
-                            data = mixinStripper.applyLegacyMemberBridges(data);
-                            data = mixinStripper.adaptValueIoHandlers(data);
+                            data = mixinStripper.applyPostRemapRepairs(data);
                             // These helpers inspect the class and ignore unrelated versions.
                             data = com.retromod.shim.forge.ForgeEventBusSynthetics
                                     .stripLenientAutoSubscriber(data);
@@ -1119,17 +1224,22 @@ public class RetromodCli {
                                     new String(data, java.nio.charset.StandardCharsets.UTF_8),
                                     com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
                                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                        } else if ((entry.getName().endsWith("-refmap.json")
-                                    || entry.getName().contains("refmap"))
-                                   && com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)) {
-                            // Remap the mixin refmap's intermediary selectors -> Mojang and add a
-                            // data.official section, so @Inject/@At target classes resolve on a 26.1+
-                            // host (else InvalidInjectionException on 'net/minecraft/class_XXXX').
-                            // Parity with the runtime FabricModTransformer refmap pass.
-                            data = com.retromod.core.MixinRefmapRemapper.remap(
-                                    new String(data, java.nio.charset.StandardCharsets.UTF_8),
-                                    com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
-                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        } else if (entry.getName().endsWith("-refmap.json")
+                                    || entry.getName().contains("refmap")) {
+                            String refmap = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+                            if (forgeRefmaps) {
+                                refmap = com.retromod.core.MixinRefmapRemapper.remapForgeSelectors(
+                                        refmap, mixinStripper);
+                            }
+                            if (com.retromod.core.RetromodVersion
+                                    .isUnobfuscatedTarget(TARGET_MC_VERSION)) {
+                                // Add the official Fabric namespace section for 26.1+ hosts.
+                                refmap = com.retromod.core.MixinRefmapRemapper.remap(
+                                        refmap,
+                                        com.retromod.mapping.IntermediaryToMojangMapper.getInstance(),
+                                        mixinStripper::remapResourceSelector);
+                            }
+                            data = refmap.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                         } else if (com.retromod.resources.ModDataMigrator.isMigratableData(entry.getName())) {
                             // 26.x data-only changes the bytecode pass can't reach (item renames,
                             // JSON shape changes); gated to 26.x inside migrate()
@@ -1140,7 +1250,9 @@ public class RetromodCli {
                                    && entry.getName().endsWith(".jar")) {
                             // a mod that registers content through a JiJ'd library (#71) needs
                             // the nested jar transformed too
-                            data = transformNestedJar(data, 1);
+                            String nestedKey = input.getFileName() + "!/" + entry.getName();
+                            data = transformNestedJar(data, 1, forgeRefmaps,
+                                    nestedTraversalBudget, nestedLookupBudget, nestedKey);
                         }
 
                         outJar.write(data);
@@ -1164,6 +1276,40 @@ public class RetromodCli {
                 outJar.closeEntry();
             }
             }
+            }
+
+            // Opening the completed archive catches a missing central directory before it can
+            // replace a good destination. The source and any existing output stay untouched on
+            // every failure before this point.
+            try (var ignored = new java.util.jar.JarFile(tempOutput.toFile())) {
+                // Validation happens in the constructor.
+            }
+            moveReplacing(tempOutput, absoluteOutput);
+        } finally {
+            Files.deleteIfExists(tempOutput);
+        }
+    }
+
+    static void requireDistinctPaths(Path input, Path output, String outputDescription)
+            throws IOException {
+        Path normalizedInput = input.toAbsolutePath().normalize();
+        Path normalizedOutput = output.toAbsolutePath().normalize();
+        boolean same = normalizedInput.equals(normalizedOutput);
+        if (!same && Files.exists(input) && Files.exists(output)) {
+            same = Files.isSameFile(input, output);
+        }
+        if (same) {
+            throw new IllegalArgumentException(outputDescription
+                    + " must differ from the input path: " + output);
+        }
+    }
+
+    private static void moveReplacing(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
@@ -1244,6 +1390,8 @@ public class RetromodCli {
 
     /** Max Jar-in-Jar nesting depth Retromod recurses through (libraries inside libraries). */
     private static final int MAX_JIJ_DEPTH = 4;
+    private static final long MAX_NESTED_OUTPUT_BYTES =
+            com.retromod.util.ZipSecurity.DEFAULT_MAX_ENTRY_SIZE;
 
     /**
      * Recursively transform a nested Jar-in-Jar library: rewrite its bytecode, relax its metadata,
@@ -1256,8 +1404,7 @@ public class RetromodCli {
             com.retromod.mixin.MixinCompatibilityTransformer mixins, byte[] classBytes, String className) {
         try {
             byte[] out = mixins.stripBlocklistedHandlers(classBytes);
-            out = mixins.applyLegacyMemberBridges(out);
-            return mixins.adaptValueIoHandlers(out);
+            return mixins.applyPostRemapRepairs(out);
         } catch (Throwable t) {
             // The remapped bytecode is still worth keeping.
             return classBytes;
@@ -1266,30 +1413,79 @@ public class RetromodCli {
 
     // Package-private for NestedJarRecursionTest.
     static byte[] transformNestedJar(byte[] jarData, int depth) {
+        return transformNestedJar(jarData, depth, false);
+    }
+
+    // Package-private for loader-specific nested resource tests.
+    static byte[] transformNestedJar(byte[] jarData, int depth, boolean forgeRefmaps) {
+        return transformNestedJar(jarData, depth, forgeRefmaps,
+                RetromodTransformer.NestedArchiveBudget.defaults(),
+                RetromodTransformer.NestedArchiveBudget.defaults());
+    }
+
+    static byte[] transformNestedJar(byte[] jarData, int depth, boolean forgeRefmaps,
+            RetromodTransformer.NestedArchiveBudget traversalBudget,
+            RetromodTransformer.NestedArchiveBudget lookupBudget) {
+        return transformNestedJar(jarData, depth, forgeRefmaps,
+                traversalBudget, lookupBudget, "nested-depth-" + depth + ".jar");
+    }
+
+    private static byte[] transformNestedJar(byte[] jarData, int depth, boolean forgeRefmaps,
+            RetromodTransformer.NestedArchiveBudget traversalBudget,
+            RetromodTransformer.NestedArchiveBudget lookupBudget, String syntheticKey) {
+        try {
+            return transformNestedJarChecked(
+                    jarData, depth, forgeRefmaps, traversalBudget, lookupBudget, syntheticKey);
+        } catch (Exception e) {
+            return jarData;
+        }
+    }
+
+    private static byte[] transformNestedJarChecked(byte[] jarData, int depth,
+            boolean forgeRefmaps,
+            RetromodTransformer.NestedArchiveBudget traversalBudget,
+            RetromodTransformer.NestedArchiveBudget lookupBudget,
+            String syntheticKey) throws IOException {
+        Objects.requireNonNull(jarData, "jarData");
+        Objects.requireNonNull(traversalBudget, "traversalBudget");
+        Objects.requireNonNull(lookupBudget, "lookupBudget");
+        Objects.requireNonNull(syntheticKey, "syntheticKey");
+
         try {
             var bais = new java.io.ByteArrayInputStream(jarData);
-            var baos = new java.io.ByteArrayOutputStream(jarData.length);
+            var boundedOutput = new BoundedNestedOutput(
+                    MAX_NESTED_OUTPUT_BYTES, jarData.length);
             boolean modified = false;
             RetromodTransformer transformer = RetromodTransformer.getInstance();
-            Map<String, byte[]> classBytes = RetromodTransformer.readJarClassBytes(jarData);
+            Map<String, byte[]> classBytes =
+                    RetromodTransformer.readJarClassBytes(jarData, lookupBudget);
+            Set<String> entryNames = new HashSet<>();
             // Built here rather than reused, because it snapshots the redirects registered so far.
             var nestedMixins = new com.retromod.mixin.MixinCompatibilityTransformer(
                     transformer);
 
             try (var hierarchyScope = transformer.pushJarClassBytesProvider(classBytes::get);
-                 var jis = new java.util.jar.JarInputStream(bais);
-                 var jos = new java.util.jar.JarOutputStream(baos)) {
+                 var jis = new java.util.zip.ZipInputStream(bais);
+                 var jos = new java.util.jar.JarOutputStream(boundedOutput)) {
 
-                java.util.jar.JarEntry entry;
-                while ((entry = jis.getNextJarEntry()) != null) {
-                    jos.putNextEntry(new java.util.jar.JarEntry(
-                            com.retromod.util.ZipSecurity.safeEntryName(entry.getName())));
+                java.util.zip.ZipEntry entry;
+                while ((entry = jis.getNextEntry()) != null) {
+                    String name = com.retromod.util.ZipSecurity.safeEntryName(entry.getName());
+                    if (!entryNames.add(name)) {
+                        throw new IOException("duplicate nested JAR entry: " + name);
+                    }
 
-                    if (!entry.isDirectory()) {
-                        byte[] data = com.retromod.util.ZipSecurity.safeReadAllBytes(jis);
-                        String name = entry.getName();
+                    if (entry.isDirectory()) {
+                        traversalBudget.reserve(0, name);
+                        jos.putNextEntry(new java.util.jar.JarEntry(name));
+                        jos.closeEntry();
+                        continue;
+                    }
 
-                        if (name.endsWith(".class")) {
+                    byte[] data = com.retromod.util.ZipSecurity.safeReadAllBytes(jis);
+                    traversalBudget.reserve(data.length, name);
+
+                    if (name.endsWith(".class")) {
                             String className = name.substring(0, name.length() - ".class".length());
                             try {
                                 byte[] t = transformer.transformClass(data, className);
@@ -1317,13 +1513,22 @@ public class RetromodCli {
                                     com.retromod.mapping.IntermediaryToMojangMapper.getInstance());
                             byte[] t = remapped.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                             if (!java.util.Arrays.equals(t, data)) { data = t; modified = true; }
-                        } else if ((name.endsWith("-refmap.json") || name.contains("refmap"))
-                                   && com.retromod.core.RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION)) {
-                            // Nested-jar mixin refmap: remap intermediary selectors -> Mojang + add
-                            // data.official (parity with the runtime nested-jar refmap pass).
-                            String rf = com.retromod.core.MixinRefmapRemapper.remap(
-                                    new String(data, java.nio.charset.StandardCharsets.UTF_8),
-                                    com.retromod.mapping.IntermediaryToMojangMapper.getInstance());
+                        } else if (name.endsWith("-refmap.json") || name.contains("refmap")) {
+                            // Refmaps are separate from annotation bytecode. Apply the same Forge
+                            // selector redirects as the outer jar before adding an official Fabric
+                            // namespace section when the target needs one.
+                            String rf = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+                            if (forgeRefmaps) {
+                                rf = com.retromod.core.MixinRefmapRemapper.remapForgeSelectors(
+                                        rf, nestedMixins);
+                            }
+                            if (com.retromod.core.RetromodVersion
+                                    .isUnobfuscatedTarget(TARGET_MC_VERSION)) {
+                                rf = com.retromod.core.MixinRefmapRemapper.remap(
+                                        rf,
+                                        com.retromod.mapping.IntermediaryToMojangMapper.getInstance(),
+                                        nestedMixins::remapResourceSelector);
+                            }
                             byte[] t2 = rf.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                             if (!java.util.Arrays.equals(t2, data)) { data = t2; modified = true; }
                         } else if (name.equals("fabric.mod.json") || name.equals("quilt.mod.json")) {
@@ -1341,20 +1546,83 @@ public class RetromodCli {
                         } else if (depth < MAX_JIJ_DEPTH
                                 && (name.startsWith("META-INF/jars/") || name.startsWith("META-INF/jarjar/"))
                                 && name.endsWith(".jar")) {
-                            byte[] t = transformNestedJar(data, depth + 1);
+                            byte[] t = transformNestedJarChecked(data, depth + 1, forgeRefmaps,
+                                    traversalBudget, lookupBudget, syntheticKey + "!/" + name);
                             if (t != data) { data = t; modified = true; }
                         }
 
-                        jos.write(data);
+                    if (data.length > com.retromod.util.ZipSecurity.DEFAULT_MAX_ENTRY_SIZE) {
+                        throw new IOException("rewritten nested JAR entry exceeds "
+                                + com.retromod.util.ZipSecurity.DEFAULT_MAX_ENTRY_SIZE
+                                + " bytes: " + name);
                     }
-
+                    jos.putNextEntry(new java.util.jar.JarEntry(name));
+                    jos.write(data);
                     jos.closeEntry();
                 }
             }
 
-            return modified ? baos.toByteArray() : jarData;
+            byte[] transformed = modified ? boundedOutput.toByteArray() : jarData;
+            var embedding = com.retromod.core.SyntheticEmbedder.embedIntoJarBytes(
+                    transformed, syntheticKey, transformer);
+            if (!embedding.succeeded()) {
+                return jarData;
+            }
+            if (embedding.jarBytes().length > MAX_NESTED_OUTPUT_BYTES) {
+                throw new IOException("rewritten nested JAR exceeds "
+                        + MAX_NESTED_OUTPUT_BYTES + " bytes after helper relocation");
+            }
+            return embedding.jarBytes();
+        } catch (IOException e) {
+            throw e;
         } catch (Exception e) {
-            return jarData;
+            throw new IOException("could not rewrite nested JAR", e);
+        }
+    }
+
+    static final class BoundedNestedOutput extends OutputStream {
+        private static final int MAX_INITIAL_CAPACITY = 1024 * 1024;
+
+        private final ByteArrayOutputStream output;
+        private final long maxBytes;
+        private long written;
+
+        BoundedNestedOutput(long maxBytes, int expectedBytes) {
+            if (maxBytes < 0) {
+                throw new IllegalArgumentException("nested output limit cannot be negative");
+            }
+            this.maxBytes = maxBytes;
+            int initialCapacity = Math.max(32,
+                    Math.min(Math.max(expectedBytes, 0), MAX_INITIAL_CAPACITY));
+            this.output = new ByteArrayOutputStream(initialCapacity);
+        }
+
+        @Override
+        public void write(int value) throws IOException {
+            reserve(1);
+            output.write(value);
+        }
+
+        @Override
+        public void write(byte[] bytes, int offset, int length) throws IOException {
+            Objects.checkFromIndexSize(offset, length, bytes.length);
+            reserve(length);
+            output.write(bytes, offset, length);
+        }
+
+        byte[] toByteArray() {
+            return output.toByteArray();
+        }
+
+        long size() {
+            return written;
+        }
+
+        private void reserve(long bytes) throws IOException {
+            if (bytes > maxBytes - written) {
+                throw new IOException("rewritten nested JAR exceeds " + maxBytes + " bytes");
+            }
+            written += bytes;
         }
     }
 
@@ -2140,6 +2408,7 @@ public class RetromodCli {
         System.out.println("  --target <version>             Choose the target Minecraft version");
         System.out.println("  --target-loader <loader>       Choose an offline loader migration");
         System.out.println("  --output <path>                Choose the output file or folder");
+        System.out.println("  --mc-jar <path>                Enable exact automatic Mixin translation offline");
         System.out.println("  --aot                          Prepare bytecode ahead of launch");
         System.out.println("  --verify                       Check unresolved references");
         System.out.println("  --force                        Continue despite a high risk score");
@@ -2147,7 +2416,8 @@ public class RetromodCli {
         System.out.println("Examples:");
         System.out.println("  retromod prepare ~/.minecraft --aot");
         System.out.println("  retromod batch ./mods --aot --verify");
-        System.out.println("  retromod transform oldmod.jar --target " + TARGET_MC_VERSION);
+        System.out.println("  retromod transform oldmod.jar --target " + TARGET_MC_VERSION
+                + " --mc-jar minecraft-client.jar");
         System.out.println("  retromod devhelp mymod.jar " + TARGET_MC_VERSION);
     }
 

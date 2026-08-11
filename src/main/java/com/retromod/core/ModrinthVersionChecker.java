@@ -9,8 +9,6 @@ import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
 import java.awt.*;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
@@ -31,7 +29,10 @@ public class ModrinthVersionChecker {
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Modrinth");
 
     private static final String MODRINTH_API = "https://api.modrinth.com/v2";
-    private static final String USER_AGENT = "Retromod/1.0.0 (bownlux)";
+    private static final String USER_AGENT = "Retromod/" + RetromodVersion.RETROMOD_VERSION
+            + " (bownlux)";
+    private static final long MAX_METADATA_BYTES = 4L * 1024 * 1024;
+    private static final long MAX_ERROR_BYTES = 64L * 1024;
 
     private static final java.util.Map<String, ModrinthResult> cache = new java.util.concurrent.ConcurrentHashMap<>();
     
@@ -112,7 +113,11 @@ public class ModrinthVersionChecker {
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             ZipEntry fabricEntry = jar.getEntry("fabric.mod.json");
             if (fabricEntry != null) {
-                String content = new String(jar.getInputStream(fabricEntry).readAllBytes());
+                String content;
+                try (var input = jar.getInputStream(fabricEntry)) {
+                    content = new String(com.retromod.util.ZipSecurity.safeReadAllBytes(
+                            input, MAX_METADATA_BYTES), StandardCharsets.UTF_8);
+                }
                 return parseModJson(content, "fabric");
             }
 
@@ -121,13 +126,21 @@ public class ModrinthVersionChecker {
                 forgeEntry = jar.getEntry("META-INF/neoforge.mods.toml");
             }
             if (forgeEntry != null) {
-                String content = new String(jar.getInputStream(forgeEntry).readAllBytes());
+                String content;
+                try (var input = jar.getInputStream(forgeEntry)) {
+                    content = new String(com.retromod.util.ZipSecurity.safeReadAllBytes(
+                            input, MAX_METADATA_BYTES), StandardCharsets.UTF_8);
+                }
                 return parseModsToml(content);
             }
 
             ZipEntry oldForgeEntry = jar.getEntry("mcmod.info");
             if (oldForgeEntry != null) {
-                String content = new String(jar.getInputStream(oldForgeEntry).readAllBytes());
+                String content;
+                try (var input = jar.getInputStream(oldForgeEntry)) {
+                    content = new String(com.retromod.util.ZipSecurity.safeReadAllBytes(
+                            input, MAX_METADATA_BYTES), StandardCharsets.UTF_8);
+                }
                 return parseMcmodInfo(content);
             }
 
@@ -172,7 +185,7 @@ public class ModrinthVersionChecker {
     private static ModrinthResult searchModrinth(ModInfo info, String targetMcVersion) {
         try {
             // Look up by slug (mod ID); fall back to a name search.
-            String projectData = fetchUrl(MODRINTH_API + "/project/" + info.modId);
+            String projectData = fetchUrl(MODRINTH_API + "/project/" + encodePathSegment(info.modId));
 
             if (projectData == null && info.modName != null) {
                 String searchQuery = URLEncoder.encode(info.modName, StandardCharsets.UTF_8);
@@ -181,7 +194,7 @@ public class ModrinthVersionChecker {
                 if (searchData != null) {
                     String slug = extractJsonField(searchData, "slug");
                     if (slug != null) {
-                        projectData = fetchUrl(MODRINTH_API + "/project/" + slug);
+                        projectData = fetchUrl(MODRINTH_API + "/project/" + encodePathSegment(slug));
                     }
                 }
             }
@@ -198,7 +211,10 @@ public class ModrinthVersionChecker {
                 return ModrinthResult.notFound();
             }
 
-            String versionsUrl = MODRINTH_API + "/project/" + projectId + "/version?game_versions=[\"" + targetMcVersion + "\"]";
+            String gameVersions = URLEncoder.encode("[\"" + targetMcVersion + "\"]",
+                    StandardCharsets.UTF_8);
+            String versionsUrl = MODRINTH_API + "/project/" + encodePathSegment(projectId)
+                    + "/version?game_versions=" + gameVersions;
             String versionsData = fetchUrl(versionsUrl);
 
             if (versionsData == null || versionsData.equals("[]")) {
@@ -232,36 +248,48 @@ public class ModrinthVersionChecker {
     }
 
     private static String fetchUrl(String urlString) {
+        HttpURLConnection conn = null;
         try {
-            URL url = URI.create(urlString).toURL();
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            URI uri = URI.create(urlString);
+            if (!isAllowedApiUri(uri)) return null;
+            URL url = uri.toURL();
+            conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setRequestProperty("User-Agent", USER_AGENT);
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(5000);
+            conn.setInstanceFollowRedirects(false);
 
             if (conn.getResponseCode() != 200) {
                 try (var es = conn.getErrorStream()) {
                     if (es != null) {
-                        es.readAllBytes();
+                        com.retromod.util.ZipSecurity.safeReadAllBytes(es, MAX_ERROR_BYTES);
                     }
                 }
                 return null;
             }
 
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(conn.getInputStream()))) {
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    sb.append(line);
-                }
-                return sb.toString();
+            try (var input = conn.getInputStream()) {
+                return new String(com.retromod.util.ZipSecurity.safeReadAllBytes(
+                        input, MAX_METADATA_BYTES), StandardCharsets.UTF_8);
             }
 
         } catch (Exception e) {
             return null;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
+    }
+
+    static boolean isAllowedApiUri(URI uri) {
+        return uri != null
+                && "https".equalsIgnoreCase(uri.getScheme())
+                && "api.modrinth.com".equalsIgnoreCase(uri.getHost())
+                && (uri.getPort() == -1 || uri.getPort() == 443);
+    }
+
+    private static String encodePathSegment(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     /**

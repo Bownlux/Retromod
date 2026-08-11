@@ -218,15 +218,7 @@ public class RetromodNeoForge {
      * class's constant pool (LoaderIsolationTest).
      */
     private static boolean readPolyfillsEnabled() {
-        try {
-            com.google.gson.JsonObject cfg = RetromodConfig.loadOrNull();
-            if (cfg != null && cfg.has("polyfills_enabled")) {
-                return cfg.get("polyfills_enabled").getAsBoolean();
-            }
-        } catch (Exception ignored) {
-            // a config read must never block mod loading
-        }
-        return true;
+        return RetromodConfig.getBoolean("polyfills_enabled", true);
     }
 
     /**

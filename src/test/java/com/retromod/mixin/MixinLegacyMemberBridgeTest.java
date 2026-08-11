@@ -6,6 +6,8 @@ package com.retromod.mixin;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.mapping.IntermediaryToMojangMapper;
+import com.retromod.polyfill.minecraft.mixin.MixinTargetPolyfill;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -268,6 +270,88 @@ class MixinLegacyMemberBridgeTest {
         return cw.toByteArray();
     }
 
+    private static byte[] legacyChatOptionsMixin() {
+        String target = "net/minecraft/client/gui/screens/options/ChatOptionsScreen";
+        String oldSuper = "net/minecraft/client/gui/screens/SimpleOptionsSubScreen";
+        String screen = "Lnet/minecraft/client/gui/screens/Screen;";
+        String options = "Lnet/minecraft/client/Options;";
+        String component = "Lnet/minecraft/network/chat/Component;";
+        String optionArray = "[Lnet/minecraft/client/OptionInstance;";
+        String constructor = "(" + screen + options + component + optionArray + ")V";
+
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                "test/MixinChatOptionsScreen", null, oldSuper, null);
+        var mixin = cw.visitAnnotation(MIXIN, false);
+        var values = mixin.visitArray("value");
+        values.visit(null, Type.getObjectType(target));
+        values.visitEnd();
+        mixin.visitEnd();
+
+        MethodVisitor constructorMethod = cw.visitMethod(
+                Opcodes.ACC_PUBLIC, "<init>", constructor, null, null);
+        constructorMethod.visitCode();
+        for (int slot = 0; slot <= 4; slot++) {
+            constructorMethod.visitVarInsn(Opcodes.ALOAD, slot);
+        }
+        constructorMethod.visitMethodInsn(
+                Opcodes.INVOKESPECIAL, oldSuper, "<init>", constructor, false);
+        constructorMethod.visitInsn(Opcodes.RETURN);
+        constructorMethod.visitMaxs(0, 0);
+        constructorMethod.visitEnd();
+
+        MethodVisitor init = cw.visitMethod(Opcodes.ACC_PUBLIC, "init", "()V", null, null);
+        init.visitCode();
+        init.visitVarInsn(Opcodes.ALOAD, 0);
+        init.visitMethodInsn(Opcodes.INVOKESPECIAL, oldSuper, "init", "()V", false);
+        init.visitInsn(Opcodes.RETURN);
+        init.visitMaxs(0, 0);
+        init.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** The exact intermediary shape emitted by the Fabric test mod before runtime transforms. */
+    private static byte[] intermediaryLegacyChatOptionsMixin() {
+        String target = "net/minecraft/class_404";
+        String oldSuper = "net/minecraft/class_5500";
+        String constructor = "(Lnet/minecraft/class_437;Lnet/minecraft/class_315;"
+                + "Lnet/minecraft/class_2561;[Lnet/minecraft/class_7172;)V";
+
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                "test/IntermediaryChatOptionsMixin", null, oldSuper, null);
+        var mixin = cw.visitAnnotation(MIXIN, false);
+        var values = mixin.visitArray("value");
+        values.visit(null, Type.getObjectType(target));
+        values.visitEnd();
+        mixin.visitEnd();
+
+        MethodVisitor constructorMethod = cw.visitMethod(
+                Opcodes.ACC_PUBLIC, "<init>", constructor, null, null);
+        constructorMethod.visitCode();
+        for (int slot = 0; slot <= 4; slot++) {
+            constructorMethod.visitVarInsn(Opcodes.ALOAD, slot);
+        }
+        constructorMethod.visitMethodInsn(
+                Opcodes.INVOKESPECIAL, oldSuper, "<init>", constructor, false);
+        constructorMethod.visitInsn(Opcodes.RETURN);
+        constructorMethod.visitMaxs(0, 0);
+        constructorMethod.visitEnd();
+
+        MethodVisitor init = cw.visitMethod(
+                Opcodes.ACC_PUBLIC, "method_25426", "()V", null, null);
+        init.visitCode();
+        init.visitVarInsn(Opcodes.ALOAD, 0);
+        init.visitMethodInsn(
+                Opcodes.INVOKESPECIAL, oldSuper, "method_25426", "()V", false);
+        init.visitInsn(Opcodes.RETURN);
+        init.visitMaxs(0, 0);
+        init.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
     private static ClassNode read(byte[] bytes) {
         ClassNode classNode = new ClassNode();
         new ClassReader(bytes).accept(classNode, 0);
@@ -299,6 +383,68 @@ class MixinLegacyMemberBridgeTest {
                 .findFirst().orElseThrow();
         assertTrue(calls(constructor, "net/minecraft/class_465", "<init>", constructor.desc));
         assertFalse(calls(constructor, "net/minecraft/class_485", "<init>", constructor.desc));
+    }
+
+    @Test
+    @DisplayName("No Chat Reports chat options mixin follows the current options screen hierarchy")
+    void legacyChatOptionsMixinDropsRemovedSuperConstructorArgument() {
+        savedVersion = RetromodVersion.TARGET_MC_VERSION;
+        RetromodVersion.TARGET_MC_VERSION = "26.2";
+        ClassNode classNode = read(legacyChatOptionsMixin());
+
+        assertTrue(MixinLegacyMemberBridge.apply(classNode));
+        String newSuper = "net/minecraft/client/gui/screens/options/OptionsSubScreen";
+        assertEquals(newSuper, classNode.superName);
+        MethodNode constructor = classNode.methods.stream()
+                .filter(method -> "<init>".equals(method.name))
+                .findFirst().orElseThrow();
+        assertEquals(4, java.util.Arrays.stream(constructor.instructions.toArray())
+                .filter(instruction -> instruction.getOpcode() == Opcodes.ALOAD).count(),
+                "the obsolete OptionInstance array load must be removed");
+        assertTrue(calls(constructor, newSuper, "<init>",
+                "(Lnet/minecraft/client/gui/screens/Screen;"
+                + "Lnet/minecraft/client/Options;"
+                + "Lnet/minecraft/network/chat/Component;)V"));
+        assertTrue(calls(method(classNode, "init", "()V"), newSuper, "init", "()V"));
+    }
+
+    @Test
+    @DisplayName("Fabric runtime repair recognizes the SimpleOptionsSubScreen placeholder")
+    void legacyChatOptionsMixinRebasesAfterPolyfillRedirect() {
+        savedVersion = RetromodVersion.TARGET_MC_VERSION;
+        RetromodVersion.TARGET_MC_VERSION = "26.2";
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        IntermediaryToMojangMapper.applyTo(transformer);
+        new MixinTargetPolyfill().registerPolyfills(transformer);
+        MixinCompatibilityTransformer mixins = new MixinCompatibilityTransformer(transformer);
+
+        byte[] annotated = mixins.transformMixinClass(intermediaryLegacyChatOptionsMixin());
+        byte[] remapped = transformer.transformClass(annotated, "test/IntermediaryChatOptionsMixin");
+        ClassNode classNode = read(mixins.applyPostRemapRepairs(remapped));
+
+        String newSuper = "net/minecraft/client/gui/screens/options/OptionsSubScreen";
+        assertEquals(newSuper, classNode.superName);
+        MethodNode constructor = classNode.methods.stream()
+                .filter(method -> "<init>".equals(method.name))
+                .findFirst().orElseThrow();
+        assertTrue(calls(constructor, newSuper, "<init>",
+                "(Lnet/minecraft/client/gui/screens/Screen;"
+                + "Lnet/minecraft/client/Options;"
+                + "Lnet/minecraft/network/chat/Component;)V"));
+        assertTrue(calls(method(classNode, "init", "()V"), newSuper, "init", "()V"));
+    }
+
+    @Test
+    @DisplayName("No Chat Reports superclass repair stays off on 1.21.11")
+    void legacyChatOptionsMixinIsUnchangedBeforeUnobfuscatedHosts() {
+        savedVersion = RetromodVersion.TARGET_MC_VERSION;
+        RetromodVersion.TARGET_MC_VERSION = "1.21.11";
+        ClassNode classNode = read(legacyChatOptionsMixin());
+
+        assertFalse(MixinLegacyMemberBridge.apply(classNode));
+        assertEquals("net/minecraft/client/gui/screens/SimpleOptionsSubScreen",
+                classNode.superName);
     }
 
     @Test
@@ -335,6 +481,8 @@ class MixinLegacyMemberBridgeTest {
         MethodNode method = method(classNode, "newPose", "(Ljava/lang/String;I)L" + POSE + ";");
         assertFalse(hasAnnotation(method, INVOKER));
         assertTrue(hasAnnotation(method, UNIQUE));
+        assertEquals(Opcodes.ACC_PRIVATE,
+                method.access & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED | Opcodes.ACC_PRIVATE));
         assertTrue(calls(method, "java/lang/String", "toLowerCase",
                 "(Ljava/util/Locale;)Ljava/lang/String;"));
         assertTrue(calls(method, POSE, "<init>", "(Ljava/lang/String;IILjava/lang/String;)V"));
@@ -364,6 +512,8 @@ class MixinLegacyMemberBridgeTest {
                 "(Ljava/lang/String;L" + CODEC + ";)L" + TREE_DECORATOR_TYPE + ";");
         assertFalse(hasAnnotation(bridged, INVOKER));
         assertTrue(hasAnnotation(bridged, UNIQUE));
+        assertEquals(Opcodes.ACC_PRIVATE,
+                bridged.access & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED | Opcodes.ACC_PRIVATE));
         assertTrue(calls(bridged, TREE_DECORATOR_TYPE, "register",
                 "(Ljava/lang/String;L" + MAP_CODEC + ";)L" + TREE_DECORATOR_TYPE + ";"));
         // A record codec is a wrapped MapCodec, so it is unwrapped rather than re-nested.
@@ -382,6 +532,8 @@ class MixinLegacyMemberBridgeTest {
                 "(L" + CODEC + ";)L" + TREE_DECORATOR_TYPE + ";");
         assertFalse(hasAnnotation(bridged, INVOKER));
         assertTrue(hasAnnotation(bridged, UNIQUE));
+        assertEquals(Opcodes.ACC_PRIVATE,
+                bridged.access & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED | Opcodes.ACC_PRIVATE));
         assertTrue(calls(bridged, TREE_DECORATOR_TYPE, "<init>", "(L" + MAP_CODEC + ";)V"));
     }
 

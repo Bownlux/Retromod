@@ -1,9 +1,11 @@
 package com.retromod.cli;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
@@ -19,6 +21,7 @@ import org.objectweb.asm.tree.MethodInsnNode;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import com.retromod.embedder.ModVersionInfo;
+import com.retromod.util.McReflect;
 
 /**
  * Regression for the {@code batch}/{@code AOT} aux-redirects gap and its loader gating (#NN).
@@ -101,6 +104,79 @@ class RetromodCliAuxRedirectsTest {
         }
     }
 
+    @Test
+    void forgeTargetSrgDoesNotLeakIntoTheNextFabricBatchMod() throws Exception {
+        Field cliTarget = RetromodCli.class.getDeclaredField("TARGET_MC_VERSION");
+        cliTarget.setAccessible(true);
+        String savedCliTarget = (String) cliTarget.get(null);
+        String savedSharedTarget = RetromodVersion.TARGET_MC_VERSION;
+        boolean savedNeoForge = McReflect.isForceNeoForge();
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        try {
+            cliTarget.set(null, "1.20.1");
+            RetromodVersion.TARGET_MC_VERSION = "1.20.1";
+            McReflect.setForceNeoForge(false);
+
+            RetromodCli.registerAuxiliaryRedirects(transformer, info("forge"), List.of());
+            assertEquals("m_8055_", blockGetterMethodName(transformer),
+                    "the Forge transform must emit its target SRG member");
+
+            RetromodCli.registerAuxiliaryRedirects(transformer, info("fabric"), List.of());
+            assertEquals("getBlockState", blockGetterMethodName(transformer),
+                    "the next Fabric mod must not inherit Forge target SRG names");
+        } finally {
+            transformer.clearRedirectsForTesting();
+            cliTarget.set(null, savedCliTarget);
+            RetromodVersion.TARGET_MC_VERSION = savedSharedTarget;
+            McReflect.setForceNeoForge(savedNeoForge);
+        }
+    }
+
+    @Test
+    void fabricIntermediaryNamesDoNotLeakIntoTheNextForgeBatchMod() throws Exception {
+        Field cliTarget = RetromodCli.class.getDeclaredField("TARGET_MC_VERSION");
+        cliTarget.setAccessible(true);
+        String savedCliTarget = (String) cliTarget.get(null);
+        String savedSharedTarget = RetromodVersion.TARGET_MC_VERSION;
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        try {
+            cliTarget.set(null, "26.1");
+            RetromodVersion.TARGET_MC_VERSION = "26.1";
+
+            RetromodCli.registerAuxiliaryRedirects(transformer, info("fabric"), List.of());
+            assertEquals("tick", transformedIntermediaryNamedCall(transformer));
+
+            RetromodCli.registerAuxiliaryRedirects(transformer, info("forge"), List.of());
+            assertEquals("method_5773", transformedIntermediaryNamedCall(transformer),
+                    "the next Forge mod must not inherit Fabric intermediary names");
+        } finally {
+            transformer.clearRedirectsForTesting();
+            cliTarget.set(null, savedCliTarget);
+            RetromodVersion.TARGET_MC_VERSION = savedSharedTarget;
+        }
+    }
+
+    private static String transformedIntermediaryNamedCall(RetromodTransformer transformer) {
+        ClassNode output = new ClassNode();
+        new ClassReader(transformer.transformClass(
+                intermediaryNamedCall(), "test/ForgeFixture")).accept(output, 0);
+        return output.methods.stream()
+                .flatMap(method -> Arrays.stream(method.instructions.toArray()))
+                .filter(MethodInsnNode.class::isInstance)
+                .map(MethodInsnNode.class::cast)
+                .findFirst().orElseThrow().name;
+    }
+
+    private static String blockGetterMethodName(RetromodTransformer transformer) {
+        return transformer.remapQualifiedMethodName(
+                "net/minecraft/world/level/BlockGetter",
+                "getBlockState",
+                "(Lnet/minecraft/core/BlockPos;)"
+                        + "Lnet/minecraft/world/level/block/state/BlockState;");
+    }
+
     /**
      * CLI == runtime: the CLI/AOT paths must apply the ResourceLocation/Identifier ctor -> factory
      * redirect the in-game boot applies. Before this was wired, CLI/AOT emitted a raw
@@ -179,6 +255,22 @@ class RetromodCliAuxRedirectsTest {
                         + "Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;",
                 false);
         method.visitInsn(Opcodes.POP);
+        method.visitInsn(Opcodes.RETURN);
+        method.visitMaxs(0, 0);
+        method.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
+    private static byte[] intermediaryNamedCall() {
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/ForgeFixture", null,
+                "java/lang/Object", null);
+        MethodVisitor method = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "probe", "()V", null, null);
+        method.visitCode();
+        method.visitMethodInsn(Opcodes.INVOKESTATIC,
+                "test/ForgeHelper", "method_5773", "()V", false);
         method.visitInsn(Opcodes.RETURN);
         method.visitMaxs(0, 0);
         method.visitEnd();

@@ -17,8 +17,8 @@ public class Forge_1_19_3_to_1_19_4 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/damagesource/DamageSource", "<init>",
+        transformer.registerConstructorRedirect(
+            "net/minecraft/world/damagesource/DamageSource",
             "(Ljava/lang/String;)V",
             "com/retromod/shim/forge/embedded/DamageSourceShim", "create",
             "(Ljava/lang/String;)Lnet/minecraft/world/damagesource/DamageSource;"

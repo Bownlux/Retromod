@@ -34,14 +34,23 @@ public final class ItemGroupEventsBridge {
     private static final String EVENT_FACTORY       = "net.fabricmc.fabric.api.event.EventFactory";
     private static final String RESOURCE_KEY        = "net.minecraft.resources.ResourceKey";
 
-    // synthetic v1 SAM interfaces (injected by the shim) and their v2 counterparts
-    private static final String SYNTH_MODIFY_ENTRIES     = "com.retromod.generated.legacyitemgroup.ModifyEntries";
-    private static final String SYNTH_MODIFY_ENTRIES_ALL = "com.retromod.generated.legacyitemgroup.ModifyEntriesAll";
+    // Snapshot.6 initially emitted these shared names. Keep the no-arg entrypoints below so
+    // already transformed jars continue to load after the per-mod relocation fix.
+    private static final String LEGACY_MODIFY_ENTRIES =
+            "com.retromod.generated.legacyitemgroup.ModifyEntries";
+    private static final String LEGACY_MODIFY_ENTRIES_ALL =
+            "com.retromod.generated.legacyitemgroup.ModifyEntriesAll";
+
+    // v2 counterparts of the synthetic v1 SAM interfaces injected by the shim
     private static final String V2_MODIFY_OUTPUT     = CREATIVE_TAB_EVENTS + "$ModifyOutput";
     private static final String V2_MODIFY_OUTPUT_ALL = CREATIVE_TAB_EVENTS + "$ModifyOutputAll";
 
-    /** Per-{@code ResourceKey} v1 events, so repeated {@code modifyEntriesEvent(key)} calls share one. */
-    private static final ConcurrentHashMap<Object, Object> PER_KEY = new ConcurrentHashMap<>();
+    /**
+     * Per-SAM-type and per-{@code ResourceKey} v1 events. Each transformed mod gets its own
+     * relocated SAM type, so sharing only by key would recreate the listener-array type mismatch.
+     */
+    private static final ConcurrentHashMap<Class<?>, ConcurrentHashMap<Object, Object>> PER_TYPE =
+            new ConcurrentHashMap<>();
 
     // computeIfAbsent, not get-then-putIfAbsent: wire() registers a forwarder on the live
     // v2 event, so a lost race would fire every handler twice per tab build.
@@ -54,18 +63,32 @@ public final class ItemGroupEventsBridge {
      * v1 {@code ItemGroupEvents.modifyEntriesEvent(key)} -> a v1 {@code Event<ModifyEntries>}
      * wired to {@code CreativeModeTabEvents.modifyOutputEvent(key)}.
      */
-    public static Object modifyEntriesEvent(Object resourceKey) {
-        return PER_KEY.computeIfAbsent(resourceKey, key -> {
+    public static Object modifyEntriesEvent(Object resourceKey, Class<?> v1Type) {
+        ConcurrentHashMap<Object, Object> perKey =
+                PER_TYPE.computeIfAbsent(v1Type, ignored -> new ConcurrentHashMap<>());
+        return perKey.computeIfAbsent(resourceKey, key -> {
             try {
                 Class<?> cmte = Class.forName(CREATIVE_TAB_EVENTS, true, cl());
                 Class<?> keyType = Class.forName(RESOURCE_KEY, false, cl());
                 Object v2Event = cmte.getMethod("modifyOutputEvent", keyType).invoke(null, key);
-                return wire(SYNTH_MODIFY_ENTRIES, V2_MODIFY_OUTPUT, v2Event);
+                return wire(v1Type, V2_MODIFY_OUTPUT, v2Event);
             } catch (Throwable t) {
                 System.out.println(TAG + "modifyEntriesEvent wiring failed (" + t + "); entries inert for this tab.");
-                return createEmpty(SYNTH_MODIFY_ENTRIES);
+                return createEmpty(v1Type);
             }
         });
+    }
+
+    /** Compatibility entrypoint for jars transformed before listener types became per-mod. */
+    public static Object modifyEntriesEvent(Object resourceKey) {
+        try {
+            return modifyEntriesEvent(resourceKey,
+                    Class.forName(LEGACY_MODIFY_ENTRIES, false, cl()));
+        } catch (Throwable t) {
+            System.out.println(TAG + "legacy modifyEntriesEvent wiring failed (" + t
+                    + "); entries inert for this tab.");
+            return null;
+        }
     }
 
     /**
@@ -73,24 +96,34 @@ public final class ItemGroupEventsBridge {
      * wired to {@code CreativeModeTabEvents.MODIFY_OUTPUT_ALL}. Called once from the
      * synthetic holder's static init.
      */
-    public static Object installModifyAll() {
+    public static Object installModifyAll(Class<?> v1Type) {
         try {
             Class<?> cmte = Class.forName(CREATIVE_TAB_EVENTS, true, cl());
             Object v2Event = cmte.getField("MODIFY_OUTPUT_ALL").get(null);
-            return wire(SYNTH_MODIFY_ENTRIES_ALL, V2_MODIFY_OUTPUT_ALL, v2Event);
+            return wire(v1Type, V2_MODIFY_OUTPUT_ALL, v2Event);
         } catch (Throwable t) {
             System.out.println(TAG + "MODIFY_ENTRIES_ALL wiring failed (" + t + "); all-tabs entries inert.");
-            return createEmpty(SYNTH_MODIFY_ENTRIES_ALL);
+            return createEmpty(v1Type);
+        }
+    }
+
+    /** Compatibility entrypoint for jars transformed before listener types became per-mod. */
+    public static Object installModifyAll() {
+        try {
+            return installModifyAll(Class.forName(LEGACY_MODIFY_ENTRIES_ALL, false, cl()));
+        } catch (Throwable t) {
+            System.out.println(TAG + "legacy MODIFY_ENTRIES_ALL wiring failed (" + t
+                    + "); all-tabs entries inert.");
+            return null;
         }
     }
 
     /**
-     * Build a v1 {@code Event} for {@code v1ClassName} and register a forwarder on
+     * Build a v1 {@code Event} for {@code v1Type} and register a forwarder on
      * {@code v2Event} that replays each v2 SAM call onto the v1 invoker's SAM.
      */
-    private static Object wire(String v1ClassName, String v2SamClassName, Object v2Event) throws Exception {
+    private static Object wire(Class<?> v1Type, String v2SamClassName, Object v2Event) throws Exception {
         ClassLoader cl = cl();
-        Class<?> v1Type = Class.forName(v1ClassName, false, cl);
         Class<?> v2SamType = Class.forName(v2SamClassName, false, cl);
 
         Object v1Event = createArrayBacked(v1Type);
@@ -114,17 +147,17 @@ public final class ItemGroupEventsBridge {
     }
 
     /** Unwired fallback v1 {@code Event} used when wiring to the v2 event fails. */
-    private static Object createEmpty(String v1ClassName) {
+    private static Object createEmpty(Class<?> v1Type) {
         try {
-            return createArrayBacked(Class.forName(v1ClassName, false, cl()));
+            return createArrayBacked(v1Type);
         } catch (Throwable t) {
-            System.out.println(TAG + "could not create fallback event for " + v1ClassName + " (" + t + ").");
+            System.out.println(TAG + "could not create fallback event for " + v1Type.getName() + " (" + t + ").");
             return null;
         }
     }
 
     private static Object createArrayBacked(Class<?> v1Type) throws Exception {
-        ClassLoader cl = cl();
+        ClassLoader cl = v1Type.getClassLoader();
         Class<?> eventFactory = Class.forName(EVENT_FACTORY, true, cl);
         Method createArrayBacked = eventFactory.getMethod("createArrayBacked", Class.class, Function.class);
         Function<Object, Object> invokerFactory = (listenersObj) -> {

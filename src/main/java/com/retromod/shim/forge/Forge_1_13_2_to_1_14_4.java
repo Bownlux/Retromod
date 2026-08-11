@@ -33,11 +33,11 @@ public class Forge_1_13_2_to_1_14_4 implements VersionShim {
             "net/minecraft/entity/passive/EntityVillager",
             "net/minecraft/entity/merchant/villager/VillagerEntity"
         );
-        transformer.registerMethodRedirect(
-            "net/minecraft/block/Block", "<init>",
-            "(Lnet/minecraft/block/Block$Properties;)V",
-            "net/minecraft/block/Block", "<init>",
-            "(Lnet/minecraft/block/AbstractBlock$Properties;)V"
+        // Block.Properties moved under AbstractBlock. Remapping the type also updates
+        // constructor descriptors without treating <init> as an ordinary method.
+        transformer.registerClassRedirect(
+            "net/minecraft/block/Block$Properties",
+            "net/minecraft/block/AbstractBlock$Properties"
         );
     }
 

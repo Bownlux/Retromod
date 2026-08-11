@@ -1,5 +1,5 @@
 # Turns "Compatibility report" issues (the compat_report.yml form) into PRs that
-# add a per-entry file under docs/_data/compatdb/ (issue-<N>.yml) — nobody
+# add a per-entry file under docs/_data/compatdb/ (issue-<N>.yml). Nobody
 # hand-writes YAML, and because every PR touches only its own new file,
 # concurrent report PRs never conflict with each other.
 #
@@ -14,7 +14,7 @@
 name: Compat report → PR
 
 # REPO SETUP REQUIRED (the permissions block below is necessary but NOT sufficient):
-#   1. The label `compat-report` must exist in the repo — GitHub silently skips
+#   1. The label `compat-report` must exist in the repo. GitHub silently skips
 #      template labels that don't exist, and this workflow keys on it.
 #   2. Settings → Actions → General → Workflow permissions →
 #      "Allow GitHub Actions to create and approve pull requests" must be CHECKED,
@@ -34,14 +34,17 @@ permissions:
 
 jobs:
   # The PR's head branch (compat-report/issue-N) is required by GitHub to open
-  # a PR at all — but it's pure scaffolding, so delete it the moment the PR
+  # a PR at all, but it's pure scaffolding, so delete it the moment the PR
   # closes, merged or not. (A re-labeled issue recreates it cleanly if a report
   # ever needs a second pass.)
   cleanup-branch:
-    if: github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'compat-report/')
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'compat-report/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const ref = `heads/${context.payload.pull_request.head.ref}`;
@@ -53,13 +56,13 @@ jobs:
     if: github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'compat-report')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const issue = context.payload.issue;
             const body = issue.body || '';
 
-            // ── parse the issue-form body: "### <label>\n\n<value>" sections ──
+            // Parse the issue-form body: "### <label>\n\n<value>" sections.
             const sections = {};
             for (const m of body.matchAll(/###\s+([^\n]+)\n+([\s\S]*?)(?=\n###\s|$)/g)) {
               sections[m[1].trim()] = m[2].trim();
@@ -85,21 +88,21 @@ jobs:
 
             if (!name || !badgeRaw) {
               await github.rest.issues.createComment({ ...context.repo, issue_number: issue.number,
-                body: 'Could not parse this report (missing mod name or badge). If you edited the issue freehand, please use the form fields — or a maintainer will add it manually.' });
+                body: 'Could not parse this report (missing mod name or badge). If you edited the issue freehand, please use the form fields, or a maintainer will add it manually.' });
               return;
             }
 
-            const badge = (badgeRaw.split('—')[0] || badgeRaw).trim().toLowerCase().split(/\s/)[0];
+            const badge = (badgeRaw.split(/\s*(?:\u2014|\u2013|-)\s*/)[0] || badgeRaw).trim().toLowerCase().split(/\s/)[0];
             if (!['diamond','gold','iron','copper','borked'].includes(badge)) {
               core.setFailed(`Unrecognized badge: ${badgeRaw}`); return;
             }
 
-            // "2.5.2, built for 1.20.1" → version + source MC (best effort; PR is reviewed)
+            // "2.5.2, built for 1.20.1" becomes version + source MC (best effort; PR is reviewed).
             let modVersion = verRaw, sourceMc = '';
             const bf = verRaw.match(/^(.*?)[,;]?\s*built\s+for\s+(.+)$/i);
             if (bf) { modVersion = bf[1].trim(); sourceMc = bf[2].trim(); }
 
-            // ── safe YAML emission: escaped double-quoted scalars only ──
+            // Safe YAML emission: escaped double-quoted scalars only.
             const q = (s) => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]+/g, ' ').trim() + '"';
             const today = new Date().toISOString().slice(0, 10);
 
@@ -128,7 +131,7 @@ jobs:
             if (details) entry += `  details: ${q(details)}\n`;
             entry += `  reporter: ${q(issue.user.login)}\n  date: ${q(today)}\n  issue: ${issue.number}\n`;
 
-            // ── branch + commit + PR ──
+            // Create the branch, commit, and PR.
             // One FILE per entry (docs/_data/compatdb/ is a Jekyll data directory): concurrent
             // report PRs each add their own issue-N.yml, so they can NEVER textually conflict
             // with each other (the old shared-file append meant every second open PR needed a
@@ -142,16 +145,16 @@ jobs:
             const baseRef = await github.rest.git.getRef({ ...context.repo, ref: `heads/${base}` });
             try {
               await github.rest.git.createRef({ ...context.repo, ref: `refs/heads/${branch}`, sha: baseRef.data.object.sha });
-            } catch (e) { // branch exists (edited issue) → reset it to base
+            } catch (e) { // An edited issue can reuse a branch, so reset it to base.
               await github.rest.git.updateRef({ ...context.repo, ref: `heads/${branch}`, sha: baseRef.data.object.sha, force: true });
             }
 
-            // "\n- name: ..." list item → "name: ..." top-level mapping (dedent the 2-space body).
+            // Convert the list item to a top-level mapping and dedent its body.
             const mapping = entry.replace(/^\n- /, '').replace(/\n  /g, '\n') + '\n';
             // No sha: the branch was just reset to base, where this per-issue file never exists.
             await github.rest.repos.createOrUpdateFileContents({
               ...context.repo, path, branch,
-              message: `compatdb: ${name} (${badge}) — from #${issue.number}`,
+              message: `compatdb: ${name} (${badge}) from #${issue.number}`,
               content: Buffer.from(mapping).toString('base64'),
             });
 
@@ -163,7 +166,7 @@ jobs:
               try {
                 const pr = await github.rest.pulls.create({
                   ...context.repo, base, head: branch,
-                  title: `Compat DB: ${name} — ${badge}`,
+                  title: `Compat DB: ${name}: ${badge}`,
                   body: `Auto-generated from #${issue.number} (reported by @${issue.user.login}).\n\nReview the entry, then merge to publish it on the [Compatibility DB](https://bownlux.github.io/Retromod/compatdb/).\n\nCloses #${issue.number}.`,
                 });
                 prUrl = pr.data.html_url;
@@ -175,7 +178,7 @@ jobs:
                     body: `The report was parsed and committed to branch \`${branch}\`, but the repository `
                       + `blocks Actions from opening pull requests.\n\n**Maintainer:** enable `
                       + `*Settings → Actions → General → Workflow permissions → "Allow GitHub Actions to create and approve pull requests"*, `
-                      + `then remove and re-add the \`compat-report\` label on this issue to retry — or open the PR manually from \`${branch}\`.` });
+                      + `then remove and re-add the \`compat-report\` label on this issue to retry, or open the PR manually from \`${branch}\`.` });
                   return;
                 }
                 throw e;

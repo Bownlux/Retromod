@@ -55,15 +55,6 @@ public class Fabric_1_21_9_to_1_21_10 implements VersionShim {
             "()Lnet/minecraft/world/World;"
         );
 
-        transformer.registerMethodRedirect(
-            "net/minecraft/block/BlockState",
-            "getBlock",
-            "()Lnet/minecraft/block/Block;",
-            "net/minecraft/block/BlockState",
-            "getBlockType",
-            "()Lnet/minecraft/block/Block;"
-        );
-
         // NbtType.getType was removed from Fabric API; route to our shim.
         transformer.registerMethodRedirect(
             "net/fabricmc/fabric/api/util/NbtType",

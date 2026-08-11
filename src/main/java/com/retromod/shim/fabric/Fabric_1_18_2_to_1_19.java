@@ -26,17 +26,19 @@ public class Fabric_1_18_2_to_1_19 implements VersionShim {
             "net/minecraft/text/TranslatableText",
             "net/minecraft/text/Text"
         );
-        transformer.registerMethodRedirect(
-            "net/minecraft/text/LiteralText", "<init>",
+        transformer.registerConstructorRedirect(
+            "net/minecraft/text/LiteralText",
             "(Ljava/lang/String;)V",
             "net/minecraft/text/Text", "literal",
-            "(Ljava/lang/String;)Lnet/minecraft/text/Text;"
+            "(Ljava/lang/String;)Lnet/minecraft/text/MutableText;",
+            true
         );
-        transformer.registerMethodRedirect(
-            "net/minecraft/text/TranslatableText", "<init>",
+        transformer.registerConstructorRedirect(
+            "net/minecraft/text/TranslatableText",
             "(Ljava/lang/String;[Ljava/lang/Object;)V",
             "net/minecraft/text/Text", "translatable",
-            "(Ljava/lang/String;[Ljava/lang/Object;)Lnet/minecraft/text/Text;"
+            "(Ljava/lang/String;[Ljava/lang/Object;)Lnet/minecraft/text/MutableText;",
+            true
         );
         transformer.registerMethodRedirect(
             "net/minecraft/server/network/ServerPlayerEntity", "sendMessage",

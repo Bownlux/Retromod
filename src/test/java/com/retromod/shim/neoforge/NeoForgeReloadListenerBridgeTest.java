@@ -141,7 +141,7 @@ class NeoForgeReloadListenerBridgeTest {
         }
 
         assertEquals(1, SyntheticEmbedder.embedIntoJar(jar, "caelum.jar", transformer));
-        String embedded = SyntheticEmbedder.PREFIX + "caelum/ReloadListenerEventShim";
+        String embedded = SyntheticEmbedder.embeddedBase("caelum.jar") + SHIM;
         try (var zip = new ZipFile(jar.toFile())) {
             assertNotNull(zip.getEntry(embedded + ".class"),
                     "the output jar must contain its private reload-listener bridge");

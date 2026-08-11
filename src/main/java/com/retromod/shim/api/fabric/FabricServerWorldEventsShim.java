@@ -83,10 +83,16 @@ public class FabricServerWorldEventsShim implements VersionShim {
 
         MethodVisitor clinit = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
         clinit.visitCode();
-        clinit.visitMethodInsn(Opcodes.INVOKESTATIC, BRIDGE, "installLoad", "()Ljava/lang/Object;", false);
+        // The class literal is remapped with the holder during per-mod embedding. This keeps
+        // Fabric's listener-array component type identical to the transformed lambda interface.
+        clinit.visitLdcInsn(org.objectweb.asm.Type.getObjectType(LOAD));
+        clinit.visitMethodInsn(Opcodes.INVOKESTATIC, BRIDGE, "installLoad",
+                "(Ljava/lang/Class;)Ljava/lang/Object;", false);
         clinit.visitTypeInsn(Opcodes.CHECKCAST, EVENT);
         clinit.visitFieldInsn(Opcodes.PUTSTATIC, HOLDER, "LOAD", L_EVENT);
-        clinit.visitMethodInsn(Opcodes.INVOKESTATIC, BRIDGE, "installUnload", "()Ljava/lang/Object;", false);
+        clinit.visitLdcInsn(org.objectweb.asm.Type.getObjectType(UNLOAD));
+        clinit.visitMethodInsn(Opcodes.INVOKESTATIC, BRIDGE, "installUnload",
+                "(Ljava/lang/Class;)Ljava/lang/Object;", false);
         clinit.visitTypeInsn(Opcodes.CHECKCAST, EVENT);
         clinit.visitFieldInsn(Opcodes.PUTSTATIC, HOLDER, "UNLOAD", L_EVENT);
         clinit.visitInsn(Opcodes.RETURN);

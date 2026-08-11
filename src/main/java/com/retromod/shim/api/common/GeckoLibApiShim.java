@@ -75,9 +75,8 @@ public class GeckoLibApiShim implements VersionShim {
             "software/bernie/geckolib/animation/AnimationController"
         );
 
-        transformer.registerMethodRedirect(
+        transformer.registerConstructorRedirect(
             "software/bernie/geckolib3/core/controller/AnimationController",
-            "<init>",
             "(Lsoftware/bernie/geckolib3/core/IAnimatable;Ljava/lang/String;FLsoftware/bernie/geckolib3/core/controller/AnimationController$IAnimationPredicate;)V",
             "com/retromod/shim/api/common/embedded/GeckoLibShim",
             "createController",

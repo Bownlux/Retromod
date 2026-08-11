@@ -59,8 +59,8 @@ public class Fabric_1_20_4_to_1_20_5 implements VersionShim {
             "(Ljava/lang/Object;F)Ljava/lang/Object;"
         );
         // Attribute system changes
-        transformer.registerMethodRedirect(
-            "net/minecraft/entity/attribute/EntityAttributeModifier", "<init>",
+        transformer.registerConstructorRedirect(
+            "net/minecraft/entity/attribute/EntityAttributeModifier",
             "(Ljava/util/UUID;Ljava/lang/String;DLnet/minecraft/entity/attribute/EntityAttributeModifier$Operation;)V",
             "com/retromod/shim/fabric/embedded/AttributeShim", "createModifier",
             "(Ljava/util/UUID;Ljava/lang/String;DLjava/lang/Object;)Ljava/lang/Object;"

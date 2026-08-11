@@ -8,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
+import java.net.URI;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,7 +17,9 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.Manifest;
@@ -26,15 +30,15 @@ public final class SignatureVerifier {
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 
     /**
-     * SHA-256 (uppercase hex) of Retromod's own classes: every {@code com/retromod/}
-     * {@code .class} entry except this verifier (it carries the value) and the relocated
-     * {@code com/retromod/shaded/} deps (build-all.sh strips/varies them per loader, so
-     * hashing only our own code keeps one value valid across every full dist jar; lite differs).
+     * SHA-256 (uppercase hex) of the executable release surface. This covers every class except
+     * loader-provided ASM, loader-variant annotation stubs, and this verifier, plus ServiceLoader
+     * descriptors and Retromod's transformation data. Those exclusions keep one value valid
+     * across every loader variant without leaving an unhashed provider injection path.
      *
      * <p>Empty in dev/source builds: status is then {@link Status#UNKNOWN} and the computed
      * hash is logged so a release build can embed it. See {@code docs/authenticity.md}.
      */
-    private static final String EXPECTED_SELF_HASH = "C5FA2E64029DFD3B7875A99BE6CECD3EFAF36868EA97AEA97FCA444CECB3D530";
+    private static final String EXPECTED_SELF_HASH = "6004FD63806C7E0F206A33EE4E9A7CDA9194DA2E8F335157F959D7244B391474";
 
     /** This class's own jar entry, excluded from the hash (it carries the hash). */
     private static final String SELF_ENTRY = "com/retromod/security/SignatureVerifier.class";
@@ -109,31 +113,29 @@ public final class SignatureVerifier {
     }
 
     /**
-     * SHA-256 over Retromod's own {@code com/retromod/} classes, sorted by name, excluding
-     * this class ({@link #SELF_ENTRY}) and the relocated {@code com/retromod/shaded/} deps,
-     * hashing each entry's name (UTF-8) then its bytes. Uppercase hex, or {@code null} if none.
+     * SHA-256 over the executable release surface, sorted by name, hashing each entry's name
+     * (UTF-8) then its bytes. Uppercase hex, or {@code null} if no covered entry exists.
      * Package-private so release tooling and tests can compute the same value.
      */
     static String computeSelfHash(JarFile jar) throws Exception {
-        List<JarEntry> classes = new ArrayList<>();
+        List<JarEntry> hashedEntries = new ArrayList<>();
+        Set<String> seenNames = new HashSet<>();
         Enumeration<JarEntry> e = jar.entries();
         while (e.hasMoreElements()) {
             JarEntry je = e.nextElement();
             if (je.isDirectory()) continue;
             String n = je.getName();
-            if (!n.endsWith(".class")) continue;
-            // only our own classes: skip relocated shaded deps and this verifier
-            if (!n.startsWith("com/retromod/")) continue;
-            if (n.startsWith("com/retromod/shaded/")) continue;
-            if (n.equals(SELF_ENTRY)) continue;
-            classes.add(je);
+            if (!seenNames.add(n)) {
+                throw new SecurityException("Duplicate JAR entry: " + n);
+            }
+            if (isHashedEntry(n)) hashedEntries.add(je);
         }
-        if (classes.isEmpty()) return null;
-        classes.sort(Comparator.comparing(JarEntry::getName));
+        if (hashedEntries.isEmpty()) return null;
+        hashedEntries.sort(Comparator.comparing(JarEntry::getName));
 
         MessageDigest md = MessageDigest.getInstance("SHA-256");
         byte[] buf = new byte[8192];
-        for (JarEntry je : classes) {
+        for (JarEntry je : hashedEntries) {
             md.update(je.getName().getBytes(StandardCharsets.UTF_8));
             try (InputStream is = jar.getInputStream(je)) {
                 int r;
@@ -146,22 +148,46 @@ public final class SignatureVerifier {
         return sb.toString();
     }
 
+    private static boolean isHashedEntry(String name) {
+        if (SELF_ENTRY.equals(name)) return false;
+        if (name.endsWith(".class")) {
+            // Loader distributions remove these where the host supplies them. They are the only
+            // class differences between the full release variants.
+            return !name.startsWith("org/objectweb/asm/")
+                    && !name.startsWith("javax/annotation/");
+        }
+        return name.startsWith("META-INF/services/")
+                || name.startsWith("retromod/")
+                || name.equals("intermediary-to-mojang.tsv")
+                || name.equals("mojang-class-moves-26.1.tsv")
+                || name.equals("retromod.mixins.json");
+    }
+
     /** Locate the JAR this class is loaded from, or null if running from a directory. */
     private static Path findOwnJar() {
         try {
             var codeSource = SignatureVerifier.class.getProtectionDomain().getCodeSource();
             if (codeSource == null) return null;
-            var url = codeSource.getLocation();
-            if (url == null) return null;
+            return jarPathFromCodeSource(codeSource.getLocation());
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
-            String path = url.getPath();
-            int bang = path.indexOf('!');
-            if (bang >= 0) path = path.substring(0, bang);
-            if (path.startsWith("file:")) path = path.substring("file:".length());
+    static Path jarPathFromCodeSource(URL url) {
+        if (url == null) return null;
+        try {
+            URI uri = url.toURI();
+            if ("jar".equalsIgnoreCase(uri.getScheme())) {
+                String nested = uri.getRawSchemeSpecificPart();
+                int bang = nested.indexOf('!');
+                if (bang >= 0) nested = nested.substring(0, bang);
+                uri = URI.create(nested);
+            }
+            if (!"file".equalsIgnoreCase(uri.getScheme())) return null;
 
-            Path p = Path.of(path);
-            if (Files.isDirectory(p)) return null; // classes dir, not a jar
-            return p;
+            Path path = Path.of(uri);
+            return Files.isDirectory(path) ? null : path;
         } catch (Exception e) {
             return null;
         }

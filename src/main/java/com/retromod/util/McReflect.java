@@ -70,7 +70,7 @@ public final class McReflect {
         for (String name : names) {
             if (name == null || name.isEmpty()) continue;
             try {
-                Class<?> c = Class.forName(name);
+                Class<?> c = loadClassWithoutInitialization(name);
                 CLASS_CACHE.put(cacheKey, c);
                 return c;
             } catch (ClassNotFoundException ignored) {
@@ -228,7 +228,7 @@ public final class McReflect {
      */
     public static boolean classExists(String name) {
         try {
-            Class.forName(name);
+            loadClassWithoutInitialization(name);
             return true;
         } catch (ClassNotFoundException e) {
             return false;
@@ -267,7 +267,7 @@ public final class McReflect {
         try {
             String mapped = (String) mapClassNameMethod.invoke(mappingResolver, "named", yarnName);
             if (mapped != null && !mapped.equals(yarnName)) {
-                return Class.forName(mapped);
+                return loadClassWithoutInitialization(mapped);
             }
         } catch (Exception e) {
             LOGGER.debug("MappingResolver lookup failed for {}: {}", yarnName, e.getMessage());
@@ -285,7 +285,8 @@ public final class McReflect {
             resolverInitialized = true;
 
             try {
-                Class<?> loaderClass = Class.forName("net.fabricmc.loader.api.FabricLoader");
+                Class<?> loaderClass = loadClassWithoutInitialization(
+                        "net.fabricmc.loader.api.FabricLoader");
                 Object loader = loaderClass.getMethod("getInstance").invoke(null);
                 mappingResolver = loaderClass.getMethod("getMappingResolver").invoke(loader);
 
@@ -303,6 +304,25 @@ public final class McReflect {
             } catch (Exception e) {
                 LOGGER.debug("Fabric MappingResolver not available (not on Fabric): {}", e.getMessage());
             }
+        }
+    }
+
+    /**
+     * Resolve a runtime class without running its static initializer.
+     *
+     * <p>These lookups run during loader startup. Initializing a Minecraft class here can execute
+     * game code before the loader and mixins have finished setting up. Retromod's own loader is
+     * preferred because it has the same view of Minecraft classes. The thread context loader is a
+     * fallback for launchers that expose optional loader APIs there.</p>
+     */
+    private static Class<?> loadClassWithoutInitialization(String name) throws ClassNotFoundException {
+        ClassLoader ownLoader = McReflect.class.getClassLoader();
+        try {
+            return Class.forName(name, false, ownLoader);
+        } catch (ClassNotFoundException first) {
+            ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
+            if (contextLoader == null || contextLoader == ownLoader) throw first;
+            return Class.forName(name, false, contextLoader);
         }
     }
 }

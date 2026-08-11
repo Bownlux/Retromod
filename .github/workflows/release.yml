@@ -5,7 +5,7 @@ name: Release latest main build
 # get the most recent build by downloading from the same URL.
 #
 # Versioned releases (e.g. v1.0.0-beta.6) are still cut by hand for milestone
-# tags — this workflow does NOT touch those. It only manages the rolling
+# tags - this workflow does NOT touch those. It only manages the rolling
 # release.
 #
 # Why workflow_run instead of `on: push`?
@@ -13,7 +13,7 @@ name: Release latest main build
 # Gating on CI completion means we never ship a build whose tests failed.
 # The downside is a small UX wart: the Release workflow shows "skipped" in
 # the Actions tab on every CI failure, which can look alarming. That's the
-# trade — quality > tidy logs.
+# trade - quality > tidy logs.
 #
 # Why Fabric only?
 # ----------------
@@ -21,7 +21,7 @@ name: Release latest main build
 # that contains fabric.mod.json AND META-INF/mods.toml AND
 # META-INF/neoforge.mods.toml all at once. Loaders are partly tolerant of
 # the extra metadata files, but distributing this fat JAR is the wrong
-# default — under some loader/MC combinations it gets rejected for
+# default - under some loader/MC combinations it gets rejected for
 # "looks like a different loader's mod" reasons.
 #
 # build-all.sh is the ground-truth distribution flow: it extracts the
@@ -39,31 +39,48 @@ on:
     branches: [main]
     types: [completed]
 
-permissions:
-  # Needed to create/update the release and force-update the `latest` tag.
-  contents: write
+permissions: {}
 
 jobs:
   release:
-    # Only run when CI passed. workflow_run fires on every CI completion,
-    # success or fail, so we have to filter ourselves.
-    if: github.event.workflow_run.conclusion == 'success'
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout the commit CI ran against
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # workflow_run runs in the context of the default branch by default,
           # not the triggering commit. Explicitly check out the SHA that CI
-          # validated so we package exactly what was tested — not whatever
+          # validated so we package exactly what was tested - not whatever
           # main happens to point at right now.
           ref: ${{ github.event.workflow_run.head_sha }}
           # Need full history for the "commits since last release" body.
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the tested commit belongs to main
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          if [ "$(git rev-parse HEAD)" != "$HEAD_SHA" ]; then
+            echo "ERROR: checkout does not match the commit reported by CI."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$HEAD_SHA" refs/remotes/origin/main; then
+            echo "ERROR: the tested commit is not part of the repository's main branch."
+            exit 1
+          fi
 
       - name: Set up JDK 25
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -81,7 +98,7 @@ jobs:
         # build-all.sh strips fabric.mod.json/mods.toml/neoforge.mods.toml
         # down to one per output JAR. The Fabric/26.2 directory is the
         # one we publish.
-        run: bash build-all.sh --skip-build
+        run: bash build-all.sh --skip-build --require-self-hash
 
       - name: Resolve version metadata and stage Fabric artifact
         id: ver
@@ -91,7 +108,7 @@ jobs:
 
           # build-all.sh emits dist/Fabric/<MC>/retromod-<ver>+<MC>.jar.
           # We rename to make the loader explicit in the downloaded filename
-          # — the dist directory disambiguates loader, but a flat GitHub
+          # - the dist directory disambiguates loader, but a flat GitHub
           # release asset can't, so the suffix carries that information.
           DIST_JAR="dist/Fabric/${MC_VERSION}/retromod-${POM_VERSION}+${MC_VERSION}.jar"
           ARTIFACT_NAME="retromod-${POM_VERSION}+${MC_VERSION}-fabric.jar"
@@ -109,7 +126,7 @@ jobs:
           BUILT_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
           # Number of commits since this rolling release was last cut. The
-          # `latest` tag may not exist on first run — fall back to "?".
+          # `latest` tag may not exist on first run - fall back to "?".
           if git rev-parse --verify --quiet refs/tags/latest >/dev/null; then
             COMMITS_SINCE=$(git rev-list --count latest..HEAD)
           else
@@ -132,7 +149,7 @@ jobs:
           echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
 
       - name: Publish rolling release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: latest
           # The action force-updates this tag to the current SHA on each run.
@@ -141,7 +158,7 @@ jobs:
           name: "Latest main build · Fabric · ${{ steps.ver.outputs.pom_version }} for MC ${{ steps.ver.outputs.mc_version }}"
 
           # `prerelease: true` keeps this from being shown as the headline
-          # "Latest release" on the repo home page — that slot is reserved
+          # "Latest release" on the repo home page - that slot is reserved
           # for hand-cut milestone releases (v1.0.0-beta.6, future v1.0.0,
           # etc.). `make_latest: false` enforces the same.
           prerelease: true
@@ -151,12 +168,12 @@ jobs:
           files: ${{ steps.ver.outputs.artifact_name }}
 
           body: |
-            **Rolling pre-release · Fabric build for MC ${{ steps.ver.outputs.mc_version }}** — auto-published on every successful CI run against `main`. Always points at the most recent green build. Versioned milestones (v1.0.0-beta.6, future v1.0.0…) are cut separately.
+            **Rolling pre-release · Fabric build for MC ${{ steps.ver.outputs.mc_version }}** - auto-published on every successful CI run against `main`. Always points at the most recent green build. Versioned milestones (v1.0.0-beta.6, future v1.0.0…) are cut separately.
 
             ### What this is
-            This is the **Fabric variant** of Retromod, built for **MC ${{ steps.ver.outputs.mc_version }}**. Fabric is Retromod's primary loader — see the [README](https://github.com/${{ github.repository }}#retromod) for why. The fat shaded JAR that contains all three loaders' metadata is intentionally not published here; loaders disagree about whether a multi-loader JAR is acceptable, and shipping a single-loader JAR avoids the ambiguity entirely.
+            This is the **Fabric variant** of Retromod, built for **MC ${{ steps.ver.outputs.mc_version }}**. Fabric is Retromod's primary loader - see the [README](https://github.com/${{ github.repository }}#retromod) for why. The fat shaded JAR that contains all three loaders' metadata is intentionally not published here; loaders disagree about whether a multi-loader JAR is acceptable, and shipping a single-loader JAR avoids the ambiguity entirely.
 
-            **Forge and NeoForge users:** the rolling channel doesn't auto-publish your variants yet. For now, grab the per-loader JARs from a tagged milestone release, or build them yourself: clone the repo and run `bash build-all.sh` — that produces `dist/Forge/<MC>/` and `dist/NeoForge/<MC>/` artifacts the same way this workflow produces the Fabric one.
+            **Forge and NeoForge users:** the rolling channel doesn't auto-publish your variants yet. For now, grab the per-loader JARs from a tagged milestone release, or build them yourself: clone the repo and run `bash build-all.sh` - that produces `dist/Forge/<MC>/` and `dist/NeoForge/<MC>/` artifacts the same way this workflow produces the Fabric one.
 
             ### Build info
             | Field | Value |

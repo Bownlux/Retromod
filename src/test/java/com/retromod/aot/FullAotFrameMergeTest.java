@@ -61,7 +61,9 @@ class FullAotFrameMergeTest {
         compiler.runFullCompilation(List.of(input)).get();
 
         Path cached = dir.resolve("retromod-cache/full-aot/framefullaot")
-                .resolve("fullaot_frame_Holder.class");
+                .resolve(FullAotCompiler.safeClassCacheFileName(HOLDER));
+        assertTrue(Files.isRegularFile(cached.getParent().resolve(".complete")),
+                "the cache must be marked complete only after its staged classes are installed");
         assertTrue(Files.isRegularFile(cached), "the holder must be written to the full AOT cache");
         List<String> frameTypes = frameStackTypes(Files.readAllBytes(cached));
         assertTrue(frameTypes.contains(PARENT),

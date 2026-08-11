@@ -55,6 +55,11 @@ public class RetromodTestModForge {
             Blocks.STONE.defaultBlockState() != null);
         n++; passed += check(n, "BlockState round-trip", () ->
             Blocks.STONE.defaultBlockState().getBlock() == Blocks.STONE);
+        // #192 uses the same target-SRG member after starting from the older
+        // func_176223_P spelling. The owner-qualified conversion itself is covered by
+        // TargetSrgMapperTest; this is the Forge load-time target-member smoke check.
+        n++; passed += check(n, "#192 Forge 1.20.1 target SRG block state", () ->
+            Blocks.DIRT.defaultBlockState().getBlock() == Blocks.DIRT);
 
         // ─── #85/#115: FMLJavaModLoadingContext Forge->NeoForge bridge ───
         // The idiom nearly every Forge @Mod constructor opens with, to grab its event bus for

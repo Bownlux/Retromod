@@ -7,7 +7,7 @@ nav_order: 6
 
 After transforming a jar, Retromod can check whether its Minecraft classes, methods, and fields exist on the host.
 
-Verification is enabled by default. Toggle it in the GUI, set `"verify_transforms": false` in `config/retromod/config.json`, or pass `--verify` to the CLI.
+Runtime verification is enabled by the generated config. Toggle it in the GUI or set `"verify_transforms": false` in `config/retromod/config.json`. For a standalone CLI run, pass `--verify`; the CLI also honors an enabled setting in the current working directory. A batch checks each generated output separately.
 
 ## Reports
 
@@ -28,7 +28,7 @@ Attach the report when filing a compatibility issue.
 
 ## What a Pass Means
 
-A clean report means bytecode references resolve against the host jar. It does not prove that the methods still behave the same way or that every mixin applied.
+A clean report means the check found no unresolved bytecode references in the host classes and mappings visible to it. It does not prove that every possible host class was visible, that the methods still behave the same way, or that every mixin applied.
 
 Always launch the game or server and test the affected feature. Rendering, networking, world generation, and save data need real runtime checks.
 

@@ -5,7 +5,7 @@ contact_links:
     about: For questions, ideas, "is this a bug or am I doing something wrong?", or anything that isn't a clear bug or feature request.
   - name: Troubleshooting docs
     url: https://bownlux.github.io/Retromod/troubleshooting
-    about: Common error messages and what they mean — often faster than waiting for a reply.
+    about: Common error messages and what they mean - often faster than waiting for a reply.
   - name: FAQ
     url: https://bownlux.github.io/Retromod/faq
     about: Safety, servers, modpacks, commercial use, and the legal stuff.

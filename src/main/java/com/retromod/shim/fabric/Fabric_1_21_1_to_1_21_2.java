@@ -116,16 +116,16 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
 
         // new Identifier(...) -> Identifier.of(...)
 
-        transformer.registerMethodRedirect(
-            "net/minecraft/util/Identifier", "<init>", "(Ljava/lang/String;Ljava/lang/String;)V",
+        transformer.registerConstructorRedirect(
+            "net/minecraft/util/Identifier", "(Ljava/lang/String;Ljava/lang/String;)V",
             "com/retromod/shim/fabric/embedded/IdentifierShim", "of", 
-            "(Ljava/lang/String;Ljava/lang/String;)Lnet/minecraft/util/Identifier;"
+            "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/Object;"
         );
         
-        transformer.registerMethodRedirect(
-            "net/minecraft/util/Identifier", "<init>", "(Ljava/lang/String;)V",
+        transformer.registerConstructorRedirect(
+            "net/minecraft/util/Identifier", "(Ljava/lang/String;)V",
             "com/retromod/shim/fabric/embedded/IdentifierShim", "of",
-            "(Ljava/lang/String;)Lnet/minecraft/util/Identifier;"
+            "(Ljava/lang/String;)Ljava/lang/Object;"
         );
         
         transformer.registerMethodRedirect(

@@ -7,10 +7,12 @@ package com.retromod.cli;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodTransformer.*;
 import com.retromod.embedder.ModVersionInfo;
+import com.retromod.util.ZipSecurity;
 
 import org.objectweb.asm.*;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.jar.*;
@@ -24,6 +26,12 @@ import java.util.zip.*;
  * built from the MC client JAR, loader APIs, and Retromod's registered redirects.
  */
 public class ModScorer {
+
+    private static final int MAX_ARCHIVE_ENTRIES = 100_000;
+    private static final int MAX_MIXIN_CONFIGS = 4_096;
+    private static final long MAX_TEXT_ENTRY_SIZE = 2L * 1024 * 1024;
+    private static final long MAX_ANALYSIS_READ_SIZE =
+            2L * ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
 
     public enum ModLoader {
         FABRIC("fabric"),
@@ -120,12 +128,20 @@ public class ModScorer {
 
     private void indexJar(Path jarPath) throws IOException {
         try (JarFile jar = new JarFile(jarPath.toFile())) {
+            validateArchive(jar);
+            ArchiveReadBudget budget = new ArchiveReadBudget(
+                    ZipSecurity.DEFAULT_MAX_TOTAL_SIZE);
             Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                if (!entry.getName().endsWith(".class") || entry.isDirectory()) continue;
-                try (InputStream is = jar.getInputStream(entry)) {
-                    ClassReader cr = new ClassReader(is);
+                String entryName = safeEntryName(entry);
+                if (entryName == null || !entryName.endsWith(".class") || entry.isDirectory()) {
+                    continue;
+                }
+                if (!budget.hasRemaining()) break;
+                try {
+                    ClassReader cr = new ClassReader(budget.read(jar, entry,
+                            ZipSecurity.DEFAULT_MAX_ENTRY_SIZE));
                     String[] currentClass = new String[1];
                     cr.accept(new ClassVisitor(Opcodes.ASM9) {
                         @Override
@@ -167,15 +183,24 @@ public class ModScorer {
         indexJar(fabricApiPath);
 
         try (JarFile jar = new JarFile(fabricApiPath.toFile())) {
+            validateArchive(jar);
+            long remainingNestedBytes = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
             Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                if (entry.getName().startsWith("META-INF/jars/") && entry.getName().endsWith(".jar")) {
+                String entryName = safeEntryName(entry);
+                if (entryName != null && entryName.startsWith("META-INF/jars/")
+                        && entryName.endsWith(".jar")) {
+                    if (remainingNestedBytes <= 0) {
+                        throw new IOException("Nested Fabric API jars exceed scan limit");
+                    }
                     Path temp = Files.createTempFile("retromod-fapi-", ".jar");
                     try {
-                        try (InputStream is = jar.getInputStream(entry);
-                             OutputStream os = Files.newOutputStream(temp)) {
-                            is.transferTo(os);
+                        long entryLimit = Math.min(ZipSecurity.DEFAULT_MAX_ENTRY_SIZE,
+                                remainingNestedBytes);
+                        try (InputStream is = jar.getInputStream(entry)) {
+                            long copied = ZipSecurity.copyBounded(is, temp, entryLimit, entryName);
+                            remainingNestedBytes -= copied;
                         }
                         indexJar(temp);
                     } finally {
@@ -197,6 +222,7 @@ public class ModScorer {
      */
     public static ModLoader detectModLoader(Path modJarPath) throws IOException {
         try (JarFile jar = new JarFile(modJarPath.toFile())) {
+            validateArchive(jar);
             if (jar.getJarEntry("fabric.mod.json") != null) {
                 return ModLoader.FABRIC;
             }
@@ -218,7 +244,8 @@ public class ModScorer {
 
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                String name = entry.getName();
+                String name = safeEntryName(entry);
+                if (name == null) continue;
                 if (name.startsWith("net/minecraftforge/")) hasForgeRefs = true;
                 if (name.startsWith("net/neoforged/")) hasNeoForgeRefs = true;
                 if (name.startsWith("net/fabricmc/")) hasFabricRefs = true;
@@ -238,6 +265,7 @@ public class ModScorer {
      * @param modInfo detected mod version info (may be null)
      */
     public ScoreResult analyze(Path modJarPath, ModVersionInfo modInfo) throws IOException {
+        ArchiveReadBudget readBudget = new ArchiveReadBudget(MAX_ANALYSIS_READ_SIZE);
         ModLoader loader;
         if (modInfo != null && modInfo.modLoaderType() != null) {
             loader = switch (modInfo.modLoaderType()) {
@@ -259,11 +287,14 @@ public class ModScorer {
         // first pass: every class the mod ships, so we can exclude mod-internal refs later
         Set<String> modClasses = new HashSet<>();
         try (JarFile jar = new JarFile(modJarPath.toFile())) {
+            validateArchive(jar);
             Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                if (entry.getName().endsWith(".class")) {
-                    String className = entry.getName().replace(".class", "");
+                String entryName = safeEntryName(entry);
+                if (entryName != null && entryName.endsWith(".class")) {
+                    String className = entryName.substring(0,
+                            entryName.length() - ".class".length());
                     modClasses.add(className);
                 }
             }
@@ -277,16 +308,20 @@ public class ModScorer {
         List<String> loaderSpecificFindings = new ArrayList<>();
 
         try (JarFile jar = new JarFile(modJarPath.toFile())) {
-            mixinTargets.addAll(extractMixinTargetsForLoader(jar, loader));
-            collectLoaderSpecificFindings(jar, loader, loaderSpecificFindings);
+            validateArchive(jar);
+            mixinTargets.addAll(extractMixinTargetsForLoader(jar, loader, readBudget));
+            collectLoaderSpecificFindings(jar, loader, loaderSpecificFindings, readBudget);
 
             Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                if (!entry.getName().endsWith(".class")) continue;
+                String entryName = safeEntryName(entry);
+                if (entryName == null || !entryName.endsWith(".class")) continue;
+                if (!readBudget.hasRemaining()) break;
 
-                try (InputStream is = jar.getInputStream(entry)) {
-                    ClassReader cr = new ClassReader(is);
+                try {
+                    ClassReader cr = new ClassReader(readBudget.read(jar, entry,
+                            ZipSecurity.DEFAULT_MAX_ENTRY_SIZE));
                     ReferenceCollector collector = new ReferenceCollector(
                             modClasses, referencedClasses, referencedMethods, referencedFields);
                     cr.accept(collector, ClassReader.SKIP_DEBUG);
@@ -463,53 +498,122 @@ public class ModScorer {
     }
 
     /** Extracts mixin targets; each loader keeps its mixin config in a different place. */
-    private List<String> extractMixinTargetsForLoader(JarFile jar, ModLoader loader) {
+    private List<String> extractMixinTargetsForLoader(JarFile jar, ModLoader loader,
+            ArchiveReadBudget budget) {
         List<String> targets = new ArrayList<>();
 
         switch (loader) {
             case FABRIC -> {
                 JarEntry fabricJson = jar.getJarEntry("fabric.mod.json");
                 if (fabricJson != null) {
-                    targets.addAll(extractMixinTargets(jar, fabricJson));
+                    targets.addAll(extractMixinTargets(jar, fabricJson, budget));
                 }
             }
-            case FORGE -> targets.addAll(extractForgeMixinTargets(jar));
-            case NEOFORGE -> targets.addAll(extractNeoForgeMixinTargets(jar));
+            case FORGE -> targets.addAll(extractForgeMixinTargets(jar, budget));
+            case NEOFORGE -> targets.addAll(extractNeoForgeMixinTargets(jar, budget));
             default -> {
                 JarEntry fabricJson = jar.getJarEntry("fabric.mod.json");
                 if (fabricJson != null) {
-                    targets.addAll(extractMixinTargets(jar, fabricJson));
+                    targets.addAll(extractMixinTargets(jar, fabricJson, budget));
                 }
-                targets.addAll(extractForgeMixinTargets(jar));
-                targets.addAll(extractNeoForgeMixinTargets(jar));
+                targets.addAll(extractForgeMixinTargets(jar, budget));
+                targets.addAll(extractNeoForgeMixinTargets(jar, budget));
             }
         }
         return targets;
     }
 
+    private static void validateArchive(JarFile jar) throws IOException {
+        if (jar.size() > MAX_ARCHIVE_ENTRIES) {
+            throw new IOException("Archive has too many entries: " + jar.size());
+        }
+    }
+
+    private static String safeEntryName(JarEntry entry) {
+        try {
+            return ZipSecurity.safeEntryName(entry.getName());
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static String safeConfigName(String name) {
+        if (name == null || name.isBlank()) return null;
+        try {
+            return ZipSecurity.safeEntryName(name);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static void addMixinConfig(List<String> configs, String name) {
+        String safeName = safeConfigName(name == null ? null : name.trim());
+        if (safeName != null && configs.size() < MAX_MIXIN_CONFIGS
+                && !configs.contains(safeName)) {
+            configs.add(safeName);
+        }
+    }
+
+    private static String readText(JarFile jar, JarEntry entry, ArchiveReadBudget budget)
+            throws IOException {
+        return new String(budget.read(jar, entry, MAX_TEXT_ENTRY_SIZE),
+                StandardCharsets.UTF_8);
+    }
+
+    private static void addManifestMixinConfigs(JarFile jar, List<String> configs,
+            ArchiveReadBudget budget) {
+        JarEntry entry = jar.getJarEntry(JarFile.MANIFEST_NAME);
+        if (entry == null) return;
+        try {
+            byte[] bytes = budget.read(jar, entry, MAX_TEXT_ENTRY_SIZE);
+            Manifest manifest = new Manifest(new ByteArrayInputStream(bytes));
+            String value = manifest.getMainAttributes().getValue("MixinConfigs");
+            if (value == null) return;
+            for (String config : value.split(",")) {
+                addMixinConfig(configs, config);
+            }
+        } catch (IOException e) {
+            // malformed metadata is ignored by the scoring report
+        }
+    }
+
+    private static final class ArchiveReadBudget {
+        private long remaining;
+
+        private ArchiveReadBudget(long maximum) {
+            remaining = maximum;
+        }
+
+        private boolean hasRemaining() {
+            return remaining > 0;
+        }
+
+        private byte[] read(JarFile jar, JarEntry entry, long maximumEntrySize)
+                throws IOException {
+            if (remaining <= 0) {
+                throw new IOException("Archive scan byte limit reached");
+            }
+            long limit = Math.min(maximumEntrySize, remaining);
+            remaining -= limit;
+            try (InputStream input = jar.getInputStream(entry)) {
+                byte[] bytes = ZipSecurity.safeReadAllBytes(input, limit);
+                remaining += limit - bytes.length;
+                return bytes;
+            }
+        }
+    }
+
     /** Forge mixin configs come from the MANIFEST MixinConfigs attribute, mods.toml, or root JSON. */
-    private List<String> extractForgeMixinTargets(JarFile jar) {
+    private List<String> extractForgeMixinTargets(JarFile jar, ArchiveReadBudget budget) {
         List<String> targets = new ArrayList<>();
         List<String> mixinConfigs = new ArrayList<>();
 
-        try {
-            java.util.jar.Manifest manifest = jar.getManifest();
-            if (manifest != null) {
-                String mixinConfigsAttr = manifest.getMainAttributes().getValue("MixinConfigs");
-                if (mixinConfigsAttr != null) {
-                    for (String config : mixinConfigsAttr.split(",")) {
-                        mixinConfigs.add(config.trim());
-                    }
-                }
-            }
-        } catch (IOException e) {
-            // ignore
-        }
+        addManifestMixinConfigs(jar, mixinConfigs, budget);
 
         JarEntry modsToml = jar.getJarEntry("META-INF/mods.toml");
         if (modsToml != null) {
-            try (InputStream is = jar.getInputStream(modsToml)) {
-                String toml = new String(is.readAllBytes());
+            try {
+                String toml = readText(jar, modsToml, budget);
                 extractMixinConfigsFromToml(toml, mixinConfigs);
             } catch (IOException e) {
                 // ignore
@@ -519,10 +623,12 @@ public class ModScorer {
         scanForMixinJsonConfigs(jar, mixinConfigs);
 
         for (String configName : mixinConfigs) {
-            JarEntry configEntry = jar.getJarEntry(configName);
+            String safeName = safeConfigName(configName);
+            if (safeName == null) continue;
+            JarEntry configEntry = jar.getJarEntry(safeName);
             if (configEntry == null) continue;
-            try (InputStream cis = jar.getInputStream(configEntry)) {
-                String configJson = new String(cis.readAllBytes());
+            try {
+                String configJson = readText(jar, configEntry, budget);
                 targets.addAll(extractTargetsFromMixinConfig(configJson));
             } catch (IOException e) {
                 // ignore
@@ -532,28 +638,16 @@ public class ModScorer {
     }
 
     /** Same as Forge but reads neoforge.mods.toml. */
-    private List<String> extractNeoForgeMixinTargets(JarFile jar) {
+    private List<String> extractNeoForgeMixinTargets(JarFile jar, ArchiveReadBudget budget) {
         List<String> targets = new ArrayList<>();
         List<String> mixinConfigs = new ArrayList<>();
 
-        try {
-            java.util.jar.Manifest manifest = jar.getManifest();
-            if (manifest != null) {
-                String mixinConfigsAttr = manifest.getMainAttributes().getValue("MixinConfigs");
-                if (mixinConfigsAttr != null) {
-                    for (String config : mixinConfigsAttr.split(",")) {
-                        mixinConfigs.add(config.trim());
-                    }
-                }
-            }
-        } catch (IOException e) {
-            // ignore
-        }
+        addManifestMixinConfigs(jar, mixinConfigs, budget);
 
         JarEntry neoforgeToml = jar.getJarEntry("META-INF/neoforge.mods.toml");
         if (neoforgeToml != null) {
-            try (InputStream is = jar.getInputStream(neoforgeToml)) {
-                String toml = new String(is.readAllBytes());
+            try {
+                String toml = readText(jar, neoforgeToml, budget);
                 extractMixinConfigsFromToml(toml, mixinConfigs);
             } catch (IOException e) {
                 // ignore
@@ -563,10 +657,12 @@ public class ModScorer {
         scanForMixinJsonConfigs(jar, mixinConfigs);
 
         for (String configName : mixinConfigs) {
-            JarEntry configEntry = jar.getJarEntry(configName);
+            String safeName = safeConfigName(configName);
+            if (safeName == null) continue;
+            JarEntry configEntry = jar.getJarEntry(safeName);
             if (configEntry == null) continue;
-            try (InputStream cis = jar.getInputStream(configEntry)) {
-                String configJson = new String(cis.readAllBytes());
+            try {
+                String configJson = readText(jar, configEntry, budget);
                 targets.addAll(extractTargetsFromMixinConfig(configJson));
             } catch (IOException e) {
                 // ignore
@@ -590,7 +686,7 @@ public class ModScorer {
                     if (qStart >= 0) {
                         int qEnd = section.indexOf('"', qStart + 1);
                         if (qEnd >= 0) {
-                            mixinConfigs.add(section.substring(qStart + 1, qEnd));
+                            addMixinConfig(mixinConfigs, section.substring(qStart + 1, qEnd));
                         }
                     }
                 }
@@ -603,11 +699,10 @@ public class ModScorer {
         Enumeration<JarEntry> entries = jar.entries();
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
-            String name = entry.getName();
+            String name = safeEntryName(entry);
+            if (name == null) continue;
             if (!name.contains("/") && name.endsWith(".mixins.json")) {
-                if (!mixinConfigs.contains(name)) {
-                    mixinConfigs.add(name);
-                }
+                addMixinConfig(mixinConfigs, name);
             }
         }
     }
@@ -617,7 +712,7 @@ public class ModScorer {
      * Event.register(), the capability system, and so on.
      */
     private void collectLoaderSpecificFindings(JarFile jar, ModLoader loader,
-            List<String> findings) {
+            List<String> findings, ArchiveReadBudget budget) {
         Set<String> forgePatterns = new LinkedHashSet<>();
         Set<String> neoforgePatterns = new LinkedHashSet<>();
         Set<String> fabricPatterns = new LinkedHashSet<>();
@@ -625,15 +720,30 @@ public class ModScorer {
         Enumeration<JarEntry> entries = jar.entries();
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
-            if (!entry.getName().endsWith(".class")) continue;
+            String entryName = safeEntryName(entry);
+            if (entryName == null || !entryName.endsWith(".class")) continue;
+            if (!budget.hasRemaining()) break;
 
-            try (InputStream is = jar.getInputStream(entry)) {
-                ClassReader cr = new ClassReader(is);
+            try {
+                ClassReader cr = new ClassReader(budget.read(jar, entry,
+                        ZipSecurity.DEFAULT_MAX_ENTRY_SIZE));
                 cr.accept(new ClassVisitor(Opcodes.ASM9) {
                     @Override
                     public MethodVisitor visitMethod(int access, String name, String desc,
                             String signature, String[] exceptions) {
                         return new MethodVisitor(Opcodes.ASM9) {
+                            @Override
+                            public AnnotationVisitor visitAnnotation(String aDesc,
+                                    boolean visible) {
+                                if (aDesc.equals("Lnet/minecraftforge/eventbus/api/SubscribeEvent;")) {
+                                    forgePatterns.add("@SubscribeEvent annotation");
+                                }
+                                if (aDesc.equals("Lnet/neoforged/bus/api/SubscribeEvent;")) {
+                                    neoforgePatterns.add("@SubscribeEvent annotation (NeoForge)");
+                                }
+                                return null;
+                            }
+
                             @Override
                             public void visitMethodInsn(int opcode, String owner, String mName,
                                     String mDesc, boolean isInterface) {
@@ -690,40 +800,8 @@ public class ModScorer {
                     }
                 }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG);
 
-                is.reset();
             } catch (Exception e) {
                 // skip unreadable classes
-            }
-        }
-
-        // second pass: the visitAnnotation above is class-level only, so catch method-level ones here
-        entries = jar.entries();
-        while (entries.hasMoreElements()) {
-            JarEntry entry = entries.nextElement();
-            if (!entry.getName().endsWith(".class")) continue;
-
-            try (InputStream is = jar.getInputStream(entry)) {
-                ClassReader cr = new ClassReader(is);
-                cr.accept(new ClassVisitor(Opcodes.ASM9) {
-                    @Override
-                    public MethodVisitor visitMethod(int access, String name, String desc,
-                            String signature, String[] exceptions) {
-                        return new MethodVisitor(Opcodes.ASM9) {
-                            @Override
-                            public AnnotationVisitor visitAnnotation(String aDesc, boolean visible) {
-                                if (aDesc.equals("Lnet/minecraftforge/eventbus/api/SubscribeEvent;")) {
-                                    forgePatterns.add("@SubscribeEvent annotation");
-                                }
-                                if (aDesc.equals("Lnet/neoforged/bus/api/SubscribeEvent;")) {
-                                    neoforgePatterns.add("@SubscribeEvent annotation (NeoForge)");
-                                }
-                                return null;
-                            }
-                        };
-                    }
-                }, ClassReader.SKIP_DEBUG);
-            } catch (Exception e) {
-                // skip
             }
         }
 
@@ -764,10 +842,11 @@ public class ModScorer {
     }
 
     /** Reads Fabric mixin targets via the mixin config names listed in fabric.mod.json. */
-    private List<String> extractMixinTargets(JarFile jar, JarEntry fabricJsonEntry) {
+    private List<String> extractMixinTargets(JarFile jar, JarEntry fabricJsonEntry,
+            ArchiveReadBudget budget) {
         List<String> targets = new ArrayList<>();
-        try (InputStream is = jar.getInputStream(fabricJsonEntry)) {
-            String json = new String(is.readAllBytes());
+        try {
+            String json = readText(jar, fabricJsonEntry, budget);
             List<String> mixinConfigs = new ArrayList<>();
             int idx = 0;
             while ((idx = json.indexOf("\"mixins\"", idx)) != -1) {
@@ -781,10 +860,10 @@ public class ModScorer {
                     if (ei == -1) break;
                     String configName = arr.substring(si + 1, ei);
                     if (configName.endsWith(".json") || configName.endsWith(".mixins.json")) {
-                        mixinConfigs.add(configName);
+                        addMixinConfig(mixinConfigs, configName);
                     } else if (!configName.isEmpty() && !configName.contains(":")) {
                         // bare config name
-                        mixinConfigs.add(configName);
+                        addMixinConfig(mixinConfigs, configName);
                     }
                     si = ei + 1;
                 }
@@ -792,11 +871,15 @@ public class ModScorer {
             }
 
             for (String configName : mixinConfigs) {
-                JarEntry configEntry = jar.getJarEntry(configName);
+                String safeName = safeConfigName(configName);
+                if (safeName == null) continue;
+                JarEntry configEntry = jar.getJarEntry(safeName);
                 if (configEntry == null) continue;
-                try (InputStream cis = jar.getInputStream(configEntry)) {
-                    String configJson = new String(cis.readAllBytes());
+                try {
+                    String configJson = readText(jar, configEntry, budget);
                     targets.addAll(extractTargetsFromMixinConfig(configJson));
+                } catch (IOException e) {
+                    // ignore one unreadable config
                 }
             }
         } catch (Exception e) {

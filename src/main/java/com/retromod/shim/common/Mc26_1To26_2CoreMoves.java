@@ -517,6 +517,11 @@ public final class Mc26_1To26_2CoreMoves {
             "(Lnet/minecraft/client/gui/screens/Screen;)V"
         );
 
+        // Minecraft.getOverlay/setOverlay moved onto mc.gui in 26.2. A plain owner redirect
+        // cannot consume a Minecraft receiver as a Gui, so use a receiver-as-arg0 forwarder that
+        // performs the field hop. ChatBubbles 1.0.1 checks getOverlay on its first client tick.
+        MinecraftToGuiHopSynthetic.register(t);
+
         // AbstractContainerScreen.renderLabels -> extractLabels in 26.2 (renderLabels present on 26.1,
         // gone on 26.2, which now has extractLabels(GuiGraphicsExtractor,II)V; the param GuiGraphics ->
         // GuiGraphicsExtractor move is already handled). Mirrors the 26.1 render -> extractRenderState

@@ -178,8 +178,17 @@ public final class MixinCompatibilityTransformer {
             driftRepairs.addAll(MixinHandlerResignature.detectOverwriteDrift(method));
         }
 
+        List<ShadowFieldRename> shadowFieldRenames = new ArrayList<>();
         for (FieldNode field : classNode.fields) {
-            modified |= transformFieldAnnotations(field);
+            String oldName = field.name;
+            boolean fieldModified = transformFieldAnnotations(field);
+            modified |= fieldModified;
+            if (fieldModified && !oldName.equals(field.name)) {
+                shadowFieldRenames.add(new ShadowFieldRename(oldName, field.name, field.desc));
+            }
+        }
+        if (!shadowFieldRenames.isEmpty()) {
+            rewriteShadowFieldReferences(classNode, shadowFieldRenames);
         }
 
         if (!modified && resignTargets.isEmpty() && driftRepairs.isEmpty()) {
@@ -284,6 +293,22 @@ public final class MixinCompatibilityTransformer {
     }
 
     /**
+     * Runs repairs that require final, post-remap Minecraft names.
+     *
+     * <p>The automatic translator first checks exact declarations in the current Minecraft JAR.
+     * Curated legacy member bridges then handle refactors that cannot be inferred from signatures
+     * alone. The ValueIO adapter runs last because it also matches final Mojang descriptors.
+     * Keeping this as one entry point prevents runtime, CLI, AOT, and nested-jar paths from quietly
+     * gaining different Mixin coverage.
+     */
+    public byte[] applyPostRemapRepairs(byte[] classBytes) {
+        byte[] translated = new AutomaticMixinTranslator(transformer.getFuzzyResolver())
+                .translate(classBytes);
+        byte[] bridged = applyLegacyMemberBridges(translated);
+        return adaptValueIoHandlers(bridged);
+    }
+
+    /**
      * Rebuilds Mixin members whose old descriptor no longer resolves: a removed shadow becomes
      * mixin-owned state, and a member the host still offers under a different descriptor becomes
      * a mixin-owned bridge overload.
@@ -299,6 +324,7 @@ public final class MixinCompatibilityTransformer {
         if (!isMixinClass(classNode)) return classBytes;
 
         boolean modified = MixinLegacyMemberBridge.apply(classNode);
+        modified |= MixinCommandParserBridge.apply(classNode, transformer.getFuzzyResolver());
         if (MixinShadowFieldDemotion.handles(classNode.name)) {
             modified |= MixinShadowFieldDemotion.apply(classNode);
         }
@@ -802,6 +828,8 @@ public final class MixinCompatibilityTransformer {
      */
     private boolean transformAccessorAnnotation(AnnotationNode annotation, MethodNode method) {
         boolean modified = false;
+        boolean isInvoker = INVOKER_DESC.equals(annotation.desc);
+        String accessorFieldDesc = isInvoker ? null : accessorFieldDescriptor(method);
 
         boolean hasExplicitValue = false;
         if (annotation.values != null) {
@@ -812,8 +840,8 @@ public final class MixinCompatibilityTransformer {
                 if ("value".equals(key) && value instanceof String s) {
                     hasExplicitValue = true;
                     String redirected = remapMethodName(s);
-                    if (redirected.equals(s)) {
-                        redirected = remapFieldName(s);
+                    if (!isInvoker && redirected.equals(s)) {
+                        redirected = remapFieldName(s, accessorFieldDesc);
                     }
                     if (!s.equals(redirected)) {
                         annotation.values.set(i + 1, redirected);
@@ -828,7 +856,6 @@ public final class MixinCompatibilityTransformer {
         if (!hasExplicitValue) {
             String methodName = method.name;
             String target = null;
-            boolean isInvoker = INVOKER_DESC.equals(annotation.desc);
 
             if (isInvoker && methodName.startsWith("invoke")) {
                 // invokeFindSlot -> findSlot
@@ -845,7 +872,9 @@ public final class MixinCompatibilityTransformer {
             }
 
             if (target != null) {
-                String redirected = isInvoker ? remapMethodName(target) : remapFieldName(target);
+                String redirected = isInvoker
+                        ? remapMethodName(target)
+                        : remapFieldName(target, accessorFieldDesc);
                 if (!redirected.equals(target)) {
                     if (annotation.values == null) {
                         annotation.values = new ArrayList<>();
@@ -860,6 +889,18 @@ public final class MixinCompatibilityTransformer {
         }
 
         return modified;
+    }
+
+    private static String accessorFieldDescriptor(MethodNode method) {
+        org.objectweb.asm.Type[] args = org.objectweb.asm.Type.getArgumentTypes(method.desc);
+        org.objectweb.asm.Type result = org.objectweb.asm.Type.getReturnType(method.desc);
+        if (args.length == 0 && result.getSort() != org.objectweb.asm.Type.VOID) {
+            return result.getDescriptor();
+        }
+        if (args.length == 1 && result.getSort() == org.objectweb.asm.Type.VOID) {
+            return args[0].getDescriptor();
+        }
+        return null;
     }
 
     /** Moves a single-target accessor mixin when its registered field moved to another owner. */
@@ -978,7 +1019,7 @@ public final class MixinCompatibilityTransformer {
             for (AnnotationNode annotation : annotations) {
                 if (SHADOW_DESC.equals(annotation.desc)) {
                     String oldName = field.name;
-                    String newName = remapFieldName(oldName);
+                    String newName = remapFieldName(oldName, field.desc);
                     if (!newName.equals(oldName)) {
                         field.name = newName;
                         LOGGER.debug("Renamed @Shadow field: {} -> {}", oldName, newName);
@@ -989,6 +1030,29 @@ public final class MixinCompatibilityTransformer {
         }
         return modified;
     }
+
+    /** A renamed shadow is still referenced through the mixin class until Mixin merges it. */
+    private static void rewriteShadowFieldReferences(
+            ClassNode classNode, List<ShadowFieldRename> renames) {
+        for (MethodNode method : classNode.methods) {
+            for (org.objectweb.asm.tree.AbstractInsnNode insn = method.instructions.getFirst();
+                    insn != null; insn = insn.getNext()) {
+                if (!(insn instanceof org.objectweb.asm.tree.FieldInsnNode fieldInsn)
+                        || !classNode.name.equals(fieldInsn.owner)) {
+                    continue;
+                }
+                for (ShadowFieldRename rename : renames) {
+                    if (rename.oldName().equals(fieldInsn.name)
+                            && rename.descriptor().equals(fieldInsn.desc)) {
+                        fieldInsn.name = rename.newName();
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    private record ShadowFieldRename(String oldName, String newName, String descriptor) {}
     
     /**
      * Redirect a class name if needed.
@@ -1031,13 +1095,16 @@ public final class MixinCompatibilityTransformer {
             if (descIdx < 0 && colonIdx >= 0) {
                 String fieldName = rest.substring(0, colonIdx);
                 String fieldDesc = remapDescriptorClasses(rest.substring(colonIdx + 1));
-                return "L" + newOwner + ";" + remapFieldName(fieldName) + ":" + fieldDesc;
+                String newField = transformer.remapQualifiedFieldName(
+                        newOwner, fieldName, fieldDesc);
+                return "L" + newOwner + ";" + newField + ":" + fieldDesc;
             }
             String methodName = descIdx >= 0 ? rest.substring(0, descIdx) : rest;
             String desc = descIdx >= 0 ? rest.substring(descIdx) : "";
 
-            String newMethod = remapMethodName(methodName);
             desc = remapDescriptorClasses(desc);
+            String newMethod = transformer.remapQualifiedMethodName(
+                    newOwner, remapMethodName(methodName), desc);
 
             return "L" + newOwner + ";" + newMethod + desc;
         }
@@ -1049,10 +1116,10 @@ public final class MixinCompatibilityTransformer {
             String desc = target.substring(descIdx);
 
             // never rename constructors/static initializers
+            desc = remapDescriptorClasses(desc);
             String newMethod = methodName.startsWith("<")
                 ? methodName
-                : remapBareMethodName(methodName);
-            desc = remapDescriptorClasses(desc);
+                : remapBareMethodName(methodName, desc);
             return newMethod + desc;
         }
 
@@ -1061,15 +1128,30 @@ public final class MixinCompatibilityTransformer {
         return remapBareMethodName(target);
     }
 
+    /** Remap an owner-qualified selector stored in a refmap resource. */
+    public String remapResourceSelector(String target) {
+        String remapped = redirectMethodTarget(target);
+        return new AutomaticMixinTranslator(transformer.getFuzzyResolver())
+                .translateResourceSelector(remapped);
+    }
+
     /**
      * Remaps a selector without an owner. Ordinary redirects take priority; same-owner Mojang
      * renames are safe only when the mixin declares one target.
      */
     private String remapBareMethodName(String name) {
+        return remapBareMethodName(name, "");
+    }
+
+    private String remapBareMethodName(String name, String descriptor) {
         String r = remapMethodName(name);
-        if (!r.equals(name)) {
-            return r;
+        Set<String> targetOwners = currentTargetOwners.get();
+        if (targetOwners.size() == 1 && !descriptor.isEmpty()) {
+            String qualified = transformer.remapQualifiedMethodName(
+                    targetOwners.iterator().next(), r, descriptor);
+            if (!qualified.equals(r)) return qualified;
         }
+        if (!r.equals(name)) return r;
         return scopedRename(name).orElse(name);
     }
 
@@ -1112,16 +1194,23 @@ public final class MixinCompatibilityTransformer {
      * Remap a field name using intermediary→Mojang mappings and shim field redirects.
      */
     private String remapFieldName(String fieldName) {
-        if (fieldName.startsWith("field_")) {
-            Map<String, String> intermediaryFields = transformer.getIntermediaryFieldNames();
-            String mojang = intermediaryFields.get(fieldName);
-            if (mojang != null) return mojang;
+        return remapFieldName(fieldName, null);
+    }
+
+    private String remapFieldName(String fieldName, String descriptor) {
+        // A bare @Shadow or @Accessor name belongs to the mixin target. Resolve it with that
+        // owner so an unrelated field with the same short name cannot leak into the mixin.
+        Set<String> targetOwners = currentTargetOwners.get();
+        if (targetOwners.size() == 1) {
+            String owner = targetOwners.iterator().next();
+            return transformer.remapQualifiedFieldName(owner, fieldName, descriptor);
         }
-        // shim-registered field redirects (boundKey -> key)
-        for (var entry : transformer.getFieldRedirects().entrySet()) {
-            if (entry.getKey().name().equals(fieldName)) {
-                return entry.getValue().name();
-            }
+
+        // Multiple-target mixins do not provide enough ownership information for a field
+        // redirect, but an intermediary short name is still globally identifiable here.
+        if (fieldName.startsWith("field_")) {
+            String mojang = transformer.getIntermediaryFieldNames().get(fieldName);
+            if (mojang != null) return mojang;
         }
         return fieldName;
     }
@@ -1131,7 +1220,7 @@ public final class MixinCompatibilityTransformer {
      * E.g. "(Lnet/minecraft/class_542;)V" → "(Lnet/minecraft/client/main/GameConfig;)V"
      */
     private String remapDescriptorClasses(String descriptor) {
-        if (descriptor == null || !descriptor.contains("class_")) return descriptor;
+        if (descriptor == null || descriptor.indexOf('L') < 0) return descriptor;
 
         Map<String, String> classRedirects = transformer.getClassRedirects();
         StringBuilder result = new StringBuilder(descriptor.length());
@@ -1737,7 +1826,7 @@ public final class MixinCompatibilityTransformer {
         // BufferBuilder inner class BuiltBuffer: removed in rendering rewrite
         KNOWN_REMOVED_CLASSES.add("net/minecraft/class_287$class_7433");
 
-        // ChatOptionsScreen: removed
+        // SimpleOptionsSubScreen: removed
         KNOWN_REMOVED_CLASSES.add("net/minecraft/class_5500");
 
         // Various removed screen/GUI classes

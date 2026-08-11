@@ -48,7 +48,7 @@ Attach the report to an issue. Contributors can use [Adding SRG Mappings]({{ '/s
 
 Errors such as `MixinApplyError`, `InvalidInjectionException`, missing `@Shadow` fields, or `mixinextras$bridge` verification failures mean the target bytecode changed more than a name.
 
-Retromod can redirect many targets and update selected handler signatures. When it cannot repair a handler safely, it may disable that feature so the rest of the mod can load. File an issue with the first mixin error and the affected mod jar.
+Retromod can redirect many targets and update selected handler signatures. Loader transforms index the installed Minecraft jar automatically; offline transforms need `--mc-jar <target.jar>` for the same exact target-method checks. Ambiguous overloads, constructors, reordered or removed parameters, changed returns, semantic local captures, and `remap = false` scopes are left for a reviewed bridge. When Retromod cannot repair a known handler safely, it may disable that feature so the rest of the mod can load. File an issue with the first mixin error and the affected mod jar.
 
 For a known fatal handler, advanced users can extend `config/retromod/mixin-blocklist.json`:
 
@@ -73,7 +73,7 @@ If a transformed jar name contains spaces or unusual punctuation, update Retromo
 
 ## Old Forge Mod on NeoForge
 
-Forge 1.20.1 and modern NeoForge use substantially different APIs. Retromod bridges part of that migration, but some mods still need a Forge host. If a mod fails on registry or `FMLJavaModLoadingContext` classes, try the matching Forge build and include the NeoForge log in a report.
+Forge 1.20.1 and modern NeoForge use substantially different APIs. Retromod bridges selected metadata, registration, event-bus, networking, and removed-class paths, but some mods still need a Forge host. If a mod fails during registry lifecycle, packet delivery, data generation, rendering, or another deep Forge subsystem, try the matching Forge build and include the NeoForge log in a report.
 
 ## Cache Looks Stale
 

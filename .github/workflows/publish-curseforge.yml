@@ -1,10 +1,10 @@
 name: Publish to CurseForge
 
 # Manual milestone publisher. Builds the full dist/ (all loaders × MC 1.20+) and
-# uploads every JAR to CurseForge — each tagged with its exact MC version + loader
-# — replacing the ~40-minute manual upload on CF's site.
+# uploads every JAR to CurseForge - each tagged with its exact MC version + loader
+# - replacing the ~40-minute manual upload on CF's site.
 #
-# This does NOT run automatically (no push/release trigger) — you start it from the
+# This does NOT run automatically (no push/release trigger) - you start it from the
 # Actions tab. The rolling GitHub pre-release (release.yml) is separate and untouched.
 #
 # ── One-time setup ──────────────────────────────────────────────────────────
@@ -20,7 +20,7 @@ name: Publish to CurseForge
 #   3. If the plan looks right, run again with "Dry run" = false to upload.
 #
 # JARs whose MC version CurseForge doesn't list yet (e.g. a brand-new 26.2) are
-# skipped with a warning, not failed — re-run once CF adds the version tag.
+# skipped with a warning, not failed - re-run once CF adds the version tag.
 
 on:
   workflow_dispatch:
@@ -45,10 +45,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Set up JDK 25
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -56,13 +58,13 @@ jobs:
           check-latest: true
 
       - name: Install Python deps
-        run: pip install requests
+        run: python3 -m pip install --requirement scripts/requirements-publish.txt
 
       - name: Build base JAR
         run: mvn package -q -DskipTests -Dexec.skip=true
 
       - name: Build all per-loader / per-MC JARs
-        run: bash build-all.sh --skip-build
+        run: bash build-all.sh --skip-build --require-self-hash
 
       - name: Publish to CurseForge
         env:

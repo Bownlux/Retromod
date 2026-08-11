@@ -130,8 +130,11 @@ public class FabricItemGroupEventsShim implements VersionShim {
                 "modifyEntriesEvent", MODIFY_ENTRIES_EVENT_DESC, null, null);
         m.visitCode();
         m.visitVarInsn(Opcodes.ALOAD, 0);
+        // Pass a class literal, not a class-name string. SyntheticEmbedder remaps the literal
+        // with the holder, so EventFactory uses the same per-mod interface as the mod's lambda.
+        m.visitLdcInsn(org.objectweb.asm.Type.getObjectType(MODIFY_ENTRIES));
         m.visitMethodInsn(Opcodes.INVOKESTATIC, BRIDGE, "modifyEntriesEvent",
-                "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+                "(Ljava/lang/Object;Ljava/lang/Class;)Ljava/lang/Object;", false);
         m.visitTypeInsn(Opcodes.CHECKCAST, EVENT);
         m.visitInsn(Opcodes.ARETURN);
         m.visitMaxs(0, 0);
@@ -140,8 +143,9 @@ public class FabricItemGroupEventsShim implements VersionShim {
         // static { MODIFY_ENTRIES_ALL = (Event) ItemGroupEventsBridge.installModifyAll(); }
         MethodVisitor clinit = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
         clinit.visitCode();
+        clinit.visitLdcInsn(org.objectweb.asm.Type.getObjectType(MODIFY_ENTRIES_ALL));
         clinit.visitMethodInsn(Opcodes.INVOKESTATIC, BRIDGE, "installModifyAll",
-                "()Ljava/lang/Object;", false);
+                "(Ljava/lang/Class;)Ljava/lang/Object;", false);
         clinit.visitTypeInsn(Opcodes.CHECKCAST, EVENT);
         clinit.visitFieldInsn(Opcodes.PUTSTATIC, HOLDER, "MODIFY_ENTRIES_ALL", L_EVENT);
         clinit.visitInsn(Opcodes.RETURN);

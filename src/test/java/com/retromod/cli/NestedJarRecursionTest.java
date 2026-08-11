@@ -1,6 +1,8 @@
 package com.retromod.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.objectweb.asm.Opcodes.*;
 
 import java.io.ByteArrayInputStream;
@@ -105,6 +107,38 @@ class NestedJarRecursionTest {
                     "doubly-nested jar must be recursed into and transformed");
         } finally {
             t.clearRedirectsForTesting();
+        }
+    }
+
+    @Test
+    @DisplayName("nested Forge refmaps use the same selector redirects as the outer mod")
+    void nestedForgeRefmapIsTransformed() throws Exception {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        try {
+            String oldOwner = "net/minecraft/block/PortalSize";
+            String newOwner = "net/minecraft/world/level/portal/PortalShape";
+            transformer.registerClassRedirect(oldOwner, newOwner);
+            transformer.registerMethodRedirect(
+                    oldOwner, "func_242974_d", "()I",
+                    newOwner, "m_77745_", "()I");
+
+            String refmap = "{\"mappings\":{\"MixinPortal\":{\"func_242974_d()I\":"
+                    + "\"L" + oldOwner + ";func_242974_d()I\"}}}";
+            byte[] nested = jarOf(java.util.Map.of(
+                    "portal-refmap.json", refmap.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+            String transformed = new String(
+                    entry(RetromodCli.transformNestedJar(nested, 1, true), "portal-refmap.json"),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(transformed.contains("L" + newOwner + ";m_77745_()I"),
+                    "the nested refmap value must use the target owner and member");
+            assertTrue(transformed.contains("\"m_77745_()I\""),
+                    "the descriptor-shaped refmap key must follow the member redirect");
+            assertFalse(transformed.contains("func_242974_d"),
+                    "the source SRG selector must not survive in a nested refmap");
+        } finally {
+            transformer.clearRedirectsForTesting();
         }
     }
 }

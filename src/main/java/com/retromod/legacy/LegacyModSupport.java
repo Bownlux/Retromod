@@ -10,6 +10,7 @@ import org.objectweb.asm.*;
 import org.objectweb.asm.tree.*;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.jar.*;
@@ -19,6 +20,8 @@ import java.util.zip.*;
  * Coordinates the larger transform steps needed by mods that cross a Minecraft API era.
  */
 public class LegacyModSupport {
+
+    private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     
     /**
      * Minecraft version epochs for transformation grouping.
@@ -116,13 +119,16 @@ public class LegacyModSupport {
      */
     public LegacyModAnalysis analyzeMod(Path modJar) throws IOException {
         LegacyModAnalysis analysis = new LegacyModAnalysis(modJar);
+        ArchiveBudget budget = new ArchiveBudget("legacy mod analysis");
         
         try (JarFile jar = new JarFile(modJar.toFile())) {
+            validateArchiveEntries(jar, modJar);
+
             // Detect mod loader type
-            analysis.modLoader = detectModLoader(jar);
+            analysis.modLoader = detectModLoader(jar, budget);
             
             // Detect target Minecraft version
-            analysis.targetMcVersion = detectTargetVersion(jar, analysis.modLoader);
+            analysis.targetMcVersion = detectTargetVersion(jar, analysis.modLoader, budget);
             analysis.sourceEpoch = Epoch.fromVersion(analysis.targetMcVersion);
             
             // Detect Java class file version
@@ -171,117 +177,80 @@ public class LegacyModSupport {
         }
         System.out.println();
         
-        // Create output path
-        String outputName = modJar.getFileName().toString()
-            .replace(".jar", "-retromod-" + targetMcVersion + ".jar");
-        Path outputJar = modJar.resolveSibling(outputName);
+        Path outputJar = transformedOutputPath(modJar);
+        Path sourcePath = modJar.toAbsolutePath().normalize();
+        Path targetPath = outputJar.toAbsolutePath().normalize();
+        if (sourcePath.equals(targetPath)) {
+            throw new IOException("Legacy output path matches the source jar: " + sourcePath);
+        }
+        ZipSecurity.validateNotSymlink(targetPath);
         
         // Transform the JAR
         long startTime = System.currentTimeMillis();
-        
-        try (JarFile sourceJar = new JarFile(modJar.toFile());
-             JarOutputStream outputStream = new JarOutputStream(
-                 new FileOutputStream(outputJar.toFile()))) {
-            
-            int classesTransformed = 0;
-            int classesSkipped = 0;
-            
-            Enumeration<JarEntry> entries = sourceJar.entries();
-            long totalBytes = 0;
-            while (entries.hasMoreElements()) {
-                JarEntry entry = entries.nextElement();
+        int classesTransformed = 0;
+        int classesSkipped = 0;
+        Path stagedJar = Files.createTempFile(targetPath.getParent(),
+                ".retromod-legacy-", ".jar.tmp");
 
-                // Sanitize entry name. Even though we're writing to another JAR
-                // (not to disk here), downstream tools may extract the output
-                // and be vulnerable to zip-slip. Reject traversal / absolute paths.
-                String safeName;
-                try {
-                    safeName = ZipSecurity.safeEntryName(entry.getName());
-                } catch (IOException badName) {
-                    System.out.println("[Retromod-Legacy] Skipping unsafe entry: " + badName.getMessage());
-                    continue;
-                }
+        try {
+            try (JarFile sourceJar = new JarFile(sourcePath.toFile());
+                 JarOutputStream outputStream = new JarOutputStream(
+                         Files.newOutputStream(stagedJar))) {
 
-                try (InputStream is = sourceJar.getInputStream(entry)) {
-                    if (safeName.endsWith(".class")) {
-                        // Transform class file
-                        byte[] classBytes = ZipSecurity.safeReadAllBytes(is);
-                        totalBytes += classBytes.length;
-                        if (totalBytes > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
-                            throw new IOException("Legacy mod exceeds " +
-                                    ZipSecurity.DEFAULT_MAX_TOTAL_SIZE + " bytes total (possible zip bomb)");
-                        }
-                        byte[] transformed = transformClass(
-                            classBytes, analysis, safeName
-                        );
+                Set<String> inputNames = new HashSet<>();
+                ArchiveBudget inputBudget = new ArchiveBudget("legacy mod transform input");
+                ArchiveBudget outputBudget = new ArchiveBudget("legacy mod transform output");
+                Enumeration<JarEntry> entries = sourceJar.entries();
+                while (entries.hasMoreElements()) {
+                    JarEntry entry = entries.nextElement();
+                    String safeName = registerEntry(entry, inputNames, sourcePath);
 
-                        if (transformed != classBytes) {
-                            classesTransformed++;
-                        } else {
-                            classesSkipped++;
-                        }
+                    outputStream.putNextEntry(new JarEntry(safeName));
+                    if (!entry.isDirectory()) {
+                        try (InputStream is = sourceJar.getInputStream(entry)) {
+                            byte[] input = readEntry(is, inputBudget, safeName);
+                            byte[] output = input;
 
-                        outputStream.putNextEntry(new JarEntry(safeName));
-                        outputStream.write(transformed);
-                        outputStream.closeEntry();
-
-                    } else if (safeName.equals("mcmod.info") ||
-                               safeName.equals("mods.toml") ||
-                               safeName.equals("META-INF/mods.toml") ||
-                               safeName.equals("fabric.mod.json") ||
-                               safeName.equals("quilt.mod.json")) {
-                        // Transform mod metadata
-                        byte[] metadata = ZipSecurity.safeReadAllBytes(is);
-                        totalBytes += metadata.length;
-                        if (totalBytes > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
-                            throw new IOException("Legacy mod exceeds total size limit");
-                        }
-                        byte[] transformed = transformMetadata(
-                            metadata, safeName, analysis
-                        );
-
-                        outputStream.putNextEntry(new JarEntry(safeName));
-                        outputStream.write(transformed);
-                        outputStream.closeEntry();
-
-                    } else {
-                        // Copy unchanged, streaming with a byte counter so a giant
-                        // asset entry can't blow up the total budget silently.
-                        outputStream.putNextEntry(new JarEntry(safeName));
-                        byte[] buf = new byte[8192];
-                        long entryBytes = 0;
-                        int n;
-                        while ((n = is.read(buf)) != -1) {
-                            entryBytes += n;
-                            totalBytes += n;
-                            if (entryBytes > ZipSecurity.DEFAULT_MAX_ENTRY_SIZE ||
-                                totalBytes > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
-                                throw new IOException("Legacy mod entry '" + safeName +
-                                        "' exceeds size limit (possible zip bomb)");
+                            if (safeName.endsWith(".class")) {
+                                output = transformClass(input, analysis, safeName);
+                                if (output != input) {
+                                    classesTransformed++;
+                                } else {
+                                    classesSkipped++;
+                                }
+                            } else if (isMetadataEntry(safeName)) {
+                                output = transformMetadata(input, safeName, analysis);
                             }
-                            outputStream.write(buf, 0, n);
+
+                            outputBudget.reserveEntry(output, safeName);
+                            outputStream.write(output);
                         }
-                        outputStream.closeEntry();
                     }
+                    outputStream.closeEntry();
+                }
+
+                // Embedded resources are trusted Retromod classes. JarOutputStream still rejects
+                // any collision with an input entry before the staged jar can replace the target.
+                embedShimClasses(outputStream, analysis);
+                if (analysis.needsVirtualLoader) {
+                    embedVirtualLoader(outputStream, analysis);
                 }
             }
-            
-            // Embed shim classes
-            embedShimClasses(outputStream, analysis);
-            
-            // Embed virtual mod loader if needed
-            if (analysis.needsVirtualLoader) {
-                embedVirtualLoader(outputStream, analysis);
+
+            try (JarFile ignored = new JarFile(stagedJar.toFile())) {
+                // Opening the completed jar verifies its central directory before replacement.
             }
-            
-            long duration = System.currentTimeMillis() - startTime;
-            
-            System.out.println("Legacy transform finished:");
-            System.out.println("  Classes updated:     " + classesTransformed);
-            System.out.println("  Classes unchanged:   " + classesSkipped);
-            System.out.println("  Time:                " + duration + " ms");
-            System.out.println("  Output:              " + outputJar.getFileName());
+            moveReplacing(stagedJar, targetPath);
+        } finally {
+            Files.deleteIfExists(stagedJar);
         }
+
+        long duration = System.currentTimeMillis() - startTime;
+        System.out.println("Legacy transform finished:");
+        System.out.println("  Classes updated:     " + classesTransformed);
+        System.out.println("  Classes unchanged:   " + classesSkipped);
+        System.out.println("  Time:                " + duration + " ms");
+        System.out.println("  Output:              " + outputJar.getFileName());
         
         return outputJar;
     }
@@ -326,7 +295,7 @@ public class LegacyModSupport {
     
     // DETECTION METHODS
     
-    private ModLoaderType detectModLoader(JarFile jar) {
+    private ModLoaderType detectModLoader(JarFile jar, ArchiveBudget budget) throws IOException {
         // Check for NeoForge
         if (jar.getEntry("META-INF/neoforge.mods.toml") != null) {
             return ModLoaderType.NEOFORGE;
@@ -366,9 +335,10 @@ public class LegacyModSupport {
         Enumeration<JarEntry> entries = jar.entries();
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
-            if (entry.getName().endsWith(".class")) {
+            if (!entry.isDirectory() && entry.getName().endsWith(".class")) {
                 try (InputStream is = jar.getInputStream(entry)) {
-                    ClassReader reader = new ClassReader(is);
+                    byte[] classBytes = readEntry(is, budget, entry.getName());
+                    ClassReader reader = new ClassReader(classBytes);
                     ModAnnotationScanner scanner = new ModAnnotationScanner();
                     reader.accept(scanner, ClassReader.SKIP_CODE);
                     
@@ -378,7 +348,7 @@ public class LegacyModSupport {
                     if (scanner.hasNeoForgeModAnnotation) {
                         return ModLoaderType.NEOFORGE;
                     }
-                } catch (Exception e) {
+                } catch (RuntimeException e) {
                     // Continue scanning
                 }
             }
@@ -387,14 +357,16 @@ public class LegacyModSupport {
         return ModLoaderType.UNKNOWN;
     }
     
-    private String detectTargetVersion(JarFile jar, ModLoaderType loader) {
+    private String detectTargetVersion(JarFile jar, ModLoaderType loader, ArchiveBudget budget)
+            throws IOException {
         try {
             switch (loader) {
                 case FABRIC -> {
                     JarEntry entry = jar.getJarEntry("fabric.mod.json");
                     if (entry != null) {
                         try (InputStream is = jar.getInputStream(entry)) {
-                            return extractFabricVersion(is);
+                            return extractFabricVersion(readEntry(
+                                    is, budget, entry.getName()));
                         }
                     }
                 }
@@ -402,7 +374,8 @@ public class LegacyModSupport {
                     JarEntry entry = jar.getJarEntry("mcmod.info");
                     if (entry != null) {
                         try (InputStream is = jar.getInputStream(entry)) {
-                            return extractLegacyForgeVersion(is);
+                            return extractLegacyForgeVersion(readEntry(
+                                    is, budget, entry.getName()));
                         }
                     }
                 }
@@ -413,7 +386,8 @@ public class LegacyModSupport {
                     }
                     if (entry != null) {
                         try (InputStream is = jar.getInputStream(entry)) {
-                            return extractModernForgeVersion(is);
+                            return extractModernForgeVersion(readEntry(
+                                    is, budget, entry.getName()));
                         }
                     }
                 }
@@ -421,7 +395,8 @@ public class LegacyModSupport {
                     JarEntry entry = jar.getJarEntry("quilt.mod.json");
                     if (entry != null) {
                         try (InputStream is = jar.getInputStream(entry)) {
-                            return extractQuiltVersion(is);
+                            return extractQuiltVersion(readEntry(
+                                    is, budget, entry.getName()));
                         }
                     }
                 }
@@ -429,7 +404,8 @@ public class LegacyModSupport {
                     JarEntry entry = jar.getJarEntry("litemod.json");
                     if (entry != null) {
                         try (InputStream is = jar.getInputStream(entry)) {
-                            return extractLiteLoaderVersion(is);
+                            return extractLiteLoaderVersion(readEntry(
+                                    is, budget, entry.getName()));
                         }
                     }
                 }
@@ -444,7 +420,7 @@ public class LegacyModSupport {
                     // and let heuristic detection take over below.
                 }
             }
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             // Fall through to heuristic detection
         }
 
@@ -548,9 +524,9 @@ public class LegacyModSupport {
     
     // HELPER METHODS
     
-    private String extractFabricVersion(InputStream is) throws IOException {
+    private String extractFabricVersion(byte[] metadata) {
         // Parse fabric.mod.json
-        String json = new String(is.readAllBytes());
+        String json = new String(metadata, StandardCharsets.UTF_8);
         // Simple extraction: look for "minecraft" dependency
         int idx = json.indexOf("\"minecraft\"");
         if (idx > 0) {
@@ -565,8 +541,8 @@ public class LegacyModSupport {
         return "1.21";
     }
     
-    private String extractLegacyForgeVersion(InputStream is) throws IOException {
-        String json = new String(is.readAllBytes());
+    private String extractLegacyForgeVersion(byte[] metadata) {
+        String json = new String(metadata, StandardCharsets.UTF_8);
         int idx = json.indexOf("\"mcversion\"");
         if (idx > 0) {
             int start = json.indexOf("\"", idx + 11) + 1;
@@ -578,8 +554,8 @@ public class LegacyModSupport {
         return "1.12.2";
     }
     
-    private String extractModernForgeVersion(InputStream is) throws IOException {
-        String toml = new String(is.readAllBytes());
+    private String extractModernForgeVersion(byte[] metadata) {
+        String toml = new String(metadata, StandardCharsets.UTF_8);
         // Look for minecraft dependency
         int idx = toml.indexOf("modId=\"minecraft\"");
         if (idx < 0) idx = toml.indexOf("modId = \"minecraft\"");
@@ -599,12 +575,12 @@ public class LegacyModSupport {
         return "1.20";
     }
     
-    private String extractQuiltVersion(InputStream is) throws IOException {
-        return extractFabricVersion(is); // Similar format
+    private String extractQuiltVersion(byte[] metadata) {
+        return extractFabricVersion(metadata); // Similar format
     }
     
-    private String extractLiteLoaderVersion(InputStream is) throws IOException {
-        String json = new String(is.readAllBytes());
+    private String extractLiteLoaderVersion(byte[] metadata) {
+        String json = new String(metadata, StandardCharsets.UTF_8);
         int idx = json.indexOf("\"mcversion\"");
         if (idx > 0) {
             int start = json.indexOf("\"", idx + 11) + 1;
@@ -638,7 +614,7 @@ public class LegacyModSupport {
     private byte[] transformMetadata(byte[] metadata, String filename, 
             LegacyModAnalysis analysis) {
         // Update version requirements in mod metadata
-        String content = new String(metadata);
+        String content = new String(metadata, StandardCharsets.UTF_8);
         
         // Update Minecraft version requirements
         content = content.replace(
@@ -646,7 +622,7 @@ public class LegacyModSupport {
             "\"" + targetMcVersion + "\""
         );
         
-        return content.getBytes();
+        return content.getBytes(StandardCharsets.UTF_8);
     }
     
     private void embedShimClasses(JarOutputStream out, LegacyModAnalysis analysis) 
@@ -664,8 +640,9 @@ public class LegacyModSupport {
         try (InputStream is = getClass().getResourceAsStream(resourcePath)) {
             if (is != null) {
                 String entryName = className.replace('.', '/') + ".class";
+                byte[] classBytes = ZipSecurity.safeReadAllBytes(is);
                 out.putNextEntry(new JarEntry(entryName));
-                is.transferTo(out);
+                out.write(classBytes);
                 out.closeEntry();
             }
         }
@@ -675,6 +652,102 @@ public class LegacyModSupport {
             throws IOException {
         // Embed virtual mod loader components for legacy mods
         virtualLoader.embedComponents(out, analysis.modLoader, analysis.sourceEpoch);
+    }
+
+    private boolean isMetadataEntry(String entryName) {
+        return entryName.equals("mcmod.info") ||
+               entryName.equals("mods.toml") ||
+               entryName.equals("META-INF/mods.toml") ||
+               entryName.equals("fabric.mod.json") ||
+               entryName.equals("quilt.mod.json");
+    }
+
+    private Path transformedOutputPath(Path modJar) throws IOException {
+        Path fileName = modJar.getFileName();
+        if (fileName == null) {
+            throw new IOException("Legacy mod has no file name: " + modJar);
+        }
+        String name = fileName.toString();
+        String base = name.toLowerCase(Locale.ROOT).endsWith(".jar")
+                ? name.substring(0, name.length() - 4)
+                : name;
+        return modJar.resolveSibling(base + "-retromod-"
+                + validateVersionComponent(targetMcVersion) + ".jar");
+    }
+
+    private static String validateVersionComponent(String version) throws IOException {
+        if (version == null || version.isBlank() || version.length() > 128
+                || !version.matches("[A-Za-z0-9][A-Za-z0-9._+-]*")) {
+            throw new IOException("Unsafe target Minecraft version: " + version);
+        }
+        return version;
+    }
+
+    private static void validateArchiveEntries(JarFile jar, Path jarPath) throws IOException {
+        Set<String> names = new HashSet<>();
+        Enumeration<JarEntry> entries = jar.entries();
+        while (entries.hasMoreElements()) {
+            registerEntry(entries.nextElement(), names, jarPath);
+        }
+    }
+
+    private static String registerEntry(JarEntry entry, Set<String> names, Path jarPath)
+            throws IOException {
+        if (names.size() >= MAX_ARCHIVE_ENTRIES) {
+            throw new IOException("Jar has too many entries: " + jarPath.getFileName());
+        }
+        String name = ZipSecurity.safeEntryName(entry.getName());
+        if (name.indexOf('\\') >= 0 || name.indexOf('\0') >= 0) {
+            throw new IOException("Jar contains an unsafe entry name: " + entry.getName());
+        }
+        String withoutDirectorySlash = entry.isDirectory() && name.endsWith("/")
+                ? name.substring(0, name.length() - 1)
+                : name;
+        for (String part : withoutDirectorySlash.split("/", -1)) {
+            if (part.isEmpty() || part.equals(".")) {
+                throw new IOException("Jar contains an unsafe entry name: " + entry.getName());
+            }
+        }
+        if (!names.add(name)) {
+            throw new IOException("Jar contains duplicate entry: " + name);
+        }
+        return name;
+    }
+
+    private static byte[] readEntry(InputStream input, ArchiveBudget budget, String entryName)
+            throws IOException {
+        byte[] bytes = ZipSecurity.safeReadAllBytes(input);
+        budget.reserveEntry(bytes, entryName);
+        return bytes;
+    }
+
+    private static void moveReplacing(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static final class ArchiveBudget {
+        private final String operation;
+        private long total;
+
+        private ArchiveBudget(String operation) {
+            this.operation = operation;
+        }
+
+        private void reserveEntry(byte[] bytes, String entryName) throws IOException {
+            if (bytes.length > ZipSecurity.DEFAULT_MAX_ENTRY_SIZE) {
+                throw new IOException("Jar entry exceeds size limit during " + operation
+                        + ": " + entryName);
+            }
+            if (total > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE - bytes.length) {
+                throw new IOException("Jar exceeds total size limit during " + operation);
+            }
+            total += bytes.length;
+        }
     }
     
     // INNER CLASSES

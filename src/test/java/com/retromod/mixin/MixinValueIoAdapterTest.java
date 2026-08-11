@@ -276,6 +276,10 @@ class MixinValueIoAdapterTest {
             assertNotNull(method(out, "onSave", "(L" + VALUE_OUTPUT + ";" + CI + ")V"),
                     "the entry point adapts the handler on 26.x");
             assertNotNull(method(out, "onSave$retromod$vio", "(L" + COMPOUND_TAG + ";" + CI + ")V"));
+
+            ClassNode pipeline = parse(mt.applyPostRemapRepairs(in));
+            assertNotNull(method(pipeline, "onSave", "(L" + VALUE_OUTPUT + ";" + CI + ")V"),
+                    "the shared post-remap pipeline must include the ValueIO adapter");
         } finally {
             RetromodVersion.TARGET_MC_VERSION = saved;
         }

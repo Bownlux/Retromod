@@ -18,8 +18,8 @@ public class Fabric_1_19_3_to_1_19_4 implements VersionShim {
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
         // DamageSource reworked onto the DamageType registry
-        transformer.registerMethodRedirect(
-            "net/minecraft/entity/damage/DamageSource", "<init>",
+        transformer.registerConstructorRedirect(
+            "net/minecraft/entity/damage/DamageSource",
             "(Ljava/lang/String;)V",
             "com/retromod/shim/fabric/embedded/DamageSourceShim", "create",
             "(Ljava/lang/String;)Lnet/minecraft/entity/damage/DamageSource;"

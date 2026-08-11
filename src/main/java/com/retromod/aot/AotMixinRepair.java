@@ -31,8 +31,7 @@ final class AotMixinRepair {
             String className) {
         try {
             byte[] out = mixinTransformer.stripBlocklistedHandlers(classBytes);
-            out = mixinTransformer.applyLegacyMemberBridges(out);
-            return mixinTransformer.adaptValueIoHandlers(out);
+            return mixinTransformer.applyPostRemapRepairs(out);
         } catch (Throwable t) {
             // The remapped bytecode is still worth keeping, so this is not fatal.
             LOGGER.warn("Could not repair the Mixin in {} ({}). Keeping its transformed bytecode.",

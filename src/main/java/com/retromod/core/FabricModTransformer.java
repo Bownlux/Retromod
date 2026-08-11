@@ -492,13 +492,9 @@ public class FabricModTransformer {
                         // The member bridges and the ValueIO adapter expect Mojang names,
                         // which are only available after the main Fabric remap.
                         if (transformed != null) {
-                            byte[] bridged = mixinTransformer.applyLegacyMemberBridges(transformed);
-                            if (bridged != null && bridged != transformed) {
-                                transformed = bridged;
-                            }
-                            byte[] valio = mixinTransformer.adaptValueIoHandlers(transformed);
-                            if (valio != null && valio != transformed) {
-                                transformed = valio;
+                            byte[] repaired = mixinTransformer.applyPostRemapRepairs(transformed);
+                            if (repaired != null && repaired != transformed) {
+                                transformed = repaired;
                             }
                         }
                     } else {
@@ -915,7 +911,10 @@ public class FabricModTransformer {
                               com.retromod.mapping.IntermediaryToMojangMapper mapper) {
         try {
             String content = Files.readString(refmapFile);
-            String remapped = MixinRefmapRemapper.remap(content, mapper);
+            MixinCompatibilityTransformer mixinTransformer =
+                    new MixinCompatibilityTransformer(bytecodeTransformer);
+            String remapped = MixinRefmapRemapper.remap(
+                    content, mapper, mixinTransformer::remapResourceSelector);
             if (!remapped.equals(content)) {
                 Files.writeString(refmapFile, remapped);
                 LOGGER.info("  Remapped refmap: {}", refmapFile.getFileName());
@@ -1390,8 +1389,26 @@ public class FabricModTransformer {
         manifest.getMainAttributes().putValue("Retromod-Transformed", "true");
         manifest.getMainAttributes().putValue("Retromod-Target-Version", targetMcVersion);
 
-        try (JarOutputStream jos = new JarOutputStream(
-                new FileOutputStream(outputJar.toFile()), manifest)) {
+        // Fabric uses one Knot class loader for every mod. Keeping generated helpers at
+        // their shared registration names lets an older transformed jar win class lookup
+        // for every other mod. Relocate only the helpers this jar references, just as the
+        // module-based loaders do, so their bytecode and listener types stay per-mod.
+        SyntheticEmbedder.embed(sourceDir, originalJar.getFileName().toString(),
+                bytecodeTransformer);
+        if (SyntheticEmbedder.hasRegisteredSyntheticReferences(
+                sourceDir, bytecodeTransformer)) {
+            throw new IOException("could not relocate every generated compatibility class in "
+                    + originalJar.getFileName());
+        }
+
+        Path parent = outputJar.toAbsolutePath().getParent();
+        if (parent == null) throw new IOException("JAR output has no parent: " + outputJar);
+        Files.createDirectories(parent);
+        Path stagedJar = Files.createTempFile(parent,
+                "." + outputJar.getFileName() + ".", ".tmp");
+        try {
+            try (JarOutputStream jos = new JarOutputStream(
+                    Files.newOutputStream(stagedJar), manifest)) {
 
             // ZIP directory entries: package resources (ClassLoader.getResources) and classpath
             // scanners (Reflections - YungsApi @AutoRegister) silently find nothing without them.
@@ -1432,7 +1449,10 @@ public class FabricModTransformer {
             if (Files.isDirectory(jijDir)) {
                 try (var jijStream = Files.list(jijDir)) {
                     for (Path jijJar : jijStream.filter(p -> p.toString().endsWith(".jar")).toList()) {
-                        processNestedJiJJar(jijJar);
+                        String nestedEntry = sourceDir.relativize(jijJar).toString()
+                                .replace(File.separator, "/");
+                        String syntheticKey = originalJar.getFileName() + "!/" + nestedEntry;
+                        processNestedJiJJar(jijJar, syntheticKey);
                     }
                 }
             }
@@ -1464,9 +1484,7 @@ public class FabricModTransformer {
 
             // Dedup entry names: a second putNextEntry for the same name throws
             // ZipException and aborts the transform. Collisions come from a source mod
-            // bundling a class our polyfill also synthesizes, or from a central directory
-            // that lists the same entry twice (case-insensitive FS too). First copy wins,
-            // so the mod's own class is kept over our synthetic.
+            // that lists the same entry twice (case-insensitive FS too). First copy wins.
             Set<String> writtenEntries = new HashSet<>();
 
             try (var stream = Files.walk(sourceDir)) {
@@ -1493,20 +1511,22 @@ public class FabricModTransformer {
                     jos.closeEntry();
                 }
             }
-
-            // Inject synthetic polyfill classes, skipping any name already written above.
-            for (var entry : RetromodTransformer.getInstance().getSyntheticClasses().entrySet()) {
-                String classPath = entry.getKey() + ".class";
-                if (!writtenEntries.add(classPath)) {
-                    LOGGER.debug("Skipping synthetic class {} - source mod already "
-                            + "ships its own copy at the same path", entry.getKey());
-                    continue;
-                }
-                jos.putNextEntry(new JarEntry(classPath));
-                jos.write(entry.getValue());
-                jos.closeEntry();
-                LOGGER.info("  Injected synthetic class: {}", entry.getKey());
             }
+            try (JarFile ignored = new JarFile(stagedJar.toFile())) {
+                // Opening the completed archive validates its central directory.
+            }
+            moveReplacing(stagedJar, outputJar);
+        } finally {
+            Files.deleteIfExists(stagedJar);
+        }
+    }
+
+    private static void moveReplacing(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
@@ -1575,8 +1595,7 @@ public class FabricModTransformer {
             com.retromod.mixin.MixinCompatibilityTransformer mixins, byte[] classBytes, String className) {
         try {
             byte[] out = mixins.stripBlocklistedHandlers(classBytes);
-            out = mixins.applyLegacyMemberBridges(out);
-            return mixins.adaptValueIoHandlers(out);
+            return mixins.applyPostRemapRepairs(out);
         } catch (Throwable t) {
             LOGGER.debug("Could not repair the Mixin in JiJ class {}: {}", className, t.toString());
             return classBytes;
@@ -1635,7 +1654,7 @@ public class FabricModTransformer {
      * Process a nested JiJ mod JAR: extract, transform bytecode, make mixin configs
      * non-fatal, clean refmaps, repack.
      */
-    private void processNestedJiJJar(Path jijJar) {
+    private void processNestedJiJJar(Path jijJar, String syntheticKey) {
         String name = jijJar.getFileName().toString();
         try {
             Path tempDir = Files.createTempDirectory("retromod-jij-");
@@ -1697,6 +1716,22 @@ public class FabricModTransformer {
                             LOGGER.debug("Failed to transform class in JiJ {}: {}", name, e.getMessage());
                         }
                     }
+                }
+
+                // Fabric Loader treats a JiJ as a separate mod, but it still shares Knot's
+                // class space. Give each nested entry its own helper copies after its classes
+                // have received redirects. The outer jar name plus entry path stays stable and
+                // distinguishes common nested names such as library.jar across parent mods.
+                int embedded = SyntheticEmbedder.embed(tempDir, syntheticKey, bytecodeTransformer);
+                if (SyntheticEmbedder.hasRegisteredSyntheticReferences(
+                        tempDir, bytecodeTransformer)) {
+                    throw new IOException("could not relocate every generated compatibility "
+                            + "class in nested JAR " + name);
+                }
+                if (embedded > 0) {
+                    modified = true;
+                    LOGGER.info("  Embedded {} referenced synthetic class(es) in JiJ {}",
+                            embedded, name);
                 }
 
                 // Patch mixin configs to be non-fatal

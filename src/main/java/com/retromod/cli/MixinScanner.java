@@ -10,6 +10,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.retromod.util.ZipSecurity;
 
 import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassReader;
@@ -21,6 +22,8 @@ import org.objectweb.asm.Type;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -82,6 +85,11 @@ public final class MixinScanner {
     private static final String MIXINEXTRAS_INJECTOR_PREFIX = "Lcom/llamalad7/mixinextras/injector/";
     private static final String MIXINEXTRAS_PREFIX = "Lcom/llamalad7/mixinextras/";
     private static final String DESC_DESC = "Lorg/spongepowered/asm/mixin/injection/Desc;";
+    private static final int MAX_ARCHIVE_ENTRIES = 100_000;
+    private static final int MAX_CONFIG_NAMES = 4_096;
+    private static final long MAX_TEXT_ENTRY_SIZE = 2L * 1024 * 1024;
+    private static final long MAX_CONFIG_TOTAL_SIZE = 16L * 1024 * 1024;
+    private static final long MAX_CLASS_SCAN_SIZE = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
 
     /** One emitted record: either a single injector handler, or a bare Mixin class (injector null). */
     public static final class Record {
@@ -148,17 +156,35 @@ public final class MixinScanner {
     private static void scanJar(Path jarPath, ScanResult result) throws IOException {
         String jarName = jarPath.getFileName().toString();
         try (JarFile jar = new JarFile(jarPath.toFile())) {
+            if (jar.size() > MAX_ARCHIVE_ENTRIES) {
+                throw new IOException("Mod archive has too many entries: " + jar.size());
+            }
             // First: which mixin classes are actually declared in a discovered config?
             // null => the jar had no parseable config at all (applied is unresolvable).
             java.util.Set<String> declared = collectDeclaredMixinClasses(jar);
+            ScanResult jarResult = new ScanResult();
+            long remainingClassBytes = MAX_CLASS_SCAN_SIZE;
 
             Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                String name = entry.getName();
+                String name;
+                try {
+                    name = ZipSecurity.safeEntryName(entry.getName());
+                } catch (IOException e) {
+                    continue;
+                }
                 if (entry.isDirectory() || !name.endsWith(".class")) continue;
+                if (remainingClassBytes <= 0) {
+                    throw new IOException("Mod class data exceeds scan limit");
+                }
+                long readLimit = Math.min(ZipSecurity.DEFAULT_MAX_ENTRY_SIZE,
+                        remainingClassBytes);
+                remainingClassBytes -= readLimit;
                 try (InputStream is = jar.getInputStream(entry)) {
-                    ClassReader cr = new ClassReader(is);
+                    byte[] classBytes = ZipSecurity.safeReadAllBytes(is, readLimit);
+                    remainingClassBytes += readLimit - classBytes.length;
+                    ClassReader cr = new ClassReader(classBytes);
                     MixinClassVisitor v = new MixinClassVisitor();
                     // skip code/frames: we only need annotations and member signatures
                     cr.accept(v, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
@@ -170,11 +196,12 @@ public final class MixinScanner {
                     } else {
                         applied = declared.contains(v.className);
                     }
-                    emitRecords(result, jarName, v, applied);
+                    emitRecords(jarResult, jarName, v, applied);
                 } catch (Exception e) {
                     // a single unreadable class shouldn't drop the rest of the jar
                 }
             }
+            result.records.addAll(jarResult.records);
         }
     }
 
@@ -225,21 +252,32 @@ public final class MixinScanner {
         // so a matched refmap/non-config JSON is skipped harmlessly.
         Enumeration<JarEntry> entries = jar.entries();
         while (entries.hasMoreElements()) {
-            String n = entries.nextElement().getName();
+            String n;
+            try {
+                n = ZipSecurity.safeEntryName(entries.nextElement().getName());
+            } catch (IOException e) {
+                continue;
+            }
             if (n.endsWith(".json")
                     && (n.endsWith(".mixins.json") || n.contains("mixin"))
                     && !n.endsWith(".refmap.json")) {
-                configNames.add(n);
+                addConfigName(configNames, n);
             }
         }
 
         boolean any = false;
+        long remainingConfigBytes = MAX_CONFIG_TOTAL_SIZE;
         java.util.LinkedHashSet<String> declared = new java.util.LinkedHashSet<>();
         for (String cfg : configNames) {
+            if (remainingConfigBytes <= 0) break;
             JarEntry e = jar.getJarEntry(cfg);
             if (e == null) continue;
+            long readLimit = Math.min(MAX_TEXT_ENTRY_SIZE, remainingConfigBytes);
+            remainingConfigBytes -= readLimit;
             try (InputStream is = jar.getInputStream(e)) {
-                String json = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                byte[] bytes = ZipSecurity.safeReadAllBytes(is, readLimit);
+                remainingConfigBytes += readLimit - bytes.length;
+                String json = new String(bytes, StandardCharsets.UTF_8);
                 if (parseMixinConfigInto(json, declared)) {
                     any = true;
                 }
@@ -277,7 +315,9 @@ public final class MixinScanner {
         JarEntry e = jar.getJarEntry("fabric.mod.json");
         if (e == null) return;
         try (InputStream is = jar.getInputStream(e)) {
-            String json = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            String json = new String(
+                    ZipSecurity.safeReadAllBytes(is, MAX_TEXT_ENTRY_SIZE),
+                    StandardCharsets.UTF_8);
             JsonElement root = JsonParser.parseString(json);
             if (!root.isJsonObject()) return;
             JsonElement mixins = root.getAsJsonObject().get("mixins");
@@ -285,13 +325,13 @@ public final class MixinScanner {
             if (mixins.isJsonArray()) {
                 for (JsonElement el : mixins.getAsJsonArray()) {
                     if (el.isJsonPrimitive()) {
-                        out.add(el.getAsString());
+                        addConfigName(out, el.getAsString());
                     } else if (el.isJsonObject() && el.getAsJsonObject().has("config")) {
-                        out.add(el.getAsJsonObject().get("config").getAsString());
+                        addConfigName(out, el.getAsJsonObject().get("config").getAsString());
                     }
                 }
             } else if (mixins.isJsonPrimitive()) {
-                out.add(mixins.getAsString());
+                addConfigName(out, mixins.getAsString());
             }
         } catch (Exception ex) {
             // ignore
@@ -302,7 +342,9 @@ public final class MixinScanner {
         JarEntry e = jar.getJarEntry(path);
         if (e == null) return;
         try (InputStream is = jar.getInputStream(e)) {
-            String toml = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            String toml = new String(
+                    ZipSecurity.safeReadAllBytes(is, MAX_TEXT_ENTRY_SIZE),
+                    StandardCharsets.UTF_8);
             int idx = 0;
             while ((idx = toml.indexOf("[[mixins]]", idx)) != -1) {
                 idx += "[[mixins]]".length();
@@ -316,7 +358,7 @@ public final class MixinScanner {
                         if (qStart >= 0) {
                             int qEnd = section.indexOf('"', qStart + 1);
                             if (qEnd >= 0) {
-                                out.add(section.substring(qStart + 1, qEnd));
+                                addConfigName(out, section.substring(qStart + 1, qEnd));
                             }
                         }
                     }
@@ -328,17 +370,28 @@ public final class MixinScanner {
     }
 
     private static void addManifestMixinConfigs(JarFile jar, java.util.Set<String> out) {
-        try {
-            Manifest mf = jar.getManifest();
-            if (mf == null) return;
+        JarEntry manifestEntry = jar.getJarEntry(JarFile.MANIFEST_NAME);
+        if (manifestEntry == null) return;
+        try (InputStream input = jar.getInputStream(manifestEntry)) {
+            byte[] bytes = ZipSecurity.safeReadAllBytes(input, MAX_TEXT_ENTRY_SIZE);
+            Manifest mf = new Manifest(new ByteArrayInputStream(bytes));
             String attr = mf.getMainAttributes().getValue("MixinConfigs");
             if (attr == null) return;
             for (String c : attr.split(",")) {
                 String t = c.trim();
-                if (!t.isEmpty()) out.add(t);
+                if (!t.isEmpty()) addConfigName(out, t);
             }
         } catch (Exception ex) {
             // ignore
+        }
+    }
+
+    private static void addConfigName(java.util.Set<String> out, String name) {
+        if (name == null || name.isBlank() || out.size() >= MAX_CONFIG_NAMES) return;
+        try {
+            out.add(ZipSecurity.safeEntryName(name));
+        } catch (IOException e) {
+            // ignore unsafe config paths from malformed metadata
         }
     }
 

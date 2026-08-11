@@ -25,12 +25,13 @@ CurseForge version tags lag real MC releases, so a JAR whose MC version CF doesn
 list yet (e.g. a brand-new 26.2) is SKIPPED with a warning rather than failing the run.
 """
 import argparse
-import glob
 import json
 import os
 import re
 import sys
 import time
+
+from release_artifacts import ReleaseArtifactError, validate_release_artifacts
 
 try:
     import requests
@@ -38,7 +39,7 @@ except ImportError:
     sys.exit("ERROR: this script needs `requests` (pip install requests).")
 
 API = "https://minecraft.curseforge.com"
-LOADER_DIRS = [("Fabric", "fabric"), ("Forge", "forge"), ("NeoForge", "neoforge")]
+REPOSITORY_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _get_json(token, path):
@@ -221,6 +222,15 @@ def main():
                          "a partial run without re-uploading the ones that succeeded.")
     args = ap.parse_args()
 
+    try:
+        artifacts = validate_release_artifacts(
+            args.version,
+            args.dist,
+            os.path.join(REPOSITORY_ROOT, "pom.xml"),
+        )
+    except ReleaseArtifactError as exc:
+        sys.exit(f"ERROR: {exc}")
+
     if args.release_type is None:
         lowered = args.version.lower()
         if "alpha" in lowered:
@@ -255,25 +265,29 @@ def main():
           f"version={args.version} type={args.release_type}\n")
 
     uploaded = skipped = failed = 0
-    for loader_dir, loader_name in LOADER_DIRS:
-        for jar in sorted(glob.glob(f"{args.dist}/{loader_dir}/*/retromod-*.jar")):
-            mcver = os.path.basename(os.path.dirname(jar))
-            base = os.path.basename(jar)
-            if only_mc and mcver not in only_mc:
-                continue
-            if loader_name not in loader_map:
-                print(f"  SKIP {base}: CF has no '{loader_name}' loader tag"); skipped += 1; continue
-            if mcver not in mc_map:
-                print(f"  SKIP {base}: CF has no '{mcver}' game version yet"); skipped += 1; continue
-            # [MC version, loader, Client, Server]: CF requires an environment-group version too.
-            gv = [mc_map[mcver], loader_map[loader_name]] + env_ids
-            name = f"Retromod {args.version} ({loader_dir} {mcver})"
-            if args.dry_run:
-                print(f"  DRY  {base}  gameVersions={gv}  \"{name}\""); uploaded += 1
-            else:
-                ok = upload(project, token, jar, gv, name, changelog, args.release_type)
-                uploaded += ok; failed += (not ok)
-                time.sleep(2)  # be gentle with CF's rate limit
+    for artifact in artifacts:
+        if not artifact.is_mod:
+            continue
+        loader_dir = artifact.loader_dir
+        loader_name = artifact.loader_name
+        mcver = artifact.minecraft_version
+        jar = os.fspath(artifact.path)
+        base = os.path.basename(jar)
+        if only_mc and mcver not in only_mc:
+            continue
+        if loader_name not in loader_map:
+            print(f"  SKIP {base}: CF has no '{loader_name}' loader tag"); skipped += 1; continue
+        if mcver not in mc_map:
+            print(f"  SKIP {base}: CF has no '{mcver}' game version yet"); skipped += 1; continue
+        # [MC version, loader, Client, Server]: CF requires an environment-group version too.
+        gv = [mc_map[mcver], loader_map[loader_name]] + env_ids
+        name = f"Retromod {args.version} ({loader_dir} {mcver})"
+        if args.dry_run:
+            print(f"  DRY  {base}  gameVersions={gv}  \"{name}\""); uploaded += 1
+        else:
+            ok = upload(project, token, jar, gv, name, changelog, args.release_type)
+            uploaded += ok; failed += (not ok)
+            time.sleep(2)  # be gentle with CF's rate limit
 
     print(f"\nSummary: {uploaded} {'planned' if args.dry_run else 'uploaded'}, "
           f"{skipped} skipped, {failed} failed.")

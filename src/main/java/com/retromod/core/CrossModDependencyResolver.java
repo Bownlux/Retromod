@@ -4,10 +4,13 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.ZipSecurity;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -21,6 +24,7 @@ import java.util.zip.*;
 public class CrossModDependencyResolver {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Dependencies");
+    private static final long MAX_METADATA_SIZE = 2L * 1024 * 1024;
 
     // modId -> dependency modIds
     private final Map<String, List<String>> dependencyGraph = new ConcurrentHashMap<>();
@@ -86,7 +90,7 @@ public class CrossModDependencyResolver {
     }
 
     private void scanFabricMod(JarFile jar, ZipEntry entry) throws IOException {
-        String content = new String(jar.getInputStream(entry).readAllBytes());
+        String content = readMetadata(jar, entry);
 
         String modId = extractJsonValue(content, "id");
         if (modId == null) return;
@@ -119,7 +123,7 @@ public class CrossModDependencyResolver {
     }
 
     private void scanForgeMod(JarFile jar, ZipEntry entry) throws IOException {
-        String content = new String(jar.getInputStream(entry).readAllBytes());
+        String content = readMetadata(jar, entry);
 
         Pattern modIdPattern = Pattern.compile("modId\\s*=\\s*\"([^\"]+)\"");
         Matcher modIdMatcher = modIdPattern.matcher(content);
@@ -138,6 +142,13 @@ public class CrossModDependencyResolver {
 
         if (!deps.isEmpty()) {
             dependencyGraph.put(modId, deps);
+        }
+    }
+
+    private String readMetadata(JarFile jar, ZipEntry entry) throws IOException {
+        try (InputStream input = jar.getInputStream(entry)) {
+            return new String(ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE),
+                    StandardCharsets.UTF_8);
         }
     }
 

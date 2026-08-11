@@ -8,6 +8,8 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 /**
  * Runtime half of the removed Fabric {@code EntityModelLayerRegistry} bridge.
@@ -28,7 +30,6 @@ public final class EntityModelLayerRegistryBridge {
 
     private static final String MLR = "net.fabricmc.fabric.api.client.rendering.v1.ModelLayerRegistry";
     private static final String NEW_PROVIDER = MLR + "$TexturedLayerDefinitionProvider";
-    private static final String SYNTH_PROVIDER = "com.retromod.generated.legacymodellayer.TexturedModelDataProvider";
     private static final String MODEL_LAYER_LOCATION = "net.minecraft.client.model.geom.ModelLayerLocation";
 
     private static ClassLoader cl() {
@@ -41,17 +42,9 @@ public final class EntityModelLayerRegistryBridge {
             ClassLoader cl = cl();
             Class<?> mlr = Class.forName(MLR, true, cl);
             Class<?> newProviderType = Class.forName(NEW_PROVIDER, false, cl);
-            Class<?> oldProviderType = Class.forName(SYNTH_PROVIDER, false, cl);
             Class<?> locType = Class.forName(MODEL_LAYER_LOCATION, false, cl);
 
-            final Method oldSam = sam(oldProviderType);
-
-            Object wrapped = Proxy.newProxyInstance(cl, new Class<?>[]{newProviderType}, (proxy, method, args) -> {
-                if (isSam(method)) {
-                    return invokeReturning(oldSam, oldProvider);
-                }
-                return objectMethod(proxy, method, args);
-            });
+            Object wrapped = adaptProvider(cl, newProviderType, oldProvider);
 
             mlr.getMethod("registerModelLayer", locType, newProviderType).invoke(null, loc, wrapped);
         } catch (Throwable t) {
@@ -59,14 +52,75 @@ public final class EntityModelLayerRegistryBridge {
         }
     }
 
+    /**
+     * Adapts the provider object itself instead of loading the generated provider by
+     * its original name. SyntheticEmbedder gives each transformed mod a private copy
+     * of that interface, so a lambda from the mod is not an instance of the original
+     * generated interface even though both interfaces have the same SAM.
+     */
+    static Object adaptProvider(ClassLoader loader, Class<?> newProviderType, Object oldProvider) {
+        if (newProviderType.isInstance(oldProvider)) {
+            return oldProvider;
+        }
+
+        Method newSam = sam(newProviderType);
+        Method oldSam = providerSam(oldProvider, newSam.getReturnType());
+        return Proxy.newProxyInstance(loader, new Class<?>[]{newProviderType}, (proxy, method, args) -> {
+            if (method.equals(newSam)) {
+                return invokeReturning(oldSam, oldProvider);
+            }
+            return objectMethod(proxy, method, args);
+        });
+    }
+
     private static Method sam(Class<?> declared) {
         for (Method m : declared.getMethods()) {
             if (Modifier.isAbstract(m.getModifiers()) && isSam(m)) return m;
         }
-        for (Method m : declared.getMethods()) {
-            if (isSam(m)) return m;
-        }
         throw new IllegalStateException("no SAM on " + declared.getName());
+    }
+
+    private static Method providerSam(Object provider, Class<?> expectedReturnType) {
+        if (provider == null) {
+            throw new IllegalArgumentException("model layer provider is null");
+        }
+
+        Set<Method> candidates = new LinkedHashSet<>();
+        for (Class<?> type = provider.getClass(); type != null; type = type.getSuperclass()) {
+            for (Class<?> providerInterface : type.getInterfaces()) {
+                for (Method method : providerInterface.getMethods()) {
+                    if (Modifier.isAbstract(method.getModifiers())
+                            && isSam(method)
+                            && method.getParameterCount() == 0
+                            && expectedReturnType.isAssignableFrom(method.getReturnType())) {
+                        candidates.add(method);
+                    }
+                }
+            }
+        }
+
+        Method namedCandidate = null;
+        for (Method candidate : candidates) {
+            if ("createModelData".equals(candidate.getName())) {
+                if (namedCandidate != null) {
+                    throw ambiguousProvider(provider, expectedReturnType);
+                }
+                namedCandidate = candidate;
+            }
+        }
+        if (namedCandidate != null) {
+            return namedCandidate;
+        }
+        if (candidates.size() == 1) {
+            return candidates.iterator().next();
+        }
+        throw ambiguousProvider(provider, expectedReturnType);
+    }
+
+    private static IllegalStateException ambiguousProvider(Object provider, Class<?> expectedReturnType) {
+        return new IllegalStateException("provider " + provider.getClass().getName()
+                + " does not expose one zero-argument model layer method returning "
+                + expectedReturnType.getName());
     }
 
     private static boolean isSam(Method m) {

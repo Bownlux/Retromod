@@ -12,7 +12,7 @@
 # Keep building after one target fails so the final report can list every failure.
 # set -e
 
-VERSION="1.3.0-snapshot.5"
+VERSION="1.3.0-snapshot.6"
 # Older mods are translated at runtime, so only 1.20 and newer need host jars.
 # Security-only updates for versions before 26.1.
 MC_VERSIONS=("1.20" "1.20.1" "1.20.2" "1.20.3" "1.20.4" "1.20.5" "1.20.6" "1.21" "1.21.1" "1.21.2" "1.21.3" "1.21.4" "1.21.5" "1.21.6" "1.21.7" "1.21.8" "1.21.9" "1.21.10" "1.21.11" "26.1" "26.1.1" "26.1.2" "26.2")
@@ -68,28 +68,25 @@ if ! command -v zip &> /dev/null; then
     exit 1
 fi
 
-# Remove any stale JARs from previous builds. Without this, a version bump
-# leaves the OLD version's JARs sitting alongside the new ones in
-# dist/<Loader>/<MC>/, which is confusing when you go to upload to Modrinth
-# (you might pick the wrong one) and bloats the dist/ tree over time.
-#
-# Scope: only delete files matching the retromod naming pattern. Leaves any
-# user-added files (notes, scripts, custom configs) in dist/ untouched.
-if [ -d dist ]; then
-    find dist -name "retromod-*.jar" -type f -delete 2>/dev/null
+# Release artifacts need a fresh external checksum manifest. Linux commonly
+# provides sha256sum, while macOS provides shasum.
+if command -v sha256sum &> /dev/null; then
+    SHA256_TOOL="sha256sum"
+elif command -v shasum &> /dev/null; then
+    SHA256_TOOL="shasum"
+else
+    echo "ERROR: Neither sha256sum nor shasum is installed."
+    exit 1
 fi
 
-# Create output directories
-mkdir -p dist/Fabric
-mkdir -p dist/Forge
-mkdir -p dist/NeoForge
-mkdir -p dist/CLI
-
-# Check for --skip-build flag (used when called from Maven)
+# Check release/build flags.
 SKIP_BUILD=false
+REQUIRE_SELF_HASH=false
 for arg in "$@"; do
     if [ "$arg" = "--skip-build" ]; then
         SKIP_BUILD=true
+    elif [ "$arg" = "--require-self-hash" ]; then
+        REQUIRE_SELF_HASH=true
     fi
 done
 
@@ -97,29 +94,72 @@ if [ "$SKIP_BUILD" = false ]; then
     # Build the base JAR first
     echo "[Step 1/4] Building base JAR with Maven..."
     # The exec plugin calls this script with --skip-build to create dist/. Skipping it here avoids
-    # running the entire 67-jar distribution phase once inside Maven and then again below.
+    # running the entire 69-jar distribution phase once inside Maven and then again below.
     mvn clean package -DskipTests -Dexec.skip=true
 else
     echo "[Step 1/4] Skipping Maven build (--skip-build flag)"
 fi
 
-# Find the shaded JAR (with all dependencies bundled)
-SHADED_JAR=""
-if [ -f "target/retromod-${VERSION}-all.jar" ]; then
-    SHADED_JAR="target/retromod-${VERSION}-all.jar"
-else
-    # Fallback: find any -all.jar
-    SHADED_JAR=$(find target -maxdepth 1 -name "retromod*-all.jar" | head -1)
-fi
+# Require the exact versioned shaded JAR. Falling back to an arbitrary old
+# target/retromod-*-all.jar can silently package stale code under new names.
+SHADED_JAR="target/retromod-${VERSION}-all.jar"
 
-if [ -z "$SHADED_JAR" ] || [ ! -f "$SHADED_JAR" ]; then
-    echo "ERROR: Shaded JAR not found in target/"
+if [ ! -f "$SHADED_JAR" ]; then
+    echo "ERROR: Expected shaded JAR not found: $SHADED_JAR"
     echo "Make sure maven-shade-plugin ran successfully."
     echo "Build failed"
     exit 1
 fi
 
 echo "  Shaded JAR: $SHADED_JAR (with bundled dependencies)"
+
+POM_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+if [ "$POM_VERSION" != "$VERSION" ]; then
+    echo "ERROR: build-all.sh VERSION ($VERSION) does not match pom.xml ($POM_VERSION)."
+    exit 1
+fi
+
+# Reject a stale embedded hash before any distribution jars are produced. A
+# blank hash is allowed for normal development builds, but release automation
+# passes --require-self-hash and refuses it.
+HASH_DECL=$(javap -classpath "$SHADED_JAR" -p -constants \
+    com.retromod.security.SignatureVerifier 2>/dev/null \
+    | sed -n '/EXPECTED_SELF_HASH/p')
+if [ -z "$HASH_DECL" ]; then
+    echo "ERROR: Could not read EXPECTED_SELF_HASH from $SHADED_JAR."
+    exit 1
+fi
+EMBEDDED_SELF_HASH=$(printf '%s\n' "$HASH_DECL" \
+    | sed -n 's/.*EXPECTED_SELF_HASH = "\([0-9A-Fa-f]*\)";.*/\1/p' \
+    | tr '[:lower:]' '[:upper:]')
+COMPUTED_SELF_HASH=$(python3 scripts/compute-self-hash.py "$SHADED_JAR")
+if [ -n "$EMBEDDED_SELF_HASH" ] && [ "$EMBEDDED_SELF_HASH" != "$COMPUTED_SELF_HASH" ]; then
+    echo "ERROR: Embedded self-hash does not match the shaded JAR."
+    echo "  embedded: $EMBEDDED_SELF_HASH"
+    echo "  computed: $COMPUTED_SELF_HASH"
+    exit 1
+fi
+if [ "$REQUIRE_SELF_HASH" = true ] && [ -z "$EMBEDDED_SELF_HASH" ]; then
+    echo "ERROR: --require-self-hash was set, but the build has no embedded self-hash."
+    exit 1
+fi
+if [ -z "$EMBEDDED_SELF_HASH" ]; then
+    echo "  Self-hash: development build (not embedded)"
+else
+    echo "  Self-hash: $EMBEDDED_SELF_HASH (verified)"
+fi
+
+# Remove stale Retromod jars only after every build and integrity preflight has
+# passed. A bad version or self-hash must not erase the last usable dist tree.
+# User-added notes and other files under dist/ are left alone.
+if [ -d dist ]; then
+    find dist -name "retromod-*.jar" -type f -delete 2>/dev/null
+fi
+
+mkdir -p dist/Fabric
+mkdir -p dist/Forge
+mkdir -p dist/NeoForge
+mkdir -p dist/CLI
 
 echo ""
 echo "[Step 2/4] Creating CLI tool..."
@@ -132,8 +172,9 @@ echo ""
 echo "[Step 3/4] Creating loader-specific JARs..."
 
 # Defensive guard: host MC versions below 1.20 never go into dist/.
-# Retromod itself requires Java 25 and MC 1.20+ to run as a mod - earlier MC
-# versions are only relevant as TRANSLATION SOURCES (the shim chain walks an
+# The release build requires JDK 25, while shipped Retromod bytecode targets
+# Java 17. Each host jar declares the JVM floor required by that Minecraft
+# version. Earlier MC versions are only relevant as TRANSLATION SOURCES (the shim chain walks an
 # old mod forward to your 1.20+ host), not as host targets. If someone later
 # adds "1.19.2" or "1.16.5" to MC_VERSIONS by mistake, this filter stops it
 # from producing a dist/ artifact rather than silently shipping a broken build.
@@ -153,12 +194,8 @@ is_host_mc_supported() {
 
 # Function to check if a loader supports a given MC version.
 #
-# This is more nuanced than a simple "loader started at version X" cutoff -
-# NeoForge in particular skips MC patch releases. For the 26.x line NeoForge
-# has only released builds for 26.1.2 (as of this writing), NOT 26.1 or
-# 26.1.1. Building our own Retromod-for-NeoForge JAR that declares 26.1 or
-# 26.1.1 as its MC version would produce an artifact nobody can use because
-# there's no NeoForge loader for those MC patches.
+# This is more nuanced than a simple "loader started at version X" cutoff because
+# loader coverage does not always begin at the first Minecraft patch in a release line.
 #
 # Keep this synced with:
 #   Fabric intermediary:  https://maven.fabricmc.net/net/fabricmc/intermediary/
@@ -169,14 +206,11 @@ loader_supports_version() {
     local ver=$2
     case $loader in
         neoforge)
-            # Started at 1.20.1; patch-release coverage is uneven.
+            # NeoForge started at 1.20.1. Current releases cover every listed host after that.
             case $ver in
                 # Before NeoForge existed
                 1.12*|1.13*|1.14*|1.15*|1.16*|1.17*|1.18*|1.19*|1.20) return 1 ;;
-                # 26.x: NeoForge skipped the 26.1 and 26.1.1 patches (only 26.1.2
-                # got a build); 26.2 shipped a NeoForge build, so it's allowed.
-                26.1|26.1.1) return 1 ;;
-                # Everything else (1.20.1+, 1.21.x, 26.1.2) is supported
+                # Everything else in MC_VERSIONS is supported.
                 *) return 0 ;;
             esac
             ;;
@@ -371,14 +405,8 @@ create_mod_jar() {
         1.21.10)                NEOFORGE_LV="21.10" ;;
         1.21.11)                NEOFORGE_LV="21.11" ;;
         26.1*)                  NEOFORGE_LV="26.1" ;;
-        # 26.2: NeoForge has only shipped a PRE-RELEASE so far (26.2.0.0-beta).
-        # Maven version ordering sorts a "-beta" qualifier BELOW the bare release,
-        # so a range of "[26.2,)" does NOT match 26.2.0.0-beta - the mod is rejected
-        # with "requires neoforge 26.2 or above" against an actual 26.2.0.0-beta
-        # (caught in-game on the 26.2 NeoForge instance). Use the pre-release as the
-        # inclusive floor: "[26.2.0.0-beta,)" matches the beta AND every later 26.2
-        # build (the eventual stable 26.2.0.0 sorts above its own beta), while still
-        # excluding 26.1.x. The minecraft "[26.2]" constraint remains the real gate.
+        # Keep the earliest compatible 26.2 beta as the floor. Maven ordering places every
+        # stable 26.2 build above it, while the exact Minecraft dependency remains the host gate.
         26.2*)                  NEOFORGE_LV="26.2.0.0-beta" ;;
         *)                      NEOFORGE_LV="20" ;;  # Permissive fallback
     esac
@@ -564,7 +592,7 @@ echo "Build complete"
 echo
 echo "Output structure:"
 echo "  dist/Fabric/     hosts 1.20 through 26.2"
-echo "  dist/Forge/      hosts 1.20 through 26.1.2"
+echo "  dist/Forge/      hosts 1.20 through 26.2"
 echo "  dist/NeoForge/   hosts 1.20.1 through 26.2"
 echo "  dist/CLI/        retromod-${VERSION}-cli.jar"
 echo ""
@@ -581,22 +609,57 @@ if [ $FAILED -gt 0 ]; then
     echo "  ${FAILED} JAR(s) failed to build."
 fi
 
-# A successful command can still produce no jar, so verify the output itself.
-EXPECTED_MIN=${EXPECTED_MIN:-60}   # 22 Fabric + 22 Forge + 19 NeoForge + 1 CLI = 64; floor leaves slack
+# A successful command can still omit a target, so require the complete release matrix.
+EXPECTED_FABRIC=23
+EXPECTED_FORGE=23
+EXPECTED_NEOFORGE=22
+EXPECTED_CLI=1
+EXPECTED_TOTAL=69
 RELEASE_OK=1
-if [ "$TOTAL_COUNT" -lt "$EXPECTED_MIN" ]; then
-    echo ""
-    echo "  The build produced ${TOTAL_COUNT} JARs, but at least ${EXPECTED_MIN} were expected."
-    echo "  Do not publish this incomplete dist folder."
-    RELEASE_OK=0
-fi
-for pair in "Fabric:${FABRIC_COUNT}" "Forge:${FORGE_COUNT}" "NeoForge:${NEOFORGE_COUNT}" "CLI:${CLI_COUNT}"; do
-    name=${pair%%:*}; n=${pair##*:}
-    if [ "$n" -eq 0 ]; then
-        echo "  ${name} produced no JARs, so that loader is missing."
+for triple in \
+        "Fabric:${FABRIC_COUNT}:${EXPECTED_FABRIC}" \
+        "Forge:${FORGE_COUNT}:${EXPECTED_FORGE}" \
+        "NeoForge:${NEOFORGE_COUNT}:${EXPECTED_NEOFORGE}" \
+        "CLI:${CLI_COUNT}:${EXPECTED_CLI}"; do
+    name=${triple%%:*}
+    remainder=${triple#*:}
+    actual=${remainder%%:*}
+    expected=${remainder##*:}
+    if [ "$actual" -ne "$expected" ]; then
+        echo "  ${name} produced ${actual} JARs, but ${expected} were expected."
         RELEASE_OK=0
     fi
 done
+if [ "$TOTAL_COUNT" -ne "$EXPECTED_TOTAL" ]; then
+    echo "  The build produced ${TOTAL_COUNT} JARs, but ${EXPECTED_TOTAL} were expected."
+    RELEASE_OK=0
+fi
+
+if [ "$RELEASE_OK" -eq 1 ] && [ "$FAILED" -eq 0 ]; then
+    if [ "$SHA256_TOOL" = "sha256sum" ]; then
+        (
+            cd dist || exit 1
+            find Fabric Forge NeoForge CLI -type f -name "*.jar" -print0 \
+                | xargs -0 sha256sum \
+                | LC_ALL=C sort -k2
+        ) > dist/SHA256SUMS.txt
+    else
+        (
+            cd dist || exit 1
+            find Fabric Forge NeoForge CLI -type f -name "*.jar" -print0 \
+                | xargs -0 shasum -a 256 \
+                | LC_ALL=C sort -k2
+        ) > dist/SHA256SUMS.txt
+    fi
+
+    CHECKSUM_COUNT=$(wc -l < dist/SHA256SUMS.txt | tr -d ' ')
+    if [ "$CHECKSUM_COUNT" -ne "$EXPECTED_TOTAL" ]; then
+        echo "  The checksum manifest has ${CHECKSUM_COUNT} entries, but ${EXPECTED_TOTAL} were expected."
+        RELEASE_OK=0
+    else
+        echo "  SHA-256 manifest: dist/SHA256SUMS.txt (${CHECKSUM_COUNT} entries)"
+    fi
+fi
 
 echo ""
 if [ "$RELEASE_OK" -eq 1 ] && [ "$FAILED" -eq 0 ]; then

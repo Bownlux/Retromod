@@ -98,7 +98,7 @@ public final class ClientTickCallbackBridge {
                     }
                 });
 
-                register1Arg(endClientTick).invoke(endClientTick, endTickListener);
+                registerListener(eventClass, endClientTick, endTickListener);
             } catch (Throwable t) {
                 System.out.println(TAG + "could not attach to ClientTickEvents.END_CLIENT_TICK (" + t + "); "
                         + "ClientTickCallback listeners will register but won't fire.");
@@ -111,14 +111,10 @@ public final class ClientTickCallbackBridge {
         }
     }
 
-    /** The single-arg {@code Event.register(T)} (skips the phase {@code register(ResourceLocation, T)} overload). */
-    private static Method register1Arg(Object event) {
-        for (Method m : event.getClass().getMethods()) {
-            if ("register".equals(m.getName()) && m.getParameterCount() == 1) {
-                return m;
-            }
-        }
-        throw new IllegalStateException("no 1-arg register on " + event.getClass());
+    /** Invoke through the public Event API, since its runtime implementation is package-private. */
+    static void registerListener(Class<?> eventType, Object event, Object listener)
+            throws ReflectiveOperationException {
+        eventType.getMethod("register", Object.class).invoke(event, listener);
     }
 
     private static Method sam(Class<?> declared) {

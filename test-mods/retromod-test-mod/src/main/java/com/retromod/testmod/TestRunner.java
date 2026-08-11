@@ -26,6 +26,12 @@ import com.retromod.testmod.tests.TagTests;
 import com.retromod.testmod.tests.Test05SuperKeyPressed;
 import com.retromod.testmod.tests.Test06RenderPipelineBridge;
 import com.retromod.testmod.tests.Test07PlayerModelPartsAccessor;
+import com.retromod.testmod.tests.Test08AutomaticMixinDescriptor;
+import com.retromod.testmod.tests.Test09ConstructorHeuristicIsolation;
+import com.retromod.testmod.tests.Test10ExactTargetPrefixCapture;
+import com.retromod.testmod.tests.Test11ChatOptionsSuperclass;
+import com.retromod.testmod.tests.Test12ClientCommandParserAccessor;
+import com.retromod.testmod.tests.Test13WindowHandleShim;
 import com.retromod.testmod.tests.TextTests;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -74,13 +80,19 @@ public final class TestRunner {
         all.add(new Test05SuperKeyPressed());
         all.add(new Test06RenderPipelineBridge());
         all.add(new Test07PlayerModelPartsAccessor());
+        all.add(new Test08AutomaticMixinDescriptor());
+        all.add(new Test09ConstructorHeuristicIsolation());
+        all.add(new Test10ExactTargetPrefixCapture());
+        all.add(new Test11ChatOptionsSuperclass());
+        all.add(new Test12ClientCommandParserAccessor());
         return List.copyOf(all);
     }
 
     private static List<Test> buildClientStartedSuite() {
-        // ItemStack construction needs the component registry to be frozen,
-        // which does not happen until a world is loaded on current hosts.
-        return List.of();
+        // The GLFW window is assigned after client entry points run during Minecraft
+        // construction. CLIENT_STARTED is the first harness phase where its native handle
+        // can be read safely.
+        return List.of(new Test13WindowHandleShim());
     }
 
     private static List<Test> buildWorldJoinSuite() {

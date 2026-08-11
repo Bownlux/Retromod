@@ -4,6 +4,9 @@
  */
 package com.retromod.gui;
 
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.retromod.util.McI18n;
 import com.retromod.util.McReflect;
 import org.slf4j.Logger;
@@ -12,7 +15,9 @@ import org.slf4j.LoggerFactory;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -47,15 +52,9 @@ public final class ConfigScreenFactory {
      */
     private static final String[] TOGGLE_KEYS = {
         "use_aot",
-        "use_hybrid",
-        "transform_mixins",
-        "transform_refmaps",
-        "remap_reflection",
         "polyfills_enabled",
         "verify_transforms",
         "force_translate_complex",
-        "log_transformations",
-        "debug",
     };
 
     private ConfigScreenFactory() {}
@@ -269,14 +268,6 @@ public final class ConfigScreenFactory {
     static Map<String, Boolean> loadConfig() {
         Map<String, Boolean> config = new LinkedHashMap<>();
         config.put("use_aot", true);
-        config.put("use_hybrid", true);
-        config.put("instruction_level_granularity", true);
-        config.put("transform_mixins", true);
-        config.put("transform_refmaps", true);
-        config.put("remap_reflection", true);
-        config.put("log_transformations", false);
-        config.put("debug", false);
-        config.put("dump_bytecode", false);
         config.put("force_translate_complex", false);
         config.put("polyfills_enabled", true);
         config.put("verify_transforms", true);
@@ -303,47 +294,43 @@ public final class ConfigScreenFactory {
     static void saveConfig(Map<String, Boolean> config) {
         try {
             Files.createDirectories(CONFIG_PATH.getParent());
-
             String existing = Files.exists(CONFIG_PATH) ? Files.readString(CONFIG_PATH) : "";
-            String targetVersion = extractStringValue(existing, "target_mc_version", "auto");
-            String logLevel = extractStringValue(existing, "log_level", "INFO");
-
-            StringBuilder sb = new StringBuilder();
-            sb.append("{\n");
-            sb.append("  \"_comment\": \"Retromod Configuration - https://github.com/Bownlux/Retromod\",\n\n");
-            sb.append("  \"use_aot\": ").append(config.getOrDefault("use_aot", true)).append(",\n");
-            sb.append("  \"use_hybrid\": ").append(config.getOrDefault("use_hybrid", true)).append(",\n");
-            sb.append("  \"instruction_level_granularity\": ").append(config.getOrDefault("instruction_level_granularity", true)).append(",\n\n");
-            sb.append("  \"transform_mixins\": ").append(config.getOrDefault("transform_mixins", true)).append(",\n");
-            sb.append("  \"transform_refmaps\": ").append(config.getOrDefault("transform_refmaps", true)).append(",\n\n");
-            sb.append("  \"remap_reflection\": ").append(config.getOrDefault("remap_reflection", true)).append(",\n\n");
-            sb.append("  \"log_level\": \"").append(logLevel).append("\",\n");
-            sb.append("  \"log_transformations\": ").append(config.getOrDefault("log_transformations", false)).append(",\n\n");
-            sb.append("  \"target_mc_version\": \"").append(targetVersion).append("\",\n\n");
-            sb.append("  \"debug\": ").append(config.getOrDefault("debug", false)).append(",\n");
-            sb.append("  \"dump_bytecode\": ").append(config.getOrDefault("dump_bytecode", false)).append(",\n\n");
-            sb.append("  \"force_translate_complex\": ").append(config.getOrDefault("force_translate_complex", false)).append(",\n\n");
-            sb.append("  \"polyfills_enabled\": ").append(config.getOrDefault("polyfills_enabled", true)).append(",\n\n");
-            sb.append("  \"verify_transforms\": ").append(config.getOrDefault("verify_transforms", true)).append("\n");
-            sb.append("}\n");
-
-            Files.writeString(CONFIG_PATH, sb.toString());
+            String merged = mergeConfigJson(existing, config);
+            Path temp = Files.createTempFile(CONFIG_PATH.getParent(), ".config.json.", ".tmp");
+            try {
+                Files.writeString(temp, merged);
+                try {
+                    Files.move(temp, CONFIG_PATH, StandardCopyOption.ATOMIC_MOVE,
+                            StandardCopyOption.REPLACE_EXISTING);
+                } catch (AtomicMoveNotSupportedException e) {
+                    Files.move(temp, CONFIG_PATH, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } finally {
+                Files.deleteIfExists(temp);
+            }
         } catch (Exception e) {
             LOGGER.warn("Could not save config: {}", e.getMessage());
         }
     }
 
-    private static String extractStringValue(String json, String key, String defaultValue) {
-        if (json == null || json.isEmpty()) return defaultValue;
-        int idx = json.indexOf("\"" + key + "\"");
-        if (idx < 0) return defaultValue;
-        int colon = json.indexOf(':', idx);
-        if (colon < 0) return defaultValue;
-        int qStart = json.indexOf('"', colon + 1);
-        if (qStart < 0) return defaultValue;
-        int qEnd = json.indexOf('"', qStart + 1);
-        if (qEnd < 0) return defaultValue;
-        return json.substring(qStart + 1, qEnd);
+    static String mergeConfigJson(String existing, Map<String, Boolean> config) {
+        JsonObject root = new JsonObject();
+        if (existing != null && !existing.isBlank()) {
+            try {
+                var parsed = JsonParser.parseString(existing);
+                if (parsed.isJsonObject()) root = parsed.getAsJsonObject();
+            } catch (Exception ignored) {
+                // Invalid JSON is replaced with a clean, usable config.
+            }
+        }
+        if (!root.has("_comment")) {
+            root.addProperty("_comment",
+                    "Retromod Configuration - https://github.com/Bownlux/Retromod");
+        }
+        for (var entry : config.entrySet()) {
+            root.addProperty(entry.getKey(), entry.getValue());
+        }
+        return new GsonBuilder().setPrettyPrinting().create().toJson(root) + "\n";
     }
 
     // MC CLASS RESOLUTION

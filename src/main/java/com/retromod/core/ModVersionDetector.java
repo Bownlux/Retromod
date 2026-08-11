@@ -5,9 +5,11 @@
 package com.retromod.core;
 
 import com.retromod.embedder.ModVersionInfo;
+import com.retromod.util.ZipSecurity;
 import com.google.gson.*;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.jar.*;
@@ -21,9 +23,15 @@ public class ModVersionDetector {
     private static final org.slf4j.Logger LOGGER =
             org.slf4j.LoggerFactory.getLogger("Retromod-Detector");
     private static final Gson GSON = new GsonBuilder().create();
+    private static final int MAX_ARCHIVE_ENTRIES = 100_000;
+    private static final long MAX_METADATA_SIZE = 2L * 1024 * 1024;
+    private static final long MAX_CLASS_SCAN_SIZE = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
 
     public ModVersionInfo detectVersion(Path modJarPath) throws IOException {
         try (JarFile jar = new JarFile(modJarPath.toFile())) {
+            if (jar.size() > MAX_ARCHIVE_ENTRIES) {
+                throw new IOException("Mod archive has too many entries: " + jar.size());
+            }
             JarEntry fabricEntry = jar.getJarEntry("fabric.mod.json");
             if (fabricEntry != null) {
                 return parseFabricMod(jar, fabricEntry);
@@ -49,31 +57,28 @@ public class ModVersionDetector {
     }
 
     private ModVersionInfo parseFabricMod(JarFile jar, JarEntry entry) throws IOException {
-        try (InputStream is = jar.getInputStream(entry);
-             Reader reader = new InputStreamReader(is)) {
+        String metadata = readMetadata(jar, entry);
+        JsonObject json = GSON.fromJson(metadata, JsonObject.class);
 
-            JsonObject json = GSON.fromJson(reader, JsonObject.class);
+        String modId = json.has("id") ? json.get("id").getAsString() : "unknown";
+        String modVersion = json.has("version") ? json.get("version").getAsString() : "unknown";
+        String targetMcVersion = extractFabricMcVersion(json);
+        String fabricApiVersion = extractFabricApiVersion(json);
 
-            String modId = json.has("id") ? json.get("id").getAsString() : "unknown";
-            String modVersion = json.has("version") ? json.get("version").getAsString() : "unknown";
-            String targetMcVersion = extractFabricMcVersion(json);
-            String fabricApiVersion = extractFabricApiVersion(json);
-
-            Set<String> packages = scanModPackages(jar, modId);
-            Set<String> apiDeps = scanApiDependencies(jar);
-            boolean usesRemoved = checkForRemovedApis(apiDeps);
+        Set<String> packages = scanModPackages(jar, modId);
+        Set<String> apiDeps = scanApiDependencies(jar);
+        boolean usesRemoved = checkForRemovedApis(apiDeps);
             
-            return new ModVersionInfo(
-                modId,
-                modVersion,
-                targetMcVersion,
-                "fabric",
-                fabricApiVersion,
-                packages,
-                apiDeps,
-                usesRemoved
-            );
-        }
+        return new ModVersionInfo(
+            modId,
+            modVersion,
+            targetMcVersion,
+            "fabric",
+            fabricApiVersion,
+            packages,
+            apiDeps,
+            usesRemoved
+        );
     }
     
     private String extractFabricMcVersion(JsonObject json) {
@@ -133,111 +138,96 @@ public class ModVersionDetector {
     }
 
     private ModVersionInfo parseForgeMod(JarFile jar, JarEntry entry) throws IOException {
-        try (InputStream is = jar.getInputStream(entry);
-             BufferedReader reader = new BufferedReader(new InputStreamReader(is))) {
+        String tomlContent = readMetadata(jar, entry);
 
-            StringBuilder fullContent = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                fullContent.append(line).append("\n");
-            }
-            String tomlContent = fullContent.toString();
+        Map<String, String> toml = parseSimpleToml(
+            new BufferedReader(new java.io.StringReader(tomlContent)));
 
-            Map<String, String> toml = parseSimpleToml(
-                new BufferedReader(new java.io.StringReader(tomlContent)));
-
-            String modId = extractPrimaryModValue(tomlContent, "modId",
-                    toml.getOrDefault("modId", "unknown"));
-            String modVersion = extractPrimaryModValue(tomlContent, "version",
-                    toml.getOrDefault("version", "unknown"));
-            String mcVersion = extractMcVersionFromToml(tomlContent);
-            if (mcVersion == null) {
-                mcVersion = inferMcVersionFromModVersion(modVersion);
-            }
-            String forgeVersion = toml.get("forge");
-
-            Set<String> packages = scanModPackages(jar, modId);
-            Set<String> apiDeps = scanApiDependencies(jar);
-
-            return new ModVersionInfo(
-                modId,
-                modVersion,
-                mcVersion,
-                "forge",
-                forgeVersion,
-                packages,
-                apiDeps,
-                checkForRemovedApis(apiDeps)
-            );
+        String modId = extractPrimaryModValue(tomlContent, "modId",
+                toml.getOrDefault("modId", "unknown"));
+        String modVersion = extractPrimaryModValue(tomlContent, "version",
+                toml.getOrDefault("version", "unknown"));
+        String mcVersion = extractMcVersionFromToml(tomlContent);
+        if (mcVersion == null) {
+            mcVersion = inferMcVersionFromModVersion(modVersion);
         }
+        String forgeVersion = toml.get("forge");
+
+        Set<String> packages = scanModPackages(jar, modId);
+        Set<String> apiDeps = scanApiDependencies(jar);
+
+        return new ModVersionInfo(
+            modId,
+            modVersion,
+            mcVersion,
+            "forge",
+            forgeVersion,
+            packages,
+            apiDeps,
+            checkForRemovedApis(apiDeps)
+        );
     }
     
     private ModVersionInfo parseLegacyForgeMod(JarFile jar, JarEntry entry) throws IOException {
-        try (InputStream is = jar.getInputStream(entry);
-             Reader reader = new InputStreamReader(is)) {
+        JsonArray array = GSON.fromJson(readMetadata(jar, entry), JsonArray.class);
+        if (array.isEmpty()) return null;
 
-            JsonArray array = GSON.fromJson(reader, JsonArray.class);
-            if (array.isEmpty()) return null;
+        JsonObject first = array.get(0).getAsJsonObject();
 
-            JsonObject first = array.get(0).getAsJsonObject();
-
-            String modId = first.has("modid") ? first.get("modid").getAsString() : "unknown";
-            String modVersion = first.has("version") ? first.get("version").getAsString() : "unknown";
-            String mcVersion = first.has("mcversion") ? first.get("mcversion").getAsString() : null;
+        String modId = first.has("modid") ? first.get("modid").getAsString() : "unknown";
+        String modVersion = first.has("version") ? first.get("version").getAsString() : "unknown";
+        String mcVersion = first.has("mcversion") ? first.get("mcversion").getAsString() : null;
             
-            Set<String> packages = scanModPackages(jar, modId);
-            Set<String> apiDeps = scanApiDependencies(jar);
+        Set<String> packages = scanModPackages(jar, modId);
+        Set<String> apiDeps = scanApiDependencies(jar);
             
-            return new ModVersionInfo(
-                modId,
-                modVersion,
-                mcVersion,
-                "forge",
-                null,
-                packages,
-                apiDeps,
-                checkForRemovedApis(apiDeps)
-            );
-        }
+        return new ModVersionInfo(
+            modId,
+            modVersion,
+            mcVersion,
+            "forge",
+            null,
+            packages,
+            apiDeps,
+            checkForRemovedApis(apiDeps)
+        );
     }
     
     private ModVersionInfo parseNeoForgeMod(JarFile jar, JarEntry entry) throws IOException {
-        try (InputStream is = jar.getInputStream(entry);
-             BufferedReader reader = new BufferedReader(new InputStreamReader(is))) {
+        String tomlContent = readMetadata(jar, entry);
 
-            StringBuilder fullContent = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                fullContent.append(line).append("\n");
-            }
-            String tomlContent = fullContent.toString();
+        Map<String, String> toml = parseSimpleToml(
+            new BufferedReader(new java.io.StringReader(tomlContent)));
 
-            Map<String, String> toml = parseSimpleToml(
-                new BufferedReader(new java.io.StringReader(tomlContent)));
+        String modId = extractPrimaryModValue(tomlContent, "modId",
+                toml.getOrDefault("modId", "unknown"));
+        String modVersion = extractPrimaryModValue(tomlContent, "version",
+                toml.getOrDefault("version", "unknown"));
+        String mcVersion = extractMcVersionFromToml(tomlContent);
+        if (mcVersion == null) {
+            mcVersion = inferMcVersionFromModVersion(modVersion);
+        }
+        String neoforgeVersion = toml.get("neoforge");
 
-            String modId = extractPrimaryModValue(tomlContent, "modId",
-                    toml.getOrDefault("modId", "unknown"));
-            String modVersion = extractPrimaryModValue(tomlContent, "version",
-                    toml.getOrDefault("version", "unknown"));
-            String mcVersion = extractMcVersionFromToml(tomlContent);
-            if (mcVersion == null) {
-                mcVersion = inferMcVersionFromModVersion(modVersion);
-            }
-            String neoforgeVersion = toml.get("neoforge");
+        Set<String> packages = scanModPackages(jar, modId);
+        Set<String> apiDeps = scanApiDependencies(jar);
 
-            Set<String> packages = scanModPackages(jar, modId);
-            Set<String> apiDeps = scanApiDependencies(jar);
+        return new ModVersionInfo(
+            modId,
+            modVersion,
+            mcVersion,
+            "neoforge",
+            neoforgeVersion,
+            packages,
+            apiDeps,
+            checkForRemovedApis(apiDeps)
+        );
+    }
 
-            return new ModVersionInfo(
-                modId,
-                modVersion,
-                mcVersion,
-                "neoforge",
-                neoforgeVersion,
-                packages,
-                apiDeps,
-                checkForRemovedApis(apiDeps)
-            );
+    private String readMetadata(JarFile jar, JarEntry entry) throws IOException {
+        try (InputStream input = jar.getInputStream(entry)) {
+            return new String(ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE),
+                    StandardCharsets.UTF_8);
         }
     }
 
@@ -430,7 +420,12 @@ public class ModVersionDetector {
         Enumeration<JarEntry> entries = jar.entries();
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
-            String name = entry.getName();
+            String name;
+            try {
+                name = ZipSecurity.safeEntryName(entry.getName());
+            } catch (IOException e) {
+                continue;
+            }
 
             if (name.endsWith(".class") && !name.startsWith("META-INF")) {
                 int lastSlash = name.lastIndexOf('/');
@@ -454,15 +449,25 @@ public class ModVersionDetector {
     /** Loader API package references found in the mod's class bytes (constant-pool substring scan). */
     private Set<String> scanApiDependencies(JarFile jar) {
         Set<String> apis = new HashSet<>();
+        long remainingBytes = MAX_CLASS_SCAN_SIZE;
 
         Enumeration<JarEntry> entries = jar.entries();
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
+            String name;
+            try {
+                name = ZipSecurity.safeEntryName(entry.getName());
+            } catch (IOException e) {
+                continue;
+            }
 
-            if (entry.getName().endsWith(".class")) {
+            if (name.endsWith(".class")) {
+                if (remainingBytes <= 0) break;
+                long readLimit = Math.min(ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, remainingBytes);
                 try (InputStream is = jar.getInputStream(entry)) {
-                    byte[] bytes = is.readAllBytes();
-                    String content = new String(bytes, "ISO-8859-1");
+                    byte[] bytes = ZipSecurity.safeReadAllBytes(is, readLimit);
+                    remainingBytes -= bytes.length;
+                    String content = new String(bytes, StandardCharsets.ISO_8859_1);
 
                     if (content.contains("net/fabricmc/")) {
                         apis.add("fabric-api");
@@ -475,6 +480,7 @@ public class ModVersionDetector {
                     }
                 } catch (Exception e) {
                     // ignore unreadable entries
+                    remainingBytes -= readLimit;
                 }
             }
         }

@@ -6,6 +6,7 @@ package com.retromod.mixin;
 
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FrameNode;
@@ -51,6 +52,23 @@ final class MixinLegacyMemberBridge {
     private static final String INVENTORY_SCREEN_INTERMEDIARY = "net/minecraft/class_490";
     private static final String OLD_EFFECTS_INVENTORY_SCREEN_INTERMEDIARY = "net/minecraft/class_485";
     private static final String CONTAINER_SCREEN_INTERMEDIARY = "net/minecraft/class_465";
+    private static final String CHAT_OPTIONS_SCREEN =
+            "net/minecraft/client/gui/screens/options/ChatOptionsScreen";
+    private static final String SIMPLE_OPTIONS_SCREEN =
+            "net/minecraft/client/gui/screens/SimpleOptionsSubScreen";
+    private static final String SIMPLE_OPTIONS_SCREEN_PLACEHOLDER =
+            "com/retromod/polyfill/minecraft/mixin/embedded/ChatOptionsScreenStub";
+    private static final String OPTIONS_SCREEN =
+            "net/minecraft/client/gui/screens/options/OptionsSubScreen";
+    private static final String CHAT_OPTIONS_OLD_CTOR =
+            "(Lnet/minecraft/client/gui/screens/Screen;"
+            + "Lnet/minecraft/client/Options;"
+            + "Lnet/minecraft/network/chat/Component;"
+            + "[Lnet/minecraft/client/OptionInstance;)V";
+    private static final String CHAT_OPTIONS_NEW_CTOR =
+            "(Lnet/minecraft/client/gui/screens/Screen;"
+            + "Lnet/minecraft/client/Options;"
+            + "Lnet/minecraft/network/chat/Component;)V";
 
     /**
      * Worldgen type wrappers whose registrar takes a {@code MapCodec} on current hosts.
@@ -93,6 +111,9 @@ final class MixinLegacyMemberBridge {
         if (targets.contains(INVENTORY_SCREEN_INTERMEDIARY)) {
             modified |= rebaseLegacyInventoryScreenMixin(classNode);
         }
+        if (targets.size() == 1 && targets.contains(CHAT_OPTIONS_SCREEN)) {
+            modified |= rebaseLegacyChatOptionsMixin(classNode);
+        }
         // Each bridge below calls a private member of the target, which is only legal once the
         // mixin has been merged into it.
         if (!mergesIntoTarget(classNode)) return modified;
@@ -131,6 +152,66 @@ final class MixinLegacyMemberBridge {
         }
         return true;
     }
+
+    /**
+     * The options screen hierarchy dropped {@code SimpleOptionsSubScreen} and moved the option
+     * list out of its superclass constructor. No Chat Reports carries the old array only to pass
+     * it to {@code super}, so removing that one load preserves the mixin's own constructor API and
+     * every feature method while satisfying the current target hierarchy.
+     */
+    private static boolean rebaseLegacyChatOptionsMixin(ClassNode classNode) {
+        if (!com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
+                    com.retromod.core.RetromodVersion.TARGET_MC_VERSION)
+                || (!SIMPLE_OPTIONS_SCREEN.equals(classNode.superName)
+                    && !SIMPLE_OPTIONS_SCREEN_PLACEHOLDER.equals(classNode.superName))) {
+            return false;
+        }
+
+        String legacySuper = classNode.superName;
+        List<ConstructorRebase> constructors = new ArrayList<>();
+        List<MethodInsnNode> initCalls = new ArrayList<>();
+        for (MethodNode method : classNode.methods) {
+            for (AbstractInsnNode instruction : method.instructions.toArray()) {
+                if (!(instruction instanceof MethodInsnNode call)
+                        || call.getOpcode() != Opcodes.INVOKESPECIAL
+                        || !legacySuper.equals(call.owner)) {
+                    continue;
+                }
+                if ("<init>".equals(call.name) && CHAT_OPTIONS_OLD_CTOR.equals(call.desc)) {
+                    AbstractInsnNode arrayLoad = previousOpcode(call);
+                    if (!(arrayLoad instanceof VarInsnNode load)
+                            || load.getOpcode() != Opcodes.ALOAD || load.var != 4) {
+                        return false;
+                    }
+                    constructors.add(new ConstructorRebase(method, call, arrayLoad));
+                } else if ("init".equals(call.name) && "()V".equals(call.desc)) {
+                    initCalls.add(call);
+                } else {
+                    // A direct call to any other removed-super member needs a semantic bridge.
+                    return false;
+                }
+            }
+        }
+        if (constructors.isEmpty()) return false;
+
+        classNode.superName = OPTIONS_SCREEN;
+        for (ConstructorRebase constructor : constructors) {
+            constructor.method().instructions.remove(constructor.removedArgument());
+            constructor.call().owner = OPTIONS_SCREEN;
+            constructor.call().desc = CHAT_OPTIONS_NEW_CTOR;
+        }
+        for (MethodInsnNode initCall : initCalls) initCall.owner = OPTIONS_SCREEN;
+        return true;
+    }
+
+    private static AbstractInsnNode previousOpcode(AbstractInsnNode instruction) {
+        AbstractInsnNode previous = instruction.getPrevious();
+        while (previous != null && previous.getOpcode() < 0) previous = previous.getPrevious();
+        return previous;
+    }
+
+    private record ConstructorRebase(
+            MethodNode method, MethodInsnNode call, AbstractInsnNode removedArgument) {}
 
     /**
      * Minecraft 1.21.2 made the smithing transform recipe's template and addition ingredients
@@ -405,6 +486,12 @@ final class MixinLegacyMemberBridge {
 
     private static void makeConcreteUnique(MethodNode method, String annotationToRemove) {
         method.access &= ~(Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE);
+        if (isStatic(method)) {
+            // Mixin rejects static helper methods unless they are private. These bridges are
+            // merged into the target class, where they can reach the private member they adapt.
+            method.access &= ~(Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED);
+            method.access |= Opcodes.ACC_PRIVATE;
+        }
         removeAnnotation(method, annotationToRemove);
         addInvisibleAnnotation(method, UNIQUE_DESC);
         method.instructions.clear();

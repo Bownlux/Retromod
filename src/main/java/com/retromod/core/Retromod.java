@@ -477,6 +477,10 @@ public class Retromod implements ModInitializer {
     /** Restores a mod from backup. Returns false on failure. */
     public boolean restoreMod(String modName) {
         try {
+            if (!isSafeModFileName(modName)) {
+                LOGGER.error("Refusing unsafe backup name: {}", modName);
+                return false;
+            }
             Path backupPath = BACKUP_FOLDER.resolve(modName);
             // prefer the Fabric game dir over CWD (Retromod may run from a
             // different working directory, e.g. CLI mode)
@@ -494,7 +498,16 @@ public class Retromod implements ModInitializer {
                 return false;
             }
 
-            java.nio.file.Files.deleteIfExists(targetPath);
+            java.nio.file.Files.createDirectories(modsFolder);
+            Path staged = java.nio.file.Files.createTempFile(modsFolder,
+                    ".retromod-restore-", ".tmp");
+            try {
+                java.nio.file.Files.copy(backupPath, staged,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                moveReplacing(staged, targetPath);
+            } finally {
+                java.nio.file.Files.deleteIfExists(staged);
+            }
 
             // drop any -retromod variant too
             String baseName = modName.substring(0, modName.lastIndexOf('.'));
@@ -506,13 +519,30 @@ public class Retromod implements ModInitializer {
                     });
             }
 
-            java.nio.file.Files.copy(backupPath, targetPath);
             LOGGER.info("Restored {} from backup", modName);
             return true;
 
         } catch (Exception e) {
             LOGGER.error("Failed to restore mod: {}", modName, e);
             return false;
+        }
+    }
+
+    static boolean isSafeModFileName(String modName) {
+        if (modName == null || modName.isBlank() || !modName.endsWith(".jar")) return false;
+        if (modName.contains("/") || modName.contains("\\")) return false;
+        Path name = Path.of(modName);
+        return name.getNameCount() == 1 && !".".equals(modName) && !"..".equals(modName);
+    }
+
+    private static void moveReplacing(Path source, Path target) throws java.io.IOException {
+        try {
+            java.nio.file.Files.move(source, target,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+            java.nio.file.Files.move(source, target,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
     }
     

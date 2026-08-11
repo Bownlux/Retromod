@@ -7,7 +7,7 @@ loader: fabric
 retromod: 1.2.0-snapshot .7+26.2-fabric
 links:
   curseforge: https://www.curseforge.com/minecraft/mc-mods/chat-bubbles/files/2947570
-summary: Game crashes at initialization stage
+summary: Reaches the title screen, but chat capture is inert and the deleted player-renderer replacement still needs a manual port.
 details: "java.lang.RuntimeException: Could not execute entrypoint stage 'client' due to errors, provided\
   \ by 'chatbubbles' at 'com.mamiyaotaru.chatbubbles.fabricmod.FabricModChatBubbles'! \tat net.fabricmc.loader.impl.FabricLoaderImpl.lambda$invokeEntrypoints$0(FabricLoaderImpl.java:413)\
   \ \tat net.fabricmc.loader.impl.util.ExceptionUtil.gatherExceptions(ExceptionUtil.java:33) \tat net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:411)\

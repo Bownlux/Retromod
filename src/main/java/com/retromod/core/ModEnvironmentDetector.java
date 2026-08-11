@@ -4,10 +4,13 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.ZipSecurity;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
@@ -18,6 +21,7 @@ import java.util.zip.ZipEntry;
 public final class ModEnvironmentDetector {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-EnvDetect");
+    private static final long MAX_METADATA_SIZE = 2L * 1024 * 1024;
 
     private ModEnvironmentDetector() {}
 
@@ -48,7 +52,9 @@ public final class ModEnvironmentDetector {
             ZipEntry fabricEntry = jar.getEntry("fabric.mod.json");
             if (fabricEntry != null) {
                 try (InputStream is = jar.getInputStream(fabricEntry)) {
-                    String content = new String(is.readAllBytes());
+                    String content = new String(
+                            ZipSecurity.safeReadAllBytes(is, MAX_METADATA_SIZE),
+                            StandardCharsets.UTF_8);
                     return parseFabricEnvironment(content);
                 }
             }
@@ -59,7 +65,9 @@ public final class ModEnvironmentDetector {
             }
             if (forgeEntry != null) {
                 try (InputStream is = jar.getInputStream(forgeEntry)) {
-                    String content = new String(is.readAllBytes());
+                    String content = new String(
+                            ZipSecurity.safeReadAllBytes(is, MAX_METADATA_SIZE),
+                            StandardCharsets.UTF_8);
                     return parseForgeEnvironment(content);
                 }
             }

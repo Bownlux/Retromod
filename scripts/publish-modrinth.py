@@ -26,12 +26,13 @@ ALWAYS run with --dry-run first: it hits only read-only endpoints (tags + existi
 validates the token/project, and prints exactly what it WOULD upload - no files sent.
 """
 import argparse
-import glob
 import json
 import os
 import re
 import sys
 import time
+
+from release_artifacts import ReleaseArtifactError, validate_release_artifacts
 
 try:
     import requests
@@ -40,7 +41,7 @@ except ImportError:
 
 API = "https://api.modrinth.com/v2"
 USER_AGENT = "Bownlux/Retromod publish-modrinth.py (bownux@gmail.com)"
-LOADER_DIRS = [("Fabric", "fabric"), ("Forge", "forge"), ("NeoForge", "neoforge")]
+REPOSITORY_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _headers(token=None):
@@ -129,6 +130,15 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
+    try:
+        artifacts = validate_release_artifacts(
+            args.version,
+            args.dist,
+            os.path.join(REPOSITORY_ROOT, "pom.xml"),
+        )
+    except ReleaseArtifactError as exc:
+        sys.exit(f"ERROR: {exc}")
+
     if args.release_type is None:
         lowered = args.version.lower()
         if "alpha" in lowered:
@@ -154,32 +164,40 @@ def main():
           f"version={args.version} type={args.release_type}\n")
 
     uploaded = skipped = failed = 0
-    for loader_dir, loader_name in LOADER_DIRS:
-        for jar in sorted(glob.glob(f"{args.dist}/{loader_dir}/*/retromod-*.jar")):
-            mcver = os.path.basename(os.path.dirname(jar))
-            base = os.path.basename(jar)
-            version_number = f"{args.version}+{mcver}-{loader_name}"
-            # Modrinth caps version_number at 32 chars. Shorten the loader suffix ONLY when the
-            # full name would exceed that (e.g. a long snapshot string + 8-char MC + "-neoforge"),
-            # so every name that already fits is left unchanged and re-runs stay idempotent. The
-            # loaders=[...] field is what actually tags the version's loader, not this suffix.
-            if len(version_number) > 32:
-                short = {"fabric": "fa", "neoforge": "nf", "forge": "fg"}.get(loader_name, loader_name[:2])
-                version_number = f"{args.version}+{mcver}-{short}"
-            name = f"Retromod {args.version} ({loader_dir} {mcver})"
-            if loader_name not in loaders:
-                print(f"  SKIP {base}: Modrinth has no '{loader_name}' loader tag"); skipped += 1; continue
-            if mcver not in game_versions:
-                print(f"  SKIP {base}: Modrinth has no '{mcver}' game version yet"); skipped += 1; continue
-            if version_number in existing:
-                print(f"  SKIP {base}: version '{version_number}' already on Modrinth"); skipped += 1; continue
-            if args.dry_run:
-                print(f"  DRY  {base}  game={mcver} loader={loader_name}  \"{version_number}\""); uploaded += 1
-            else:
-                ok = create_version(project, token, jar, version_number, name, mcver,
-                                    loader_name, changelog, args.release_type)
-                uploaded += ok; failed += (not ok)
-                time.sleep(1)  # be gentle with Modrinth's rate limit
+    for artifact in artifacts:
+        if not artifact.is_mod:
+            continue
+        loader_dir = artifact.loader_dir
+        loader_name = artifact.loader_name
+        mcver = artifact.minecraft_version
+        jar = os.fspath(artifact.path)
+        base = os.path.basename(jar)
+        version_number = f"{args.version}+{mcver}-{loader_name}"
+        # Modrinth caps version_number at 32 chars. Shorten the loader suffix ONLY when the
+        # full name would exceed that (e.g. a long snapshot string + 8-char MC + "-neoforge"),
+        # so every name that already fits is left unchanged and re-runs stay idempotent. The
+        # loaders=[...] field is what actually tags the version's loader, not this suffix.
+        if len(version_number) > 32:
+            short = {
+                "fabric": "fa",
+                "neoforge": "nf",
+                "forge": "fg",
+            }.get(loader_name, loader_name[:2])
+            version_number = f"{args.version}+{mcver}-{short}"
+        name = f"Retromod {args.version} ({loader_dir} {mcver})"
+        if loader_name not in loaders:
+            print(f"  SKIP {base}: Modrinth has no '{loader_name}' loader tag"); skipped += 1; continue
+        if mcver not in game_versions:
+            print(f"  SKIP {base}: Modrinth has no '{mcver}' game version yet"); skipped += 1; continue
+        if version_number in existing:
+            print(f"  SKIP {base}: version '{version_number}' already on Modrinth"); skipped += 1; continue
+        if args.dry_run:
+            print(f"  DRY  {base}  game={mcver} loader={loader_name}  \"{version_number}\""); uploaded += 1
+        else:
+            ok = create_version(project, token, jar, version_number, name, mcver,
+                                loader_name, changelog, args.release_type)
+            uploaded += ok; failed += (not ok)
+            time.sleep(1)  # be gentle with Modrinth's rate limit
 
     print(f"\nSummary: {uploaded} {'planned' if args.dry_run else 'uploaded'}, "
           f"{skipped} skipped, {failed} failed.")

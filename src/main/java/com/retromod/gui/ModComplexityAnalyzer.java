@@ -4,6 +4,8 @@
  */
 package com.retromod.gui;
 
+import com.retromod.util.ZipSecurity;
+
 import org.objectweb.asm.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +38,8 @@ public class ModComplexityAnalyzer {
 
     // Score threshold: at or above this, we warn the user
     private static final int THRESHOLD_UNLIKELY = 60;
+    private static final int MAX_ARCHIVE_ENTRIES = 100_000;
+    private static final long MAX_CLASS_SCAN_SIZE = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
 
     /**
      * Result of a complexity analysis.
@@ -55,6 +59,9 @@ public class ModComplexityAnalyzer {
         List<String> riskFactors = new ArrayList<>();
 
         try (JarFile jar = new JarFile(modJar.toFile())) {
+            if (jar.size() > MAX_ARCHIVE_ENTRIES) {
+                throw new IOException("Mod archive has too many entries: " + jar.size());
+            }
             int classCount = 0;
             int mixinCount = 0;
             int reflectionUses = 0;
@@ -66,29 +73,43 @@ public class ModComplexityAnalyzer {
             int renderingUses = 0;
             boolean usesCoremod = false;
             boolean usesAccessTransformer = false;
+            boolean usesLegacyRegistryEvents = false;
+            boolean constructsRegistryEntriesStatically = false;
+            long remainingClassBytes = MAX_CLASS_SCAN_SIZE;
 
             Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
+                String entryName;
+                try {
+                    entryName = ZipSecurity.safeEntryName(entry.getName());
+                } catch (IOException e) {
+                    continue;
+                }
 
                 // Check for coremods (Forge)
-                if (entry.getName().equals("META-INF/coremods.json") ||
-                    entry.getName().endsWith("_at.cfg") ||
-                    entry.getName().equals("META-INF/accesstransformer.cfg")) {
+                if (entryName.equals("META-INF/coremods.json") ||
+                    entryName.endsWith("_at.cfg") ||
+                    entryName.equals("META-INF/accesstransformer.cfg")) {
                     usesCoremod = true;
                 }
 
-                if (entry.getName().endsWith("_at.cfg") ||
-                    entry.getName().equals("META-INF/accesstransformer.cfg")) {
+                if (entryName.endsWith("_at.cfg") ||
+                    entryName.equals("META-INF/accesstransformer.cfg")) {
                     usesAccessTransformer = true;
                 }
 
-                if (!entry.getName().endsWith(".class")) continue;
+                if (!entryName.endsWith(".class")) continue;
+                if (remainingClassBytes <= 0) break;
 
                 classCount++;
+                long readLimit = Math.min(ZipSecurity.DEFAULT_MAX_ENTRY_SIZE,
+                        remainingClassBytes);
+                remainingClassBytes -= readLimit;
 
                 try (InputStream is = jar.getInputStream(entry)) {
-                    byte[] classBytes = is.readAllBytes();
+                    byte[] classBytes = ZipSecurity.safeReadAllBytes(is, readLimit);
+                    remainingClassBytes += readLimit - classBytes.length;
                     ClassReader reader = new ClassReader(classBytes);
 
                     // Check for mixin classes
@@ -112,6 +133,8 @@ public class ModComplexityAnalyzer {
                     final int[] localNet = {0};
                     final int[] localRender = {0};
                     final int[] localMixin = {0};
+                    final boolean[] localLegacyRegistry = {false};
+                    final boolean[] localStaticConstruction = {false};
 
                     reader.accept(new ClassVisitor(Opcodes.ASM9) {
                         @Override
@@ -125,7 +148,18 @@ public class ModComplexityAnalyzer {
                         @Override
                         public MethodVisitor visitMethod(int access, String name, String desc,
                                                          String signature, String[] exceptions) {
+                            if (desc.contains("Lnet/minecraftforge/event/RegistryEvent$Register;")) {
+                                localLegacyRegistry[0] = true;
+                            }
                             return new MethodVisitor(Opcodes.ASM9) {
+                                @Override
+                                public void visitTypeInsn(int opcode, String type) {
+                                    if ("<clinit>".equals(name) && opcode == Opcodes.NEW
+                                            && !type.startsWith("java/")) {
+                                        localStaticConstruction[0] = true;
+                                    }
+                                }
+
                                 @Override
                                 public void visitMethodInsn(int opcode, String owner, String mName,
                                                             String mDesc, boolean isInterface) {
@@ -186,6 +220,8 @@ public class ModComplexityAnalyzer {
                     networkingUses += localNet[0];
                     renderingUses += localRender[0];
                     mixinCount += localMixin[0];
+                    usesLegacyRegistryEvents |= localLegacyRegistry[0];
+                    constructsRegistryEntriesStatically |= localStaticConstruction[0];
 
                 } catch (Exception e) {
                     // Skip unreadable classes
@@ -242,6 +278,15 @@ public class ModComplexityAnalyzer {
             if (usesAccessTransformer) {
                 score += 10;
                 riskFactors.add("Uses access transformers");
+            }
+
+            // Forge 1.16 and older commonly constructed blocks/items in static initializers and
+            // registered them through RegistryEvent.Register. Modern Forge constructs mods after
+            // the vanilla registries freeze, so these classes need a DeferredRegister lifecycle
+            // migration rather than member-name remapping (#192).
+            if (usesLegacyRegistryEvents && constructsRegistryEntriesStatically) {
+                score += 25;
+                riskFactors.add("Uses eager legacy Forge registry entries (needs DeferredRegister migration)");
             }
 
             // Forge capabilities

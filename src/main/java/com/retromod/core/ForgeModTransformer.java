@@ -128,6 +128,11 @@ public class ForgeModTransformer {
             int classesTransformed = transformClasses(tempDir);
             LOGGER.info("Transformed {} class files", classesTransformed);
 
+            int refmapsTransformed = transformRefmaps(tempDir);
+            if (refmapsTransformed > 0) {
+                LOGGER.info("Transformed {} Mixin refmap(s)", refmapsTransformed);
+            }
+
             makeMixinConfigsNonFatal(tempDir);
             stripAccessWideners(tempDir);
             stripMixinSyntheticPackage(tempDir);
@@ -318,8 +323,7 @@ public class ForgeModTransformer {
                     byte[] transformed = bytecodeTransformer.transformClass(preStripped, className);
                     // Keep the ValueIO repair in the same post-remap position on every loader.
                     if (transformed != null) {
-                        transformed = mixinTransformer.applyLegacyMemberBridges(transformed);
-                        transformed = mixinTransformer.adaptValueIoHandlers(transformed);
+                        transformed = mixinTransformer.applyPostRemapRepairs(transformed);
                     }
                     // These helpers inspect the class and leave unrelated versions unchanged.
                     transformed = com.retromod.shim.forge.ForgeEventBusSynthetics
@@ -353,6 +357,24 @@ public class ForgeModTransformer {
         }
 
         return counter.get();
+    }
+
+    private int transformRefmaps(Path dir) throws IOException {
+        int changed = 0;
+        try (var files = Files.walk(dir)) {
+            for (Path refmap : files.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().contains("refmap"))
+                    .toList()) {
+                String original = Files.readString(refmap);
+                String transformed = MixinRefmapRemapper.remapForgeSelectors(
+                        original, mixinTransformer);
+                if (!original.equals(transformed)) {
+                    Files.writeString(refmap, transformed);
+                    changed++;
+                }
+            }
+        }
+        return changed;
     }
 
     /** Max Jar-in-Jar nesting depth Retromod recurses through. */
@@ -399,6 +421,7 @@ public class ForgeModTransformer {
         try {
             extractJar(jijJar, tempDir);
             int classesTransformed = transformClasses(tempDir);
+            int refmapsTransformed = transformRefmaps(tempDir);
 
             boolean hasForgeToml      = Files.exists(tempDir.resolve("META-INF/mods.toml"));
             boolean hasNeoForgeToml   = Files.exists(tempDir.resolve("META-INF/neoforge.mods.toml"));
@@ -415,13 +438,13 @@ public class ForgeModTransformer {
 
             int nestedPatched = (depth < MAX_JIJ_DEPTH) ? patchJarInJarMetadata(tempDir, depth + 1) : 0;
 
-            boolean changed = classesTransformed > 0 || hasForgeToml || hasNeoForgeToml
+            boolean changed = classesTransformed > 0 || refmapsTransformed > 0
+                    || hasForgeToml || hasNeoForgeToml
                     || dataMigrated > 0 || nestedPatched > 0;
             if (!changed) {
                 return false;
             }
 
-            Files.delete(jijJar);
             repackageJar(tempDir, jijJar);
             LOGGER.debug("Transformed JIJ {} ({} class(es) rewritten)", jijJar.getFileName(), classesTransformed);
             return true;
@@ -1208,6 +1231,23 @@ public class ForgeModTransformer {
     }
 
     private void repackageJar(Path sourceDir, Path outputJar) throws IOException {
+        Path parent = outputJar.toAbsolutePath().getParent();
+        if (parent == null) throw new IOException("JAR output has no parent: " + outputJar);
+        Files.createDirectories(parent);
+        Path stagedJar = Files.createTempFile(parent,
+                "." + outputJar.getFileName() + ".", ".tmp");
+        try {
+            writeJar(sourceDir, stagedJar);
+            try (JarFile ignored = new JarFile(stagedJar.toFile())) {
+                // Opening the completed archive validates its central directory.
+            }
+            moveReplacing(stagedJar, outputJar);
+        } finally {
+            Files.deleteIfExists(stagedJar);
+        }
+    }
+
+    private void writeJar(Path sourceDir, Path outputJar) throws IOException {
         try (JarOutputStream jos = new JarOutputStream(
                 new BufferedOutputStream(Files.newOutputStream(outputJar)))) {
 
@@ -1237,6 +1277,15 @@ public class ForgeModTransformer {
                     jos.closeEntry();
                 }
             }
+        }
+    }
+
+    private static void moveReplacing(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 }

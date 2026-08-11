@@ -7,36 +7,44 @@ nav_order: 4
 
 Settings live in `config/retromod/config.json`. Retromod creates the file on first launch, and the [in-game settings screen]({{ '/gui' | relative_url }}) edits the same values.
 
-## Main Settings
+## Active Settings
 
 | Key | Default | Purpose |
 |---|---:|---|
-| `use_aot` | `true` | Cache transformed mods for faster later launches |
-| `use_hybrid` | `true` | Use cached classes when available and transform the rest |
-| `instruction_level_granularity` | `true` | Apply precise instruction-level rewrites |
-| `transform_mixins` | `true` | Update mixin targets |
-| `transform_refmaps` | `true` | Update mixin refmap names |
-| `remap_reflection` | `true` | Rewrite supported reflective class and member names |
-| `polyfills_enabled` | `true` | Provide replacements for selected removed APIs |
-| `verify_transforms` | `true` | Report unresolved references after transformation |
-| `target_mc_version` | `"auto"` | Detect the host version from the loader |
-| `force_translate_complex` | `false` | Attempt mods that fail the complexity check |
+| `use_aot` | `true` | Prepare legacy mods ahead of launch on the Fabric entry point |
+| `polyfills_enabled` | `true` | Enable or disable polyfill-provider registration on Fabric, Forge, and NeoForge |
+| `verify_transforms` | `true` | Check generated jars and write unresolved-reference reports |
+| `force_translate_complex` | `false` | Let the in-game file picker attempt a high-risk mod |
+| `check_for_native_versions` | `false` | Opt in to a Modrinth API lookup for a native build of a selected mod |
+| `restart_prompt` | `true` when absent | Show the restart prompt after files are prepared |
 
 Leave these defaults in place unless you are diagnosing a specific transform.
 
-## Logging
+`check_for_native_versions` is the only setting here that enables routine outbound HTTP. It checks Modrinth metadata and does not download a mod jar. You can also opt in for one run with `-Dretromod.checkForNativeVersions=true`. The in-game settings screen does not expose this key or `restart_prompt`; set them by editing the JSON file.
+
+## Reserved Settings
+
+The generated file also contains settings that are reserved for later runtime wiring. Snapshot.6 writes them into a new file, but the transform pipeline does not currently consult them:
 
 | Key | Default | Purpose |
 |---|---:|---|
-| `log_level` | `"INFO"` | `TRACE`, `DEBUG`, `INFO`, `WARN`, or `ERROR` |
-| `log_transformations` | `false` | Log individual redirects |
-| `debug` | `false` | Enable extra transformer checks |
-| `dump_bytecode` | `false` | Write transformed classes for decompilation |
+| `use_hybrid` | `true` | Reserved hybrid-engine toggle |
+| `instruction_level_granularity` | `true` | Reserved transform-granularity toggle |
+| `transform_mixins` | `true` | Read by the Fabric initializer, but not yet used to gate the mixin passes |
+| `transform_refmaps` | `true` | Reserved refmap-pass toggle |
+| `remap_reflection` | `true` | Reserved JSON toggle; the current transformer uses the `retromod.remapReflection` system property |
+| `log_level` | `"INFO"` | Reserved log-level setting |
+| `log_transformations` | `false` | Reserved per-redirect logging toggle |
+| `target_mc_version` | `"auto"` | Reserved override; loader detection and the CLI `--target` option select the target |
+| `debug` | `false` | Reserved debug toggle |
+| `dump_bytecode` | `false` | Reserved bytecode-dump toggle |
 
-Debug logs and bytecode dumps can become large. Turn them off after reproducing the issue.
+Do not depend on a reserved key changing behavior yet. The in-game screen exposes only four active toggles, but it preserves other valid JSON keys when saving them.
 
 ## Editing the File
 
-The file is plain JSON and cannot contain comments. If it is invalid, Retromod logs a warning and uses defaults for that launch. Delete the file to regenerate it.
+The file is plain JSON and cannot contain JSON comments. The `_comment` field is ordinary data and is valid. If the file is invalid, Retromod logs a warning and uses defaults for that launch. Delete the file to regenerate it.
 
-Verification reports are written to `config/retromod/verify-reports/`. AOT cache files live in `config/retromod/aot-cache/`.
+Set `check_for_native_versions`, `restart_prompt`, and reserved keys by editing the file. The settings screen does not display them, but it preserves them when saving its four toggles.
+
+Verification reports are written to `config/retromod/verify-reports/`. The normal AOT cache lives in `config/retromod/aot-cache/`; full AOT state lives in `retromod-cache/full-aot/`.

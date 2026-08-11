@@ -89,11 +89,11 @@ public class NeoForge_1_21_8_to_1_21_9 implements VersionShim {
 
         // KeyMapping dropped its String-category constructor for a Category record;
         // the shim builds the record from the old string.
-        transformer.registerMethodRedirect(
-            "net/minecraft/client/KeyMapping", "<init>",
+        transformer.registerConstructorRedirect(
+            "net/minecraft/client/KeyMapping",
             "(Ljava/lang/String;Lcom/mojang/blaze3d/platform/InputConstants$Type;ILjava/lang/String;)V",
             "com/retromod/shim/neoforge/embedded/KeyMappingShim", "create",
-            "(Ljava/lang/String;Ljava/lang/Object;ILjava/lang/String;)Lnet/minecraft/client/KeyMapping;"
+            "(Ljava/lang/String;Ljava/lang/Object;ILjava/lang/String;)Ljava/lang/Object;"
         );
 
         // RenderHighlightEvent was replaced by ExtractBlockOutlineRenderStateEvent.

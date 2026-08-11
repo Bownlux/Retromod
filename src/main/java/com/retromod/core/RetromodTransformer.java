@@ -23,8 +23,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
-import java.util.jar.JarEntry;
-import java.util.jar.JarInputStream;
 
 import com.retromod.util.ZipSecurity;
 
@@ -141,6 +139,12 @@ public class RetromodTransformer implements ClassFileTransformer {
     private final Map<String, String> srgMethodNames = new ConcurrentHashMap<>(8000);
     private final Map<String, String> srgFieldNames = new ConcurrentHashMap<>(8000);
 
+    // Mojang owner + name + descriptor -> the SRG member name exposed by a specific
+    // pre-26 Forge target. This is the second half of old SRG -> Mojang -> target SRG.
+    // Owner and descriptor are required because readable member names are not unique.
+    private final Map<String, String> targetSrgMethodNames = new ConcurrentHashMap<>(8000);
+    private final Map<String, String> targetSrgFieldNames = new ConcurrentHashMap<>(8000);
+
     // Mojang->Mojang method renames on a kept class, keyed "owner#name" -> newName (e.g.
     // ResourceKey.location -> identifier on 26.x). Owner-scoped, not a global dictionary,
     // since the names are ordinary words. Applied via the ClassRemapper's mapMethodName so
@@ -197,22 +201,89 @@ public class RetromodTransformer implements ClassFileTransformer {
 
     /** Reads the class entries of an in-memory nested jar for frame hierarchy resolution. */
     public static Map<String, byte[]> readJarClassBytes(byte[] jarData) throws IOException {
+        return readJarClassBytes(jarData, NestedArchiveBudget.defaults());
+    }
+
+    /**
+     * Reads nested classes while charging the caller's shared archive budget. Callers that recurse
+     * through several bundled jars can reuse one budget so each sibling cannot claim a fresh cap.
+     */
+    public static Map<String, byte[]> readJarClassBytes(
+            byte[] jarData, NestedArchiveBudget budget) throws IOException {
+        Objects.requireNonNull(jarData, "jarData");
+        Objects.requireNonNull(budget, "budget");
         Map<String, byte[]> classes = new LinkedHashMap<>();
-        long total = 0;
-        try (JarInputStream jar = new JarInputStream(new ByteArrayInputStream(jarData))) {
-            JarEntry entry;
-            while ((entry = jar.getNextJarEntry()) != null) {
-                if (entry.isDirectory() || !entry.getName().endsWith(".class")) continue;
-                byte[] bytes = ZipSecurity.safeReadAllBytes(jar);
-                total += bytes.length;
-                if (total > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
-                    throw new IOException("nested jar classes exceed max decompressed size");
+        Set<String> entryNames = new HashSet<>();
+        try (var jar = new java.util.zip.ZipInputStream(new ByteArrayInputStream(jarData))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = jar.getNextEntry()) != null) {
+                String entryName = ZipSecurity.safeEntryName(entry.getName());
+                if (!entryNames.add(entryName)) {
+                    throw new IOException("duplicate nested JAR entry: " + entryName);
                 }
-                String name = entry.getName().substring(0, entry.getName().length() - 6);
-                classes.put(name, bytes);
+                if (entry.isDirectory()) {
+                    budget.reserve(0, entryName);
+                    continue;
+                }
+                byte[] bytes = ZipSecurity.safeReadAllBytes(jar);
+                budget.reserve(bytes.length, entryName);
+                if (!entryName.endsWith(".class")) {
+                    continue;
+                }
+                String name = entryName.substring(0, entryName.length() - 6);
+                if (classes.putIfAbsent(name, bytes) != null) {
+                    throw new IOException("duplicate nested JAR class: " + name);
+                }
             }
         }
         return classes;
+    }
+
+    /** Shared byte and entry budget for one nested-archive tree. */
+    public static final class NestedArchiveBudget {
+        private static final int DEFAULT_MAX_ENTRIES = 100_000;
+
+        private final long maxBytes;
+        private final int maxEntries;
+        private long usedBytes;
+        private int usedEntries;
+
+        public NestedArchiveBudget(long maxBytes, int maxEntries) {
+            if (maxBytes < 0 || maxEntries < 0) {
+                throw new IllegalArgumentException("nested archive limits cannot be negative");
+            }
+            this.maxBytes = maxBytes;
+            this.maxEntries = maxEntries;
+        }
+
+        public static NestedArchiveBudget defaults() {
+            return new NestedArchiveBudget(
+                    ZipSecurity.DEFAULT_MAX_TOTAL_SIZE, DEFAULT_MAX_ENTRIES);
+        }
+
+        public void reserve(long bytes, String entryName) throws IOException {
+            if (bytes < 0) {
+                throw new IllegalArgumentException("nested archive entry size cannot be negative");
+            }
+            if (usedEntries >= maxEntries) {
+                throw new IOException("nested archive exceeds " + maxEntries
+                        + " entries at " + entryName);
+            }
+            if (bytes > maxBytes - usedBytes) {
+                throw new IOException("nested archive exceeds " + maxBytes
+                        + " expanded bytes at " + entryName);
+            }
+            usedEntries++;
+            usedBytes += bytes;
+        }
+
+        public long usedBytes() {
+            return usedBytes;
+        }
+
+        public int usedEntries() {
+            return usedEntries;
+        }
     }
 
     /**
@@ -857,6 +928,110 @@ public class RetromodTransformer implements ClassFileTransformer {
         LOGGER.info("Registered {} SRG method names and {} SRG field names for bytecode remapping",
             methodNames.size(), fieldNames.size());
     }
+
+    /** Register owner-qualified Mojang to target-SRG mappings for a pre-26 Forge host. */
+    public void registerTargetSrgNameMappings(
+            Map<String, String> methodNames, Map<String, String> fieldNames) {
+        targetSrgMethodNames.putAll(methodNames);
+        targetSrgFieldNames.putAll(fieldNames);
+        cachedRemapper = null;
+        LOGGER.info("Registered {} target SRG methods and {} target SRG fields",
+                methodNames.size(), fieldNames.size());
+    }
+
+    /**
+     * Resolve a method selector that ClassRemapper cannot visit, such as text stored in a
+     * Mixin annotation. The owner and descriptor make the target SRG lookup unambiguous.
+     */
+    public String remapQualifiedMethodName(String owner, String name, String descriptor) {
+        String mappedName = srgMethodNames.getOrDefault(name, name);
+        String mappedOwner = classRedirects.getOrDefault(owner, owner);
+        mappedName = mojangMethodRenames.getOrDefault(
+                mappedOwner + "#" + mappedName, mappedName);
+        String mappedDescriptor = remapDescriptorClasses(descriptor);
+        return targetSrgMethodNames.getOrDefault(
+                com.retromod.mapping.TargetSrgMapper.memberKey(
+                        mappedOwner, mappedName, mappedDescriptor),
+                mappedName);
+    }
+
+    /** Resolve a field selector stored outside ordinary bytecode instructions. */
+    public String remapQualifiedFieldName(String owner, String name, String descriptor) {
+        String mappedName = name;
+        if (!intermediaryFieldNames.isEmpty() && name.startsWith("field_")) {
+            String mojang = null;
+            if (descriptor != null && ambiguousIntermediaryFieldNames.contains(name)) {
+                mojang = intermediaryFieldNamesByDesc.get(memberDescKey(name, descriptor));
+            }
+            if (mojang == null) mojang = intermediaryFieldNames.get(name);
+            if (mojang != null) mappedName = mojang;
+        }
+        mappedName = srgFieldNames.getOrDefault(mappedName, mappedName);
+        String mappedOwner = classRedirects.getOrDefault(owner, owner);
+        String mappedDescriptor = remapDescriptorClasses(descriptor);
+
+        // A Mixin field name cannot express a field-to-method rewrite. Accept only an exact
+        // same-owner field rename with the descriptor expected by the registered shim.
+        FieldTarget redirect = fieldRedirects.get(new FieldKey(mappedOwner, mappedName));
+        if (redirect != null
+                && redirect.owner().equals(mappedOwner)
+                && (redirect.newDesc() == null || !redirect.newDesc().startsWith("("))
+                && (redirect.oldDesc() == null || redirect.oldDesc().equals(mappedDescriptor))) {
+            mappedName = redirect.name();
+            if (redirect.newDesc() != null) mappedDescriptor = redirect.newDesc();
+        }
+
+        return targetSrgFieldNames.getOrDefault(
+                com.retromod.mapping.TargetSrgMapper.memberKey(
+                        mappedOwner, mappedName, mappedDescriptor),
+                mappedName);
+    }
+
+    private String remapDescriptorClasses(String descriptor) {
+        if (descriptor == null || descriptor.indexOf('L') < 0 || classRedirects.isEmpty()) {
+            return descriptor;
+        }
+        StringBuilder result = new StringBuilder(descriptor.length());
+        int offset = 0;
+        while (offset < descriptor.length()) {
+            int typeStart = descriptor.indexOf('L', offset);
+            if (typeStart < 0) {
+                result.append(descriptor, offset, descriptor.length());
+                break;
+            }
+            int typeEnd = descriptor.indexOf(';', typeStart);
+            if (typeEnd < 0) return descriptor;
+            result.append(descriptor, offset, typeStart + 1);
+            String type = descriptor.substring(typeStart + 1, typeEnd);
+            result.append(classRedirects.getOrDefault(type, type)).append(';');
+            offset = typeEnd + 1;
+        }
+        return result.toString();
+    }
+
+    /**
+     * Drop the source SRG half when an offline pre-26 Forge target has no matching
+     * target table. Leaving Mojang names in that jar would be worse than preserving
+     * the original SRG references for Forge's own remapper to attempt.
+     */
+    public void clearSrgNameMappings() {
+        srgMethodNames.clear();
+        srgFieldNames.clear();
+        targetSrgMethodNames.clear();
+        targetSrgFieldNames.clear();
+        cachedRemapper = null;
+    }
+
+    /** Drop Fabric intermediary member names before configuring another loader's mod. */
+    public void clearIntermediaryNameMappings() {
+        intermediaryMethodNames.clear();
+        intermediaryFieldNames.clear();
+        intermediaryMethodNamesByDesc.clear();
+        intermediaryFieldNamesByDesc.clear();
+        ambiguousIntermediaryMethodNames.clear();
+        ambiguousIntermediaryFieldNames.clear();
+        cachedRemapper = null;
+    }
     
     /**
      * Register a field redirect (field to field).
@@ -1040,7 +1215,7 @@ public class RetromodTransformer implements ClassFileTransformer {
 
     /**
      * Register a synthetic class generated via ASM bytecode.
-     * These classes are injected into mod JARs during transformation and
+     * These classes are embedded under a per-mod name during transformation and
      * can have fields/methods with MC-typed signatures that can't be
      * compiled from Java source (since MC isn't on the compile classpath).
      *
@@ -1152,6 +1327,8 @@ public class RetromodTransformer implements ClassFileTransformer {
         ambiguousIntermediaryFieldNames.clear();
         srgMethodNames.clear();
         srgFieldNames.clear();
+        targetSrgMethodNames.clear();
+        targetSrgFieldNames.clear();
         classRedirects.clear();
         fieldRedirects.clear();
         superclassRedirects.clear();
@@ -1618,7 +1795,8 @@ public class RetromodTransformer implements ClassFileTransformer {
             // SRG maps must also force the remapper into the chain: an SRG-only registration
             // (no class redirects) previously built NO remapper at all, silently skipping the
             // member remap (latent; production paths always had class redirects alongside).
-            boolean hasSrgNames = !srgMethodNames.isEmpty() || !srgFieldNames.isEmpty();
+            boolean hasSrgNames = !srgMethodNames.isEmpty() || !srgFieldNames.isEmpty()
+                    || !targetSrgMethodNames.isEmpty() || !targetSrgFieldNames.isEmpty();
             if (!classRedirects.isEmpty() || hasIntermediaryNames || hasSrgNames
                     || !mojangMethodRenames.isEmpty()) {
                 synchronized (this) {
@@ -1632,19 +1810,20 @@ public class RetromodTransformer implements ClassFileTransformer {
 
                             @Override
                             public String mapMethodName(String owner, String name, String descriptor) {
+                                String mappedName = name;
                                 // Remap intermediary method names (method_XXXX / comp_XXXX → Mojang name)
                                 if (!intermediaryMethodNames.isEmpty()
                                         && (name.startsWith("method_") || name.startsWith("comp_"))) {
+                                    String mojang = null;
                                     // Ambiguous short-name: resolve by descriptor instead of the
                                     // last-writer-wins flat entry. Fall through to the flat map only
                                     // if this descriptor variant wasn't harvested.
                                     if (ambiguousIntermediaryMethodNames.contains(name)) {
-                                        String byDesc = intermediaryMethodNamesByDesc.get(
+                                        mojang = intermediaryMethodNamesByDesc.get(
                                                 memberDescKey(name, descriptor));
-                                        if (byDesc != null) return byDesc;
                                     }
-                                    String mojang = intermediaryMethodNames.get(name);
-                                    if (mojang != null) return mojang;
+                                    if (mojang == null) mojang = intermediaryMethodNames.get(name);
+                                    if (mojang != null) mappedName = mojang;
                                 }
                                 // Remap Forge SRG method names (m_NNNNNN_ -> Mojang). Forge 64.x
                                 // dropped the SRG remap layer, so SRG-baked Forge mods would hit
@@ -1656,17 +1835,23 @@ public class RetromodTransformer implements ClassFileTransformer {
                                         && ((name.startsWith("m_") && name.endsWith("_"))
                                             || name.startsWith("func_"))) {
                                     String mojang = srgMethodNames.get(name);
-                                    if (mojang != null) return mojang;
+                                    if (mojang != null) mappedName = mojang;
                                 }
                                 // Vanilla Mojang->Mojang rename (owner-scoped), e.g.
                                 // ResourceKey.location -> identifier on 26.x. Routed through the
                                 // ClassRemapper so it also rewrites method references
                                 // (ResourceKey::location), which methodRedirects can't reach.
                                 if (!mojangMethodRenames.isEmpty()) {
-                                    String renamed = mojangMethodRenames.get(owner + "#" + name);
-                                    if (renamed != null) return renamed;
+                                    String renamed = mojangMethodRenames.get(owner + "#" + mappedName);
+                                    if (renamed != null) mappedName = renamed;
                                 }
-                                return name;
+                                if (!targetSrgMethodNames.isEmpty()) {
+                                    String target = targetSrgMethodNames.get(
+                                            com.retromod.mapping.TargetSrgMapper.memberKey(
+                                                    map(owner), mappedName, mapMethodDesc(descriptor)));
+                                    if (target != null) return target;
+                                }
+                                return mappedName;
                             }
 
                             @Override
@@ -1696,17 +1881,18 @@ public class RetromodTransformer implements ClassFileTransformer {
                             }
 
                             public String mapFieldName(String owner, String name, String descriptor) {
+                                String mappedName = name;
                                 // Remap intermediary field names (field_XXXX → Mojang name)
                                 if (!intermediaryFieldNames.isEmpty() && name.startsWith("field_")) {
+                                    String mojang = null;
                                     // Ambiguous short-name: resolve by descriptor first (see the
                                     // method case above), else fall through to the flat map.
                                     if (ambiguousIntermediaryFieldNames.contains(name)) {
-                                        String byDesc = intermediaryFieldNamesByDesc.get(
+                                        mojang = intermediaryFieldNamesByDesc.get(
                                                 memberDescKey(name, descriptor));
-                                        if (byDesc != null) return byDesc;
                                     }
-                                    String mojang = intermediaryFieldNames.get(name);
-                                    if (mojang != null) return mojang;
+                                    if (mojang == null) mojang = intermediaryFieldNames.get(name);
+                                    if (mojang != null) mappedName = mojang;
                                 }
                                 // Remap Forge SRG field names (f_NNNNN_ -> Mojang), same reasoning
                                 // as the method case above (f_50069_ is Blocks.STONE). 1.12.2-era
@@ -1719,9 +1905,15 @@ public class RetromodTransformer implements ClassFileTransformer {
                                         && ((name.startsWith("f_") && name.endsWith("_"))
                                             || name.startsWith("field_"))) {
                                     String mojang = srgFieldNames.get(name);
-                                    if (mojang != null) return mojang;
+                                    if (mojang != null) mappedName = mojang;
                                 }
-                                return name;
+                                if (!targetSrgFieldNames.isEmpty()) {
+                                    String target = targetSrgFieldNames.get(
+                                            com.retromod.mapping.TargetSrgMapper.memberKey(
+                                                    map(owner), mappedName, mapDesc(descriptor)));
+                                    if (target != null) return target;
+                                }
+                                return mappedName;
                             }
                         };
                         cachedRemapper = classRemapper;
@@ -3394,9 +3586,15 @@ public class RetromodTransformer implements ClassFileTransformer {
             // resolution for unresolved references, since they cover the whole MC API surface.
             if (!methodRedirectOwners.contains(owner) && !argDropOwners.contains(owner)
                     && !convertingOwners.contains(owner) && !singletonOwners.contains(owner)) {
+                // JVM special methods must never enter heuristic resolution. In particular,
+                // rewriting a constructor call to an ordinary ()V method leaves the value from
+                // NEW uninitialized and produces a VerifyError. Exact constructor redirects are
+                // handled above by the constructor pre-pass and super-constructor table.
+                boolean heuristicCandidate = name == null || !name.startsWith("<");
+
                 // Try pattern heuristics FIRST; faster and more reliable than fuzzy
                 PatternHeuristics patterns = patternHeuristics;
-                if (patterns != null) {
+                if (heuristicCandidate && patterns != null) {
                     PatternHeuristics.PatternResult patternMatch = patterns.resolveMethod(owner, name, descriptor);
                     if (patternMatch != null && patternMatch.confidence() >= 0.6) {
                         int patternOpcode = fixClassToInterfaceOpcode(opcode, patternMatch.newOwner());
@@ -3410,7 +3608,7 @@ public class RetromodTransformer implements ClassFileTransformer {
 
                 // Try fuzzy resolution if available (only for MC classes)
                 FuzzyMethodResolver resolver = fuzzyResolver;
-                if (resolver != null && resolver.isIndexed()
+                if (heuristicCandidate && resolver != null && resolver.isIndexed()
                         && (owner.startsWith("net/minecraft/") || owner.startsWith("com/mojang/"))) {
                     FuzzyMethodResolver.MethodInfo fuzzyMatch =
                             resolver.resolveMethod(owner, name, descriptor);
@@ -3582,8 +3780,9 @@ public class RetromodTransformer implements ClassFileTransformer {
                 // Neither will EVER override a hardcoded redirect (we only get here if none matched).
 
                 // Pattern heuristics: deterministic naming convention rules (e.g., render* -> extract*)
+                boolean heuristicCandidate = name == null || !name.startsWith("<");
                 PatternHeuristics patterns = patternHeuristics;
-                if (patterns != null) {
+                if (heuristicCandidate && patterns != null) {
                     PatternHeuristics.PatternResult patternMatch = patterns.resolveMethod(owner, name, descriptor);
                     if (patternMatch != null && patternMatch.confidence() >= 0.6) {
                         LOGGER.debug("[Retromod-Pattern] Resolved {}.{}{} -> {}.{}{} (rule: {}, confidence: {})",
@@ -3602,7 +3801,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                 // Fuzzy resolver: scans the target MC JAR to find probable matches
                 // based on class, name similarity, and parameter type matching.
                 FuzzyMethodResolver resolver = fuzzyResolver;
-                if (resolver != null && resolver.isIndexed()) {
+                if (heuristicCandidate && resolver != null && resolver.isIndexed()) {
                     FuzzyMethodResolver.MethodInfo fuzzyMatch =
                             resolver.resolveMethod(owner, name, descriptor);
                     if (fuzzyMatch != null) {

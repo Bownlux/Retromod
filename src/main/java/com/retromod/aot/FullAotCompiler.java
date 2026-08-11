@@ -7,13 +7,18 @@ package com.retromod.aot;
 import com.retromod.core.EnvironmentDetector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.shim.ShimRegistry;
+import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
 import java.awt.*;
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.*;
@@ -30,6 +35,7 @@ public class FullAotCompiler {
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-FullAOT");
 
     private static final String CACHE_DIR = "retromod-cache/full-aot";
+    private static final long MAX_EXPANDED_BYTES = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
 
     private static FullAotCompiler instance;
 
@@ -78,23 +84,49 @@ public class FullAotCompiler {
      * files read back out of it, anywhere the game can write.
      */
     static String safeModId(String modId) {
-        String cleaned = modId == null ? "" : modId.replaceAll("[^A-Za-z0-9._-]", "_");
+        if (modId == null || modId.isBlank()) return "unnamed-mod";
+        String cleaned = modId.replaceAll("[^A-Za-z0-9._-]", "_");
         while (cleaned.startsWith(".")) cleaned = cleaned.substring(1);
-        return cleaned.isBlank() ? "unnamed-mod" : cleaned;
+        if (cleaned.isBlank()) return "unnamed-mod";
+        boolean changed = !cleaned.equals(modId);
+        if (cleaned.length() > 160) {
+            cleaned = cleaned.substring(0, 160);
+            changed = true;
+        }
+        return changed ? cleaned + "_" + shortDigest(modId) : cleaned;
     }
 
     public boolean hasCachedCompilation(String modId) {
-        Path modCache = cacheDir.resolve(safeModId(modId) + ".aot");
-        return Files.exists(modCache);
+        Path modCache = safeModCacheDir(modId);
+        return isCompletedCache(modCache);
+    }
+
+    private boolean isCompletedCache(Path modCache) {
+        Path marker = modCache.resolve(".complete");
+        try {
+            ZipSecurity.validateNotSymlink(cacheDir);
+            ZipSecurity.validateNotSymlink(modCache);
+            ZipSecurity.validateNotSymlink(marker);
+            return Files.isRegularFile(marker, LinkOption.NOFOLLOW_LINKS);
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     public byte[] getCachedClass(String modId, String className) {
-        Path classCache = cacheDir.resolve(safeModId(modId))
-            .resolve(className.replace('/', '_') + ".class");
+        Path modCache = safeModCacheDir(modId);
+        Path classCache = modCache.resolve(safeClassCacheFileName(className));
+
+        if (!isCompletedCache(modCache)) return null;
         
-        if (Files.exists(classCache)) {
+        if (Files.isRegularFile(classCache, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                return Files.readAllBytes(classCache);
+                ZipSecurity.validateNotSymlink(cacheDir);
+                ZipSecurity.validateNotSymlink(modCache);
+                ZipSecurity.validateNotSymlink(classCache);
+                try (InputStream input = Files.newInputStream(classCache)) {
+                    return ZipSecurity.safeReadAllBytes(input);
+                }
             } catch (IOException e) {
                 LOGGER.debug("Could not read cached class: {}", className);
             }
@@ -131,6 +163,10 @@ public class FullAotCompiler {
 
                 com.retromod.core.RetromodTransformer transformer =
                     com.retromod.core.RetromodTransformer.getInstance();
+                ExpandedByteBudget expandedInputBudget =
+                        new ExpandedByteBudget(MAX_EXPANDED_BYTES);
+                ExpandedByteBudget cacheOutputBudget =
+                        new ExpandedByteBudget(MAX_EXPANDED_BYTES);
                 
                 for (Path modJar : modsToCompile) {
                     if (wasCancelled) {
@@ -141,7 +177,8 @@ public class FullAotCompiler {
                     currentMod = modJar.getFileName().toString();
                     LOGGER.info("Compiling: {}", currentMod);
                     
-                    compileAllClassesInMod(modJar, transformer);
+                    compileAllClassesInMod(modJar, transformer, expandedInputBudget,
+                            cacheOutputBudget);
                 }
                 
                 long elapsed = System.currentTimeMillis() - startTime;
@@ -174,8 +211,9 @@ public class FullAotCompiler {
             var entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                if (entry.getName().endsWith(".class") && 
-                    !entry.getName().startsWith("META-INF/")) {
+                String entryName = ZipSecurity.safeEntryName(entry.getName());
+                if (entryName.endsWith(".class") &&
+                    !entryName.startsWith("META-INF/")) {
                     count++;
                 }
             }
@@ -186,22 +224,36 @@ public class FullAotCompiler {
     }
     
     /** Transform every class in a mod JAR in parallel and write the results to the mod's cache dir. */
-    private void compileAllClassesInMod(Path jarPath, RetromodTransformer transformer) {
+    private void compileAllClassesInMod(Path jarPath, RetromodTransformer transformer,
+                                        ExpandedByteBudget expandedInputBudget,
+                                        ExpandedByteBudget cacheOutputBudget) {
         // Selectors live in annotation text, which the class remap leaves alone, so a cached
         // Mixin would still point at the name the mod was built against.
         com.retromod.mixin.MixinCompatibilityTransformer mixinTransformer =
             new com.retromod.mixin.MixinCompatibilityTransformer(transformer);
-        String modId = extractModId(jarPath);
+        String modId;
+        try {
+            modId = extractModId(jarPath, expandedInputBudget);
+        } catch (IOException e) {
+            LOGGER.error("Could not read metadata from {}: {}", jarPath.getFileName(), e.getMessage());
+            return;
+        }
         if (modId == null) {
             modId = jarPath.getFileName().toString().replace(".jar", "");
         }
         modId = safeModId(modId);
 
-        Path modCacheDir = cacheDir.resolve(modId);
+        Path modCacheDir = safeModCacheDir(modId);
+        Path normalizedCacheDir = cacheDir.toAbsolutePath().normalize();
+        Path stagingDir;
         try {
-            Files.createDirectories(modCacheDir);
+            ZipSecurity.validateNotSymlink(cacheDir);
+            ZipSecurity.validateNotSymlink(modCacheDir);
+            Files.createDirectories(normalizedCacheDir);
+            stagingDir = Files.createTempDirectory(normalizedCacheDir,
+                    ".retromod-aot-stage-");
         } catch (IOException e) {
-            LOGGER.error("Could not create mod cache dir", e);
+            LOGGER.error("Could not create staged mod cache", e);
             return;
         }
         
@@ -209,62 +261,71 @@ public class FullAotCompiler {
         ExecutorService executor = Executors.newFixedThreadPool(threads);
 
         try (JarFile jar = new JarFile(jarPath.toFile())) {
-            List<JarEntry> classEntries = new ArrayList<>();
+            Map<String, byte[]> classEntries = new LinkedHashMap<>();
             var entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                if (entry.getName().endsWith(".class") && 
-                    !entry.getName().startsWith("META-INF/")) {
-                    classEntries.add(entry);
+                String entryName = ZipSecurity.safeEntryName(entry.getName());
+                if (entryName.endsWith(".class") &&
+                    !entryName.startsWith("META-INF/")) {
+                    byte[] original;
+                    try (InputStream input = new BufferedInputStream(jar.getInputStream(entry))) {
+                        original = ZipSecurity.safeReadAllBytes(input);
+                    }
+                    expandedInputBudget.reserve(original.length, entryName);
+                    if (classEntries.putIfAbsent(entryName, original) != null) {
+                        throw new IOException("duplicate class entry in " + jarPath.getFileName()
+                                + ": " + entryName);
+                    }
                 }
             }
 
-            final java.util.function.Function<String, byte[]> classBytesProvider = name -> {
-                JarEntry classEntry = jar.getJarEntry(name + ".class");
-                if (classEntry == null) return null;
-                try (InputStream input = jar.getInputStream(classEntry)) {
-                    return com.retromod.util.ZipSecurity.safeReadAllBytes(input);
-                } catch (IOException e) {
-                    return null;
-                }
-            };
+            final java.util.function.Function<String, byte[]> classBytesProvider =
+                    name -> classEntries.get(name + ".class");
             
             int batchSize = Math.max(10, classEntries.size() / threads);
             List<Future<?>> futures = new ArrayList<>();
-            final Path finalModCacheDir = modCacheDir;
+            final Path finalStagingDir = stagingDir;
+            List<Map.Entry<String, byte[]>> classEntryList = new ArrayList<>(classEntries.entrySet());
+            java.util.concurrent.atomic.AtomicReference<IOException> fatalFailure =
+                    new java.util.concurrent.atomic.AtomicReference<>();
             
-            for (int i = 0; i < classEntries.size(); i += batchSize) {
+            for (int i = 0; i < classEntryList.size(); i += batchSize) {
                 if (wasCancelled) break;
                 
                 int start = i;
-                int end = Math.min(i + batchSize, classEntries.size());
-                List<JarEntry> batch = classEntries.subList(start, end);
+                int end = Math.min(i + batchSize, classEntryList.size());
+                List<Map.Entry<String, byte[]>> batch = classEntryList.subList(start, end);
                 
                 futures.add(executor.submit(() -> {
                     try (var hierarchyScope = transformer
                             .pushJarClassBytesProvider(classBytesProvider)) {
-                    for (JarEntry entry : batch) {
-                        if (wasCancelled) return;
+                    for (Map.Entry<String, byte[]> entry : batch) {
+                        if (wasCancelled || fatalFailure.get() != null) return;
                         
-                        String className = entry.getName()
-                            .replace(".class", "")
-                            .replace('/', '.');
+                        String entryName = entry.getKey();
+                        String className = entryName.substring(0, entryName.length() - 6)
+                                .replace('/', '.');
                         
                         currentClass = className;
                         
                         try {
-                            byte[] original;
-                            try (InputStream is = new BufferedInputStream(jar.getInputStream(entry))) {
-                                original = is.readAllBytes();
-                            }
+                            byte[] original = entry.getValue();
 
                             byte[] transformed = transformer.transformClass(original, className);
                             transformed = AotMixinRepair.apply(mixinTransformer,
                                 transformed != null ? transformed : original, className);
 
                             if (transformed != null && transformed != original) {
-                                String cacheFileName = className.replace('.', '_') + ".class";
-                                Path cacheFile = finalModCacheDir.resolve(cacheFileName);
+                                if (transformed.length > ZipSecurity.DEFAULT_MAX_ENTRY_SIZE) {
+                                    throw new IOException("transformed class exceeds cache entry limit: "
+                                            + className);
+                                }
+                                cacheOutputBudget.reserve(transformed.length,
+                                        "full AOT cache for " + className);
+                                String cacheFileName = safeClassCacheFileName(className);
+                                Path cacheFile = finalStagingDir.resolve(cacheFileName);
+                                ZipSecurity.validateNotSymlink(cacheFile);
                                 Files.write(cacheFile, transformed);
 
                                 synchronized (this) {
@@ -278,6 +339,9 @@ public class FullAotCompiler {
                                 }
                             }
                             
+                        } catch (IOException e) {
+                            fatalFailure.compareAndSet(null, e);
+                            return;
                         } catch (Exception e) {
                             LOGGER.debug("Could not compile class: {}", className);
                         }
@@ -294,12 +358,24 @@ public class FullAotCompiler {
                 }
             }
 
+            if (fatalFailure.get() != null) throw fatalFailure.get();
+            if (wasCancelled) {
+                LOGGER.info("Discarding incomplete full AOT cache for {}", currentMod);
+                return;
+            }
+
+            Path marker = stagingDir.resolve(".complete");
+            Files.writeString(marker, String.valueOf(System.currentTimeMillis()));
+            if (wasCancelled) {
+                LOGGER.info("Discarding cancelled full AOT cache for {}", currentMod);
+                return;
+            }
+            replaceCompletedCache(normalizedCacheDir, stagingDir, modCacheDir);
+            stagingDir = null;
+
             for (ProgressListener listener : listeners) {
                 listener.onProgress(compiledClasses, totalClasses, currentMod, "Complete");
             }
-
-            Path marker = modCacheDir.resolve(".complete");
-            Files.writeString(marker, String.valueOf(System.currentTimeMillis()));
             
         } catch (Exception e) {
             LOGGER.error("Error processing mod: {}", jarPath.getFileName(), e);
@@ -308,16 +384,27 @@ public class FullAotCompiler {
             try {
                 executor.awaitTermination(5, TimeUnit.SECONDS);
             } catch (InterruptedException ignored) {}
+            if (stagingDir != null) {
+                try {
+                    deleteCacheTree(stagingDir, normalizedCacheDir);
+                } catch (IOException e) {
+                    LOGGER.warn("Could not clean staged full AOT cache {}: {}",
+                            stagingDir.getFileName(), e.getMessage());
+                }
+            }
         }
     }
     
-    private String extractModId(Path jarPath) {
+    private String extractModId(Path jarPath, ExpandedByteBudget expandedByteBudget)
+            throws IOException {
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             ZipEntry fabricEntry = jar.getEntry("fabric.mod.json");
             if (fabricEntry != null) {
                 String content;
                 try (InputStream is = jar.getInputStream(fabricEntry)) {
-                    content = new String(is.readAllBytes());
+                    byte[] metadata = ZipSecurity.safeReadAllBytes(is);
+                    expandedByteBudget.reserve(metadata.length, fabricEntry.getName());
+                    content = new String(metadata, StandardCharsets.UTF_8);
                 }
                 java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"");
                 java.util.regex.Matcher matcher = pattern.matcher(content);
@@ -330,7 +417,9 @@ public class FullAotCompiler {
             if (forgeEntry != null) {
                 String content;
                 try (InputStream is = jar.getInputStream(forgeEntry)) {
-                    content = new String(is.readAllBytes());
+                    byte[] metadata = ZipSecurity.safeReadAllBytes(is);
+                    expandedByteBudget.reserve(metadata.length, forgeEntry.getName());
+                    content = new String(metadata, StandardCharsets.UTF_8);
                 }
                 java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("modId\\s*=\\s*\"([^\"]+)\"");
                 java.util.regex.Matcher matcher = pattern.matcher(content);
@@ -338,10 +427,168 @@ public class FullAotCompiler {
                     return matcher.group(1);
                 }
             }
-        } catch (Exception e) {
-            // ignore
         }
         return null;
+    }
+
+    /**
+     * Install a completed staged cache while keeping the previous completed cache recoverable until
+     * the replacement directory is in place.
+     */
+    static void replaceCompletedCache(Path cacheRoot, Path stagedCache, Path targetCache)
+            throws IOException {
+        Path normalizedRoot = cacheRoot.toAbsolutePath().normalize();
+        Path normalizedStage = stagedCache.toAbsolutePath().normalize();
+        Path normalizedTarget = targetCache.toAbsolutePath().normalize();
+        requireDirectCacheChild(normalizedRoot, normalizedStage, "staged cache");
+        requireDirectCacheChild(normalizedRoot, normalizedTarget, "target cache");
+        ZipSecurity.validateNotSymlink(normalizedRoot);
+        ZipSecurity.validateNotSymlink(normalizedStage);
+        if (Files.isSymbolicLink(normalizedTarget)) {
+            throw new IOException("refusing to replace symlinked full AOT cache: "
+                    + normalizedTarget);
+        }
+        ZipSecurity.validateNotSymlink(normalizedTarget);
+
+        Path marker = normalizedStage.resolve(".complete");
+        ZipSecurity.validateNotSymlink(marker);
+        if (!Files.isDirectory(normalizedStage, LinkOption.NOFOLLOW_LINKS)
+                || !Files.isRegularFile(marker, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("staged full AOT cache is incomplete: " + normalizedStage);
+        }
+
+        Path backupRoot = null;
+        Path previousCache = null;
+        boolean previousMoved = false;
+        boolean installed = false;
+        try {
+            if (Files.exists(normalizedTarget, LinkOption.NOFOLLOW_LINKS)) {
+                backupRoot = Files.createTempDirectory(normalizedRoot,
+                        ".retromod-aot-backup-");
+                previousCache = backupRoot.resolve("previous");
+                moveCacheDirectory(normalizedTarget, previousCache);
+                previousMoved = true;
+            }
+
+            try {
+                moveCacheDirectory(normalizedStage, normalizedTarget);
+                installed = true;
+            } catch (IOException installFailure) {
+                if (previousMoved) {
+                    try {
+                        moveCacheDirectory(previousCache, normalizedTarget);
+                        previousMoved = false;
+                    } catch (IOException restoreFailure) {
+                        installFailure.addSuppressed(restoreFailure);
+                    }
+                }
+                throw installFailure;
+            }
+        } finally {
+            if (backupRoot != null && (installed || !previousMoved)) {
+                try {
+                    deleteCacheTree(backupRoot, normalizedRoot);
+                } catch (IOException cleanupFailure) {
+                    LOGGER.warn("Could not remove previous full AOT cache backup {}: {}",
+                            backupRoot.getFileName(), cleanupFailure.getMessage());
+                }
+            }
+        }
+    }
+
+    private static void moveCacheDirectory(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException ignored) {
+            Files.move(source, target);
+        }
+    }
+
+    private static void requireDirectCacheChild(Path cacheRoot, Path child, String description)
+            throws IOException {
+        if (!cacheRoot.equals(child.getParent())) {
+            throw new IOException(description + " escapes the full AOT cache: " + child);
+        }
+    }
+
+    private static void deleteCacheTree(Path path, Path cacheRoot) throws IOException {
+        Path normalizedRoot = cacheRoot.toAbsolutePath().normalize();
+        Path normalizedPath = path.toAbsolutePath().normalize();
+        requireDirectCacheChild(normalizedRoot, normalizedPath, "cache cleanup path");
+        if (!Files.exists(normalizedPath, LinkOption.NOFOLLOW_LINKS)) return;
+        if (Files.isSymbolicLink(normalizedPath)) {
+            Files.delete(normalizedPath);
+            return;
+        }
+        Files.walkFileTree(normalizedPath, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
+                    throws IOException {
+                Files.delete(file);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path directory, IOException error)
+                    throws IOException {
+                if (error != null) throw error;
+                Files.delete(directory);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    private Path safeModCacheDir(String modId) {
+        Path normalizedCache = cacheDir.toAbsolutePath().normalize();
+        Path resolved = normalizedCache.resolve(safeModId(modId)).normalize();
+        if (!resolved.startsWith(normalizedCache) || !normalizedCache.equals(resolved.getParent())) {
+            throw new IllegalArgumentException("mod cache path escapes the full AOT cache");
+        }
+        return resolved;
+    }
+
+    static String safeClassCacheFileName(String className) {
+        String canonical = className == null ? "" : className.replace('\\', '/').replace('.', '/');
+        String readable = canonical.replace('/', '_').replaceAll("[^A-Za-z0-9_$-]", "_");
+        while (readable.startsWith(".")) readable = readable.substring(1);
+        if (readable.isBlank()) readable = "unnamed-class";
+        if (readable.length() > 160) readable = readable.substring(0, 160);
+        return readable + "_" + shortDigest(canonical) + ".class";
+    }
+
+    private static String shortDigest(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder result = new StringBuilder(12);
+            for (int i = 0; i < 6; i++) result.append(String.format("%02x", digest[i]));
+            return result.toString();
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    static final class ExpandedByteBudget {
+        private final long limit;
+        private long used;
+
+        ExpandedByteBudget(long limit) {
+            if (limit <= 0) throw new IllegalArgumentException("expanded-byte limit must be positive");
+            this.limit = limit;
+        }
+
+        synchronized void reserve(long bytes, String entryName) throws IOException {
+            if (bytes < 0) throw new IllegalArgumentException("expanded-byte count cannot be negative");
+            if (bytes > limit - used) {
+                throw new IOException("full AOT input exceeds expanded-byte limit of " + limit
+                        + " bytes at " + entryName);
+            }
+            used += bytes;
+        }
+
+        synchronized long usedBytes() {
+            return used;
+        }
     }
 
     public void cancel() {

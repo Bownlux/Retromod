@@ -33,6 +33,10 @@ public class AotCompiler {
 
     private static final String AOT_MANIFEST_KEY = "Retromod-AOT-Version";
 
+    private static final int MAX_ARCHIVE_ENTRIES = 100_000;
+    private static final long MAX_EXPANDED_BYTES = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
+    private static final long MAX_NESTED_OUTPUT_BYTES = ZipSecurity.DEFAULT_MAX_ENTRY_SIZE;
+
     // Bump this when transform behavior changes.
     static final String AOT_VERSION = RetromodVersion.RETROMOD_VERSION;
 
@@ -85,6 +89,8 @@ public class AotCompiler {
 
         backupOriginalMod(modJar);
 
+        configureLoaderMappingsFor(modInfo);
+
         List<VersionShim> shimChain = shimRegistry.findShimChain(
             modInfo.modLoaderType(),
             modInfo.targetMcVersion(),
@@ -121,13 +127,6 @@ public class AotCompiler {
             }
             // ResourceLocation/Identifier ctor -> factory, matching an in-game boot (AOT == runtime).
             com.retromod.mapping.IntermediaryToMojangMapper.registerIdentifierCtorRedirects(transformer);
-            if ("fabric".equalsIgnoreCase(modInfo.modLoaderType())) {
-                try {
-                    com.retromod.mapping.IntermediaryToMojangMapper.applyTo(transformer);
-                } catch (Exception e) {
-                    LOGGER.warn("Could not register member mappings for AOT", e);
-                }
-            }
             // Same empty-chain gap as the CLI transform/batch paths: the version-graph BFS returns
             // an empty chain for 1.21.x sources. Register the loader-agnostic 26.1 common shim,
             // and for 26.2+ targets the 26.2 core moves, or an AOT jar misses the 26.x
@@ -157,6 +156,17 @@ public class AotCompiler {
             classesTransformed, classesSkipped, classesObfuscated);
         
         return outputJar;
+    }
+
+    /** Selects the member namespace for this mod before an offline AOT transform. */
+    void configureLoaderMappingsFor(ModVersionInfo modInfo) {
+        var mappings = com.retromod.mapping.OfflineLoaderNameMappings.configure(
+                transformer, modInfo.modLoaderType(), targetMcVersion,
+                com.retromod.util.McReflect.isNeoForge());
+        if (mappings.intermediaryMappings() > 0 || mappings.srgMappings() > 0) {
+            LOGGER.info("Configured AOT member mappings: {} intermediary, {} SRG",
+                    mappings.intermediaryMappings(), mappings.srgMappings());
+        }
     }
     
     /** Backs up the original mod JAR to mods/retromod-backups/ before transformation. */
@@ -266,7 +276,12 @@ public class AotCompiler {
         Map<String, byte[]> transformedClasses = new LinkedHashMap<>();
         Map<String, byte[]> originalResources = new LinkedHashMap<>();
         Set<String> obfuscatedClasses = new HashSet<>();
+        Set<String> inputEntryNames = new HashSet<>();
+        ArchiveBudget inputBudget = new ArchiveBudget(MAX_EXPANDED_BYTES, MAX_ARCHIVE_ENTRIES);
+        ArchiveBudget retainedBudget = new ArchiveBudget(MAX_EXPANDED_BYTES, MAX_ARCHIVE_ENTRIES);
         MixinCompatibilityTransformer mixinTransformer = new MixinCompatibilityTransformer(transformer);
+        boolean forgeRefmaps = "forge".equalsIgnoreCase(modInfo.modLoaderType())
+                || "neoforge".equalsIgnoreCase(modInfo.modLoaderType());
 
         try (JarFile jar = new JarFile(inputJar.toFile())) {
             // Rebuilding a frame needs the mod's own class hierarchy, and those classes are not on
@@ -289,16 +304,22 @@ public class AotCompiler {
 
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                
-                if (entry.isDirectory()) continue;
+
+                String entryName = ZipSecurity.safeEntryName(entry.getName());
+                if (!inputEntryNames.add(entryName)) {
+                    throw new IOException("duplicate JAR entry: " + entryName);
+                }
+                if (entry.isDirectory()) {
+                    inputBudget.reserve(0, entryName);
+                    continue;
+                }
                 
                 try (InputStream is = jar.getInputStream(entry)) {
-                    // bounded read: a crafted jar with a huge/decompression-bomb entry would OOM
-                    // the game JVM via readAllBytes (review finding; extractJar already bounds)
                     byte[] data = ZipSecurity.safeReadAllBytes(is);
+                    inputBudget.reserve(data.length, entryName);
 
-                    if (entry.getName().endsWith(".class")) {
-                        String className = entry.getName().replace(".class", "");
+                    if (entryName.endsWith(".class")) {
+                        String className = entryName.replace(".class", "");
 
                         byte[] out = data;
                         if (shouldTransformClass(className, modInfo)) {
@@ -313,10 +334,12 @@ public class AotCompiler {
                             classesSkipped++;
                         }
                         // A class whose own bytecode was left alone can still hold a Mixin.
-                        transformedClasses.put(entry.getName(),
-                                AotMixinRepair.apply(mixinTransformer, out, className));
+                        byte[] repaired = AotMixinRepair.apply(mixinTransformer, out, className);
+                        retainEntry(retainedBudget, repaired, entryName);
+                        transformedClasses.put(entryName, repaired);
                     } else {
-                        originalResources.put(entry.getName(), data);
+                        retainEntry(retainedBudget, data, entryName);
+                        originalResources.put(entryName, data);
                     }
                 }
             }
@@ -326,9 +349,19 @@ public class AotCompiler {
         }
 
         Map<String, byte[]> embeddedShims = collectEmbeddedShims(modInfo);
+        ArchiveBudget nestedArchiveBudget =
+                new ArchiveBudget(MAX_EXPANDED_BYTES, MAX_ARCHIVE_ENTRIES);
 
-        try (JarOutputStream jos = new JarOutputStream(
-                new BufferedOutputStream(new FileOutputStream(outputJar.toFile())))) {
+        Path absoluteOutput = outputJar.toAbsolutePath().normalize();
+        Path outputParent = absoluteOutput.getParent();
+        if (outputParent == null) {
+            throw new IOException("AOT output has no parent directory: " + outputJar);
+        }
+        Files.createDirectories(outputParent);
+        Path stagedOutput = Files.createTempFile(outputParent, ".retromod-aot-", ".tmp");
+        try {
+            try (JarOutputStream jos = new JarOutputStream(
+                    new BufferedOutputStream(Files.newOutputStream(stagedOutput)))) {
 
             Manifest manifest = new Manifest();
             manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
@@ -384,27 +417,36 @@ public class AotCompiler {
                     }
                 }
 
-                // A 26.x host reads the official namespace, so an intermediary access widener or
-                // refmap is rejected before any mod code runs. The JIT and CLI paths already
-                // repair both, and an AOT-prepared mod needs the same treatment.
-                if (RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) {
-                    String name = entry.getKey();
-                    String lower = name.toLowerCase();
-                    try {
-                        if (lower.endsWith(".accesswidener") || lower.endsWith(".classtweaker")) {
-                            data = com.retromod.core.AccessWidenerRemapper.remapToOfficial(
-                                    new String(data, java.nio.charset.StandardCharsets.UTF_8),
-                                    com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
-                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                        } else if (name.endsWith("-refmap.json") || name.contains("refmap")) {
-                            data = com.retromod.core.MixinRefmapRemapper.remap(
-                                    new String(data, java.nio.charset.StandardCharsets.UTF_8),
-                                    com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
-                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                // Refmaps are separate from annotation bytecode, so Forge redirects must also be
+                // applied here. On a 26.x host, Fabric resources additionally need the official
+                // namespace pass before any mod code can run.
+                String resourceName = entry.getKey();
+                String resourceNameLower = resourceName.toLowerCase();
+                try {
+                    if (resourceName.endsWith("-refmap.json") || resourceName.contains("refmap")) {
+                        String refmap = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+                        if (forgeRefmaps) {
+                            refmap = com.retromod.core.MixinRefmapRemapper.remapForgeSelectors(
+                                    refmap, mixinTransformer);
                         }
-                    } catch (Exception e) {
-                        LOGGER.warn("Could not remap {} ({}). Keeping the original.", name, e.toString());
+                        if (RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) {
+                            refmap = com.retromod.core.MixinRefmapRemapper.remap(
+                                    refmap,
+                                    com.retromod.mapping.IntermediaryToMojangMapper.getInstance(),
+                                    mixinTransformer::remapResourceSelector);
+                        }
+                        data = refmap.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    } else if (RetromodVersion.isUnobfuscatedTarget(targetMcVersion)
+                            && (resourceNameLower.endsWith(".accesswidener")
+                                    || resourceNameLower.endsWith(".classtweaker"))) {
+                        data = com.retromod.core.AccessWidenerRemapper.remapToOfficial(
+                                new String(data, java.nio.charset.StandardCharsets.UTF_8),
+                                com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
+                                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                     }
+                } catch (Exception e) {
+                    LOGGER.warn("Could not remap {} ({}). Keeping the original.",
+                            resourceName, e.toString());
                 }
 
                 // 26.x data-only changes the bytecode pass cannot reach; gated inside migrate().
@@ -431,7 +473,10 @@ public class AotCompiler {
                 if ((entry.getKey().startsWith("META-INF/jars/")
                         || entry.getKey().startsWith("META-INF/jarjar/"))
                         && entry.getKey().endsWith(".jar")) {
-                    data = transformNestedJarAot(data, 1, mixinTransformer);
+                    String nestedKey = inputJar.getFileName() + "!/" + entry.getKey();
+                    data = transformNestedJarAotSafely(
+                            data, 1, mixinTransformer, forgeRefmaps,
+                            nestedArchiveBudget, nestedKey);
                 }
 
                 jos.putNextEntry(new JarEntry(ZipSecurity.safeEntryName(entry.getKey())));
@@ -448,8 +493,25 @@ public class AotCompiler {
                 jos.closeEntry();
             }
 
-            writeAotMetadata(jos, modInfo, obfuscatedClasses);
+                writeAotMetadata(jos, modInfo, obfuscatedClasses);
+            }
+
+            try (JarFile ignored = new JarFile(stagedOutput.toFile())) {
+                // Opening the completed archive validates its central directory before replacement.
+            }
+            moveReplacing(stagedOutput, absoluteOutput);
+        } finally {
+            Files.deleteIfExists(stagedOutput);
         }
+    }
+
+    private static void retainEntry(ArchiveBudget budget, byte[] data, String entryName)
+            throws IOException {
+        if (data.length > ZipSecurity.DEFAULT_MAX_ENTRY_SIZE) {
+            throw new IOException("transformed JAR entry exceeds "
+                    + ZipSecurity.DEFAULT_MAX_ENTRY_SIZE + " bytes: " + entryName);
+        }
+        budget.reserve(data.length, entryName);
     }
 
     /** Max Jar-in-Jar nesting depth the AOT path recurses through. */
@@ -462,20 +524,65 @@ public class AotCompiler {
      */
     private byte[] transformNestedJarAot(byte[] jarData, int depth,
             MixinCompatibilityTransformer mixinTransformer) {
+        return transformNestedJarAot(jarData, depth, mixinTransformer, false);
+    }
+
+    private byte[] transformNestedJarAot(byte[] jarData, int depth,
+            MixinCompatibilityTransformer mixinTransformer, boolean forgeRefmaps) {
+        return transformNestedJarAotSafely(jarData, depth, mixinTransformer, forgeRefmaps,
+                new ArchiveBudget(MAX_EXPANDED_BYTES, MAX_ARCHIVE_ENTRIES));
+    }
+
+    private byte[] transformNestedJarAotSafely(byte[] jarData, int depth,
+            MixinCompatibilityTransformer mixinTransformer, boolean forgeRefmaps,
+            ArchiveBudget nestedBudget) {
+        return transformNestedJarAotSafely(jarData, depth, mixinTransformer,
+                forgeRefmaps, nestedBudget, "nested-depth-" + depth + ".jar");
+    }
+
+    private byte[] transformNestedJarAotSafely(byte[] jarData, int depth,
+            MixinCompatibilityTransformer mixinTransformer, boolean forgeRefmaps,
+            ArchiveBudget nestedBudget, String syntheticKey) {
+        try {
+            return transformNestedJarAot(
+                    jarData, depth, mixinTransformer, forgeRefmaps,
+                    nestedBudget, syntheticKey);
+        } catch (IOException e) {
+            LOGGER.warn("Keeping a bundled JAR unchanged because it exceeds safe archive limits: {}",
+                    e.getMessage());
+            return jarData;
+        }
+    }
+
+    private byte[] transformNestedJarAot(byte[] jarData, int depth,
+            MixinCompatibilityTransformer mixinTransformer, boolean forgeRefmaps,
+            ArchiveBudget nestedBudget) throws IOException {
+        return transformNestedJarAot(jarData, depth, mixinTransformer,
+                forgeRefmaps, nestedBudget, "nested-depth-" + depth + ".jar");
+    }
+
+    private byte[] transformNestedJarAot(byte[] jarData, int depth,
+            MixinCompatibilityTransformer mixinTransformer, boolean forgeRefmaps,
+            ArchiveBudget nestedBudget, String syntheticKey) throws IOException {
         try {
             var bais = new java.io.ByteArrayInputStream(jarData);
-            var baos = new java.io.ByteArrayOutputStream(jarData.length);
+            var boundedOutput = new BoundedArchiveOutput(
+                    MAX_NESTED_OUTPUT_BYTES, jarData.length);
             boolean modified = false;
             Map<String, byte[]> classBytes = RetromodTransformer.readJarClassBytes(jarData);
             try (var hierarchyScope = transformer.pushJarClassBytesProvider(classBytes::get);
-                 var jis = new java.util.jar.JarInputStream(bais);
-                 var jos = new JarOutputStream(baos)) {
-                java.util.jar.JarEntry e;
-                while ((e = jis.getNextJarEntry()) != null) {
-                    jos.putNextEntry(new JarEntry(ZipSecurity.safeEntryName(e.getName())));
+                 var jis = new java.util.zip.ZipInputStream(bais);
+                 var jos = new JarOutputStream(boundedOutput)) {
+                java.util.zip.ZipEntry e;
+                while ((e = jis.getNextEntry()) != null) {
+                    String name = ZipSecurity.safeEntryName(e.getName());
+                    if (e.isDirectory()) {
+                        nestedBudget.reserve(0, name);
+                    }
+                    jos.putNextEntry(new JarEntry(name));
                     if (!e.isDirectory()) {
                         byte[] d = ZipSecurity.safeReadAllBytes(jis);
-                        String name = e.getName();
+                        nestedBudget.reserve(d.length, name);
                         boolean official = RetromodVersion.isUnobfuscatedTarget(targetMcVersion);
                         String lower = name.toLowerCase();
                         if (name.endsWith(".class")) {
@@ -500,11 +607,19 @@ public class AotCompiler {
                                     com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
                                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                             if (!java.util.Arrays.equals(t, d)) { d = t; modified = true; }
-                        } else if (official && (name.endsWith("-refmap.json") || name.contains("refmap"))) {
-                            byte[] t = com.retromod.core.MixinRefmapRemapper.remap(
-                                    new String(d, java.nio.charset.StandardCharsets.UTF_8),
-                                    com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
-                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        } else if (name.endsWith("-refmap.json") || name.contains("refmap")) {
+                            String refmap = new String(d, java.nio.charset.StandardCharsets.UTF_8);
+                            if (forgeRefmaps) {
+                                refmap = com.retromod.core.MixinRefmapRemapper.remapForgeSelectors(
+                                        refmap, mixinTransformer);
+                            }
+                            if (official) {
+                                refmap = com.retromod.core.MixinRefmapRemapper.remap(
+                                        refmap,
+                                        com.retromod.mapping.IntermediaryToMojangMapper.getInstance(),
+                                        mixinTransformer::remapResourceSelector);
+                            }
+                            byte[] t = refmap.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                             if (!java.util.Arrays.equals(t, d)) { d = t; modified = true; }
                         } else if (com.retromod.resources.ModDataMigrator.isMigratableData(name)) {
                             byte[] t = com.retromod.resources.ModDataMigrator.migrate(
@@ -513,7 +628,9 @@ public class AotCompiler {
                         } else if (depth < MAX_JIJ_DEPTH_AOT
                                 && (name.startsWith("META-INF/jars/") || name.startsWith("META-INF/jarjar/"))
                                 && name.endsWith(".jar")) {
-                            byte[] t = transformNestedJarAot(d, depth + 1, mixinTransformer);
+                            byte[] t = transformNestedJarAot(
+                                    d, depth + 1, mixinTransformer, forgeRefmaps,
+                                    nestedBudget, syntheticKey + "!/" + name);
                             if (t != d) { d = t; modified = true; }
                         }
                         jos.write(d);
@@ -521,7 +638,15 @@ public class AotCompiler {
                     jos.closeEntry();
                 }
             }
-            return modified ? baos.toByteArray() : jarData;
+            byte[] transformed = modified ? boundedOutput.toByteArray() : jarData;
+            SyntheticEmbedder.ByteEmbeddingResult embedding =
+                    SyntheticEmbedder.embedIntoJarBytes(transformed, syntheticKey, transformer);
+            if (!embedding.succeeded()) {
+                return jarData;
+            }
+            return embedding.jarBytes();
+        } catch (ArchiveLimitException ex) {
+            throw ex;
         } catch (Exception ex) {
             return jarData;
         }
@@ -735,7 +860,8 @@ public class AotCompiler {
                     String resourcePath = shimClass.replace('.', '/') + ".class";
                     try (InputStream is = getClass().getClassLoader().getResourceAsStream(resourcePath)) {
                         if (is != null) {
-                            shims.put(shimClass.replace('.', '/'), is.readAllBytes());
+                            shims.put(shimClass.replace('.', '/'),
+                                    ZipSecurity.safeReadAllBytes(is));
                         }
                     }
                 } catch (Exception e) {
@@ -810,11 +936,17 @@ public class AotCompiler {
         }
     }
 
-    private String computeHash(Path file) {
+    static String computeHash(Path file) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] bytes = Files.readAllBytes(file);
-            byte[] hash = digest.digest(bytes);
+            byte[] buffer = new byte[8192];
+            try (InputStream input = new BufferedInputStream(Files.newInputStream(file))) {
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    digest.update(buffer, 0, read);
+                }
+            }
+            byte[] hash = digest.digest();
 
             StringBuilder sb = new StringBuilder();
             for (byte b : hash) {
@@ -824,6 +956,107 @@ public class AotCompiler {
 
         } catch (Exception e) {
             return "";
+        }
+    }
+
+    private static void moveReplacing(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    static final class ArchiveBudget {
+        private final long maxBytes;
+        private final int maxEntries;
+        private long usedBytes;
+        private int usedEntries;
+
+        ArchiveBudget(long maxBytes, int maxEntries) {
+            if (maxBytes < 0 || maxEntries < 0) {
+                throw new IllegalArgumentException("archive limits cannot be negative");
+            }
+            this.maxBytes = maxBytes;
+            this.maxEntries = maxEntries;
+        }
+
+        void reserve(long bytes, String entryName) throws IOException {
+            if (bytes < 0) {
+                throw new IllegalArgumentException("archive entry size cannot be negative");
+            }
+            if (usedEntries >= maxEntries) {
+                throw new ArchiveLimitException("archive exceeds " + maxEntries
+                        + " entries at " + entryName);
+            }
+            if (bytes > maxBytes - usedBytes) {
+                throw new ArchiveLimitException("archive exceeds " + maxBytes
+                        + " expanded bytes at " + entryName);
+            }
+            usedEntries++;
+            usedBytes += bytes;
+        }
+
+        long usedBytes() {
+            return usedBytes;
+        }
+
+        int usedEntries() {
+            return usedEntries;
+        }
+    }
+
+    static final class BoundedArchiveOutput extends OutputStream {
+        private static final int MAX_INITIAL_CAPACITY = 1024 * 1024;
+
+        private final ByteArrayOutputStream output;
+        private final long maxBytes;
+        private long written;
+
+        BoundedArchiveOutput(long maxBytes, int expectedBytes) {
+            if (maxBytes < 0) {
+                throw new IllegalArgumentException("archive output limit cannot be negative");
+            }
+            this.maxBytes = maxBytes;
+            int initialCapacity = Math.max(32,
+                    Math.min(Math.max(expectedBytes, 0), MAX_INITIAL_CAPACITY));
+            this.output = new ByteArrayOutputStream(initialCapacity);
+        }
+
+        @Override
+        public void write(int value) throws IOException {
+            reserve(1);
+            output.write(value);
+        }
+
+        @Override
+        public void write(byte[] bytes, int offset, int length) throws IOException {
+            Objects.checkFromIndexSize(offset, length, bytes.length);
+            reserve(length);
+            output.write(bytes, offset, length);
+        }
+
+        byte[] toByteArray() {
+            return output.toByteArray();
+        }
+
+        long size() {
+            return written;
+        }
+
+        private void reserve(long bytes) throws IOException {
+            if (bytes > maxBytes - written) {
+                throw new ArchiveLimitException("rewritten nested JAR exceeds "
+                        + maxBytes + " bytes");
+            }
+            written += bytes;
+        }
+    }
+
+    private static final class ArchiveLimitException extends IOException {
+        ArchiveLimitException(String message) {
+            super(message);
         }
     }
 

@@ -1,12 +1,12 @@
 name: Compatibility report
-description: Report how well a mod runs through Retromod — it gets added to the Compatibility DB on the docs site.
+description: Report how well a mod runs through Retromod - it gets added to the Compatibility DB on the docs site.
 title: "[Compat] <mod name> <mod version> on <host MC>"
 labels: ["compat-report"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for testing! Honest reports are the most useful kind — "loads but X is broken"
+        Thanks for testing! Honest reports are the most useful kind - "loads but X is broken"
         beats "works". A bot converts this report into a database entry automatically
         (you'll get a link to the pull request); once merged it appears on the
         [Compatibility DB](https://bownlux.github.io/Retromod/compatdb/). Tip: the
@@ -16,7 +16,7 @@ body:
     id: report_type
     attributes:
       label: Report type
-      description: A bundle means "I ran all these mods at once" — combinations often behave differently than single mods.
+      description: A bundle means "I ran all these mods at once" - combinations often behave differently than single mods.
       options:
         - Single mod
         - Bundle (multiple mods together)
@@ -27,7 +27,7 @@ body:
     id: mod_name
     attributes:
       label: Mod name (or a label for the bundle)
-      placeholder: e.g. AppleSkin — or "My QoL pack"
+      placeholder: e.g. AppleSkin - or "My QoL pack"
     validations:
       required: true
 
@@ -91,11 +91,11 @@ body:
       label: Badge
       description: How well does it actually run?
       options:
-        - "Diamond — indistinguishable from native; everything works"
-        - "Gold — fully playable; minor or cosmetic quirks only"
-        - "Iron — core features work; something noticeable is broken"
-        - "Copper — loads and runs, but major features are missing/inert"
-        - "Borked — crashes or unusable"
+        - "Diamond - indistinguishable from native; everything works"
+        - "Gold - fully playable; minor or cosmetic quirks only"
+        - "Iron - core features work; something noticeable is broken"
+        - "Copper - loads and runs, but major features are missing/inert"
+        - "Borked - crashes or unusable"
     validations:
       required: true
 

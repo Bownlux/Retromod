@@ -17,6 +17,10 @@ public class Forge_1_19_4_to_1_20 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        transformer.registerMethodRename(
+            "net/minecraft/world/level/block/state/BlockBehaviour$Properties",
+            "noDrops", "noLootTable"
+        );
         transformer.registerMethodRedirect(
             "net/minecraft/world/level/block/state/BlockBehaviour$Properties", "of",
             "(Lnet/minecraft/world/level/material/Material;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;",

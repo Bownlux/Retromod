@@ -8,7 +8,7 @@ body:
       value: |
         Thanks for filing this. The more of the fields below you can fill in, the faster I can usually figure out what's going wrong.
 
-        Before opening, have a quick look at the [Troubleshooting page](https://bownlux.github.io/Retromod/troubleshooting) — it covers the most common error messages.
+        Before opening, have a quick look at the [Troubleshooting page](https://bownlux.github.io/Retromod/troubleshooting) - it covers the most common error messages.
 
   - type: input
     id: retromod-version

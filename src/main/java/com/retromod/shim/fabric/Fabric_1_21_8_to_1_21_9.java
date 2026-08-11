@@ -76,11 +76,11 @@ public class Fabric_1_21_8_to_1_21_9 implements VersionShim {
 
         // String-category KeyBinding constructor is gone in 1.21.9; the shim builds the
         // Category record from the old String argument.
-        transformer.registerMethodRedirect(
-            "net/minecraft/client/option/KeyBinding", "<init>",
+        transformer.registerConstructorRedirect(
+            "net/minecraft/client/option/KeyBinding",
             "(Ljava/lang/String;Lnet/minecraft/client/util/InputUtil$Type;ILjava/lang/String;)V",
             "com/retromod/shim/fabric/embedded/KeyBindingShim", "create",
-            "(Ljava/lang/String;Ljava/lang/Object;ILjava/lang/String;)Lnet/minecraft/client/option/KeyBinding;"
+            "(Ljava/lang/String;Ljava/lang/Object;ILjava/lang/String;)Ljava/lang/Object;"
         );
 
         // BlockEntityRenderer moved to OrderedRenderCommandQueue; no redirect needed for the common cases.

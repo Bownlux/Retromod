@@ -25,21 +25,33 @@ public class ShimRegistry {
         Map<String, String> aliases = new HashMap<>();
 
         aliases.put("1.13",   "1.13.2");
+        aliases.put("1.13.0", "1.13.2");
         aliases.put("1.13.1", "1.13.2");
 
         aliases.put("1.14",   "1.14.4");
+        aliases.put("1.14.0", "1.14.4");
         aliases.put("1.14.1", "1.14.4");
         aliases.put("1.14.2", "1.14.4");
         aliases.put("1.14.3", "1.14.4");
 
         aliases.put("1.15",   "1.15.2");
+        aliases.put("1.15.0", "1.15.2");
         aliases.put("1.15.1", "1.15.2");
 
         aliases.put("1.16",   "1.16.5");
+        aliases.put("1.16.0", "1.16.5");
         aliases.put("1.16.1", "1.16.5");
         aliases.put("1.16.2", "1.16.5");
         aliases.put("1.16.3", "1.16.5");
         aliases.put("1.16.4", "1.16.5");
+
+        // Some mod metadata writers expand the first release in a line to x.y.0,
+        // while Minecraft and the shim graph name those releases x.y.
+        aliases.put("1.17.0", "1.17");
+        aliases.put("1.18.0", "1.18");
+        aliases.put("1.19.0", "1.19");
+        aliases.put("1.20.0", "1.20");
+        aliases.put("1.21.0", "1.21");
 
         // pre-releases / rc / snapshots → 26.1 (Fabric uses dots, Prism uses dashes)
         aliases.put("26.1-pre.1", "26.1");

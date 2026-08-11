@@ -60,11 +60,10 @@ public class QuiltModTransformer {
         return transformed;
     }
     
-    private void updateQuiltModJson(Path jarPath) {
-        try {
-            Path tempDir = Files.createTempDirectory("retromod-quilt-");
+    private void updateQuiltModJson(Path jarPath) throws IOException {
+        Path tempDir = Files.createTempDirectory("retromod-quilt-");
 
-            try {
+        try {
                 // Bounded extraction: a mod JAR is user content, and an entry can lie about its
                 // declared size, so count actual decompressed bytes to catch a zip bomb.
                 long quiltTotalSize = 0;
@@ -100,12 +99,8 @@ public class QuiltModTransformer {
                 }
 
                 repackJar(tempDir, jarPath);
-            } finally {
-                deleteDirectory(tempDir);
-            }
-
-        } catch (Exception e) {
-            LOGGER.debug("Could not update quilt.mod.json: {}", e.getMessage());
+        } finally {
+            deleteDirectory(tempDir);
         }
     }
     
@@ -130,7 +125,8 @@ public class QuiltModTransformer {
             if (entry != null) {
                 String content;
                 try (InputStream is = jar.getInputStream(entry)) {
-                    content = new String(is.readAllBytes());
+                    content = new String(ZipSecurity.safeReadAllBytes(is),
+                            java.nio.charset.StandardCharsets.UTF_8);
                 }
                 Pattern p = Pattern.compile("\"minecraft\"\\s*:\\s*\"([^\"]+)\"");
                 Matcher m = p.matcher(content);
@@ -152,27 +148,36 @@ public class QuiltModTransformer {
     }
     
     private void repackJar(Path sourceDir, Path targetJar) throws IOException {
-        Files.deleteIfExists(targetJar);
-        
-        try (var jos = new java.util.jar.JarOutputStream(
-                new FileOutputStream(targetJar.toFile()))) {
+        Path parent = targetJar.toAbsolutePath().getParent();
+        if (parent == null) throw new IOException("Quilt jar has no parent: " + targetJar);
+        Path staged = Files.createTempFile(parent,
+                "." + targetJar.getFileName() + ".", ".tmp");
+        try {
+            try (var jos = new java.util.jar.JarOutputStream(Files.newOutputStream(staged))) {
 
-            // ZIP directory entries: package resources (ClassLoader.getResources) and classpath
-// scanners (Reflections - YungsApi @AutoRegister) silently find nothing without them.
-            com.retromod.util.JarDirectoryEntries.writeAll(jos, sourceDir);
+                // ZIP directory entries keep package resource and classpath scans working.
+                com.retromod.util.JarDirectoryEntries.writeAll(jos, sourceDir);
 
-            try (var stream = Files.walk(sourceDir)) {
-                stream.filter(p -> !Files.isDirectory(p)).forEach(path -> {
-                    try {
+                try (var stream = Files.walk(sourceDir)) {
+                    for (Path path : stream.filter(p -> !Files.isDirectory(p)).toList()) {
                         String entryName = sourceDir.relativize(path).toString().replace("\\", "/");
-                        jos.putNextEntry(new JarEntry(entryName));
+                        jos.putNextEntry(new JarEntry(ZipSecurity.safeEntryName(entryName)));
                         Files.copy(path, jos);
                         jos.closeEntry();
-                    } catch (Exception e) {
-                        // ignore
                     }
-                });
+                }
             }
+            try (JarFile ignored = new JarFile(staged.toFile())) {
+                // Validate the completed central directory before replacement.
+            }
+            try {
+                Files.move(staged, targetJar, StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(staged, targetJar, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(staged);
         }
     }
 

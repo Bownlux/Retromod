@@ -70,6 +70,9 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 LOGGER.warn("Could not determine game directory, using current directory");
                 gameDir = Path.of(".");
             }
+            // Fabric pre-launch transforms run before the normal mod initializer. Create the
+            // default here so first-launch verification and every other config default apply.
+            RetromodConfig.ensureDefaultConfig();
             String targetVersion = getMinecraftVersion();
 
             LOGGER.info("Target Minecraft version: {}", targetVersion);
@@ -351,7 +354,9 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 LOGGER.warn("Could not register intermediary→Mojang mappings: {}", e.getMessage());
             }
 
-            try {
+            if (!RetromodConfig.getBoolean("polyfills_enabled", true)) {
+                LOGGER.info("Polyfills are disabled in config");
+            } else try {
                 ServiceLoader<com.retromod.polyfill.PolyfillProvider> polyfills =
                     ServiceLoader.load(com.retromod.polyfill.PolyfillProvider.class);
                 int polyfillCount = 0;
@@ -528,6 +533,8 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
 
             Files.createDirectories(processedFolder);
             Files.createDirectories(outputFolder);
+            ZipSecurity.validateNotSymlink(processedFolder);
+            ZipSecurity.validateNotSymlink(outputFolder);
 
             FabricModTransformer transformer = new FabricModTransformer(targetVersion);
 
@@ -552,20 +559,29 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                     }
 
                     boolean needsTransform = !isExactVersionMatch(modVersion, targetVersion);
+                    boolean completed = false;
 
                     if (!needsTransform) {
                         LOGGER.info("{} already targets Minecraft {}; copying it unchanged",
                             fileName, targetVersion);
                         Files.copy(modJar, outputFolder.resolve(fileName),
                             StandardCopyOption.REPLACE_EXISTING);
+                        completed = true;
                     } else {
                         Path transformed = transformer.transformMod(modJar, outputFolder);
                         if (transformed != null) {
                             LOGGER.info("Updated {} as {}", fileName, transformed.getFileName());
                             transformedMods.add(fileName);
+                            completed = true;
                         } else {
                             LOGGER.warn("Retromod could not update {}", fileName);
                         }
+                    }
+
+                    if (!completed) {
+                        LOGGER.warn("Keeping {} in {} so it can be retried",
+                                fileName, inputFolder.getFileName());
+                        continue;
                     }
                     
                     // move original to processed

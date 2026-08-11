@@ -97,9 +97,8 @@ public class ReiApiShim implements VersionShim {
         );
 
         // BasicDisplay ctor and category/widget factories route through the embedded ReiShim
-        transformer.registerMethodRedirect(
+        transformer.registerConstructorRedirect(
             "me/shedaniel/rei/api/common/display/basic/BasicDisplay",
-            "<init>",
             "(Ljava/util/List;Ljava/util/List;)V",
             "com/retromod/shim/api/fabric/embedded/ReiShim",
             "createBasicDisplay",

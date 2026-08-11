@@ -10,7 +10,40 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.3.0 Snapshot Line
 
-### Snapshot 5, in development
+### Snapshot 6, August 11, 2026
+
+- Added automatic mixin translation for unique target changes that only add parameters. It covers common `@Inject`, `@Redirect`, `WrapOperation`, `@Overwrite`, invoker, and Fabric refmap cases while refusing ambiguous or semantic changes.
+- Added `--mc-jar <target.jar>` to offline `transform`, `batch`, and `aot` commands so they can make the same exact host-method decisions as loader transforms and infer the matching target version.
+- Rejected explicit `--target` values that disagree with the version inside `--mc-jar`, preventing mismatched shim and host-method decisions.
+- Applied batch verification to unchanged copies as well as transformed outputs.
+- Applied documented config defaults during the first Fabric pre-launch, honored `polyfills_enabled` on every loader, and kept manual, reserved, and future config fields when the in-game screen saves.
+- Preserved handler parameter annotations, type annotations, local metadata, and stack frames when automatic translation inserts parameters.
+- Fixed Dynamic FPS mixins for the added `SoundEngine.play` parameter and the renamed `Window` handle getter. Patch-zero source versions such as `1.21.0` now receive the full shim chain.
+- Fixed No Chat Reports mixins for the removed simple-options screen superclass and client command parser invoker.
+- Fixed legacy Fabric client tick callbacks registering through an inaccessible event implementation, which left old listeners inert on current Java.
+- Fixed legacy overlay getter and setter calls after they moved behind `Minecraft.gui` on 26.2. Chat Bubbles now reaches the title screen, but its removed chat listener and player renderer keep the bubble feature unsupported.
+- Removed a stale shim that changed the live `BlockState.getBlock()` call to a nonexistent method.
+- Made mixin shadow, accessor, and explicit field selectors owner-aware so a same-named field on another Minecraft class cannot be renamed accidentally.
+- Kept constructors out of ordinary fuzzy method repair and migrated fifteen legacy shim registrations to the dedicated constructor path.
+- Made generated static Mixin helpers private so current Mixin accepts the bridged Pose constructor and worldgen codec registrars.
+- Fixed relocated item-group, server-world, and model-layer callbacks using a different interface identity from Fabric's listener arrays and delayed provider invocation.
+- Isolated generated helpers per mod and per nested library across Fabric, CLI, and AOT, while keeping older transformed callback holders compatible.
+- Gave each translated legacy HUD callback a unique layer id so multiple mods can render their overlays together.
+- Isolated Fabric intermediary and Forge SRG member maps between jars in mixed-loader batches, including standalone AOT and `batch --aot`.
+- Extended Forge and NeoForge refmap repair through AOT output and nested jars without changing Fabric intermediary sections.
+- Added owner-and-descriptor-aware old-SRG to Forge 1.20.1 target-SRG mapping, covering more than 69,000 exact method and field entries.
+- Fixed Forge mixin refmaps keeping old class owners and member names after the mixin class itself was transformed.
+- Fixed the removed `BlockBehaviour.Properties.noDrops()` call used by older Forge mods.
+- Improved compatibility analysis to identify eager legacy Forge registry entries that require a `DeferredRegister` lifecycle migration.
+- Restored NeoForge 26.1 and 26.1.1 release artifacts. The release matrix now requires 69 outputs: 23 Fabric, 23 Forge, 22 NeoForge, and one CLI jar.
+- Regenerated `SHA256SUMS.txt` from the current release matrix and required one checksum for every published jar.
+- Fixed self-hash verification from launcher paths containing encoded spaces, such as macOS `Application Support`.
+
+YUNG's Better Portals 0.3.9 now passes its reported missing-class failure, old SRG calls, mixin parsing, and `noDrops()` construction call on a real Forge 1.20.1 client. Its next blocker is structural: it creates blocks, fluids, and items in static initializers after modern Forge has frozen the registry. Snapshot 6 reports that limitation clearly; a full fix needs a registry lifecycle port.
+
+The automatic mixin work was checked against the exact No Chat Reports, Simple Voice Chat, Mouse Tweaks, and Dynamic FPS jars, plus a Fabric mixin compiled for 1.20.1. Signature changes that replace or remove parameters, change return values, depend on captured locals, or have more than one possible host target still require a reviewed repair. A handler that captures old parameters also remains unchanged when only its refmap, not its annotation text, relates a Yarn source name to the current Mojang name.
+
+### Snapshot 5, August 10, 2026
 
 - Fixed mod-owned stack-frame merges in the standalone CLI, full AOT worker pool, and recursively nested libraries. Each transform now reads the hierarchy from the jar it is actually rewriting.
 - Fixed Patchouli 1.20.1 on Fabric 1.21.11 across its recipe accessors, screen hierarchy, sound accessor, item setup, and old Gson registration. Replaced APIs for ghost buffers, resource-pack books, the animated guide-book model, and its completion predicate are disabled safely; built-in books and normal rendering remain available.

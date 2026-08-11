@@ -44,6 +44,19 @@ class FullAotModIdSafetyTest {
     }
 
     @Test
+    @DisplayName("Different hostile ids cannot collapse onto the same cache directory")
+    void sanitizedIdsRetainDistinctDigests() {
+        String slash = FullAotCompiler.safeModId("a/b");
+        String question = FullAotCompiler.safeModId("a?b");
+
+        assertNotEquals(slash, question);
+        assertTrue(slash.startsWith("a_b_"));
+        assertTrue(question.startsWith("a_b_"));
+        assertEquals(slash, FullAotCompiler.safeModId("a/b"),
+                "the collision suffix must be stable between runs");
+    }
+
+    @Test
     @DisplayName("An empty or unusable id still yields a usable directory name")
     void alwaysReturnsSomething() {
         assertEquals("unnamed-mod", FullAotCompiler.safeModId(null));

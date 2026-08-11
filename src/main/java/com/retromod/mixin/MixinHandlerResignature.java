@@ -6,12 +6,15 @@ package com.retromod.mixin;
 
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
+import org.objectweb.asm.TypeReference;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.FrameNode;
 import org.objectweb.asm.tree.IincInsnNode;
+import org.objectweb.asm.tree.LocalVariableAnnotationNode;
 import org.objectweb.asm.tree.LocalVariableNode;
 import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.TypeAnnotationNode;
 import org.objectweb.asm.tree.VarInsnNode;
 
 import java.util.ArrayList;
@@ -31,9 +34,10 @@ import java.util.Set;
  * Mixin no longer considers it a valid prefix. This class inserts the missing parameter and moves
  * the handler's local variable slots to match.
  *
- * <p>The repair is deliberately narrow. It only handles changes listed in
- * {@link #SIGNATURE_CHANGES}, skips parameters with Mixin annotations such as {@code @Local}, and
- * lets the caller recompute stack frames. If frame computation fails, the caller keeps the
+ * <p>The curated repair is deliberately narrow. It only handles changes listed in
+ * {@link #SIGNATURE_CHANGES}, skips parameters with semantic Mixin annotations such as
+ * {@code @Local}, and lets the caller recompute stack frames. Ordinary annotations such as
+ * {@code @Nullable} move with their parameter. If frame computation fails, the caller keeps the
  * original class bytes.
  *
  * <p>Bare method selectors need only the handler repair. Selectors that include a descriptor also
@@ -223,12 +227,7 @@ public final class MixinHandlerResignature {
         // parameter would change its meaning.
         if (cbIndex < 1) return false;
 
-        // Parameter annotation arrays use descriptor positions. Moving parameters without moving
-        // those arrays could attach @Local, @Coerce, or @Share to the wrong parameter.
-        if (hasParamAnnotations(handler.visibleParameterAnnotations, Integer.MAX_VALUE - 1)
-                || hasParamAnnotations(handler.invisibleParameterAnnotations, Integer.MAX_VALUE - 1)) {
-            return false;
-        }
+        if (hasUnsafeParamAnnotations(handler)) return false;
 
         if (!insertRawParams(handler, inserts)) return false;
 
@@ -272,12 +271,26 @@ public final class MixinHandlerResignature {
         if (handler.localVariables != null) {
             for (LocalVariableNode lv : handler.localVariables) lv.index += shiftFor(lv.index, insSlot, insWidth);
         }
+        shiftLocalVariableAnnotations(handler.visibleLocalVariableAnnotations, insSlot, insWidth);
+        shiftLocalVariableAnnotations(handler.invisibleLocalVariableAnnotations, insSlot, insWidth);
 
         // Insert from the end so each earlier index remains valid.
         List<Type> newArgs = new ArrayList<>(Arrays.asList(args));
         for (int k = sorted.size() - 1; k >= 0; k--) {
             newArgs.add(sorted.get(k).paramIndex(), Type.getType(sorted.get(k).typeDescriptor()));
         }
+        handler.visibleParameterAnnotations = shiftParameterAnnotations(
+                handler.visibleParameterAnnotations, args.length, sorted);
+        handler.invisibleParameterAnnotations = shiftParameterAnnotations(
+                handler.invisibleParameterAnnotations, args.length, sorted);
+        if (handler.visibleParameterAnnotations != null) {
+            handler.visibleAnnotableParameterCount = newArgs.size();
+        }
+        if (handler.invisibleParameterAnnotations != null) {
+            handler.invisibleAnnotableParameterCount = newArgs.size();
+        }
+        shiftFormalParameterTypeAnnotations(handler.visibleTypeAnnotations, sorted);
+        shiftFormalParameterTypeAnnotations(handler.invisibleTypeAnnotations, sorted);
         handler.desc = Type.getMethodDescriptor(ret, newArgs.toArray(new Type[0]));
 
         // These optional attributes still describe the old parameter list.
@@ -486,10 +499,7 @@ public final class MixinHandlerResignature {
             int idx = ins.paramIndex();
             if (idx < args.length && args[idx].getDescriptor().equals(ins.typeDescriptor())) return List.of();
         }
-        if (hasParamAnnotations(method.visibleParameterAnnotations, Integer.MAX_VALUE - 1)
-                || hasParamAnnotations(method.invisibleParameterAnnotations, Integer.MAX_VALUE - 1)) {
-            return List.of();
-        }
+        if (hasUnsafeParamAnnotations(method)) return List.of();
         return List.of(new OverwriteDrift(method, sc.inserts()));
     }
 
@@ -552,10 +562,7 @@ public final class MixinHandlerResignature {
             } else {
                 return null;
             }
-            if (hasParamAnnotations(handler.visibleParameterAnnotations, Integer.MAX_VALUE - 1)
-                    || hasParamAnnotations(handler.invisibleParameterAnnotations, Integer.MAX_VALUE - 1)) {
-                return null;
-            }
+            if (hasUnsafeParamAnnotations(handler)) return null;
             List<ParamInsert> shifted = new ArrayList<>();
             for (ParamInsert ins : sc.inserts()) {
                 shifted.add(new ParamInsert(ins.paramIndex() + receiverOffset, ins.typeDescriptor()));
@@ -577,10 +584,82 @@ public final class MixinHandlerResignature {
         return (List<Object>) l;
     }
 
-    private static boolean hasParamAnnotations(List<AnnotationNode>[] arr, int uptoInclusive) {
-        if (arr == null) return false;
-        for (int i = 0; i <= uptoInclusive && i < arr.length; i++) if (arr[i] != null && !arr[i].isEmpty()) return true;
+    /**
+     * Whether a handler carries parameter metadata whose meaning cannot be preserved by moving the
+     * annotated parameter. Ordinary nullability and type-use annotations move with the original
+     * parameter. Mixin capture annotations are semantic, so those handlers remain manual-only.
+     */
+    static boolean hasUnsafeParamAnnotations(MethodNode method) {
+        int parameterCount;
+        try {
+            parameterCount = Type.getArgumentTypes(method.desc).length;
+        } catch (RuntimeException e) {
+            return true;
+        }
+        return hasUnsafeParamAnnotations(method.visibleParameterAnnotations, parameterCount)
+                || hasUnsafeParamAnnotations(method.invisibleParameterAnnotations, parameterCount);
+    }
+
+    private static boolean hasUnsafeParamAnnotations(
+            List<AnnotationNode>[] annotations, int parameterCount) {
+        if (annotations == null) return false;
+        // An abbreviated annotable-parameter table needs synthetic-parameter accounting that a
+        // general Mixin handler cannot infer. Leave it unchanged rather than move metadata wrong.
+        if (annotations.length != parameterCount) return true;
+        for (List<AnnotationNode> parameter : annotations) {
+            if (parameter == null) continue;
+            for (AnnotationNode annotation : parameter) {
+                String desc = annotation.desc;
+                if (desc != null && (desc.startsWith("Lorg/spongepowered/asm/mixin/")
+                        || desc.startsWith("Lcom/llamalad7/mixinextras/"))) {
+                    return true;
+                }
+            }
+        }
         return false;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<AnnotationNode>[] shiftParameterAnnotations(
+            List<AnnotationNode>[] annotations, int oldCount, List<ParamInsert> inserts) {
+        if (annotations == null) return null;
+        if (annotations.length != oldCount) return annotations;
+        List<AnnotationNode>[] shifted = (List<AnnotationNode>[]) new List<?>[
+                oldCount + inserts.size()];
+        for (int oldIndex = 0; oldIndex < annotations.length; oldIndex++) {
+            int newIndex = oldIndex;
+            for (ParamInsert insert : inserts) {
+                if (insert.paramIndex() <= oldIndex) newIndex++;
+            }
+            shifted[newIndex] = annotations[oldIndex];
+        }
+        return shifted;
+    }
+
+    private static void shiftFormalParameterTypeAnnotations(
+            List<TypeAnnotationNode> annotations, List<ParamInsert> inserts) {
+        if (annotations == null) return;
+        for (TypeAnnotationNode annotation : annotations) {
+            TypeReference reference = new TypeReference(annotation.typeRef);
+            if (reference.getSort() != TypeReference.METHOD_FORMAL_PARAMETER) continue;
+            int oldIndex = reference.getFormalParameterIndex();
+            int newIndex = oldIndex;
+            for (ParamInsert insert : inserts) {
+                if (insert.paramIndex() <= oldIndex) newIndex++;
+            }
+            annotation.typeRef = TypeReference.newFormalParameterReference(newIndex).getValue();
+        }
+    }
+
+    private static void shiftLocalVariableAnnotations(
+            List<LocalVariableAnnotationNode> annotations, int[] slots, int[] widths) {
+        if (annotations == null) return;
+        for (LocalVariableAnnotationNode annotation : annotations) {
+            for (int i = 0; i < annotation.index.size(); i++) {
+                int oldSlot = annotation.index.get(i);
+                annotation.index.set(i, oldSlot + shiftFor(oldSlot, slots, widths));
+            }
+        }
     }
 
     /** Counts how many local variable slots an insertion moves this slot by. */

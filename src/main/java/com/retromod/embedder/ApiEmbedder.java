@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.jar.*;
@@ -37,6 +38,7 @@ import java.util.zip.*;
 public class ApiEmbedder {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Embedder");
+    private static final int MAX_ARCHIVE_ENTRIES = 100_000;
 
     // Location of archived mod loader sources (extracted from old versions)
     private static final Path API_ARCHIVE_DIR = Path.of("config/retromod/api-archive");
@@ -125,16 +127,19 @@ public class ApiEmbedder {
      */
     private Set<ApiDependency> analyzeModDependencies(Path modJarPath) throws IOException {
         Set<ApiDependency> dependencies = new HashSet<>();
+        Set<String> entryNames = new HashSet<>();
+        ArchiveBudget budget = new ArchiveBudget("mod dependency scan");
         
         try (JarFile jar = new JarFile(modJarPath.toFile())) {
             Enumeration<JarEntry> entries = jar.entries();
             
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
+                String entryName = registerEntry(entry, entryNames, modJarPath);
                 
-                if (entry.getName().endsWith(".class")) {
+                if (!entry.isDirectory() && entryName.endsWith(".class")) {
                     try (InputStream is = jar.getInputStream(entry)) {
-                        byte[] classBytes = is.readAllBytes();
+                        byte[] classBytes = readEntry(is, budget, entryName);
                         dependencies.addAll(extractApiCalls(classBytes));
                     }
                 }
@@ -194,31 +199,55 @@ public class ApiEmbedder {
     /**
      * Embed extracted API classes into a mod JAR.
      */
-    private void embedApisIntoJar(Path modJarPath, Set<ApiDependency> removedDeps) 
+    void embedApisIntoJar(Path modJarPath, Set<ApiDependency> removedDeps)
             throws IOException {
         
         // Create output path for modified JAR
-        Path outputPath = modJarPath.resolveSibling(
-            modJarPath.getFileName().toString().replace(".jar", "-retromod.jar")
-        );
+        Path outputPath = embeddedOutputPath(modJarPath);
         
         // Collect all classes we need to embed
         Map<String, byte[]> classesToEmbed = new HashMap<>();
+        ArchiveBudget archiveBudget = new ArchiveBudget("archived API extraction");
         
         for (ApiDependency dep : removedDeps) {
             ArchivedApiInfo apiInfo = getApiInfo(dep);
             if (apiInfo != null) {
                 // Extract the class and all its dependencies
-                Map<String, byte[]> extracted = extractApiWithDependencies(apiInfo);
+                Map<String, byte[]> extracted = extractApiWithDependencies(apiInfo, archiveBudget);
                 classesToEmbed.putAll(extracted);
             }
         }
-        
-        // Copy original JAR and add embedded classes
-        try (JarFile originalJar = new JarFile(modJarPath.toFile());
-             JarOutputStream newJar = new JarOutputStream(
-                     new FileOutputStream(outputPath.toFile()))) {
-            
+
+        Path sourcePath = modJarPath.toAbsolutePath().normalize();
+        Path targetPath = outputPath.toAbsolutePath().normalize();
+        if (sourcePath.equals(targetPath)) {
+            throw new IOException("Embedded output path matches the source jar: " + sourcePath);
+        }
+        ZipSecurity.validateNotSymlink(targetPath);
+        Path stagedJar = Files.createTempFile(targetPath.getParent(),
+                ".retromod-api-embed-", ".jar.tmp");
+        try {
+            writeEmbeddedJar(sourcePath, stagedJar, classesToEmbed);
+            try (JarFile ignored = new JarFile(stagedJar.toFile())) {
+                // Opening the completed jar verifies its central directory before replacement.
+            }
+            moveReplacing(stagedJar, targetPath);
+        } finally {
+            Files.deleteIfExists(stagedJar);
+        }
+
+        LOGGER.info("Created Retromod-enhanced JAR: {} ({} embedded classes)",
+                outputPath.getFileName(), classesToEmbed.size());
+    }
+
+    private void writeEmbeddedJar(Path sourcePath, Path stagedJar,
+            Map<String, byte[]> classesToEmbed) throws IOException {
+        Set<String> outputNames = new HashSet<>();
+        ArchiveBudget inputBudget = new ArchiveBudget("mod embed input");
+        ArchiveBudget outputBudget = new ArchiveBudget("mod embed output");
+
+        try (JarFile originalJar = new JarFile(sourcePath.toFile());
+             JarOutputStream newJar = new JarOutputStream(Files.newOutputStream(stagedJar))) {
             // Copy all original entries.
             // Validate every entry name against zip-slip: input is an arbitrary
             // user-supplied JAR, and writing entry.getName() verbatim into the
@@ -227,17 +256,19 @@ public class ApiEmbedder {
             Enumeration<JarEntry> entries = originalJar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                newJar.putNextEntry(new JarEntry(ZipSecurity.safeEntryName(entry.getName())));
+                String entryName = registerEntry(entry, outputNames, sourcePath);
+                newJar.putNextEntry(new JarEntry(entryName));
 
                 if (!entry.isDirectory()) {
                     try (InputStream is = originalJar.getInputStream(entry)) {
-                        byte[] data = is.readAllBytes();
+                        byte[] data = readEntry(is, inputBudget, entryName);
 
                         // If it's a class file, transform it to use embedded APIs
-                        if (entry.getName().endsWith(".class")) {
+                        if (entryName.endsWith(".class")) {
                             data = transformToUseEmbedded(data, classesToEmbed.keySet());
                         }
 
+                        outputBudget.reserveEntry(data, entryName);
                         newJar.write(data);
                     }
                 }
@@ -250,28 +281,32 @@ public class ApiEmbedder {
             // against a future refactor accidentally letting attacker-controlled
             // strings reach this loop.
             for (Map.Entry<String, byte[]> embedded : classesToEmbed.entrySet()) {
-                String embeddedPath = ZipSecurity.safeEntryName(
-                    "retromod_embedded/" + embedded.getKey() + ".class");
+                String embeddedPath = registerGeneratedEntry(
+                        "retromod_embedded/" + embedded.getKey() + ".class", outputNames);
+                outputBudget.reserveEntry(embedded.getValue(), embeddedPath);
                 newJar.putNextEntry(new JarEntry(embeddedPath));
                 newJar.write(embedded.getValue());
                 newJar.closeEntry();
             }
 
             // Add a marker file indicating this JAR has been processed
-            newJar.putNextEntry(new JarEntry("retromod_embedded/RETROMOD_PROCESSED"));
-            newJar.write(("Processed by Retromod v1.0\n" +
-                         "Embedded APIs: " + classesToEmbed.size() + "\n").getBytes());
+            String markerName = registerGeneratedEntry(
+                    "retromod_embedded/RETROMOD_PROCESSED", outputNames);
+            byte[] marker = ("Processed by Retromod v1.0\n" +
+                    "Embedded APIs: " + classesToEmbed.size() + "\n")
+                    .getBytes(StandardCharsets.UTF_8);
+            outputBudget.reserveEntry(marker, markerName);
+            newJar.putNextEntry(new JarEntry(markerName));
+            newJar.write(marker);
             newJar.closeEntry();
         }
-        
-        LOGGER.info("Created Retromod-enhanced JAR: {} ({} embedded classes)",
-                outputPath.getFileName(), classesToEmbed.size());
     }
     
     /**
      * Extract an API class and all classes it depends on.
      */
-    private Map<String, byte[]> extractApiWithDependencies(ArchivedApiInfo apiInfo) 
+    private Map<String, byte[]> extractApiWithDependencies(ArchivedApiInfo apiInfo,
+            ArchiveBudget budget)
             throws IOException {
         
         Map<String, byte[]> result = new HashMap<>();
@@ -288,7 +323,7 @@ public class ApiEmbedder {
             processed.add(className);
             
             // Try to load from archive
-            byte[] classBytes = loadFromArchive(apiInfo.archiveVersion(), className);
+            byte[] classBytes = loadFromArchive(apiInfo.archiveVersion(), className, budget);
             if (classBytes == null) {
                 LOGGER.warn("Could not find archived class: {}", className);
                 continue;
@@ -313,11 +348,14 @@ public class ApiEmbedder {
     /**
      * Load a class from the archived API sources.
      */
-    private byte[] loadFromArchive(String archiveVersion, String className) throws IOException {
+    private byte[] loadFromArchive(String archiveVersion, String className, ArchiveBudget budget)
+            throws IOException {
         // Check cache first
         String cacheKey = archiveVersion + "/" + className;
         if (extractedClassCache.containsKey(cacheKey)) {
-            return extractedClassCache.get(cacheKey);
+            byte[] cached = extractedClassCache.get(cacheKey);
+            budget.reserveEntry(cached, className + ".class");
+            return cached;
         }
         
         // Look in archive directory
@@ -332,11 +370,12 @@ public class ApiEmbedder {
         
         // Extract from archive JAR
         try (JarFile archiveJar = new JarFile(archivePath.toFile())) {
+            validateArchiveEntries(archiveJar, archivePath);
             JarEntry entry = archiveJar.getJarEntry(className + ".class");
             if (entry == null) return null;
             
             try (InputStream is = archiveJar.getInputStream(entry)) {
-                byte[] bytes = is.readAllBytes();
+                byte[] bytes = readEntry(is, budget, entry.getName());
                 extractedClassCache.put(cacheKey, bytes);
                 return bytes;
             }
@@ -498,6 +537,104 @@ public class ApiEmbedder {
             info = removedApiRegistry.get(wildcardKey);
         }
         return info;
+    }
+
+    private static Path embeddedOutputPath(Path modJarPath) throws IOException {
+        Path fileName = modJarPath.getFileName();
+        if (fileName == null) {
+            throw new IOException("Mod jar has no file name: " + modJarPath);
+        }
+        String name = fileName.toString();
+        String base = name.toLowerCase(Locale.ROOT).endsWith(".jar")
+                ? name.substring(0, name.length() - 4)
+                : name;
+        return modJarPath.resolveSibling(base + "-retromod.jar");
+    }
+
+    private static void validateArchiveEntries(JarFile jar, Path jarPath) throws IOException {
+        Set<String> names = new HashSet<>();
+        Enumeration<JarEntry> entries = jar.entries();
+        while (entries.hasMoreElements()) {
+            registerEntry(entries.nextElement(), names, jarPath);
+        }
+    }
+
+    private static String registerEntry(JarEntry entry, Set<String> names, Path jarPath)
+            throws IOException {
+        if (names.size() >= MAX_ARCHIVE_ENTRIES) {
+            throw new IOException("Jar has too many entries: " + jarPath.getFileName());
+        }
+        String name = validateEntryName(entry.getName(), entry.isDirectory());
+        if (!names.add(name)) {
+            throw new IOException("Jar contains duplicate entry: " + name);
+        }
+        return name;
+    }
+
+    private static String registerGeneratedEntry(String entryName, Set<String> names)
+            throws IOException {
+        if (names.size() >= MAX_ARCHIVE_ENTRIES) {
+            throw new IOException("Retromod output has too many entries");
+        }
+        String name = validateEntryName(entryName, false);
+        if (!names.add(name)) {
+            throw new IOException("Retromod output entry collides with an existing entry: "
+                    + name);
+        }
+        return name;
+    }
+
+    private static String validateEntryName(String entryName, boolean directory)
+            throws IOException {
+        String name = ZipSecurity.safeEntryName(entryName);
+        if (name.indexOf('\\') >= 0 || name.indexOf('\0') >= 0) {
+            throw new IOException("Jar contains an unsafe entry name: " + entryName);
+        }
+        String withoutDirectorySlash = directory && name.endsWith("/")
+                ? name.substring(0, name.length() - 1)
+                : name;
+        for (String part : withoutDirectorySlash.split("/", -1)) {
+            if (part.isEmpty() || part.equals(".")) {
+                throw new IOException("Jar contains an unsafe entry name: " + entryName);
+            }
+        }
+        return name;
+    }
+
+    private static byte[] readEntry(InputStream input, ArchiveBudget budget, String entryName)
+            throws IOException {
+        byte[] bytes = ZipSecurity.safeReadAllBytes(input);
+        budget.reserveEntry(bytes, entryName);
+        return bytes;
+    }
+
+    private static void moveReplacing(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static final class ArchiveBudget {
+        private final String operation;
+        private long total;
+
+        private ArchiveBudget(String operation) {
+            this.operation = operation;
+        }
+
+        private void reserveEntry(byte[] bytes, String entryName) throws IOException {
+            if (bytes.length > ZipSecurity.DEFAULT_MAX_ENTRY_SIZE) {
+                throw new IOException("Jar entry exceeds size limit during " + operation
+                        + ": " + entryName);
+            }
+            if (total > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE - bytes.length) {
+                throw new IOException("Jar exceeds total size limit during " + operation);
+            }
+            total += bytes.length;
+        }
     }
     
     // --- Record classes ---

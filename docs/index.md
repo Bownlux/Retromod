@@ -17,7 +17,7 @@ Retromod translates older Minecraft mods while the game loads. It updates byteco
   <a class="retromod-btn retromod-btn-ghost" href="https://github.com/Bownlux/Retromod">Source</a>
 </div>
 
-It supports Fabric, NeoForge, and Forge on Minecraft 1.20 through 26.2. Source support reaches back to 1.12.2 on Forge, 1.14.4 on Fabric, and 1.20.1 on NeoForge.
+Published host jars cover Fabric and Forge on Minecraft 1.20 through 26.2, plus NeoForge on 1.20.1 through 26.2. Source support reaches back to 1.12.2 on Forge, 1.14.4 on Fabric, and 1.20.1 on NeoForge. GitHub releases also include an executable standalone CLI jar for offline transforms.
 
 ## Start Here
 
@@ -33,7 +33,7 @@ Retromod works best with content mods, quality-of-life mods, libraries, and reci
 
 Mods such as Create, OptiFine, Flywheel, and Veil are generally outside its scope. See [Mods That Can't Be Translated]({{ '/incompatible-mods' | relative_url }}).
 
-Original jars are backed up. A successful transform still needs an in-game test because a mod can load while one feature remains incompatible.
+Original mod jars are backed up, but world saves are not. Back up important worlds and test save-affecting mods in a copied instance. A successful transform still needs an in-game test because a mod can load while one feature remains incompatible.
 
 ## More
 

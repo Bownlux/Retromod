@@ -226,18 +226,32 @@ public class ResourceManager {
     }
     
     private void copyDirectory(Path source, Path dest) throws IOException {
-        try (var stream = Files.walk(source)) {
-            stream.forEach(src -> {
-                try {
-                    Path dst = dest.resolve(source.relativize(src));
+        Path parent = dest.toAbsolutePath().getParent();
+        if (parent == null) throw new IOException("Pack destination has no parent: " + dest);
+        Files.createDirectories(parent);
+        if (Files.exists(dest)) {
+            throw new FileAlreadyExistsException("Pack destination already exists: " + dest);
+        }
+        Path staged = Files.createTempDirectory(parent, ".retromod-pack-");
+        try {
+            try (var stream = Files.walk(source)) {
+                for (Path src : stream.toList()) {
+                    Path dst = staged.resolve(source.relativize(src).toString());
                     if (Files.isDirectory(src)) {
                         Files.createDirectories(dst);
                     } else {
                         Files.createDirectories(dst.getParent());
-                        Files.copy(src, dst, StandardCopyOption.REPLACE_EXISTING);
+                        Files.copy(src, dst);
                     }
-                } catch (Exception e) {}
-            });
+                }
+            }
+            try {
+                Files.move(staged, dest, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(staged, dest);
+            }
+        } finally {
+            if (Files.exists(staged)) deleteDirectory(staged);
         }
     }
     
@@ -246,11 +260,12 @@ public class ResourceManager {
         deleteDirectory(source);
     }
     
-    private void deleteDirectory(Path dir) {
+    private void deleteDirectory(Path dir) throws IOException {
         try (var stream = Files.walk(dir)) {
-            stream.sorted((a, b) -> -a.compareTo(b))
-                  .forEach(p -> { try { Files.delete(p); } catch (Exception e) {} });
-        } catch (Exception e) {}
+            for (Path path : stream.sorted((a, b) -> -a.compareTo(b)).toList()) {
+                Files.delete(path);
+            }
+        }
     }
     
     // Getters

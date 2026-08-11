@@ -217,18 +217,25 @@ public final class ModHealthChecker {
         }
 
         try {
+            Path inputFolder = info.transformedPath().getParent().getParent().resolve("retromod-input");
+            Files.createDirectories(inputFolder);
+            Path destination = inputFolder.resolve(
+                info.backupPath().getFileName().toString().replace("-original.jar", ".jar")
+            );
+
+            Path staged = Files.createTempFile(inputFolder, ".retromod-restore-", ".tmp");
+            try {
+                Files.copy(info.backupPath(), staged, StandardCopyOption.REPLACE_EXISTING);
+                moveReplacing(staged, destination);
+            } finally {
+                Files.deleteIfExists(staged);
+            }
+
             if (Files.exists(info.transformedPath())) {
                 Files.delete(info.transformedPath());
                 LOGGER.info("Removed the broken transformed copy: {}",
                     info.transformedPath().getFileName());
             }
-
-            Path inputFolder = info.transformedPath().getParent().getParent().resolve("retromod-input");
-            Path destination = inputFolder.resolve(
-                info.backupPath().getFileName().toString().replace("-original.jar", ".jar")
-            );
-
-            Files.copy(info.backupPath(), destination, StandardCopyOption.REPLACE_EXISTING);
             LOGGER.info("Restored the original to retromod-input: {}", destination.getFileName());
             
             JOptionPane.showMessageDialog(
@@ -245,6 +252,15 @@ public final class ModHealthChecker {
         } catch (IOException e) {
             LOGGER.error("Could not restore original for {}", info.modId(), e);
             return false;
+        }
+    }
+
+    private static void moveReplacing(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
         }
     }
     

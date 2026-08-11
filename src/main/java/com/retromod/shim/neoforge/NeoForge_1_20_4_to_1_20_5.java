@@ -57,8 +57,8 @@ public class NeoForge_1_20_4_to_1_20_5 implements VersionShim {
             "com/retromod/shim/neoforge/embedded/FoodPropertiesShim", "nutrition",
             "(Ljava/lang/Object;I)Ljava/lang/Object;"
         );
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/entity/ai/attributes/AttributeModifier", "<init>",
+        transformer.registerConstructorRedirect(
+            "net/minecraft/world/entity/ai/attributes/AttributeModifier",
             "(Ljava/util/UUID;Ljava/lang/String;DLnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;)V",
             "com/retromod/shim/neoforge/embedded/AttributeShim", "createModifier",
             "(Ljava/util/UUID;Ljava/lang/String;DLjava/lang/Object;)Ljava/lang/Object;"
