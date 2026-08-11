@@ -36,7 +36,7 @@
         <fabric.api.version>0.114.0+1.21.4</fabric.api.version>
         
         <!-- ASM version -->
-        <asm.version>9.8</asm.version>
+        <asm.version>9.10.1</asm.version>
         
         <!-- Other dependencies -->
         <gson.version>2.10.1</gson.version>
