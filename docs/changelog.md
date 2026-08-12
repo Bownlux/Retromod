@@ -10,6 +10,13 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.3.0 Snapshot Line
 
+### Snapshot 7, August 11, 2026
+
+- Fixed parameter-capturing Fabric mixins whose annotation keeps a Yarn source selector while the refmap alone identifies the changed target method.
+- Carries an exact, unique target parameter-addition proof from refmap remapping into the matching class repair, while preserving the source selector that Mixin expects.
+- Refuses ambiguous targets, `remap = false`, unsafe parameter annotations, staticness mismatches, and owner mismatches instead of guessing.
+- Uses the same repair context for runtime transforms, the CLI, normal and full AOT, and nested jars.
+
 ### Snapshot 6, August 11, 2026
 
 - Added automatic mixin translation for unique target changes that only add parameters. It covers common `@Inject`, `@Redirect`, `WrapOperation`, `@Overwrite`, invoker, and Fabric refmap cases while refusing ambiguous or semantic changes.
@@ -41,7 +48,7 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 YUNG's Better Portals 0.3.9 now passes its reported missing-class failure, old SRG calls, mixin parsing, and `noDrops()` construction call on a real Forge 1.20.1 client. Its next blocker is structural: it creates blocks, fluids, and items in static initializers after modern Forge has frozen the registry. Snapshot 6 reports that limitation clearly; a full fix needs a registry lifecycle port.
 
-The automatic mixin work was checked against the exact No Chat Reports, Simple Voice Chat, Mouse Tweaks, and Dynamic FPS jars, plus a Fabric mixin compiled for 1.20.1. Signature changes that replace or remove parameters, change return values, depend on captured locals, or have more than one possible host target still require a reviewed repair. A handler that captures old parameters also remains unchanged when only its refmap, not its annotation text, relates a Yarn source name to the current Mojang name.
+The automatic mixin work was checked against the exact No Chat Reports, Simple Voice Chat, Mouse Tweaks, and Dynamic FPS jars, plus a Fabric mixin compiled for 1.20.1. Signature changes that replace or remove parameters, change return values, depend on captured locals, or have more than one possible host target still require a reviewed repair. In snapshot 6, a handler that captured old parameters also remained unchanged when only its refmap, not its annotation text, related a Yarn source name to the current Mojang name. Snapshot 7 fixes that case.
 
 ### Snapshot 5, August 10, 2026
 

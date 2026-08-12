@@ -7,10 +7,10 @@ nav_order: 5
 
 The CLI transforms mods without launching Minecraft. It is useful for servers, modpacks, CI, and compatibility checks.
 
-Download `retromod-1.3.0-snapshot.6-cli.jar` from the GitHub release. It bundles its dependencies and has an executable manifest:
+Download `retromod-1.3.0-snapshot.7-cli.jar` from the GitHub release. It bundles its dependencies and has an executable manifest:
 
 ```bash
-java -jar retromod-1.3.0-snapshot.6-cli.jar <command> <args>
+java -jar retromod-1.3.0-snapshot.7-cli.jar <command> <args>
 ```
 
 From a repository checkout, Maven is a useful fallback:
@@ -25,30 +25,30 @@ mvn exec:java \
 
 ```bash
 # Inspect a mod
-java -jar retromod-1.3.0-snapshot.6-cli.jar analyze path/to/mod.jar
+java -jar retromod-1.3.0-snapshot.7-cli.jar analyze path/to/mod.jar
 
 # Transform one mod and use the exact target jar for safe Mixin repairs
-java -jar retromod-1.3.0-snapshot.6-cli.jar transform path/to/mod.jar \
+java -jar retromod-1.3.0-snapshot.7-cli.jar transform path/to/mod.jar \
   --target 26.2 --mc-jar path/to/minecraft-26.2-client.jar --verify
 
 # Transform a folder
-java -jar retromod-1.3.0-snapshot.6-cli.jar batch path/to/mods \
+java -jar retromod-1.3.0-snapshot.7-cli.jar batch path/to/mods \
   --aot --mc-jar path/to/minecraft-26.2-client.jar --verify
 
 # Prepare a Minecraft instance
-java -jar retromod-1.3.0-snapshot.6-cli.jar prepare path/to/.minecraft --aot
+java -jar retromod-1.3.0-snapshot.7-cli.jar prepare path/to/.minecraft --aot
 
 # List registered shims
-java -jar retromod-1.3.0-snapshot.6-cli.jar shims
+java -jar retromod-1.3.0-snapshot.7-cli.jar shims
 
 # Compare two version points
-java -jar retromod-1.3.0-snapshot.6-cli.jar diff fabric 1.21.1 26.2
+java -jar retromod-1.3.0-snapshot.7-cli.jar diff fabric 1.21.1 26.2
 ```
 
 Run `--help` for the full command and option list:
 
 ```bash
-java -jar retromod-1.3.0-snapshot.6-cli.jar --help
+java -jar retromod-1.3.0-snapshot.7-cli.jar --help
 ```
 
 ## Useful Flags
@@ -63,7 +63,7 @@ java -jar retromod-1.3.0-snapshot.6-cli.jar --help
 
 If `--target` is omitted, `--mc-jar` also tries to infer the target from the jar's `version.json`. A standard filename such as `minecraft-26.2-client.jar` is the fallback. An explicit `--target` always wins. Without `--mc-jar`, registered shims and mapping tables still run, but the exact target-method analysis is unavailable.
 
-Automatic Mixin translation is intentionally narrow. It can follow a unique current method when the return type is unchanged and the old parameters remain in order with no more than three additions. It can also repair selected zero-capture injections and exact-prefix handler captures. It refuses ambiguous overloads, constructors, reordered or removed parameters, return-type changes, semantic local captures, unsafe parameter annotations, and every `remap = false` scope.
+Automatic Mixin translation is intentionally narrow. It can follow a unique current method when the return type is unchanged and the old parameters remain in order with no more than three additions. It can also repair selected zero-capture injections and exact-prefix handler captures. When a Fabric refmap is the only link between the source selector in an annotation and the current target method, Retromod carries the exact parameter-addition proof from the refmap pass into the class repair without replacing the source selector. It refuses ambiguous overloads, constructors, reordered or removed parameters, return-type changes, semantic local captures, unsafe parameter annotations, staticness or owner mismatches, and every `remap = false` scope.
 
 The CLI leaves source jars untouched unless a command explicitly documents an in-place operation. `transform` defaults to a sibling `-transformed.jar`, `batch` defaults to `<input>/retromod-output/`, and `aot` writes its cache under `config/retromod/aot-cache/` unless `--output` is supplied. At startup the CLI initializes `retromod-input/`, `retromod-input/processed/`, and `retromod-backups/` in the current working directory. Reports, full-AOT state, and downloaded API archives also use that working directory, including `config/retromod/verify-reports/`, `retromod-cache/full-aot/`, and `config/retromod/api-archive/`.
 

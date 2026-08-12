@@ -125,7 +125,9 @@ public class ForgeModTransformer {
         try {
             extractJar(sourceJar, tempDir);
 
-            int classesTransformed = transformClasses(tempDir);
+            com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs =
+                    collectRefmapRepairs(tempDir);
+            int classesTransformed = transformClasses(tempDir, refmapRepairs);
             LOGGER.info("Transformed {} class files", classesTransformed);
 
             int refmapsTransformed = transformRefmaps(tempDir);
@@ -281,6 +283,11 @@ public class ForgeModTransformer {
 
     // Package-private for ForgeFrameMergeTest, which pins the frames this rebuilds.
     int transformClasses(Path dir) throws IOException {
+        return transformClasses(dir, com.retromod.mixin.MixinRefmapRepairIndex.empty());
+    }
+
+    private int transformClasses(Path dir,
+            com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs) throws IOException {
         final java.util.List<Path> classFiles;
         try (var stream = Files.walk(dir)) {
             classFiles = stream
@@ -323,7 +330,8 @@ public class ForgeModTransformer {
                     byte[] transformed = bytecodeTransformer.transformClass(preStripped, className);
                     // Keep the ValueIO repair in the same post-remap position on every loader.
                     if (transformed != null) {
-                        transformed = mixinTransformer.applyPostRemapRepairs(transformed);
+                        transformed = mixinTransformer.applyPostRemapRepairs(
+                                transformed, refmapRepairs);
                     }
                     // These helpers inspect the class and leave unrelated versions unchanged.
                     transformed = com.retromod.shim.forge.ForgeEventBusSynthetics
@@ -366,8 +374,8 @@ public class ForgeModTransformer {
                     .filter(path -> path.getFileName().toString().contains("refmap"))
                     .toList()) {
                 String original = Files.readString(refmap);
-                String transformed = MixinRefmapRemapper.remapForgeSelectors(
-                        original, mixinTransformer);
+                String transformed = MixinRefmapRemapper.remapForgeSelectorsWithRepairs(
+                        original, mixinTransformer).json();
                 if (!original.equals(transformed)) {
                     Files.writeString(refmap, transformed);
                     changed++;
@@ -375,6 +383,25 @@ public class ForgeModTransformer {
             }
         }
         return changed;
+    }
+
+    /** Build one immutable handler plan for this archive before its classes run in parallel. */
+    private com.retromod.mixin.MixinRefmapRepairIndex collectRefmapRepairs(Path dir) {
+        com.retromod.mixin.MixinRefmapRepairIndex repairs =
+                com.retromod.mixin.MixinRefmapRepairIndex.empty();
+        try (var files = Files.walk(dir)) {
+            for (Path refmap : files.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().contains("refmap"))
+                    .toList()) {
+                MixinRefmapRemapper.RemapResult result =
+                        MixinRefmapRemapper.remapForgeSelectorsWithRepairs(
+                                Files.readString(refmap), mixinTransformer);
+                repairs = repairs.merge(result.repairs());
+            }
+        } catch (Exception e) {
+            LOGGER.debug("Could not prepare refmap-aware Mixin repairs: {}", e.getMessage());
+        }
+        return repairs;
     }
 
     /** Max Jar-in-Jar nesting depth Retromod recurses through. */
@@ -420,7 +447,9 @@ public class ForgeModTransformer {
         Path tempDir = Files.createTempDirectory("retromod-jij-");
         try {
             extractJar(jijJar, tempDir);
-            int classesTransformed = transformClasses(tempDir);
+            com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs =
+                    collectRefmapRepairs(tempDir);
+            int classesTransformed = transformClasses(tempDir, refmapRepairs);
             int refmapsTransformed = transformRefmaps(tempDir);
 
             boolean hasForgeToml      = Files.exists(tempDir.resolve("META-INF/mods.toml"));

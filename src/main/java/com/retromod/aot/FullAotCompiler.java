@@ -222,7 +222,54 @@ public class FullAotCompiler {
         }
         return count;
     }
-    
+
+    private static final int MAX_REFMAP_FILES = 4_096;
+
+    /** Collects one immutable repair index before the Full AOT worker threads start. */
+    private com.retromod.mixin.MixinRefmapRepairIndex collectRefmapRepairs(
+            JarFile jar,
+            com.retromod.mixin.MixinCompatibilityTransformer mixins,
+            boolean forgeRefmaps, boolean official,
+            ExpandedByteBudget expandedInputBudget) throws IOException {
+        var repairs = com.retromod.mixin.MixinRefmapRepairIndex.empty();
+        int files = 0;
+        var entries = jar.entries();
+        while (entries.hasMoreElements()) {
+            JarEntry entry = entries.nextElement();
+            String name = ZipSecurity.safeEntryName(entry.getName());
+            if (entry.isDirectory()
+                    || !(name.endsWith("-refmap.json") || name.contains("refmap"))) {
+                continue;
+            }
+            if (++files > MAX_REFMAP_FILES) {
+                throw new IOException("mod JAR contains more than " + MAX_REFMAP_FILES
+                        + " refmap resources");
+            }
+            byte[] data;
+            try (InputStream input = jar.getInputStream(entry)) {
+                data = ZipSecurity.safeReadAllBytes(input);
+            }
+            expandedInputBudget.reserve(data.length, name);
+            String json = new String(data, StandardCharsets.UTF_8);
+            if (forgeRefmaps) {
+                com.retromod.core.MixinRefmapRemapper.RemapResult forge =
+                        com.retromod.core.MixinRefmapRemapper
+                                .remapForgeSelectorsWithRepairs(json, mixins);
+                json = forge.json();
+                repairs = repairs.merge(forge.repairs());
+            }
+            if (official) {
+                com.retromod.core.MixinRefmapRemapper.RemapResult mapped =
+                        com.retromod.core.MixinRefmapRemapper.remapWithRepairs(
+                                json,
+                                com.retromod.mapping.IntermediaryToMojangMapper.getInstance(),
+                                mixins);
+                repairs = repairs.merge(mapped.repairs());
+            }
+        }
+        return repairs;
+    }
+
     /** Transform every class in a mod JAR in parallel and write the results to the mod's cache dir. */
     private void compileAllClassesInMod(Path jarPath, RetromodTransformer transformer,
                                         ExpandedByteBudget expandedInputBudget,
@@ -261,6 +308,13 @@ public class FullAotCompiler {
         ExecutorService executor = Executors.newFixedThreadPool(threads);
 
         try (JarFile jar = new JarFile(jarPath.toFile())) {
+            boolean forgeRefmaps = jar.getEntry("META-INF/mods.toml") != null
+                    || jar.getEntry("META-INF/neoforge.mods.toml") != null;
+            com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs =
+                    collectRefmapRepairs(jar, mixinTransformer, forgeRefmaps,
+                            com.retromod.core.RetromodVersion
+                                    .isUnobfuscatedTarget(targetVersion),
+                            expandedInputBudget);
             Map<String, byte[]> classEntries = new LinkedHashMap<>();
             var entries = jar.entries();
             while (entries.hasMoreElements()) {
@@ -313,8 +367,10 @@ public class FullAotCompiler {
                             byte[] original = entry.getValue();
 
                             byte[] transformed = transformer.transformClass(original, className);
-                            transformed = AotMixinRepair.apply(mixinTransformer,
-                                transformed != null ? transformed : original, className);
+                            transformed = AotMixinRepair.apply(
+                                    mixinTransformer,
+                                    transformed != null ? transformed : original,
+                                    className, refmapRepairs);
 
                             if (transformed != null && transformed != original) {
                                 if (transformed.length > ZipSecurity.DEFAULT_MAX_ENTRY_SIZE) {

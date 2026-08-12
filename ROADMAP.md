@@ -4,7 +4,7 @@ This is a direction of travel, not a release promise. Real mod reports and new M
 
 Shipped work belongs in the [changelog](CHANGELOG.md). There are no fixed release dates.
 
-Last reviewed: 2026-07-29
+Last reviewed: 2026-08-11
 
 ## Current Work
 
@@ -18,6 +18,7 @@ Already working in the 1.3 snapshots:
 
 - save-data handlers affected by the `CompoundTag` to `ValueInput` and `ValueOutput` change
 - handlers for methods that gained a leading `ServerLevel` parameter
+- parameter-capturing handlers whose current target signature is proven through a refmap
 - more MixinExtras selectors and owner moves
 - several class and enum moves found through corpus testing
 

@@ -282,8 +282,11 @@ public class AotCompiler {
         MixinCompatibilityTransformer mixinTransformer = new MixinCompatibilityTransformer(transformer);
         boolean forgeRefmaps = "forge".equalsIgnoreCase(modInfo.modLoaderType())
                 || "neoforge".equalsIgnoreCase(modInfo.modLoaderType());
+        ArchiveRefmapPlan refmapPlan;
 
         try (JarFile jar = new JarFile(inputJar.toFile())) {
+            refmapPlan = prepareRefmapPlan(jar, mixinTransformer, forgeRefmaps,
+                    RetromodVersion.isUnobfuscatedTarget(targetMcVersion));
             // Rebuilding a frame needs the mod's own class hierarchy, and those classes are not on
             // the transform classpath. Reading them back out of the jar keeps a branch between two
             // of the mod's own types from being typed as Object, which the JVM rejects as soon as
@@ -334,7 +337,8 @@ public class AotCompiler {
                             classesSkipped++;
                         }
                         // A class whose own bytecode was left alone can still hold a Mixin.
-                        byte[] repaired = AotMixinRepair.apply(mixinTransformer, out, className);
+                        byte[] repaired = AotMixinRepair.apply(
+                                mixinTransformer, out, className, refmapPlan.repairs());
                         retainEntry(retainedBudget, repaired, entryName);
                         transformedClasses.put(entryName, repaired);
                     } else {
@@ -423,19 +427,8 @@ public class AotCompiler {
                 String resourceName = entry.getKey();
                 String resourceNameLower = resourceName.toLowerCase();
                 try {
-                    if (resourceName.endsWith("-refmap.json") || resourceName.contains("refmap")) {
-                        String refmap = new String(data, java.nio.charset.StandardCharsets.UTF_8);
-                        if (forgeRefmaps) {
-                            refmap = com.retromod.core.MixinRefmapRemapper.remapForgeSelectors(
-                                    refmap, mixinTransformer);
-                        }
-                        if (RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) {
-                            refmap = com.retromod.core.MixinRefmapRemapper.remap(
-                                    refmap,
-                                    com.retromod.mapping.IntermediaryToMojangMapper.getInstance(),
-                                    mixinTransformer::remapResourceSelector);
-                        }
-                        data = refmap.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    if (isRefmapEntry(resourceName)) {
+                        data = refmapPlan.resources().getOrDefault(resourceName, data);
                     } else if (RetromodVersion.isUnobfuscatedTarget(targetMcVersion)
                             && (resourceNameLower.endsWith(".accesswidener")
                                     || resourceNameLower.endsWith(".classtweaker"))) {
@@ -514,6 +507,115 @@ public class AotCompiler {
         budget.reserve(data.length, entryName);
     }
 
+    private static final long MAX_REFMAP_SCAN_BYTES = 64L * 1024 * 1024;
+    private static final int MAX_REFMAP_FILES = 4_096;
+
+    private record ArchiveRefmapPlan(
+            com.retromod.mixin.MixinRefmapRepairIndex repairs,
+            Map<String, byte[]> resources) {
+        private ArchiveRefmapPlan {
+            repairs = repairs == null
+                    ? com.retromod.mixin.MixinRefmapRepairIndex.empty() : repairs;
+            resources = Map.copyOf(resources);
+        }
+    }
+
+    private record RemappedRefmap(byte[] bytes,
+            com.retromod.mixin.MixinRefmapRepairIndex repairs) {}
+
+    private static boolean isRefmapEntry(String name) {
+        return name != null && (name.endsWith("-refmap.json") || name.contains("refmap"));
+    }
+
+    private static ArchiveRefmapPlan prepareRefmapPlan(JarFile jar,
+            MixinCompatibilityTransformer mixins, boolean forgeRefmaps,
+            boolean official) throws IOException {
+        var repairs = com.retromod.mixin.MixinRefmapRepairIndex.empty();
+        Map<String, byte[]> resources = new LinkedHashMap<>();
+        long totalBytes = 0;
+        int files = 0;
+        var entries = jar.entries();
+        while (entries.hasMoreElements()) {
+            JarEntry entry = entries.nextElement();
+            String name = ZipSecurity.safeEntryName(entry.getName());
+            if (entry.isDirectory() || !isRefmapEntry(name)) continue;
+            if (++files > MAX_REFMAP_FILES) {
+                throw new IOException("mod JAR contains more than " + MAX_REFMAP_FILES
+                        + " refmap resources");
+            }
+            byte[] data;
+            try (InputStream input = jar.getInputStream(entry)) {
+                data = ZipSecurity.safeReadAllBytes(input);
+            }
+            totalBytes += data.length;
+            if (totalBytes > MAX_REFMAP_SCAN_BYTES) {
+                throw new IOException("mod JAR refmaps exceed " + MAX_REFMAP_SCAN_BYTES
+                        + " expanded bytes");
+            }
+            RemappedRefmap remapped = remapRefmap(data, mixins, forgeRefmaps, official);
+            if (resources.putIfAbsent(name, remapped.bytes()) != null) {
+                throw new IOException("duplicate refmap entry: " + name);
+            }
+            repairs = repairs.merge(remapped.repairs());
+        }
+        return new ArchiveRefmapPlan(repairs, resources);
+    }
+
+    private static ArchiveRefmapPlan prepareRefmapPlan(byte[] jarData,
+            MixinCompatibilityTransformer mixins, boolean forgeRefmaps,
+            boolean official) throws IOException {
+        var repairs = com.retromod.mixin.MixinRefmapRepairIndex.empty();
+        Map<String, byte[]> resources = new LinkedHashMap<>();
+        long totalBytes = 0;
+        int files = 0;
+        try (var input = new ZipInputStream(new ByteArrayInputStream(jarData))) {
+            ZipEntry entry;
+            while ((entry = input.getNextEntry()) != null) {
+                String name = ZipSecurity.safeEntryName(entry.getName());
+                if (entry.isDirectory() || !isRefmapEntry(name)) continue;
+                if (++files > MAX_REFMAP_FILES) {
+                    throw new IOException("nested JAR contains more than " + MAX_REFMAP_FILES
+                            + " refmap resources");
+                }
+                byte[] data = ZipSecurity.safeReadAllBytes(input);
+                totalBytes += data.length;
+                if (totalBytes > MAX_REFMAP_SCAN_BYTES) {
+                    throw new IOException("nested JAR refmaps exceed " + MAX_REFMAP_SCAN_BYTES
+                            + " expanded bytes");
+                }
+                RemappedRefmap remapped = remapRefmap(data, mixins, forgeRefmaps, official);
+                if (resources.putIfAbsent(name, remapped.bytes()) != null) {
+                    throw new IOException("duplicate nested refmap entry: " + name);
+                }
+                repairs = repairs.merge(remapped.repairs());
+            }
+        }
+        return new ArchiveRefmapPlan(repairs, resources);
+    }
+
+    private static RemappedRefmap remapRefmap(byte[] data,
+            MixinCompatibilityTransformer mixins, boolean forgeRefmaps,
+            boolean official) {
+        String json = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+        var repairs = com.retromod.mixin.MixinRefmapRepairIndex.empty();
+        if (forgeRefmaps) {
+            MixinRefmapRemapper.RemapResult forge =
+                    MixinRefmapRemapper.remapForgeSelectorsWithRepairs(json, mixins);
+            json = forge.json();
+            repairs = repairs.merge(forge.repairs());
+        }
+        if (official) {
+            MixinRefmapRemapper.RemapResult mapped =
+                    MixinRefmapRemapper.remapWithRepairs(
+                            json, com.retromod.mapping.IntermediaryToMojangMapper.getInstance(),
+                            mixins);
+            json = mapped.json();
+            repairs = repairs.merge(mapped.repairs());
+        }
+        return new RemappedRefmap(
+                json.getBytes(java.nio.charset.StandardCharsets.UTF_8), repairs);
+    }
+
     /** Max Jar-in-Jar nesting depth the AOT path recurses through. */
     private static final int MAX_JIJ_DEPTH_AOT = 4;
 
@@ -570,6 +672,9 @@ public class AotCompiler {
                     MAX_NESTED_OUTPUT_BYTES, jarData.length);
             boolean modified = false;
             Map<String, byte[]> classBytes = RetromodTransformer.readJarClassBytes(jarData);
+            boolean official = RetromodVersion.isUnobfuscatedTarget(targetMcVersion);
+            ArchiveRefmapPlan refmapPlan = prepareRefmapPlan(
+                    jarData, mixinTransformer, forgeRefmaps, official);
             try (var hierarchyScope = transformer.pushJarClassBytesProvider(classBytes::get);
                  var jis = new java.util.zip.ZipInputStream(bais);
                  var jos = new JarOutputStream(boundedOutput)) {
@@ -583,7 +688,6 @@ public class AotCompiler {
                     if (!e.isDirectory()) {
                         byte[] d = ZipSecurity.safeReadAllBytes(jis);
                         nestedBudget.reserve(d.length, name);
-                        boolean official = RetromodVersion.isUnobfuscatedTarget(targetMcVersion);
                         String lower = name.toLowerCase();
                         if (name.endsWith(".class")) {
                             String cn = name.substring(0, name.length() - ".class".length());
@@ -594,7 +698,8 @@ public class AotCompiler {
                             }
                             // A bundled library ships its own Mixins, which need the same
                             // repairs as the mod's, or they cannot resolve their targets.
-                            byte[] repaired = AotMixinRepair.apply(mixinTransformer, d, cn);
+                            byte[] repaired = AotMixinRepair.apply(
+                                    mixinTransformer, d, cn, refmapPlan.repairs());
                             if (repaired != d) { d = repaired; modified = true; }
                         } else if (name.equals("fabric.mod.json") || name.equals("quilt.mod.json")) {
                             d = relaxFabricModDependencies(d); modified = true;
@@ -607,20 +712,12 @@ public class AotCompiler {
                                     com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
                                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                             if (!java.util.Arrays.equals(t, d)) { d = t; modified = true; }
-                        } else if (name.endsWith("-refmap.json") || name.contains("refmap")) {
-                            String refmap = new String(d, java.nio.charset.StandardCharsets.UTF_8);
-                            if (forgeRefmaps) {
-                                refmap = com.retromod.core.MixinRefmapRemapper.remapForgeSelectors(
-                                        refmap, mixinTransformer);
+                        } else if (isRefmapEntry(name)) {
+                            byte[] t = refmapPlan.resources().getOrDefault(name, d);
+                            if (!java.util.Arrays.equals(t, d)) {
+                                d = t;
+                                modified = true;
                             }
-                            if (official) {
-                                refmap = com.retromod.core.MixinRefmapRemapper.remap(
-                                        refmap,
-                                        com.retromod.mapping.IntermediaryToMojangMapper.getInstance(),
-                                        mixinTransformer::remapResourceSelector);
-                            }
-                            byte[] t = refmap.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                            if (!java.util.Arrays.equals(t, d)) { d = t; modified = true; }
                         } else if (com.retromod.resources.ModDataMigrator.isMigratableData(name)) {
                             byte[] t = com.retromod.resources.ModDataMigrator.migrate(
                                     name, d, targetMcVersion);

@@ -24,6 +24,7 @@ import org.objectweb.asm.tree.VarInsnNode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -104,6 +105,54 @@ class AutomaticMixinTranslatorTest {
         assertEquals("append(Ljava/lang/String;I)V", injectSelector(output));
         assertEquals("(Ljava/lang/String;I" + CALLBACK_INFO + ")V", handler(output).desc,
                 "the appended target parameter must stay ahead of CallbackInfo");
+    }
+
+    @Test
+    @DisplayName("A refmap-only Yarn source selector can repair its parameter-capturing handler")
+    void refmapOnlySourceSelectorRepairsHandler() {
+        String sourceSelector = "oldYarnAppend(Ljava/lang/String;)V";
+        String oldHandler = "(Ljava/lang/String;" + CALLBACK_INFO + ")V";
+        byte[] input = injectMixin("RefmapLinkedMixin", sourceSelector, oldHandler, false);
+        MixinRefmapRepairIndex index = MixinRefmapRepairIndex.builder()
+                .put("test/mixin/RefmapLinkedMixin", sourceSelector,
+                        new MixinRefmapRepairIndex.Repair(
+                                TARGET, "(Ljava/lang/String;)V",
+                                "(Ljava/lang/String;I)V",
+                                Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                                List.of(new MixinHandlerResignature.ParamInsert(1, "I"))))
+                .build();
+
+        byte[] output = translator.translateRefmapHandlers(input, index);
+
+        assertEquals(sourceSelector, injectSelector(output),
+                "the source selector remains the refmap lookup key");
+        assertEquals("(Ljava/lang/String;I" + CALLBACK_INFO + ")V", handler(output).desc,
+                "the exact refmap relationship supplies the added target parameter");
+        assertEquals(3, firstVar(handler(output), Opcodes.ALOAD),
+                "the existing callback load follows its shifted local slot");
+    }
+
+    @Test
+    @DisplayName("Multiple matching injector annotations decline a refmap-linked repair")
+    void multipleRefmapMatchesAreRefused() {
+        String sourceSelector = "oldYarnAppend(Ljava/lang/String;)V";
+        String oldHandler = "(Ljava/lang/String;" + CALLBACK_INFO + ")V";
+        byte[] input = duplicateInjectAnnotation(injectMixin(
+                "DuplicateRefmapMixin", sourceSelector, oldHandler, false));
+        MixinRefmapRepairIndex index = MixinRefmapRepairIndex.builder()
+                .put("test/mixin/DuplicateRefmapMixin", sourceSelector,
+                        new MixinRefmapRepairIndex.Repair(
+                                TARGET, "(Ljava/lang/String;)V",
+                                "(Ljava/lang/String;I)V",
+                                Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                                List.of(new MixinHandlerResignature.ParamInsert(1, "I"))))
+                .build();
+
+        byte[] output = translator.translateRefmapHandlers(input, index);
+
+        assertArrayEquals(input, output,
+                "one handler cannot receive two independently discovered layouts");
+        assertEquals(oldHandler, handler(output).desc);
     }
 
     @Test
@@ -400,6 +449,21 @@ class AutomaticMixinTranslatorTest {
         handler.visitMaxs(0, 0);
         handler.visitEnd();
         writer.visitEnd();
+        return writer.toByteArray();
+    }
+
+    private static byte[] duplicateInjectAnnotation(byte[] classBytes) {
+        ClassNode node = readClass(classBytes);
+        MethodNode method = node.methods.stream()
+                .filter(candidate -> candidate.name.equals("handler"))
+                .findFirst().orElseThrow();
+        AnnotationNode original = annotation(method, INJECT);
+        AnnotationNode duplicate = new AnnotationNode(original.desc);
+        duplicate.values = original.values == null ? null : new ArrayList<>(original.values);
+        if (method.invisibleAnnotations == null) method.invisibleAnnotations = new ArrayList<>();
+        method.invisibleAnnotations.add(duplicate);
+        ClassWriter writer = new ClassWriter(0);
+        node.accept(writer);
         return writer.toByteArray();
     }
 

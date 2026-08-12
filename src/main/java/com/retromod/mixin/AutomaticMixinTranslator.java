@@ -23,6 +23,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -80,6 +81,31 @@ public final class AutomaticMixinTranslator {
         return targetMethods != null && targetMethods.isIndexed();
     }
 
+    /** A resource selector change proven against one exact host declaration. */
+    public record ResourceSelectorRepair(String replacement, String targetOwner,
+            String oldTargetDescriptor, String newTargetDescriptor, int targetAccess,
+            List<MixinHandlerResignature.ParamInsert> insertions) {
+        public ResourceSelectorRepair {
+            insertions = List.copyOf(insertions);
+        }
+    }
+
+    /** Plans a resource repair while retaining the facts needed to repair its Mixin handler. */
+    public Optional<ResourceSelectorRepair> planResourceSelector(String selectorText) {
+        if (!isAvailable() || selectorText == null) return Optional.empty();
+        ParsedSelector selector = ParsedSelector.parse(selectorText);
+        if (selector == null || selector.owner() == null) return Optional.empty();
+
+        MethodChange added = resolveAddedParameters(
+                selector.owner(), selector.name(), selector.descriptor(),
+                targetMethods.getMethodsInHierarchy(selector.owner()));
+        if (added == null) return Optional.empty();
+        return Optional.of(new ResourceSelectorRepair(
+                selector.withMethod(added.name(), added.descriptor()),
+                selector.owner(), selector.descriptor(), added.descriptor(),
+                added.access(), added.inserts()));
+    }
+
     /**
      * Repairs one owner-qualified method selector stored outside the Mixin class, such as a
      * refmap value. Resource selectors have no handler metadata, so this only follows the safest
@@ -87,16 +113,70 @@ public final class AutomaticMixinTranslator {
      * old parameters plus at most three insertions.
      */
     public String translateResourceSelector(String selectorText) {
-        if (!isAvailable() || selectorText == null) return selectorText;
-        ParsedSelector selector = ParsedSelector.parse(selectorText);
-        if (selector == null || selector.owner() == null) return selectorText;
+        return planResourceSelector(selectorText)
+                .map(ResourceSelectorRepair::replacement)
+                .orElse(selectorText);
+    }
 
-        MethodChange added = resolveAddedParameters(
-                selector.owner(), selector.name(), selector.descriptor(),
-                targetMethods.getMethodsInHierarchy(selector.owner()));
-        return added == null
-                ? selectorText
-                : selector.withMethod(added.name(), added.descriptor());
+    /**
+     * Repairs handlers whose source selector can only be related to the host through a refmap.
+     * Annotation text remains unchanged because Mixin still uses it as the refmap lookup key.
+     */
+    public byte[] translateRefmapHandlers(
+            byte[] classBytes, MixinRefmapRepairIndex repairIndex) {
+        if (!isAvailable() || classBytes == null || repairIndex == null || repairIndex.isEmpty()) {
+            return classBytes;
+        }
+
+        ClassNode classNode = new ClassNode();
+        new ClassReader(classBytes).accept(classNode, 0);
+        if (mixinRemapDisabled(classNode)) return classBytes;
+        String mixinOwner = soleOwner(mixinOwners(classNode));
+        if (mixinOwner == null) return classBytes;
+
+        List<PendingRepair> pending = new ArrayList<>();
+        for (MethodNode handler : classNode.methods) {
+            List<MixinHandlerResignature.ParamInsert> handlerInserts = null;
+            int matches = 0;
+            for (List<AnnotationNode> annotations : annotationLists(handler)) {
+                for (AnnotationNode annotation : annotations) {
+                    if (!INJECT.equals(annotation.desc) || remapDisabled(annotation)) continue;
+                    String sourceSelector = singleMethodSelector(annotation);
+                    if (sourceSelector == null) continue;
+                    MixinRefmapRepairIndex.Repair repair = repairIndex
+                            .find(classNode.name, sourceSelector).orElse(null);
+                    if (repair == null || !mixinOwner.equals(repair.targetOwner())) continue;
+                    List<MixinHandlerResignature.ParamInsert> inserts =
+                            refmapHandlerInserts(handler, repair);
+                    if (inserts != null && !inserts.isEmpty()) {
+                        matches++;
+                        handlerInserts = inserts;
+                    }
+                }
+            }
+            if (matches == 1) {
+                pending.add(new HandlerOnlyRepair(handler, handlerInserts));
+            } else if (matches > 1) {
+                LOGGER.debug("Declined refmap-linked Mixin repair for {}.{}{}: multiple matches",
+                        classNode.name, handler.name, handler.desc);
+            }
+        }
+        if (pending.isEmpty()) return classBytes;
+
+        try {
+            for (PendingRepair repair : pending) {
+                if (!repair.apply()) return classBytes;
+            }
+            ClassWriter writer = new com.retromod.util.SafeClassWriter(ClassWriter.COMPUTE_FRAMES);
+            classNode.accept(writer);
+            LOGGER.info("Automatically repaired {} refmap-linked Mixin handler(s) in {}",
+                    pending.size(), classNode.name);
+            return writer.toByteArray();
+        } catch (Throwable t) {
+            LOGGER.debug("Could not verify refmap-linked Mixin repair in {} ({}). Keeping it unchanged.",
+                    classNode.name, t.toString());
+            return classBytes;
+        }
     }
 
     /**
@@ -398,6 +478,51 @@ public final class AutomaticMixinTranslator {
         }
         if (MixinHandlerResignature.hasUnsafeParamAnnotations(handler)) return null;
         return change.inserts();
+    }
+
+    private static List<MixinHandlerResignature.ParamInsert> refmapHandlerInserts(
+            MethodNode handler, MixinRefmapRepairIndex.Repair repair) {
+        Type[] handlerArgs = safeArgumentTypes(handler.desc);
+        Type[] oldArgs = safeArgumentTypes(repair.oldTargetDescriptor());
+        if (handlerArgs == null || oldArgs == null || oldArgs.length == 0
+                || Type.getReturnType(handler.desc).getSort() != Type.VOID) {
+            return null;
+        }
+        int callback = MixinHandlerResignature.callbackIndex(handlerArgs);
+        if (callback != oldArgs.length || callback != handlerArgs.length - 1) return null;
+        if (!callbackMatchesReturn(
+                handlerArgs[callback], returnDescriptor(repair.newTargetDescriptor()))) {
+            return null;
+        }
+        for (int i = 0; i < oldArgs.length; i++) {
+            if (!handlerArgs[i].equals(oldArgs[i])) return null;
+        }
+        if (staticness(handler.access) != staticness(repair.targetAccess())
+                || MixinHandlerResignature.hasUnsafeParamAnnotations(handler)) {
+            return null;
+        }
+        return repair.insertions();
+    }
+
+    private static String singleMethodSelector(AnnotationNode injector) {
+        if (injector.values == null) return null;
+        String result = null;
+        for (int i = 0; i + 1 < injector.values.size(); i += 2) {
+            if (!"method".equals(injector.values.get(i))) continue;
+            Object value = injector.values.get(i + 1);
+            String selector;
+            if (value instanceof String string) {
+                selector = string;
+            } else if (value instanceof List<?> list
+                    && list.size() == 1 && list.get(0) instanceof String string) {
+                selector = string;
+            } else {
+                return null;
+            }
+            if (result != null) return null;
+            result = selector;
+        }
+        return result;
     }
 
     /**

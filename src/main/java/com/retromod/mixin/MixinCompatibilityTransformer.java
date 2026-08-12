@@ -302,8 +302,16 @@ public final class MixinCompatibilityTransformer {
      * gaining different Mixin coverage.
      */
     public byte[] applyPostRemapRepairs(byte[] classBytes) {
-        byte[] translated = new AutomaticMixinTranslator(transformer.getFuzzyResolver())
-                .translate(classBytes);
+        return applyPostRemapRepairs(classBytes, MixinRefmapRepairIndex.empty());
+    }
+
+    /** Runs post-remap repairs with exact relationships collected from this archive's refmaps. */
+    public byte[] applyPostRemapRepairs(
+            byte[] classBytes, MixinRefmapRepairIndex refmapRepairs) {
+        AutomaticMixinTranslator automatic =
+                new AutomaticMixinTranslator(transformer.getFuzzyResolver());
+        byte[] translated = automatic.translate(classBytes);
+        translated = automatic.translateRefmapHandlers(translated, refmapRepairs);
         byte[] bridged = applyLegacyMemberBridges(translated);
         return adaptValueIoHandlers(bridged);
     }
@@ -1130,9 +1138,22 @@ public final class MixinCompatibilityTransformer {
 
     /** Remap an owner-qualified selector stored in a refmap resource. */
     public String remapResourceSelector(String target) {
+        return remapResourceSelectorWithRepair(target).selector();
+    }
+
+    /** A resource selector after redirects, with an optional exact host-signature repair. */
+    public record ResourceSelectorResult(String selector,
+            AutomaticMixinTranslator.ResourceSelectorRepair repair) {}
+
+    /** Remaps one refmap value while retaining the proof needed for its handler class. */
+    public ResourceSelectorResult remapResourceSelectorWithRepair(String target) {
         String remapped = redirectMethodTarget(target);
-        return new AutomaticMixinTranslator(transformer.getFuzzyResolver())
-                .translateResourceSelector(remapped);
+        AutomaticMixinTranslator automatic =
+                new AutomaticMixinTranslator(transformer.getFuzzyResolver());
+        AutomaticMixinTranslator.ResourceSelectorRepair repair =
+                automatic.planResourceSelector(remapped).orElse(null);
+        return new ResourceSelectorResult(
+                repair != null ? repair.replacement() : remapped, repair);
     }
 
     /**

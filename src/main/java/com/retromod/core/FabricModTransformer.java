@@ -170,7 +170,9 @@ public class FabricModTransformer {
         try {
             extractJar(sourceJar, tempDir);
 
-            int classesTransformed = transformClasses(tempDir);
+            com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs =
+                    collectRefmapRepairs(tempDir);
+            int classesTransformed = transformClasses(tempDir, refmapRepairs);
             LOGGER.info("Transformed {} class files", classesTransformed);
 
             // Wrap entrypoints in try-catch so one mod's init failure doesn't kill the game.
@@ -435,6 +437,11 @@ public class FabricModTransformer {
      * extra annotation pass.
      */
     private int transformClasses(Path dir) throws IOException {
+        return transformClasses(dir, com.retromod.mixin.MixinRefmapRepairIndex.empty());
+    }
+
+    private int transformClasses(Path dir,
+            com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs) throws IOException {
         final com.retromod.mixin.MixinCompatibilityTransformer mixinTransformer;
         com.retromod.mixin.MixinCompatibilityTransformer mt = null;
         try {
@@ -492,7 +499,8 @@ public class FabricModTransformer {
                         // The member bridges and the ValueIO adapter expect Mojang names,
                         // which are only available after the main Fabric remap.
                         if (transformed != null) {
-                            byte[] repaired = mixinTransformer.applyPostRemapRepairs(transformed);
+                            byte[] repaired = mixinTransformer.applyPostRemapRepairs(
+                                    transformed, refmapRepairs);
                             if (repaired != null && repaired != transformed) {
                                 transformed = repaired;
                             }
@@ -913,8 +921,8 @@ public class FabricModTransformer {
             String content = Files.readString(refmapFile);
             MixinCompatibilityTransformer mixinTransformer =
                     new MixinCompatibilityTransformer(bytecodeTransformer);
-            String remapped = MixinRefmapRemapper.remap(
-                    content, mapper, mixinTransformer::remapResourceSelector);
+            String remapped = MixinRefmapRemapper.remapWithRepairs(
+                    content, mapper, mixinTransformer).json();
             if (!remapped.equals(content)) {
                 Files.writeString(refmapFile, remapped);
                 LOGGER.info("  Remapped refmap: {}", refmapFile.getFileName());
@@ -922,6 +930,39 @@ public class FabricModTransformer {
         } catch (Exception e) {
             LOGGER.warn("Failed to remap refmap {}: {}", refmapFile.getFileName(), e.getMessage());
         }
+    }
+
+    /**
+     * Builds the immutable handler plan before classes are transformed. Refmap resources are
+     * written later by {@link #remapIntermediaryNames(Path)}, but both passes use the same exact
+     * selector planner so the class and resource decisions cannot drift.
+     */
+    private com.retromod.mixin.MixinRefmapRepairIndex collectRefmapRepairs(Path dir) {
+        com.retromod.mixin.MixinRefmapRepairIndex repairs =
+                com.retromod.mixin.MixinRefmapRepairIndex.empty();
+        if (!RetromodPreLaunch.isUnobfuscatedTarget(targetMcVersion)) return repairs;
+
+        com.retromod.mapping.IntermediaryToMojangMapper mapper =
+                com.retromod.mapping.IntermediaryToMojangMapper.getInstance();
+        if (!mapper.isLoaded()) return repairs;
+
+        MixinCompatibilityTransformer mixins =
+                new MixinCompatibilityTransformer(bytecodeTransformer);
+        try (var files = Files.walk(dir)) {
+            for (Path refmap : files.filter(Files::isRegularFile)
+                    .filter(path -> {
+                        String name = path.getFileName().toString();
+                        return name.endsWith("-refmap.json") || name.contains("refmap");
+                    }).toList()) {
+                MixinRefmapRemapper.RemapResult result =
+                        MixinRefmapRemapper.remapWithRepairs(
+                                Files.readString(refmap), mapper, mixins);
+                repairs = repairs.merge(result.repairs());
+            }
+        } catch (Exception e) {
+            LOGGER.debug("Could not prepare refmap-aware Mixin repairs: {}", e.getMessage());
+        }
+        return repairs;
     }
 
     /**
@@ -939,7 +980,9 @@ public class FabricModTransformer {
                 // registration/helper JIJ has no metadata to change, so its remapped
                 // bytecode would otherwise be discarded, leaving intermediary
                 // Registry.register calls dead on a 26.1 host (#71).
-                int classesTransformed = transformClasses(tempDir);
+                com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs =
+                        collectRefmapRepairs(tempDir);
+                int classesTransformed = transformClasses(tempDir, refmapRepairs);
 
                 int remapped = classesTransformed;
                 Map<String, byte[]> nestedClassLookup = null;

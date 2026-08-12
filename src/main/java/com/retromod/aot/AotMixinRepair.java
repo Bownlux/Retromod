@@ -5,6 +5,7 @@
 package com.retromod.aot;
 
 import com.retromod.mixin.MixinCompatibilityTransformer;
+import com.retromod.mixin.MixinRefmapRepairIndex;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,9 +30,19 @@ final class AotMixinRepair {
      */
     static byte[] apply(MixinCompatibilityTransformer mixinTransformer, byte[] classBytes,
             String className) {
+        return apply(mixinTransformer, classBytes, className, MixinRefmapRepairIndex.empty());
+    }
+
+    /**
+     * Repairs one Mixin with the selector facts collected from its owning archive's refmaps.
+     * The index must not be shared with an outer or nested archive because identical source
+     * selector text can map to different targets in separate bundled libraries.
+     */
+    static byte[] apply(MixinCompatibilityTransformer mixinTransformer, byte[] classBytes,
+            String className, MixinRefmapRepairIndex refmapRepairs) {
         try {
             byte[] out = mixinTransformer.stripBlocklistedHandlers(classBytes);
-            return mixinTransformer.applyPostRemapRepairs(out);
+            return mixinTransformer.applyPostRemapRepairs(out, refmapRepairs);
         } catch (Throwable t) {
             // The remapped bytecode is still worth keeping, so this is not fatal.
             LOGGER.warn("Could not repair the Mixin in {} ({}). Keeping its transformed bytecode.",

@@ -2,6 +2,13 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
+## [1.3.0-snapshot.7] - 2026-08-11
+
+**Seventh snapshot of the 1.3.0 line.**
+
+### Fixed
+- **Refmap-only target changes can now repair parameter-capturing Mixin handlers.** Some Fabric mixins keep a Yarn source name in their annotation and rely on the refmap to locate the intermediary target. Snapshot.6 could update that refmap target, but the later class pass could not connect the source selector to the proven current method, so a handler that captured the old parameters stayed incompatible. The refmap pass now carries a uniquely proven target parameter addition into the matching class repair. Retromod inserts the unused parameters into the handler while leaving its source selector intact for Mixin to resolve through the refmap. Ambiguous targets, `remap = false`, unsafe parameter annotations, staticness mismatches, and owner mismatches are left unchanged. The shared repair context reaches runtime transforms, the CLI, normal and full AOT, and mixins in nested jars.
+
 ## [1.3.0-snapshot.6] - 2026-08-11
 
 **Sixth snapshot of the 1.3.0 line.**
@@ -38,7 +45,7 @@ All user-facing changes to Retromod. The format is loosely based on [Keep a Chan
 - **Compatibility analysis now reports eager legacy Forge registration.** A mod that combines `RegistryEvent.Register` handlers with non-JDK object construction in static initializers is flagged as needing a `DeferredRegister` lifecycle migration. This catches the next Better Portals blocker, where its symbols all resolve but Forge rejects block construction after the registry is frozen. The analyzer now explains that structural limit instead of leaving users with only a clean linkage report. Tested with a synthetic legacy registry holder and the exact reported jar.
 
 ### Known limitations
-- **A refmap-only Yarn method rename cannot yet supply newly captured handler parameters.** Retromod repairs the refmap target, so zero-capture injections keep working. If the annotation text still uses a different Yarn source name and its handler captures every old target parameter, the class pass cannot yet connect that source name back to the repaired refmap entry. These handlers remain unchanged for a reviewed repair instead of receiving a guessed parameter layout.
+- **A refmap-only Yarn method rename cannot yet supply newly captured handler parameters.** Retromod repairs the refmap target, so zero-capture injections keep working. If the annotation text still uses a different Yarn source name and its handler captures every old target parameter, the class pass cannot yet connect that source name back to the repaired refmap entry. These handlers remain unchanged for a reviewed repair instead of receiving a guessed parameter layout. This limitation is fixed in snapshot.7.
 - **YUNG's Better Portals still needs a registry lifecycle port on Forge 1.20.1 (#192).** Snapshot.6 clears the missing class, old-to-target SRG members, stale mixin refmap, and removed `noDrops()` call. The exact mod and YUNG's API then reach mod construction, where Better Portals eagerly creates its blocks and fluids from static initializers. Forge 1.20.1 requires those objects to be supplied during its registry event through `DeferredRegister`; translating static fields, their consumers, fluids, blocks, items, and event timing is a structural mod port rather than a safe member redirect. The new analyzer reports this explicitly.
 
 ### Infrastructure
