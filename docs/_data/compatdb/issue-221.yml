@@ -1,0 +1,14 @@
+name: "Mana and Artifice"
+badge: borked
+mod_version: "1.20.1"
+host_mc: "26.1.2"
+loader: "forge"
+retromod: "1.3.0-snapshot.6+26.1.2-neoforge"
+links:
+  modrinth: "https://modrinth.com/mod/mana-and-artifice"
+summary: "Loading error occurred"
+details: "I installed the prerequisite mods Curios and Geckolib and tried to run it. The following error was displayed and it failed to launch: \"A technical error occurred during mod loading: Java.lang.RuntimeException: Invalid class name 'net.minecraft.world.level.storage.loot.LootContext:' at line 10 Technical Details: Java.lang.RuntimeException: Invalid class name 'net.minecraft.world.level.storage.loot.LootContext:' at line 10\""
+reporter: "Ruby11692046"
+date: "2026-08-12"
+issue: 221
+
