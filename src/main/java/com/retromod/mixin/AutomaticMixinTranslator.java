@@ -56,6 +56,20 @@ public final class AutomaticMixinTranslator {
             "Lcom/llamalad7/mixinextras/injector/ModifyExpressionValue;";
     private static final String WRAP_OPERATION =
             "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;";
+    private static final Set<String> INJECTOR_ANNOTATIONS = Set.of(
+            INJECT,
+            REDIRECT,
+            "Lorg/spongepowered/asm/mixin/injection/ModifyArg;",
+            "Lorg/spongepowered/asm/mixin/injection/ModifyArgs;",
+            "Lorg/spongepowered/asm/mixin/injection/ModifyConstant;",
+            "Lorg/spongepowered/asm/mixin/injection/ModifyVariable;",
+            MODIFY_RETURN,
+            MODIFY_EXPRESSION,
+            "Lcom/llamalad7/mixinextras/injector/ModifyReceiver;",
+            "Lcom/llamalad7/mixinextras/injector/WrapWithCondition;",
+            "Lcom/llamalad7/mixinextras/injector/v2/WrapWithCondition;",
+            "Lcom/llamalad7/mixinextras/injector/wrapmethod/WrapMethod;",
+            WRAP_OPERATION);
     private static final String CALLBACK_INFO =
             "org/spongepowered/asm/mixin/injection/callback/CallbackInfo";
     private static final String CALLBACK_INFO_RETURNABLE =
@@ -136,28 +150,53 @@ public final class AutomaticMixinTranslator {
 
         List<PendingRepair> pending = new ArrayList<>();
         for (MethodNode handler : classNode.methods) {
-            List<MixinHandlerResignature.ParamInsert> handlerInserts = null;
-            int matches = 0;
+            List<AnnotationNode> injectors = new ArrayList<>();
             for (List<AnnotationNode> annotations : annotationLists(handler)) {
                 for (AnnotationNode annotation : annotations) {
-                    if (!INJECT.equals(annotation.desc) || remapDisabled(annotation)) continue;
-                    String sourceSelector = singleMethodSelector(annotation);
-                    if (sourceSelector == null) continue;
-                    MixinRefmapRepairIndex.Repair repair = repairIndex
-                            .find(classNode.name, sourceSelector).orElse(null);
-                    if (repair == null || !mixinOwner.equals(repair.targetOwner())) continue;
-                    List<MixinHandlerResignature.ParamInsert> inserts =
-                            refmapHandlerInserts(handler, repair);
-                    if (inserts != null && !inserts.isEmpty()) {
-                        matches++;
-                        handlerInserts = inserts;
+                    if (!isInjector(annotation.desc) || remapDisabled(annotation)) {
+                        continue;
                     }
+                    injectors.add(annotation);
                 }
             }
-            if (matches == 1) {
+            List<OuterSelectorSite> sites = outerSelectorSites(injectors);
+            List<MixinHandlerResignature.ParamInsert> handlerInserts = null;
+            String finalHandlerDescriptor = null;
+            AnnotationNode matchingInjector = null;
+            boolean conflicting = false;
+            for (OuterSelectorSite site : sites) {
+                MixinRefmapRepairIndex.Repair repair = repairIndex
+                        .find(classNode.name, site.selector()).orElse(null);
+                if (repair == null || !mixinOwner.equals(repair.targetOwner())) continue;
+                List<MixinHandlerResignature.ParamInsert> inserts =
+                        refmapHandlerInserts(handler, site.injector().desc, repair);
+                if (inserts == null || inserts.isEmpty()) continue;
+                String candidate = descriptorAfterInsertions(handler.desc, inserts);
+                if (candidate == null
+                        || (matchingInjector != null && matchingInjector != site.injector())
+                        || (finalHandlerDescriptor != null
+                                && (!finalHandlerDescriptor.equals(candidate)
+                                    || !handlerInserts.equals(inserts)))) {
+                    conflicting = true;
+                    break;
+                }
+                matchingInjector = site.injector();
+                finalHandlerDescriptor = candidate;
+                handlerInserts = inserts;
+            }
+            if (conflicting) {
+                LOGGER.debug("Declined refmap-linked Mixin repair for {}.{}{}: multiple layouts",
+                        classNode.name, handler.name, handler.desc);
+                continue;
+            }
+            if (finalHandlerDescriptor != null
+                    && injectors.size() == 1
+                    && outerSelectorsAcceptLayout(handler, sites, Set.of(mixinOwner),
+                            finalHandlerDescriptor, classNode.name, repairIndex, true)) {
                 pending.add(new HandlerOnlyRepair(handler, handlerInserts));
-            } else if (matches > 1) {
-                LOGGER.debug("Declined refmap-linked Mixin repair for {}.{}{}: multiple matches",
+            } else if (finalHandlerDescriptor != null) {
+                LOGGER.debug("Declined refmap-linked Mixin repair for {}.{}{}: not every "
+                        + "outer selector accepts the same handler layout",
                         classNode.name, handler.name, handler.desc);
             }
         }
@@ -186,7 +225,17 @@ public final class AutomaticMixinTranslator {
      * all insertions succeed and ASM can rebuild the class frames.
      */
     public byte[] translate(byte[] classBytes) {
+        return translate(classBytes, MixinRefmapRepairIndex.empty());
+    }
+
+    /**
+     * Applies automatic repairs with exact source-selector relationships from the same archive.
+     * Direct and refmap-linked selectors that share a handler must prove one common layout before
+     * either the handler or its direct selector text changes.
+     */
+    public byte[] translate(byte[] classBytes, MixinRefmapRepairIndex repairIndex) {
         if (!isAvailable() || classBytes == null) return classBytes;
+        if (repairIndex == null) repairIndex = MixinRefmapRepairIndex.empty();
 
         ClassNode classNode = new ClassNode();
         new ClassReader(classBytes).accept(classNode, 0);
@@ -199,7 +248,8 @@ public final class AutomaticMixinTranslator {
         List<PendingRepair> pending = new ArrayList<>();
 
         for (MethodNode method : classNode.methods) {
-            MethodScan scan = scanMethod(method, mixinOwners);
+            MethodScan scan = scanMethod(
+                    method, mixinOwners, classNode.name, repairIndex);
             selectorChanged |= scan.selectorChanged();
             selectorRepairs += scan.selectorRepairs();
             // One handler cannot safely accept two independently inferred layouts.
@@ -243,15 +293,17 @@ public final class AutomaticMixinTranslator {
         }
     }
 
-    private MethodScan scanMethod(MethodNode method, Set<String> mixinOwners) {
+    private MethodScan scanMethod(MethodNode method, Set<String> mixinOwners,
+            String mixinClass, MixinRefmapRepairIndex repairIndex) {
         MutableScan scan = new MutableScan();
+        List<AnnotationNode> injectors = new ArrayList<>();
         for (List<AnnotationNode> annotations : annotationLists(method)) {
             for (AnnotationNode annotation : annotations) {
                 if (annotation == null || annotation.desc == null || remapDisabled(annotation)) {
                     continue;
                 }
                 if (isInjector(annotation.desc)) {
-                    scanInjector(method, annotation, mixinOwners, scan);
+                    injectors.add(annotation);
                 } else if (OVERWRITE.equals(annotation.desc)) {
                     PendingRepair repair = overwriteRepair(method, mixinOwners);
                     if (repair != null) scan.pending.add(repair);
@@ -263,32 +315,127 @@ public final class AutomaticMixinTranslator {
                 }
             }
         }
+        scanOuterSelectors(method, injectors, mixinOwners, mixinClass, repairIndex, scan);
+        for (AnnotationNode injector : injectors) {
+            scanAtSelectors(method, injector, scan);
+        }
         return new MethodScan(scan.selectorChanged, scan.selectorRepairs, List.copyOf(scan.pending));
     }
 
-    private void scanInjector(MethodNode handler, AnnotationNode injector,
-            Set<String> mixinOwners, MutableScan scan) {
-        if (injector.values == null) return;
+    private void scanOuterSelectors(MethodNode handler, List<AnnotationNode> injectors,
+            Set<String> mixinOwners, String mixinClass,
+            MixinRefmapRepairIndex repairIndex, MutableScan scan) {
+        List<OuterSelectorSite> sites = outerSelectorSites(injectors);
+        if (sites.isEmpty()) return;
 
-        for (int i = 0; i + 1 < injector.values.size(); i += 2) {
-            if (!"method".equals(injector.values.get(i))) continue;
-            Object value = injector.values.get(i + 1);
-            if (value instanceof String selector) {
-                SelectorDecision decision = outerSelectorDecision(
-                        handler, injector, mixinOwners, selector);
-                applyDecision(handler, injector.values, i + 1, decision, scan);
-            } else if (value instanceof List<?> selectors) {
-                @SuppressWarnings("unchecked")
-                List<Object> mutable = (List<Object>) selectors;
-                for (int j = 0; j < mutable.size(); j++) {
-                    if (!(mutable.get(j) instanceof String selector)) continue;
-                    SelectorDecision decision = outerSelectorDecision(
-                            handler, injector, mixinOwners, selector);
-                    applyDecision(handler, mutable, j, decision, scan);
+        List<SelectorDecision> decisions = new ArrayList<>(sites.size());
+        List<List<MixinHandlerResignature.ParamInsert>> indexedInserts =
+                new ArrayList<>(sites.size());
+        boolean retypesHandler = false;
+        for (OuterSelectorSite site : sites) {
+            SelectorDecision decision = outerSelectorDecision(
+                    handler, site.injector(), mixinOwners, site.selector());
+            MixinRefmapRepairIndex.Repair indexedRepair = repairIndex
+                    .find(mixinClass, site.selector()).orElse(null);
+            List<MixinHandlerResignature.ParamInsert> refmapInserts =
+                    indexedRepair != null && mixinOwners.contains(indexedRepair.targetOwner())
+                            ? refmapHandlerInserts(
+                                    handler, site.injector().desc, indexedRepair)
+                            : null;
+            decisions.add(decision);
+            indexedInserts.add(refmapInserts);
+            retypesHandler |= decision != null && !decision.handlerInserts().isEmpty();
+            retypesHandler |= refmapInserts != null && !refmapInserts.isEmpty();
+        }
+
+        if (!retypesHandler) {
+            for (int i = 0; i < sites.size(); i++) {
+                OuterSelectorSite site = sites.get(i);
+                applyDecision(handler, site.values(), site.valueIndex(), decisions.get(i), scan);
+            }
+            return;
+        }
+        if (injectors.size() != 1) {
+            LOGGER.debug("Declined automatic Mixin repair for {}{}: multiple injector annotations",
+                    handler.name, handler.desc);
+            return;
+        }
+
+        List<MixinHandlerResignature.ParamInsert> sharedInserts = null;
+        String finalHandlerDescriptor = null;
+        boolean requireCompleteEvidence = false;
+        for (int i = 0; i < decisions.size(); i++) {
+            SelectorDecision decision = decisions.get(i);
+            requireCompleteEvidence |= decision != null
+                    && decision.replacement() != null
+                    && !decision.handlerInserts().isEmpty();
+            requireCompleteEvidence |= indexedInserts.get(i) != null
+                    && !indexedInserts.get(i).isEmpty();
+            List<List<MixinHandlerResignature.ParamInsert>> candidates = List.of(
+                    decision != null ? decision.handlerInserts() : List.of(),
+                    indexedInserts.get(i) != null ? indexedInserts.get(i) : List.of());
+            for (List<MixinHandlerResignature.ParamInsert> inserts : candidates) {
+                if (inserts.isEmpty()) continue;
+                String candidate = descriptorAfterInsertions(handler.desc, inserts);
+                if (candidate == null) return;
+                if (finalHandlerDescriptor == null) {
+                    finalHandlerDescriptor = candidate;
+                    sharedInserts = inserts;
+                } else if (!finalHandlerDescriptor.equals(candidate)
+                        || !sharedInserts.equals(inserts)) {
+                    LOGGER.debug("Declined automatic Mixin repair for {}{}: outer selectors "
+                            + "require different handler layouts", handler.name, handler.desc);
+                    return;
                 }
             }
         }
+        if (finalHandlerDescriptor == null
+                || !outerSelectorsAcceptLayout(handler, sites, mixinOwners,
+                        finalHandlerDescriptor, mixinClass, repairIndex,
+                        requireCompleteEvidence)) {
+            return;
+        }
 
+        List<SelectorReplacement> replacements = new ArrayList<>();
+        for (int i = 0; i < sites.size(); i++) {
+            SelectorDecision decision = decisions.get(i);
+            if (decision == null || decision.replacement() == null) continue;
+            OuterSelectorSite site = sites.get(i);
+            if (!decision.replacement().equals(site.values().get(site.valueIndex()))) {
+                replacements.add(new SelectorReplacement(
+                        site.values(), site.valueIndex(), decision.replacement()));
+            }
+        }
+        scan.pending.add(new MultiSelectorCoupledRepair(handler, replacements, sharedInserts));
+        scan.selectorRepairs += replacements.size();
+    }
+
+    private static List<OuterSelectorSite> outerSelectorSites(List<AnnotationNode> injectors) {
+        List<OuterSelectorSite> sites = new ArrayList<>();
+        for (AnnotationNode injector : injectors) {
+            if (injector.values == null) continue;
+            for (int i = 0; i + 1 < injector.values.size(); i += 2) {
+                if (!"method".equals(injector.values.get(i))) continue;
+                Object value = injector.values.get(i + 1);
+                if (value instanceof String selector) {
+                    sites.add(new OuterSelectorSite(
+                            injector, injector.values, i + 1, selector));
+                } else if (value instanceof List<?> selectors) {
+                    @SuppressWarnings("unchecked")
+                    List<Object> mutable = (List<Object>) selectors;
+                    for (int j = 0; j < mutable.size(); j++) {
+                        if (mutable.get(j) instanceof String selector) {
+                            sites.add(new OuterSelectorSite(injector, mutable, j, selector));
+                        }
+                    }
+                }
+            }
+        }
+        return sites;
+    }
+
+    private void scanAtSelectors(
+            MethodNode handler, AnnotationNode injector, MutableScan scan) {
         for (AnnotationNode at : collectAtAnnotations(injector)) {
             if (at.values == null || remapDisabled(at)) continue;
             for (int i = 0; i + 1 < at.values.size(); i += 2) {
@@ -344,7 +491,12 @@ public final class AutomaticMixinTranslator {
                 return new SelectorDecision(replacement, handlerInserts);
             }
             if (MODIFY_RETURN.equals(injector.desc) || MODIFY_EXPRESSION.equals(injector.desc)) {
-                return new SelectorDecision(replacement, List.of());
+                List<MixinHandlerResignature.ParamInsert> handlerInserts =
+                        valueModifierHandlerInserts(handler, injector.desc,
+                                selector.descriptor(), added.descriptor(), added.access(),
+                                added.inserts());
+                if (handlerInserts == null) return null;
+                return new SelectorDecision(replacement, handlerInserts);
             }
             return null;
         }
@@ -481,7 +633,14 @@ public final class AutomaticMixinTranslator {
     }
 
     private static List<MixinHandlerResignature.ParamInsert> refmapHandlerInserts(
-            MethodNode handler, MixinRefmapRepairIndex.Repair repair) {
+            MethodNode handler, String injectorDesc, MixinRefmapRepairIndex.Repair repair) {
+        if (MODIFY_RETURN.equals(injectorDesc) || MODIFY_EXPRESSION.equals(injectorDesc)) {
+            return valueModifierHandlerInserts(handler, injectorDesc,
+                    repair.oldTargetDescriptor(), repair.newTargetDescriptor(),
+                    repair.targetAccess(), repair.insertions());
+        }
+        if (!INJECT.equals(injectorDesc)) return null;
+
         Type[] handlerArgs = safeArgumentTypes(handler.desc);
         Type[] oldArgs = safeArgumentTypes(repair.oldTargetDescriptor());
         if (handlerArgs == null || oldArgs == null || oldArgs.length == 0
@@ -504,25 +663,181 @@ public final class AutomaticMixinTranslator {
         return repair.insertions();
     }
 
-    private static String singleMethodSelector(AnnotationNode injector) {
-        if (injector.values == null) return null;
-        String result = null;
-        for (int i = 0; i + 1 < injector.values.size(); i += 2) {
-            if (!"method".equals(injector.values.get(i))) continue;
-            Object value = injector.values.get(i + 1);
-            String selector;
-            if (value instanceof String string) {
-                selector = string;
-            } else if (value instanceof List<?> list
-                    && list.size() == 1 && list.get(0) instanceof String string) {
-                selector = string;
-            } else {
-                return null;
-            }
-            if (result != null) return null;
-            result = selector;
+    /**
+     * Retypes a MixinExtras value modifier only when it captures either no target arguments or the
+     * complete old target argument list. The intercepted value remains parameter zero, so target
+     * insertions are shifted by one in the handler descriptor.
+     */
+    private static List<MixinHandlerResignature.ParamInsert> valueModifierHandlerInserts(
+            MethodNode handler, String injectorDesc, String oldTargetDesc, String newTargetDesc,
+            int targetAccess, List<MixinHandlerResignature.ParamInsert> targetInserts) {
+        Type[] handlerArgs = safeArgumentTypes(handler.desc);
+        Type[] oldTargetArgs = safeArgumentTypes(oldTargetDesc);
+        String handlerReturn = returnDescriptor(handler.desc);
+        String oldTargetReturn = returnDescriptor(oldTargetDesc);
+        String newTargetReturn = returnDescriptor(newTargetDesc);
+        if (handlerArgs == null || oldTargetArgs == null || handlerArgs.length == 0
+                || handlerReturn == null || oldTargetReturn == null || newTargetReturn == null
+                || !oldTargetReturn.equals(newTargetReturn)
+                || !handlerArgs[0].getDescriptor().equals(handlerReturn)
+                || !valueModifierStaticnessIsCompatible(handler.access, targetAccess)
+                || MixinHandlerResignature.hasUnsafeParamAnnotations(handler)) {
+            return null;
         }
-        return result;
+        if (MODIFY_RETURN.equals(injectorDesc) && !handlerReturn.equals(newTargetReturn)) {
+            return null;
+        }
+        if (handlerArgs.length == 1) return List.of();
+        if (handlerArgs.length != oldTargetArgs.length + 1) return null;
+        for (int i = 0; i < oldTargetArgs.length; i++) {
+            if (!handlerArgs[i + 1].equals(oldTargetArgs[i])) return null;
+        }
+
+        List<MixinHandlerResignature.ParamInsert> shifted = new ArrayList<>();
+        for (MixinHandlerResignature.ParamInsert insert : targetInserts) {
+            if (insert.paramIndex() < 0 || insert.paramIndex() > oldTargetArgs.length) return null;
+            shifted.add(new MixinHandlerResignature.ParamInsert(
+                    insert.paramIndex() + 1, insert.typeDescriptor()));
+        }
+        return shifted;
+    }
+
+    private boolean outerSelectorsAcceptLayout(MethodNode handler, List<OuterSelectorSite> sites,
+            Set<String> mixinOwners, String finalHandlerDescriptor, String mixinClass,
+            MixinRefmapRepairIndex repairIndex, boolean requireEvidence) {
+        for (OuterSelectorSite site : sites) {
+            MixinRefmapRepairIndex.Repair indexedRepair = repairIndex == null || mixinClass == null
+                    ? null : repairIndex.find(mixinClass, site.selector()).orElse(null);
+            if (indexedRepair != null) {
+                if (!mixinOwners.contains(indexedRepair.targetOwner())
+                        || !handlerLayoutIsCompatible(handler.access, finalHandlerDescriptor,
+                                site.injector().desc, indexedRepair.newTargetDescriptor(),
+                                indexedRepair.targetAccess())) {
+                    return false;
+                }
+                continue;
+            }
+
+            List<LiveOuterTarget> liveTargets = liveOuterTargets(site.selector(), mixinOwners);
+            if (requireEvidence && liveTargets.isEmpty()) return false;
+            for (LiveOuterTarget target : liveTargets) {
+                if (!handlerLayoutIsCompatible(handler.access, finalHandlerDescriptor,
+                        site.injector().desc, target.descriptor(), target.access())) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private List<LiveOuterTarget> liveOuterTargets(
+            String selectorText, Set<String> mixinOwners) {
+        ParsedSelector selector = ParsedSelector.parse(selectorText);
+        if (selector == null) {
+            String owner = soleOwner(mixinOwners);
+            if (owner == null || !isBareMethodName(selectorText)) return List.of();
+            LinkedHashSet<LiveOuterTarget> targets = new LinkedHashSet<>();
+            for (FuzzyMethodResolver.MethodInfo candidate : targetMethods.getDeclaredMethods(owner)) {
+                if (selectorText.equals(candidate.name())) {
+                    targets.add(new LiveOuterTarget(candidate.descriptor(), candidate.access()));
+                }
+            }
+            return List.copyOf(targets);
+        }
+
+        String owner = selector.owner() != null ? selector.owner() : soleOwner(mixinOwners);
+        if (owner == null) return List.of();
+        LinkedHashSet<LiveOuterTarget> exact = new LinkedHashSet<>();
+        for (FuzzyMethodResolver.MethodInfo candidate : targetMethods.getMethodsInHierarchy(owner)) {
+            if (selector.name().equals(candidate.name())
+                    && selector.descriptor().equals(candidate.descriptor())) {
+                exact.add(new LiveOuterTarget(candidate.descriptor(), candidate.access()));
+            }
+        }
+        if (!exact.isEmpty()) return List.copyOf(exact);
+
+        MethodChange added = resolveAddedParameters(owner, selector.name(), selector.descriptor(),
+                targetMethods.getDeclaredMethods(owner));
+        return added == null
+                ? List.of() : List.of(new LiveOuterTarget(added.descriptor(), added.access()));
+    }
+
+    private static boolean handlerLayoutIsCompatible(int handlerAccess, String handlerDesc,
+            String injectorDesc, String targetDesc, int targetAccess) {
+        Type[] handlerArgs = safeArgumentTypes(handlerDesc);
+        Type[] targetArgs = safeArgumentTypes(targetDesc);
+        String handlerReturn = returnDescriptor(handlerDesc);
+        String targetReturn = returnDescriptor(targetDesc);
+        if (handlerArgs == null || targetArgs == null
+                || handlerReturn == null || targetReturn == null || targetAccess < 0) {
+            return false;
+        }
+
+        if (MODIFY_RETURN.equals(injectorDesc) || MODIFY_EXPRESSION.equals(injectorDesc)) {
+            if (handlerArgs.length == 0
+                    || !handlerArgs[0].getDescriptor().equals(handlerReturn)
+                    || !valueModifierStaticnessIsCompatible(handlerAccess, targetAccess)) {
+                return false;
+            }
+            if (MODIFY_RETURN.equals(injectorDesc) && !handlerReturn.equals(targetReturn)) {
+                return false;
+            }
+            int captured = handlerArgs.length - 1;
+            if (captured > targetArgs.length) return false;
+            for (int i = 0; i < captured; i++) {
+                if (!handlerArgs[i + 1].equals(targetArgs[i])) return false;
+            }
+            return true;
+        }
+
+        if (!INJECT.equals(injectorDesc)
+                || staticness(handlerAccess) != staticness(targetAccess)
+                || !"V".equals(handlerReturn)) {
+            return false;
+        }
+        int callback = MixinHandlerResignature.callbackIndex(handlerArgs);
+        if (callback < 0 || callback != handlerArgs.length - 1
+                || !callbackMatchesReturn(handlerArgs[callback], targetReturn)) {
+            return false;
+        }
+        if (callback == 0) return true;
+        if (callback != targetArgs.length) return false;
+        for (int i = 0; i < callback; i++) {
+            if (!handlerArgs[i].equals(targetArgs[i])) return false;
+        }
+        return true;
+    }
+
+    private static String descriptorAfterInsertions(String descriptor,
+            List<MixinHandlerResignature.ParamInsert> inserts) {
+        Type[] args = safeArgumentTypes(descriptor);
+        String returnDesc = returnDescriptor(descriptor);
+        if (args == null || returnDesc == null || inserts == null || inserts.isEmpty()) return null;
+        List<Type> updated = new ArrayList<>(Arrays.asList(args));
+        List<MixinHandlerResignature.ParamInsert> sorted = new ArrayList<>(inserts);
+        sorted.sort(java.util.Comparator.comparingInt(
+                MixinHandlerResignature.ParamInsert::paramIndex));
+        try {
+            for (int i = sorted.size() - 1; i >= 0; i--) {
+                MixinHandlerResignature.ParamInsert insert = sorted.get(i);
+                if (insert.paramIndex() < 0 || insert.paramIndex() > updated.size()) return null;
+                Type type = Type.getType(insert.typeDescriptor());
+                if (type.getSort() == Type.VOID || type.getSort() == Type.METHOD) return null;
+                updated.add(insert.paramIndex(), type);
+            }
+            return Type.getMethodDescriptor(
+                    Type.getType(returnDesc), updated.toArray(new Type[0]));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static boolean valueModifierStaticnessIsCompatible(
+            int handlerAccess, int targetAccess) {
+        if (targetAccess < 0) return false;
+        boolean handlerStatic = (handlerAccess & Opcodes.ACC_STATIC) != 0;
+        boolean targetStatic = (targetAccess & Opcodes.ACC_STATIC) != 0;
+        return handlerStatic || !targetStatic;
     }
 
     /**
@@ -828,8 +1143,7 @@ public final class AutomaticMixinTranslator {
     }
 
     private static boolean isInjector(String desc) {
-        return desc.startsWith("Lorg/spongepowered/asm/mixin/injection/")
-                || desc.startsWith("Lcom/llamalad7/mixinextras/injector/");
+        return INJECTOR_ANNOTATIONS.contains(desc);
     }
 
     private static boolean remapDisabled(AnnotationNode annotation) {
@@ -927,6 +1241,19 @@ public final class AutomaticMixinTranslator {
         }
     }
 
+    private record MultiSelectorCoupledRepair(MethodNode handler,
+            List<SelectorReplacement> replacements,
+            List<MixinHandlerResignature.ParamInsert> inserts) implements PendingRepair {
+        @Override
+        public boolean apply() {
+            if (!MixinHandlerResignature.insertRawParams(handler, inserts)) return false;
+            for (SelectorReplacement replacement : replacements) {
+                replacement.values().set(replacement.valueIndex(), replacement.replacement());
+            }
+            return true;
+        }
+    }
+
     private record HandlerOnlyRepair(MethodNode handler,
             List<MixinHandlerResignature.ParamInsert> inserts) implements PendingRepair {
         @Override
@@ -937,6 +1264,14 @@ public final class AutomaticMixinTranslator {
 
     private record SelectorDecision(String replacement,
             List<MixinHandlerResignature.ParamInsert> handlerInserts) {}
+
+    private record SelectorReplacement(
+            List<Object> values, int valueIndex, String replacement) {}
+
+    private record OuterSelectorSite(AnnotationNode injector,
+            List<Object> values, int valueIndex, String selector) {}
+
+    private record LiveOuterTarget(String descriptor, int access) {}
 
     private record MethodChange(String name, String descriptor, int access,
             List<MixinHandlerResignature.ParamInsert> inserts) {}

@@ -4,7 +4,7 @@ This is a direction of travel, not a release promise. Real mod reports and new M
 
 Shipped work belongs in the [changelog](CHANGELOG.md). There are no fixed release dates.
 
-Last reviewed: 2026-08-11
+Last reviewed: 2026-08-12
 
 ## Current Work
 
@@ -19,16 +19,17 @@ Already working in the 1.3 snapshots:
 - save-data handlers affected by the `CompoundTag` to `ValueInput` and `ValueOutput` change
 - handlers for methods that gained a leading `ServerLevel` parameter
 - parameter-capturing handlers whose current target signature is proven through a refmap
+- MixinExtras value modifiers that capture all old target arguments when a proven target change only adds parameters
 - more MixinExtras selectors and owner moves
+- YUNG's API `NoiseChunk` worldgen mixin, verified on a headless 26.2 server
 - several class and enum moves found through corpus testing
 
 Work still planned:
 
 - handle MixinExtras cases that need local-slot resolution
-- restore the repairable YUNG's API worldgen mixins and verify them on a headless server
 - replace more blocklist entries with real repairs when the old and new behavior can be matched safely
 
-Some mixins still need a source port. True Darkness is one example because Minecraft replaced the CPU-side light texture it shadows with a different GPU system.
+Some mixins still need a source port. True Darkness is one example because Minecraft replaced the CPU-side light texture it shadows with a different GPU system. YUNG's API's enhanced Beardifier terrain adaptation also stays disabled: its bytecode applies, but a headless 26.2 server proved that its behavior breaks current chunk scheduling.
 
 ## Next
 

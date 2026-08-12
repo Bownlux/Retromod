@@ -58,6 +58,24 @@ class NestedJarClassLookupSecurityTest {
     }
 
     @Test
+    @DisplayName("nested class lookup remains bounded after a rejected read")
+    void rejectedReadKeepsLookupBounded() throws Exception {
+        byte[] nested = jarOf(Map.of("test/TooLarge.class", new byte[6]));
+        RetromodTransformer.NestedArchiveBudget budget =
+                new RetromodTransformer.NestedArchiveBudget(5, 2);
+
+        assertThrows(IOException.class,
+                () -> RetromodTransformer.readJarClassBytes(nested, budget));
+        assertEquals(5, budget.usedBytes());
+        assertEquals(1, budget.usedEntries());
+
+        assertThrows(IOException.class,
+                () -> RetromodTransformer.readJarClassBytes(nested, budget));
+        assertEquals(5, budget.usedBytes());
+        assertEquals(2, budget.usedEntries());
+    }
+
+    @Test
     @DisplayName("class lookup rejects unsafe and duplicate entry names")
     void classLookupRejectsUnsafeAndDuplicateEntries() throws Exception {
         assertThrows(IOException.class, () -> RetromodTransformer.readJarClassBytes(

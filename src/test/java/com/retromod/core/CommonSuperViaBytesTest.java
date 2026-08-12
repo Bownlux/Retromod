@@ -104,4 +104,27 @@ class CommonSuperViaBytesTest {
             transformer.clearJarClassBytesProvider();
         }
     }
+
+    @Test
+    @DisplayName("A remapped mod hierarchy can continue through an off-classpath target index")
+    void remappedHierarchyContinuesThroughIndexedTargetParents() {
+        Map<String, byte[]> source = Map.of(
+                CHILD, classWithSuper(CHILD, "net/minecraft/class_1668"));
+        Map<String, String> remaps = Map.of(
+                "net/minecraft/class_1668",
+                        "net/minecraft/world/entity/projectile/AbstractHurtingProjectile");
+        Map<String, String> targetParents = Map.of(
+                "net/minecraft/world/entity/projectile/AbstractHurtingProjectile",
+                        "net/minecraft/world/entity/Entity",
+                "net/minecraft/world/entity/Entity",
+                        "java/lang/Object");
+
+        assertEquals("net/minecraft/world/entity/Entity",
+                RetromodTransformer.commonSuperViaBytes(
+                        CHILD,
+                        "net/minecraft/world/entity/Entity",
+                        source::get,
+                        name -> remaps.getOrDefault(name, name),
+                        targetParents::get));
+    }
 }

@@ -225,6 +225,12 @@ public class FullAotCompiler {
 
     private static final int MAX_REFMAP_FILES = 4_096;
 
+    private static boolean isRefmapResource(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".json") && lower.contains("refmap");
+    }
+
     /** Collects one immutable repair index before the Full AOT worker threads start. */
     private com.retromod.mixin.MixinRefmapRepairIndex collectRefmapRepairs(
             JarFile jar,
@@ -237,8 +243,7 @@ public class FullAotCompiler {
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
             String name = ZipSecurity.safeEntryName(entry.getName());
-            if (entry.isDirectory()
-                    || !(name.endsWith("-refmap.json") || name.contains("refmap"))) {
+            if (entry.isDirectory() || !isRefmapResource(name)) {
                 continue;
             }
             if (++files > MAX_REFMAP_FILES) {

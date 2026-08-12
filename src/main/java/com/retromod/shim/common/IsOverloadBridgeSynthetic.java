@@ -2,7 +2,7 @@
  * Retromod - Backwards Compatibility Layer for Minecraft Mods
  * Copyright (c) 2026 Bownlux. Licensed under MIT License.
  *
- * Bridge for the is() overloads MC 26.1 removed from BlockState/ItemStack/FluidState.
+ * Common synthetic bridges for small vanilla methods removed by the 26.x API changes.
  */
 package com.retromod.shim.common;
 
@@ -31,6 +31,10 @@ import static org.objectweb.asm.Opcodes.*;
  * layer where the overloads died), so every chain targeting 26.1+ gets it on all three loaders;
  * the synthetic reaches the mod jar via the Fabric synthetic-writing pass or the NeoForge/Forge
  * {@link com.retromod.core.SyntheticEmbedder}.
+ *
+ * <p>The same synthetic also carries focused adapters for other direct API reshapes found in
+ * real transformed mods. Keeping these small helpers together lets the embedder relocate only one
+ * compatibility surface per mod, plus the predicate adapter when that specific bridge is used.
  */
 public final class IsOverloadBridgeSynthetic {
 
@@ -45,6 +49,23 @@ public final class IsOverloadBridgeSynthetic {
     private static final String BSB = "net/minecraft/world/level/block/state/BlockBehaviour$BlockStateBase";
     private static final String STACK = "net/minecraft/world/item/ItemStack";
     private static final String FLUID_STATE = "net/minecraft/world/level/material/FluidState";
+    private static final String ENTITY_TYPE = "net/minecraft/world/entity/EntityType";
+    private static final String ENTITY = "net/minecraft/world/entity/Entity";
+    private static final String LIVING_ENTITY = "net/minecraft/world/entity/LivingEntity";
+    private static final String PHANTOM = "net/minecraft/world/entity/monster/Phantom";
+    private static final String DAMAGE_SOURCE = "net/minecraft/world/damagesource/DamageSource";
+    private static final String LEVEL = "net/minecraft/world/level/Level";
+    private static final String SERVER_LEVEL = "net/minecraft/server/level/ServerLevel";
+    private static final String SERVER_ENTITY_GETTER = "net/minecraft/server/level/ServerEntityGetter";
+    private static final String TARGETING_CONDITIONS =
+            "net/minecraft/world/entity/ai/targeting/TargetingConditions";
+    private static final String TARGETING_SELECTOR = TARGETING_CONDITIONS + "$Selector";
+    private static final String AABB = "net/minecraft/world/phys/AABB";
+    private static final String PREDICATE = "java/util/function/Predicate";
+    private static final String ENTITY_RENDER_DISPATCHER =
+            "net/minecraft/client/renderer/entity/EntityRenderDispatcher";
+    private static final String CAMERA = "net/minecraft/client/Camera";
+    private static final String QUATERNION = "org/joml/Quaternionf";
 
     private static final String BLOCK = "net/minecraft/world/level/block/Block";
     private static final String ITEM = "net/minecraft/world/item/Item";
@@ -57,6 +78,17 @@ public final class IsOverloadBridgeSynthetic {
     private static final String L_BSB = "L" + BSB + ";";
     private static final String L_STACK = "L" + STACK + ";";
     private static final String L_FS = "L" + FLUID_STATE + ";";
+    private static final String L_ENTITY_TYPE = "L" + ENTITY_TYPE + ";";
+    private static final String L_LIVING_ENTITY = "L" + LIVING_ENTITY + ";";
+    private static final String L_PHANTOM = "L" + PHANTOM + ";";
+    private static final String L_DAMAGE_SOURCE = "L" + DAMAGE_SOURCE + ";";
+    private static final String L_TARGETING_CONDITIONS = "L" + TARGETING_CONDITIONS + ";";
+    private static final String L_TARGETING_SELECTOR = "L" + TARGETING_SELECTOR + ";";
+    private static final String L_LEVEL = "L" + LEVEL + ";";
+    private static final String L_AABB = "L" + AABB + ";";
+    private static final String L_PREDICATE = "L" + PREDICATE + ";";
+    private static final String L_ENTITY_RENDER_DISPATCHER = "L" + ENTITY_RENDER_DISPATCHER + ";";
+    private static final String L_QUATERNION = "L" + QUATERNION + ";";
     private static final String L_BLOCK = "L" + BLOCK + ";";
     private static final String L_ITEM = "L" + ITEM + ";";
     private static final String L_FLUID = "L" + FLUID + ";";
@@ -64,6 +96,8 @@ public final class IsOverloadBridgeSynthetic {
     private static final String L_HOLDER = "L" + HOLDER + ";";
     private static final String L_HOLDER_REF = "L" + HOLDER_REF + ";";
     private static final String L_RK = "L" + RESOURCE_KEY + ";";
+
+    public static final String PREDICATE_SELECTOR_INTERNAL = INTERNAL + "$PredicateSelector";
 
     private static final String SPE = "net/minecraft/world/level/levelgen/structure/pools/StructurePoolElement";
     private static final String STM = "net/minecraft/world/level/levelgen/structure/templatesystem/StructureTemplateManager";
@@ -78,9 +112,10 @@ public final class IsOverloadBridgeSynthetic {
     private static final String FLOAT_PROVIDERS = "net/minecraft/util/valueproviders/FloatProviders";
     private static final String L_CODEC = "Lcom/mojang/serialization/Codec;";
 
-    /** Register the synthetic and rewrite every removed is() overload call onto it. */
+    /** Register the synthetic classes and their exact removed-method rewrites. */
     public static void register(RetromodTransformer t) {
         t.registerSyntheticClass(INTERNAL, generate());
+        t.registerSyntheticClass(PREDICATE_SELECTOR_INTERNAL, generatePredicateSelector());
 
         // BlockState.is(...) - both plausible call-site owners map to the same helpers.
         for (String owner : new String[]{BS, BSB}) {
@@ -105,6 +140,48 @@ public final class IsOverloadBridgeSynthetic {
                 INTERNAL, "fluidStateIs", "(" + L_FS + L_FLUID + ")Z", true);
         t.registerMethodRedirect(FLUID_STATE, "is", "(" + L_TAG + ")Z",
                 INTERNAL, "fluidStateIsTag", "(" + L_FS + L_TAG + ")Z", true);
+
+        // EntityType lost the same tag convenience method. Its old implementation delegated to
+        // the registry holder, which remains public on 26.1 and 26.2.
+        t.registerMethodRedirect(ENTITY_TYPE, "is", "(" + L_TAG + ")Z",
+                INTERNAL, "entityTypeIsTag", "(" + L_ENTITY_TYPE + L_TAG + ")Z", true);
+
+        // The old combined hurt method was mapped onto hurtClient during intermediary remapping,
+        // even though the amount proves it is the pre-split API. hurtOrSimulate is the modern
+        // dispatcher that preserves both server damage and client simulation behavior.
+        t.registerMethodRedirect(LIVING_ENTITY, "hurtClient", "(" + L_DAMAGE_SOURCE + "F)Z",
+                INTERNAL, "livingEntityHurtClient",
+                "(" + L_LIVING_ENTITY + L_DAMAGE_SOURCE + "F)Z", true);
+
+        // LivingEntity.canAttack(target, conditions) was replaced by the level-aware
+        // TargetingConditions.test call. Revamped Phantoms emits Phantom as the call owner, so
+        // reproduce the current Phantom helper's exact test(level, self, target) behavior.
+        t.registerMethodRedirect(PHANTOM, "canAttack",
+                "(" + L_LIVING_ENTITY + L_TARGETING_CONDITIONS + ")Z",
+                INTERNAL, "phantomCanAttack",
+                "(" + L_PHANTOM + L_LIVING_ENTITY + L_TARGETING_CONDITIONS + ")Z", true);
+
+        // TargetingConditions changed its selector from Predicate<LivingEntity> to a two-argument
+        // Selector that also receives ServerLevel. Wrap the old predicate and ignore only the new
+        // contextual argument.
+        t.registerMethodRedirect(TARGETING_CONDITIONS, "selector",
+                "(" + L_PREDICATE + ")" + L_TARGETING_CONDITIONS,
+                INTERNAL, "targetingConditionsSelector",
+                "(" + L_TARGETING_CONDITIONS + L_PREDICATE + ")" + L_TARGETING_CONDITIONS, true);
+
+        // The level-aware nearby query moved from EntityGetter/Level to ServerEntityGetter when
+        // TargetingConditions gained its ServerLevel parameter. Delegate on a server level and
+        // return an empty result on the client, where the modern operation is not defined.
+        String nearbyDesc = "(Ljava/lang/Class;" + L_TARGETING_CONDITIONS + L_LIVING_ENTITY
+                + L_AABB + ")Ljava/util/List;";
+        t.registerMethodRedirect(LEVEL, "getNearbyEntities", nearbyDesc,
+                INTERNAL, "levelGetNearbyEntities", "(" + L_LEVEL + nearbyDesc.substring(1), true);
+
+        // EntityRenderDispatcher no longer caches and exposes cameraOrientation. Its prepare
+        // method now stores only the Camera, whose rotation() is the same orientation value.
+        t.registerMethodRedirect(ENTITY_RENDER_DISPATCHER, "cameraOrientation", "()" + L_QUATERNION,
+                INTERNAL, "cameraOrientation",
+                "(" + L_ENTITY_RENDER_DISPATCHER + ")" + L_QUATERNION, true);
 
         // 26.1+ moved IntProvider/FloatProvider's static codec factories AND codec constants to
         // the companion classes with IDENTICAL signatures (verified on 26.2: IntProviders has
@@ -211,6 +288,15 @@ public final class IsOverloadBridgeSynthetic {
         emitHolderIs(cw, "itemStackIsHolder", L_STACK, L_HOLDER, IsOverloadBridgeSynthetic::emitItemHolder);
         emitHolderIs(cw, "fluidStateIsTag", L_FS, L_TAG,
                 m -> m.visitMethodInsn(INVOKEVIRTUAL, FLUID_STATE, "typeHolder", "()" + L_HOLDER, false));
+        emitHolderIs(cw, "entityTypeIsTag", L_ENTITY_TYPE, L_TAG,
+                m -> m.visitMethodInsn(INVOKEVIRTUAL, ENTITY_TYPE, "builtInRegistryHolder",
+                        "()" + L_HOLDER_REF, false));
+
+        emitLivingEntityHurtClient(cw);
+        emitPhantomCanAttack(cw);
+        emitTargetingConditionsSelector(cw);
+        emitLevelGetNearbyEntities(cw);
+        emitCameraOrientation(cw);
 
         emitShuffledJigsawBlocks(cw);
         emitJigsawCanAttach(cw);
@@ -330,5 +416,144 @@ public final class IsOverloadBridgeSynthetic {
     private static void emitItemHolder(MethodVisitor m) {
         m.visitMethodInsn(INVOKEVIRTUAL, STACK, "getItem", "()" + L_ITEM, false);
         m.visitMethodInsn(INVOKEVIRTUAL, ITEM, "builtInRegistryHolder", "()" + L_HOLDER_REF, false);
+    }
+
+    /** Route the old combined damage call through the modern server-or-client dispatcher. */
+    private static void emitLivingEntityHurtClient(ClassWriter cw) {
+        MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "livingEntityHurtClient",
+                "(" + L_LIVING_ENTITY + L_DAMAGE_SOURCE + "F)Z", null, null);
+        m.visitCode();
+        m.visitVarInsn(ALOAD, 0);
+        m.visitVarInsn(ALOAD, 1);
+        m.visitVarInsn(FLOAD, 2);
+        m.visitMethodInsn(INVOKEVIRTUAL, ENTITY, "hurtOrSimulate",
+                "(" + L_DAMAGE_SOURCE + "F)Z", false);
+        m.visitInsn(IRETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+    }
+
+    /** Match modern Phantom's private level-aware targeting helper without calling it privately. */
+    private static void emitPhantomCanAttack(ClassWriter cw) {
+        MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "phantomCanAttack",
+                "(" + L_PHANTOM + L_LIVING_ENTITY + L_TARGETING_CONDITIONS + ")Z", null, null);
+        m.visitCode();
+        m.visitVarInsn(ALOAD, 0);
+        m.visitMethodInsn(INVOKEVIRTUAL, ENTITY, "level", "()L" + LEVEL + ";", false);
+        m.visitVarInsn(ASTORE, 3);
+        m.visitVarInsn(ALOAD, 3);
+        m.visitTypeInsn(INSTANCEOF, SERVER_LEVEL);
+        Label serverLevel = new Label();
+        m.visitJumpInsn(IFNE, serverLevel);
+        m.visitInsn(ICONST_0);
+        m.visitInsn(IRETURN);
+        m.visitLabel(serverLevel);
+        m.visitVarInsn(ALOAD, 2);
+        m.visitVarInsn(ALOAD, 3);
+        m.visitTypeInsn(CHECKCAST, SERVER_LEVEL);
+        m.visitVarInsn(ALOAD, 0);
+        m.visitVarInsn(ALOAD, 1);
+        m.visitMethodInsn(INVOKEVIRTUAL, TARGETING_CONDITIONS, "test",
+                "(L" + SERVER_LEVEL + ";" + L_LIVING_ENTITY + L_LIVING_ENTITY + ")Z", false);
+        m.visitInsn(IRETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+    }
+
+    /** Convert the old Predicate selector into the modern level-aware selector interface. */
+    private static void emitTargetingConditionsSelector(ClassWriter cw) {
+        MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "targetingConditionsSelector",
+                "(" + L_TARGETING_CONDITIONS + L_PREDICATE + ")" + L_TARGETING_CONDITIONS,
+                null, null);
+        m.visitCode();
+        m.visitVarInsn(ALOAD, 1);
+        Label wrap = new Label();
+        m.visitJumpInsn(IFNONNULL, wrap);
+        m.visitVarInsn(ALOAD, 0);
+        m.visitInsn(ACONST_NULL);
+        m.visitMethodInsn(INVOKEVIRTUAL, TARGETING_CONDITIONS, "selector",
+                "(" + L_TARGETING_SELECTOR + ")" + L_TARGETING_CONDITIONS, false);
+        m.visitInsn(ARETURN);
+        m.visitLabel(wrap);
+        m.visitVarInsn(ALOAD, 0);
+        m.visitTypeInsn(NEW, PREDICATE_SELECTOR_INTERNAL);
+        m.visitInsn(DUP);
+        m.visitVarInsn(ALOAD, 1);
+        m.visitMethodInsn(INVOKESPECIAL, PREDICATE_SELECTOR_INTERNAL, "<init>",
+                "(" + L_PREDICATE + ")V", false);
+        m.visitMethodInsn(INVOKEVIRTUAL, TARGETING_CONDITIONS, "selector",
+                "(" + L_TARGETING_SELECTOR + ")" + L_TARGETING_CONDITIONS, false);
+        m.visitInsn(ARETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+    }
+
+    /** Delegate Level's removed query to the modern server-only interface. */
+    private static void emitLevelGetNearbyEntities(ClassWriter cw) {
+        String desc = "(Ljava/lang/Class;" + L_TARGETING_CONDITIONS + L_LIVING_ENTITY
+                + L_AABB + ")Ljava/util/List;";
+        MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "levelGetNearbyEntities",
+                "(" + L_LEVEL + desc.substring(1), null, null);
+        m.visitCode();
+        m.visitVarInsn(ALOAD, 0);
+        m.visitTypeInsn(INSTANCEOF, SERVER_ENTITY_GETTER);
+        Label server = new Label();
+        m.visitJumpInsn(IFNE, server);
+        m.visitMethodInsn(INVOKESTATIC, "java/util/List", "of", "()Ljava/util/List;", true);
+        m.visitInsn(ARETURN);
+        m.visitLabel(server);
+        m.visitVarInsn(ALOAD, 0);
+        m.visitTypeInsn(CHECKCAST, SERVER_ENTITY_GETTER);
+        for (int i = 1; i <= 4; i++) m.visitVarInsn(ALOAD, i);
+        m.visitMethodInsn(INVOKEINTERFACE, SERVER_ENTITY_GETTER, "getNearbyEntities", desc, true);
+        m.visitInsn(ARETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+    }
+
+    /** Read the orientation from the Camera now retained by EntityRenderDispatcher.prepare. */
+    private static void emitCameraOrientation(ClassWriter cw) {
+        MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "cameraOrientation",
+                "(" + L_ENTITY_RENDER_DISPATCHER + ")" + L_QUATERNION, null, null);
+        m.visitCode();
+        m.visitVarInsn(ALOAD, 0);
+        m.visitFieldInsn(GETFIELD, ENTITY_RENDER_DISPATCHER, "camera", "L" + CAMERA + ";");
+        m.visitMethodInsn(INVOKEVIRTUAL, CAMERA, "rotation", "()" + L_QUATERNION, false);
+        m.visitInsn(ARETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+    }
+
+    /** Generate the tiny adapter that makes a Predicate implement the modern selector SAM. */
+    public static byte[] generatePredicateSelector() {
+        ClassWriter cw = newWriter();
+        cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, PREDICATE_SELECTOR_INTERNAL, null,
+                "java/lang/Object", new String[]{TARGETING_SELECTOR});
+        cw.visitField(ACC_PRIVATE | ACC_FINAL, "predicate", L_PREDICATE, null, null).visitEnd();
+
+        MethodVisitor c = cw.visitMethod(ACC_PUBLIC, "<init>", "(" + L_PREDICATE + ")V", null, null);
+        c.visitCode();
+        c.visitVarInsn(ALOAD, 0);
+        c.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        c.visitVarInsn(ALOAD, 0);
+        c.visitVarInsn(ALOAD, 1);
+        c.visitFieldInsn(PUTFIELD, PREDICATE_SELECTOR_INTERNAL, "predicate", L_PREDICATE);
+        c.visitInsn(RETURN);
+        c.visitMaxs(0, 0);
+        c.visitEnd();
+
+        MethodVisitor test = cw.visitMethod(ACC_PUBLIC, "test",
+                "(" + L_LIVING_ENTITY + "L" + SERVER_LEVEL + ";)Z", null, null);
+        test.visitCode();
+        test.visitVarInsn(ALOAD, 0);
+        test.visitFieldInsn(GETFIELD, PREDICATE_SELECTOR_INTERNAL, "predicate", L_PREDICATE);
+        test.visitVarInsn(ALOAD, 1);
+        test.visitMethodInsn(INVOKEINTERFACE, PREDICATE, "test", "(Ljava/lang/Object;)Z", true);
+        test.visitInsn(IRETURN);
+        test.visitMaxs(0, 0);
+        test.visitEnd();
+
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 }

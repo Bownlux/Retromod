@@ -32,6 +32,7 @@ import com.retromod.testmod.tests.Test10ExactTargetPrefixCapture;
 import com.retromod.testmod.tests.Test11ChatOptionsSuperclass;
 import com.retromod.testmod.tests.Test12ClientCommandParserAccessor;
 import com.retromod.testmod.tests.Test13WindowHandleShim;
+import com.retromod.testmod.tests.Test14RevampedEntityBridges;
 import com.retromod.testmod.tests.TextTests;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,6 +86,7 @@ public final class TestRunner {
         all.add(new Test10ExactTargetPrefixCapture());
         all.add(new Test11ChatOptionsSuperclass());
         all.add(new Test12ClientCommandParserAccessor());
+        all.add(new Test14RevampedEntityBridges());
         return List.copyOf(all);
     }
 
@@ -100,6 +102,7 @@ public final class TestRunner {
         all.addAll(DeferredItemStackTests.all());
         all.addAll(EnchantmentTests.all());
         all.addAll(StatusEffectTests.all());
+        all.add(Test14RevampedEntityBridges.entityTagMembership());
         return List.copyOf(all);
     }
 

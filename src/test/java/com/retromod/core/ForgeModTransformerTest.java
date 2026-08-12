@@ -25,6 +25,15 @@ import static org.junit.jupiter.api.Assertions.*;
 class ForgeModTransformerTest {
 
     @Test
+    @DisplayName("refmap discovery accepts JSON resources but not nested jar filenames")
+    void refmapDiscoveryRequiresJson() {
+        assertTrue(ForgeModTransformer.isRefmapResource("mappings/compat-refmap.json"));
+        assertTrue(ForgeModTransformer.isRefmapResource("MAPPINGS/COMPAT-REFMAP.JSON"));
+        assertFalse(ForgeModTransformer.isRefmapResource(
+                "META-INF/jarjar/refmap-library.jar"));
+    }
+
+    @Test
     @DisplayName("#42: top-level loaderVersion is relaxed to [1,)")
     void relaxesLoaderVersion() {
         String in = "modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\nlicense=\"MIT\"\n";

@@ -92,6 +92,27 @@ class AotForgeRefmapPathTest {
                 readEntry(output, "portal-refmap.json"), StandardCharsets.UTF_8));
     }
 
+    @Test
+    @DisplayName("AOT recurses into a bundled jar whose filename contains refmap")
+    void refmapNamedNestedJarIsTransformed() throws Exception {
+        byte[] library = jarOf(Map.of(
+                "portal-refmap.json", REFMAP.getBytes(StandardCharsets.UTF_8)));
+        byte[] parent = jarOf(Map.of(
+                "META-INF/jars/refmap-library.jar", library));
+        AotCompiler compiler = new AotCompiler(new ShimRegistry(), "1.20.1");
+        Method transformNested = AotCompiler.class.getDeclaredMethod(
+                "transformNestedJarAot", byte[].class, int.class,
+                MixinCompatibilityTransformer.class, boolean.class);
+        transformNested.setAccessible(true);
+
+        byte[] output = (byte[]) transformNested.invoke(
+                compiler, parent, 1, new MixinCompatibilityTransformer(transformer), true);
+        byte[] libraryOut = readEntry(output, "META-INF/jars/refmap-library.jar");
+
+        assertTargetSelector(new String(
+                readEntry(libraryOut, "portal-refmap.json"), StandardCharsets.UTF_8));
+    }
+
     private static void assertTargetSelector(String refmap) {
         assertTrue(refmap.contains("L" + NEW_OWNER + ";m_77745_()I"),
                 "the refmap value must use the target owner and member");

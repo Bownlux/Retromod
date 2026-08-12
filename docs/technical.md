@@ -34,9 +34,11 @@ Mixin annotations and refmaps are rewritten separately from normal instructions.
 
 Retromod indexes the installed Minecraft jar during a game launch. Offline `transform`, `aot`, and `batch` commands use `--mc-jar <target.jar>` to build the same method index. If `--target` is absent, the CLI reads `version.json` from that jar, with a standard client filename as a fallback.
 
-The automatic translator accepts only uniquely proven shapes. The main case is a same-name method with an unchanged return type where the old parameters remain in order and no more than three parameters were added. Selected callback-only injections, exact-prefix captures, invokers, overwrites, and call-mirroring injectors have additional shape checks. Ambiguous overloads, constructors, reordered or removed parameters, changed return types, semantic local captures, unsafe parameter annotations, multiple inferred layouts, and `remap = false` scopes are left unchanged. A failed frame rebuild falls back to the last valid result.
+The automatic translator accepts only uniquely proven shapes. The main case is a same-name method with an unchanged return type where the old parameters remain in order and no more than three parameters were added. Selected callback-only injections, exact-prefix captures, invokers, overwrites, and call-mirroring injectors have additional shape checks. A MixinExtras `@ModifyReturnValue` or `@ModifyExpressionValue` handler can also follow the change when its first parameter is the intercepted value and the remaining parameters exactly match every old target argument. New target arguments are inserted after that value. Ambiguous overloads, constructors, partial captures, reordered or removed parameters, changed return types, semantic local captures, unsafe parameter annotations, multiple inferred layouts, and `remap = false` scopes are left unchanged. A failed frame rebuild falls back to the last valid result.
 
-Curated adapters handle some semantic changes that cannot be inferred from descriptors alone. The ValueIO adapter, for example, preserves an old `CompoundTag` handler behind an explicit input or output bridge. Retromod does not generalize that conversion to unrelated save methods.
+Curated adapters handle some semantic changes that cannot be inferred from descriptors alone. The ValueIO adapter, for example, preserves an old `CompoundTag` handler behind an explicit input or output bridge. Exact 26.x entity bridges can rebuild older tag, targeting, damage, and registration calls when the current behavior is known. Retromod does not generalize those conversions to unrelated methods.
+
+The legacy entity-renderer adapter is deliberately narrower. It can make a direct old `EntityRenderer` subclass loadable by supplying a base render state and removing its deleted direct-super call. It does not translate the old render body into the modern submit pipeline, so custom geometry can remain invisible. A renderer with a different hierarchy or signature is left unchanged.
 
 Known fatal handlers can be removed through the mixin blocklist, leaving the associated feature inactive.
 
@@ -50,7 +52,7 @@ Forge-to-NeoForge support combines metadata promotion, mappings, and per-mod syn
 
 ## Embedded Classes
 
-Deleted loader APIs are embedded under a unique `com/retromod/embedded/<mod-key>/` path. This avoids split packages between the loader and multiple transformed mods.
+Deleted loader APIs are embedded under a unique `com/retromod/embedded/<mod-key>/` path. This avoids split packages between the loader and multiple transformed mods. A helper used inside nested jars derives its key from the complete parent archive chain, so two libraries with the same filename do not share a generated class.
 
 ## Cache and Verification
 
@@ -60,7 +62,7 @@ The verifier checks transformed references visible from its host classpath and m
 
 ## Security Model
 
-Mods are untrusted input. Runtime writes stay in the selected game directory. The CLI writes its requested outputs and initializes the standard Retromod input, backup, and API-archive folders relative to its current working directory. Commands create caches and reports there when needed. Archive entries are validated and bounded before extraction or rewrite.
+Mods are untrusted input. Runtime writes stay in the selected game directory. The CLI writes its requested outputs and initializes the standard Retromod input, backup, and API-archive folders relative to its current working directory. Commands create caches and reports there when needed. Archive entries are validated and bounded before extraction or rewrite. Fabric runtime recursion stops after four nested levels.
 
 Normal transformation is offline. The native-version lookup is opt-in through `check_for_native_versions` or a system property. CLI API-archive downloads require an explicit command and consent, or `--yes` for scripted use.
 

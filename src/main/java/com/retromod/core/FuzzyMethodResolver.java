@@ -64,11 +64,23 @@ public class FuzzyMethodResolver {
     /** Key: JVM internal class name. Value: methods declared on it. */
     private final Map<String, List<MethodInfo>> methodIndex = new HashMap<>();
 
+    /**
+     * Key: JVM internal class name. Value: constructor descriptors declared on it.
+     * Constructors are retained for exact verification but never enter fuzzy candidate lists.
+     */
+    private final Map<String, Set<String>> constructorIndex = new HashMap<>();
+
     /** Key: JVM internal class name. Value: fields declared on it. */
     private final Map<String, List<FieldInfo>> fieldIndex = new HashMap<>();
 
     /** Key: JVM internal class name. Value: its superclass plus implemented interfaces. */
     private final Map<String, List<String>> classHierarchy = new HashMap<>();
+
+    /** Platform ancestors loaded lazily for exact inherited-member checks only. */
+    private final Map<String, ExternalClassInfo> externalClassIndex = new ConcurrentHashMap<>();
+
+    /** Negative cache for platform classes that could not be inspected. */
+    private final Set<String> missingExternalClasses = ConcurrentHashMap.newKeySet();
 
     /** Cap on resolve-cache entries; once hit, the cache is cleared. A mod has ~50-200 unresolved refs. */
     private static final int MAX_CACHE_SIZE = 10_000;
@@ -119,6 +131,9 @@ public class FuzzyMethodResolver {
      */
     public record FieldInfo(String owner, String name, String descriptor, int score) {}
 
+    private record ExternalClassInfo(
+            List<MethodInfo> methods, List<FieldInfo> fields, List<String> parents) {}
+
     /**
      * Index every {@code net/minecraft/} and {@code com/mojang/} class, method, and field in the JAR.
      * Call once at startup before any resolve call.
@@ -165,7 +180,7 @@ public class FuzzyMethodResolver {
                     String[] interfaces = reader.getInterfaces();
 
                     List<String> parents = new ArrayList<>();
-                    if (superName != null && !superName.equals("java/lang/Object")) {
+                    if (superName != null) {
                         parents.add(superName);
                     }
                     if (interfaces != null) {
@@ -181,8 +196,11 @@ public class FuzzyMethodResolver {
                         @Override
                         public MethodVisitor visitMethod(int access, String name,
                                 String descriptor, String signature, String[] exceptions) {
-                            // constructors/initializers aren't fuzzy-match candidates
-                            if (!"<init>".equals(name) && !"<clinit>".equals(name)) {
+                            // Constructors are exact-linkage data, not fuzzy-match candidates.
+                            if ("<init>".equals(name)) {
+                                constructorIndex.computeIfAbsent(className, ignored -> new HashSet<>())
+                                        .add(descriptor);
+                            } else if (!"<clinit>".equals(name)) {
                                 classMethods.add(new MethodInfo(className, name, descriptor, -1, access));
                             }
                             return null;
@@ -245,10 +263,17 @@ public class FuzzyMethodResolver {
      */
     public boolean hasMethod(String owner, String name, String descriptor) {
         if (!indexed || owner == null) return false;
+
+        // JVM constructors belong to their exact owner and are never inherited. Keep this
+        // separate from methodIndex so fuzzy resolution can never offer a constructor candidate.
+        if ("<init>".equals(name)) {
+            Set<String> constructors = constructorIndex.get(owner);
+            return constructors != null && constructors.contains(descriptor);
+        }
+        if (isJvmSpecialMethod(name)) return false;
+
         return hasMemberInHierarchy(owner, parent -> {
-            List<MethodInfo> methods = methodIndex.get(parent);
-            if (methods == null) return false;
-            for (MethodInfo m : methods) {
+            for (MethodInfo m : declaredMethodsForExactLookup(parent)) {
                 if (m.name().equals(name) && m.descriptor().equals(descriptor)) {
                     return true;
                 }
@@ -261,9 +286,7 @@ public class FuzzyMethodResolver {
     public boolean hasField(String owner, String name, String descriptor) {
         if (!indexed || owner == null) return false;
         return hasMemberInHierarchy(owner, parent -> {
-            List<FieldInfo> fields = fieldIndex.get(parent);
-            if (fields == null) return false;
-            for (FieldInfo f : fields) {
+            for (FieldInfo f : declaredFieldsForExactLookup(parent)) {
                 if (f.name().equals(name) && f.descriptor().equals(descriptor)) {
                     return true;
                 }
@@ -278,10 +301,15 @@ public class FuzzyMethodResolver {
      */
     public boolean hasMethodName(String owner, String name) {
         if (!indexed || owner == null) return false;
+
+        if ("<init>".equals(name)) {
+            Set<String> constructors = constructorIndex.get(owner);
+            return constructors != null && !constructors.isEmpty();
+        }
+        if (isJvmSpecialMethod(name)) return false;
+
         return hasMemberInHierarchy(owner, parent -> {
-            List<MethodInfo> methods = methodIndex.get(parent);
-            if (methods == null) return false;
-            for (MethodInfo m : methods) {
+            for (MethodInfo m : declaredMethodsForExactLookup(parent)) {
                 if (m.name().equals(name)) return true;
             }
             return false;
@@ -292,9 +320,7 @@ public class FuzzyMethodResolver {
     public boolean hasFieldName(String owner, String name) {
         if (!indexed || owner == null) return false;
         return hasMemberInHierarchy(owner, parent -> {
-            List<FieldInfo> fields = fieldIndex.get(parent);
-            if (fields == null) return false;
-            for (FieldInfo f : fields) {
+            for (FieldInfo f : declaredFieldsForExactLookup(parent)) {
                 if (f.name().equals(name)) return true;
             }
             return false;
@@ -313,7 +339,7 @@ public class FuzzyMethodResolver {
             String current = stack.pop();
             if (!visited.add(current)) continue;
             if (predicate.test(current)) return true;
-            List<String> parents = classHierarchy.get(current);
+            List<String> parents = parentsForExactLookup(current);
             if (parents != null) {
                 for (String p : parents) {
                     if (p != null && !visited.contains(p)) stack.push(p);
@@ -321,6 +347,71 @@ public class FuzzyMethodResolver {
             }
         }
         return false;
+    }
+
+    private List<MethodInfo> declaredMethodsForExactLookup(String owner) {
+        List<MethodInfo> indexedMethods = methodIndex.get(owner);
+        if (indexedMethods != null) return indexedMethods;
+        ExternalClassInfo external = externalClassInfo(owner);
+        return external == null ? List.of() : external.methods();
+    }
+
+    private List<FieldInfo> declaredFieldsForExactLookup(String owner) {
+        List<FieldInfo> indexedFields = fieldIndex.get(owner);
+        if (indexedFields != null) return indexedFields;
+        ExternalClassInfo external = externalClassInfo(owner);
+        return external == null ? List.of() : external.fields();
+    }
+
+    private List<String> parentsForExactLookup(String owner) {
+        List<String> indexedParents = classHierarchy.get(owner);
+        if (indexedParents != null) return indexedParents;
+        ExternalClassInfo external = externalClassInfo(owner);
+        return external == null ? null : external.parents();
+    }
+
+    /**
+     * Inspect a reachable JDK ancestor without adding its members to fuzzy candidates. Reflection
+     * is used because the running JDK may emit a newer class-file version than bundled ASM can
+     * parse. The class is never initialized.
+     */
+    private ExternalClassInfo externalClassInfo(String owner) {
+        if (owner == null || !owner.startsWith("java/")) return null;
+        ExternalClassInfo cached = externalClassIndex.get(owner);
+        if (cached != null) return cached;
+        if (missingExternalClasses.contains(owner)) return null;
+
+        try {
+            Class<?> platformClass = Class.forName(owner.replace('/', '.'), false,
+                    ClassLoader.getPlatformClassLoader());
+
+            List<MethodInfo> methods = new ArrayList<>();
+            for (java.lang.reflect.Method method : platformClass.getDeclaredMethods()) {
+                methods.add(new MethodInfo(owner, method.getName(),
+                        Type.getMethodDescriptor(method), -1, method.getModifiers()));
+            }
+
+            List<FieldInfo> fields = new ArrayList<>();
+            for (java.lang.reflect.Field field : platformClass.getDeclaredFields()) {
+                fields.add(new FieldInfo(owner, field.getName(),
+                        Type.getDescriptor(field.getType()), -1));
+            }
+
+            List<String> parents = new ArrayList<>();
+            Class<?> superClass = platformClass.getSuperclass();
+            if (superClass != null) parents.add(Type.getInternalName(superClass));
+            for (Class<?> iface : platformClass.getInterfaces()) {
+                parents.add(Type.getInternalName(iface));
+            }
+
+            ExternalClassInfo loaded = new ExternalClassInfo(
+                    List.copyOf(methods), List.copyOf(fields), List.copyOf(parents));
+            ExternalClassInfo raced = externalClassIndex.putIfAbsent(owner, loaded);
+            return raced != null ? raced : loaded;
+        } catch (ClassNotFoundException | LinkageError | SecurityException e) {
+            missingExternalClasses.add(owner);
+            return null;
+        }
     }
 
     /**
@@ -1044,6 +1135,12 @@ public class FuzzyMethodResolver {
 
     public int getIndexedFieldCount() {
         return indexedFieldCount;
+    }
+
+    /** Direct superclass recorded from the target Minecraft jar, or null when unknown. */
+    String directSuperclass(String owner) {
+        List<String> parents = classHierarchy.get(owner);
+        return parents == null || parents.isEmpty() ? null : parents.get(0);
     }
 
     /** Clear both resolve caches; call after rebuilding the index or changing redirect maps. */

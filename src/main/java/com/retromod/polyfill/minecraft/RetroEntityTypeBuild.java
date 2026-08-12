@@ -38,6 +38,9 @@ public final class RetroEntityTypeBuild {
     public static Object build(Object builder, String id) {
         try {
             if (builder == null || unresolvable) return null;
+            if (isOfficialBuilder(builder)) {
+                return buildOfficial(builder, id);
+            }
             if (buildMethod == null && !resolve(builder)) return null;
             Object identifier = idFactory.invoke(null, id);
             Object key = keyFactory.invoke(null, entityTypeRootKey, identifier);
@@ -45,6 +48,30 @@ public final class RetroEntityTypeBuild {
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /** 26.x official-name variant of the same String to ResourceKey adaptation. */
+    public static Object buildOfficial(Object builder, String id) {
+        try {
+            if (builder == null) return null;
+            ClassLoader cl = builder.getClass().getClassLoader();
+            Class<?> keyClass = Class.forName("net.minecraft.resources.ResourceKey", false, cl);
+            Class<?> idClass = Class.forName("net.minecraft.resources.Identifier", false, cl);
+            Class<?> registriesClass = Class.forName(
+                    "net.minecraft.core.registries.Registries", false, cl);
+            Object root = registriesClass.getField("ENTITY_TYPE").get(null);
+            Object identifier = idClass.getMethod("parse", String.class).invoke(null, id);
+            Object key = keyClass.getMethod("create", keyClass, idClass)
+                    .invoke(null, root, identifier);
+            return builder.getClass().getMethod("build", keyClass).invoke(builder, key);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static boolean isOfficialBuilder(Object builder) {
+        return builder.getClass().getName().equals(
+                "net.minecraft.world.entity.EntityType$Builder");
     }
 
     private static synchronized boolean resolve(Object builder) {

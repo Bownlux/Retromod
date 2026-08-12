@@ -49,7 +49,7 @@ Sometimes. Retromod bridges selected common 1.20.1 Forge metadata, registration,
 
 ## Can Retromod repair Mixins automatically?
 
-For a narrow, proven subset. At game launch Retromod indexes the installed Minecraft classes. The CLI gets the same target facts from `--mc-jar <target.jar>`. It can repair unique parameter-addition changes and selected zero-capture or exact-prefix handlers. It refuses ambiguous overloads, constructors, reordered or removed parameters, return-type changes, semantic local captures, unsafe annotations, and `remap = false` scopes.
+For a narrow, proven subset. At game launch Retromod indexes the installed Minecraft classes. The CLI gets the same target facts from `--mc-jar <target.jar>`. It can repair unique parameter-addition changes, selected zero-capture or exact-prefix handlers, and MixinExtras value modifiers that capture every old target argument. It refuses ambiguous overloads, constructors, partial captures, reordered or removed parameters, return-type changes, semantic local captures, unsafe annotations, and `remap = false` scopes.
 
 Curated adapters cover a few semantic migrations. Other save, worldgen, renderer, or networking changes still need a real bridge and feature testing.
 

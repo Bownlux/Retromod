@@ -18,9 +18,14 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.nio.file.Files;
 import java.util.List;
+import java.util.Map;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
+import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -92,6 +97,29 @@ class AotRefmapRepairIndexTest {
                 handlerDescriptor(Files.readAllBytes(cached)));
     }
 
+    @Test
+    @DisplayName("Full AOT does not scan a refmap-named nested jar as JSON")
+    void fullAotSkipsRefmapNamedNestedJarDuringRefmapPlanning() throws Exception {
+        byte[] nested = jarOf(Map.of("assets/fixture/data.bin", new byte[] {1, 2, 3}));
+        Path outer = tempDir.resolve("full-aot-nested.jar");
+        Files.write(outer, jarOf(Map.of("META-INF/jars/refmap-library.jar", nested)));
+        FullAotCompiler compiler = FullAotCompiler.getInstance(tempDir, "26.1");
+        FullAotCompiler.ExpandedByteBudget budget =
+                new FullAotCompiler.ExpandedByteBudget(1);
+        Method collect = FullAotCompiler.class.getDeclaredMethod(
+                "collectRefmapRepairs", JarFile.class, MixinCompatibilityTransformer.class,
+                boolean.class, boolean.class, FullAotCompiler.ExpandedByteBudget.class);
+        collect.setAccessible(true);
+
+        try (JarFile jar = new JarFile(outer.toFile())) {
+            collect.invoke(compiler, jar, new MixinCompatibilityTransformer(transformer),
+                    false, true, budget);
+        }
+
+        assertEquals(0, budget.usedBytes(),
+                "a nested archive must not consume the JSON refmap scan budget");
+    }
+
     private byte[] transformNested(byte[] archive, String key) throws Exception {
         AotCompiler compiler = new AotCompiler(new ShimRegistry(), "26.1");
         Method method = AotCompiler.class.getDeclaredMethod(
@@ -110,6 +138,18 @@ class AotRefmapRepairIndexTest {
         return node.methods.stream()
                 .filter(method -> "handler".equals(method.name))
                 .findFirst().orElseThrow().desc;
+    }
+
+    private static byte[] jarOf(Map<String, byte[]> entries) throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (JarOutputStream jar = new JarOutputStream(bytes)) {
+            for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
+                jar.putNextEntry(new JarEntry(entry.getKey()));
+                jar.write(entry.getValue());
+                jar.closeEntry();
+            }
+        }
+        return bytes.toByteArray();
     }
 
     private static void resetFullAotCompiler() throws Exception {

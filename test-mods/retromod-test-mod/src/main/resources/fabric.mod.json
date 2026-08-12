@@ -19,7 +19,7 @@
     ]
   },
   "mixins": [
-    "retromod-test.mixins.json"
+    "mixin.retromod_test.json"
   ],
   "depends": {
     "fabricloader": ">=0.15.0",

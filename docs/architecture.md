@@ -13,7 +13,7 @@ Retromod turns an old mod jar into one that targets the host Minecraft and loade
 2. Find a chain of version shims.
 3. Register class, method, field, constructor, and signature redirects.
 4. Remap Fabric intermediary or Forge SRG names when needed.
-5. Rewrite classes, mixin annotations, refmaps, access wideners, and metadata.
+5. Rewrite classes, mixin annotations, refmaps, access wideners, and metadata, including supported nested jars.
 6. Embed selected replacement APIs.
 7. Verify references and cache the result.
 
@@ -52,6 +52,6 @@ Both use `ServiceLoader` registrations under `src/main/resources/META-INF/servic
 
 ## Safety
 
-Redirects should be owner- and descriptor-specific. Frame recomputation falls back conservatively when a class hierarchy cannot be proven. Original jars are backed up, and cache stamps prevent packaged builds from reusing stale transforms.
+Redirects should be owner- and descriptor-specific. Frame recomputation falls back conservatively when a class hierarchy cannot be proven. Fabric runtime nested transforms stop after four levels. Original jars are backed up, and cache stamps prevent packaged builds from reusing stale transforms.
 
 See [Technical Details]({{ '/technical' | relative_url }}) for lower-level notes.

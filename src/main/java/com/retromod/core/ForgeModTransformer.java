@@ -371,7 +371,7 @@ public class ForgeModTransformer {
         int changed = 0;
         try (var files = Files.walk(dir)) {
             for (Path refmap : files.filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().contains("refmap"))
+                    .filter(path -> isRefmapResource(path.getFileName().toString()))
                     .toList()) {
                 String original = Files.readString(refmap);
                 String transformed = MixinRefmapRemapper.remapForgeSelectorsWithRepairs(
@@ -391,7 +391,7 @@ public class ForgeModTransformer {
                 com.retromod.mixin.MixinRefmapRepairIndex.empty();
         try (var files = Files.walk(dir)) {
             for (Path refmap : files.filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().contains("refmap"))
+                    .filter(path -> isRefmapResource(path.getFileName().toString()))
                     .toList()) {
                 MixinRefmapRemapper.RemapResult result =
                         MixinRefmapRemapper.remapForgeSelectorsWithRepairs(
@@ -402,6 +402,12 @@ public class ForgeModTransformer {
             LOGGER.debug("Could not prepare refmap-aware Mixin repairs: {}", e.getMessage());
         }
         return repairs;
+    }
+
+    static boolean isRefmapResource(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".json") && lower.contains("refmap");
     }
 
     /** Max Jar-in-Jar nesting depth Retromod recurses through. */

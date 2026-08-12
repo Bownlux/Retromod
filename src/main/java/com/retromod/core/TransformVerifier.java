@@ -4,6 +4,8 @@
  */
 package com.retromod.core;
 
+import com.retromod.core.verify.McSymbolIndex;
+import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,18 +33,24 @@ public final class TransformVerifier {
     /** Prefixes that are always on the classpath and should not be flagged. */
     private static final String[] SAFE_PREFIXES = {
         "java/", "javax/", "jdk/", "sun/",
-        "com/google/gson/", "com/google/common/",
-        "org/slf4j/", "org/apache/logging/",
+        runtimePrefix("com", "google", "gson"), "com/google/common/",
+        runtimePrefix("org", "slf4j"), "org/apache/logging/",
         "org/apache/commons/", "org/objectweb/asm/", "org/lwjgl/",
-        "io/netty/", "com/mojang/",
+        "io/netty/",
+        "com/mojang/authlib/", "com/mojang/blocklist/", "com/mojang/brigadier/",
+        "com/mojang/datafixers/", "com/mojang/jtracy/", "com/mojang/logging/",
+        "com/mojang/patchy/", "com/mojang/serialization/", "com/mojang/text2speech/",
         "it/unimi/dsi/fastutil/", "org/joml/",
         "net/fabricmc/loader/", "net/fabricmc/api/",
         "net/fabricmc/fabric/",
+        "org/spongepowered/asm/", "com/llamalad7/mixinextras/",
         "net/minecraftforge/", "net/neoforged/",
         "com/retromod/",
     };
 
     private TransformVerifier() {}
+
+    private static final int MAX_NESTED_VERIFY_DEPTH = 4;
 
     /**
      * Verify a transformed mod JAR by checking every bytecode reference against
@@ -53,37 +61,62 @@ public final class TransformVerifier {
      * @param targetVersion  target MC version string
      */
     public static VerifyResult verify(Path transformedJar, String modName, String targetVersion) {
+        return verify(transformedJar, modName, targetVersion, null);
+    }
+
+    /**
+     * Verify against an exact target-Minecraft index when one is available. The standalone CLI
+     * cannot load Minecraft classes onto its own classpath, so relying only on resource probes
+     * makes valid classes from {@code --mc-jar} look missing.
+     */
+    public static VerifyResult verify(Path transformedJar, String modName, String targetVersion,
+            McSymbolIndex targetIndex) {
         List<Issue> issues = new ArrayList<>();
 
         try {
             Set<String> modClasses = new HashSet<>();
             Set<String> referencedClasses = new LinkedHashSet<>();
             Map<String, Set<String>> referencedMethods = new LinkedHashMap<>();
-            Map<String, Set<String>> referencedFields = new LinkedHashMap<>();
+            Map<String, Set<FieldReference>> referencedFields = new LinkedHashMap<>();
             Map<String, Set<String>> referencedCtors = new LinkedHashMap<>();
+            Set<String> nestedReferencedClasses = new LinkedHashSet<>();
+            Map<String, Set<String>> nestedReferencedMethods = new LinkedHashMap<>();
+            Map<String, Set<FieldReference>> nestedReferencedFields = new LinkedHashMap<>();
+            Map<String, Set<String>> nestedReferencedCtors = new LinkedHashMap<>();
+            boolean scanNestedTargets = targetIndex != null && targetIndex.isAvailable();
 
             try (JarFile jar = new JarFile(transformedJar.toFile())) {
-                // pass 1: mod-internal class names
+                // Pass 1 learns every class packaged with the mod, including recursively bundled
+                // libraries. Otherwise a library under META-INF/jars looks like an absent external
+                // dependency even though the loader will put it on the mod's classpath.
+                walkArchive(jar, RetromodTransformer.NestedArchiveBudget.defaults(),
+                        (entryName, classBytes, nested) -> {
+                            String discoveredClass = className(entryName);
+                            modClasses.add(discoveredClass);
+                            if (!nested || !scanNestedTargets) return;
+                            try (InputStream input = new ByteArrayInputStream(classBytes)) {
+                                scanClass(input, discoveredClass, nestedReferencedClasses,
+                                        nestedReferencedMethods, nestedReferencedFields,
+                                        nestedReferencedCtors);
+                            } catch (Exception ignored) {
+                                // An unreadable optional library class does not invalidate the mod.
+                            }
+                        });
+
+                // Pass 2 scans the outer mod bytecode. Nested libraries have their own optional
+                // dependency graph, so treating every library reference as a required mod link
+                // produces reports for formats the mod never selects at runtime. Their classes
+                // still entered modClasses above, which is the information outer calls need.
                 var entries = jar.entries();
                 while (entries.hasMoreElements()) {
                     JarEntry entry = entries.nextElement();
-                    if (entry.getName().endsWith(".class") && !entry.isDirectory()) {
-                        modClasses.add(entry.getName().replace(".class", ""));
-                    }
-                }
-
-                // pass 2: external references
-                entries = jar.entries();
-                while (entries.hasMoreElements()) {
-                    JarEntry entry = entries.nextElement();
                     if (!entry.getName().endsWith(".class") || entry.isDirectory()) continue;
-
                     String sourceClass = entry.getName().replace(".class", "");
                     try (InputStream is = jar.getInputStream(entry)) {
                         scanClass(is, sourceClass, referencedClasses,
                                 referencedMethods, referencedFields, referencedCtors);
-                    } catch (Exception e) {
-                        // skip unreadable classes
+                    } catch (Exception ignored) {
+                        // One unreadable class must not disable checks for the rest of a mod.
                     }
                 }
             }
@@ -91,21 +124,22 @@ public final class TransformVerifier {
             for (String cls : referencedClasses) {
                 if (modClasses.contains(cls)) continue;
                 if (isSafe(cls)) continue;
-                if (!canResolveClass(cls)) {
+                if (!canResolveClass(cls, targetIndex)) {
                     issues.add(new Issue(IssueType.MISSING_CLASS, cls, null, null));
                 }
             }
 
             for (var entry : referencedMethods.entrySet()) {
                 String owner = entry.getKey();
-                if (modClasses.contains(owner) || isSafe(owner) || !canResolveClass(owner)) continue;
+                if (isArrayType(owner) || modClasses.contains(owner) || isSafe(owner)
+                        || !canResolveClass(owner, targetIndex)) continue;
 
                 for (String nameDesc : entry.getValue()) {
                     int descStart = nameDesc.indexOf('(');
                     if (descStart < 0) continue;
                     String mName = nameDesc.substring(0, descStart);
                     String mDesc = nameDesc.substring(descStart);
-                    if (!canResolveMethod(owner, mName, mDesc)) {
+                    if (!canResolveMethod(owner, mName, mDesc, targetIndex)) {
                         issues.add(new Issue(IssueType.MISSING_METHOD, owner, mName, mDesc));
                     }
                 }
@@ -113,24 +147,35 @@ public final class TransformVerifier {
 
             for (var entry : referencedFields.entrySet()) {
                 String owner = entry.getKey();
-                if (modClasses.contains(owner) || isSafe(owner) || !canResolveClass(owner)) continue;
+                if (isArrayType(owner) || modClasses.contains(owner) || isSafe(owner)
+                        || !canResolveClass(owner, targetIndex)) continue;
 
-                for (String fieldName : entry.getValue()) {
-                    if (!canResolveField(owner, fieldName)) {
-                        issues.add(new Issue(IssueType.MISSING_FIELD, owner, fieldName, null));
+                for (FieldReference field : entry.getValue()) {
+                    if (!canResolveField(
+                            owner, field.name(), field.descriptor(), targetIndex)) {
+                        issues.add(new Issue(IssueType.MISSING_FIELD,
+                                owner, field.name(), field.descriptor()));
                     }
                 }
             }
 
             for (var entry : referencedCtors.entrySet()) {
                 String owner = entry.getKey();
-                if (modClasses.contains(owner) || isSafe(owner) || !canResolveClass(owner)) continue;
+                if (isArrayType(owner) || modClasses.contains(owner) || isSafe(owner)
+                        || !canResolveClass(owner, targetIndex)) continue;
 
                 for (String desc : entry.getValue()) {
-                    if (!canResolveMethod(owner, "<init>", desc)) {
+                    if (!canResolveMethod(owner, "<init>", desc, targetIndex)) {
                         issues.add(new Issue(IssueType.MISSING_CONSTRUCTOR, owner, "<init>", desc));
                     }
                 }
+            }
+
+            if (scanNestedTargets) {
+                validateNestedTargetReferences(modClasses,
+                        nestedReferencedClasses, nestedReferencedMethods,
+                        nestedReferencedFields, nestedReferencedCtors,
+                        targetIndex, issues);
             }
 
         } catch (Throwable t) {
@@ -143,20 +188,170 @@ public final class TransformVerifier {
         return new VerifyResult(modName, targetVersion, issues);
     }
 
+    @FunctionalInterface
+    private interface ArchiveClassVisitor {
+        void visit(String entryName, byte[] classBytes, boolean nested) throws IOException;
+    }
+
+    private static void walkArchive(JarFile jar,
+            RetromodTransformer.NestedArchiveBudget budget,
+            ArchiveClassVisitor visitor) throws IOException {
+        Set<String> names = new HashSet<>();
+        var entries = jar.entries();
+        while (entries.hasMoreElements()) {
+            JarEntry entry = entries.nextElement();
+            String name = ZipSecurity.safeEntryName(entry.getName());
+            if (!names.add(name)) {
+                throw new IOException("duplicate JAR entry: " + name);
+            }
+            if (entry.isDirectory()) continue;
+            if (name.endsWith(".class")) {
+                try (InputStream in = jar.getInputStream(entry)) {
+                    visitor.visit(name, ZipSecurity.safeReadAllBytes(in), false);
+                }
+            } else if (isNestedJarEntry(name)) {
+                byte[] nested;
+                try (InputStream in = jar.getInputStream(entry)) {
+                    long allowance = budget.beginRead(
+                            ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, name);
+                    nested = ZipSecurity.safeReadAllBytes(in, allowance);
+                    budget.completeRead(allowance, nested.length);
+                }
+                walkNestedArchive(nested, 1, budget, visitor);
+            }
+        }
+    }
+
+    private static void walkNestedArchive(byte[] archive, int depth,
+            RetromodTransformer.NestedArchiveBudget budget,
+            ArchiveClassVisitor visitor) throws IOException {
+        Set<String> names = new HashSet<>();
+        try (var in = new java.util.zip.ZipInputStream(new ByteArrayInputStream(archive))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = in.getNextEntry()) != null) {
+                String name = ZipSecurity.safeEntryName(entry.getName());
+                if (!names.add(name)) {
+                    throw new IOException("duplicate nested JAR entry: " + name);
+                }
+                if (entry.isDirectory()) {
+                    budget.reserve(0, name);
+                    continue;
+                }
+                long allowance = budget.beginRead(
+                        ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, name);
+                byte[] bytes = ZipSecurity.safeReadAllBytes(in, allowance);
+                budget.completeRead(allowance, bytes.length);
+                if (name.endsWith(".class")) {
+                    visitor.visit(name, bytes, true);
+                } else if (depth < MAX_NESTED_VERIFY_DEPTH && isNestedJarEntry(name)) {
+                    walkNestedArchive(bytes, depth + 1, budget, visitor);
+                }
+            }
+        }
+    }
+
+    private static boolean isNestedJarEntry(String name) {
+        return name != null && name.endsWith(".jar")
+                && (name.startsWith("META-INF/jars/")
+                    || name.startsWith("META-INF/jarjar/"));
+    }
+
+    private static String className(String entryName) {
+        return entryName.substring(0, entryName.length() - ".class".length());
+    }
+
+    /**
+     * Nested libraries can contain optional integrations that are absent by design. Only links to
+     * namespaces owned by the indexed Minecraft JAR are authoritative enough to report here.
+     */
+    private static void validateNestedTargetReferences(
+            Set<String> modClasses,
+            Set<String> classes,
+            Map<String, Set<String>> methods,
+            Map<String, Set<FieldReference>> fields,
+            Map<String, Set<String>> ctors,
+            McSymbolIndex targetIndex,
+            List<Issue> issues) {
+        for (String cls : classes) {
+            if (!isTargetOwnedClass(cls) || modClasses.contains(cls)) continue;
+            if (!targetIndex.hasClass(cls)) {
+                addIssue(issues, new Issue(IssueType.MISSING_CLASS, cls, null, null));
+            }
+        }
+
+        for (var entry : methods.entrySet()) {
+            String owner = entry.getKey();
+            if (!isTargetOwnedClass(owner) || isArrayType(owner)
+                    || modClasses.contains(owner) || !targetIndex.hasClass(owner)) continue;
+            for (String nameDesc : entry.getValue()) {
+                int descStart = nameDesc.indexOf('(');
+                if (descStart < 0) continue;
+                String name = nameDesc.substring(0, descStart);
+                String descriptor = nameDesc.substring(descStart);
+                if (!targetIndex.hasMethod(owner, name, descriptor)) {
+                    addIssue(issues,
+                            new Issue(IssueType.MISSING_METHOD, owner, name, descriptor));
+                }
+            }
+        }
+
+        for (var entry : fields.entrySet()) {
+            String owner = entry.getKey();
+            if (!isTargetOwnedClass(owner) || isArrayType(owner)
+                    || modClasses.contains(owner) || !targetIndex.hasClass(owner)) continue;
+            for (FieldReference field : entry.getValue()) {
+                if (!targetIndex.hasField(owner, field.name(), field.descriptor())) {
+                    addIssue(issues, new Issue(IssueType.MISSING_FIELD,
+                            owner, field.name(), field.descriptor()));
+                }
+            }
+        }
+
+        for (var entry : ctors.entrySet()) {
+            String owner = entry.getKey();
+            if (!isTargetOwnedClass(owner) || isArrayType(owner)
+                    || modClasses.contains(owner) || !targetIndex.hasClass(owner)) continue;
+            for (String descriptor : entry.getValue()) {
+                if (!targetIndex.hasMethod(owner, "<init>", descriptor)) {
+                    addIssue(issues, new Issue(IssueType.MISSING_CONSTRUCTOR,
+                            owner, "<init>", descriptor));
+                }
+            }
+        }
+    }
+
+    private static boolean isTargetOwnedClass(String internalName) {
+        return internalName != null
+                && (internalName.startsWith("net/minecraft/")
+                    || internalName.startsWith("com/mojang/blaze3d/")
+                    || internalName.startsWith("com/mojang/math/")
+                    || internalName.startsWith("com/mojang/realmsclient/"));
+    }
+
+    private static void addIssue(List<Issue> issues, Issue issue) {
+        if (!issues.contains(issue)) issues.add(issue);
+    }
+
     /**
      * Run verification and write the report to config/retromod/verify-reports/.
      * Logs a summary to the console.
      */
     public static VerifyResult verifyAndReport(Path transformedJar, String modName, String targetVersion) {
+        return verifyAndReport(transformedJar, modName, targetVersion, null);
+    }
+
+    /** Verify and report using the supplied target-Minecraft symbol index when available. */
+    public static VerifyResult verifyAndReport(Path transformedJar, String modName,
+            String targetVersion, McSymbolIndex targetIndex) {
         LOGGER.info("Checking transformed bytecode for {}", modName);
         long start = System.currentTimeMillis();
 
-        VerifyResult result = verify(transformedJar, modName, targetVersion);
+        VerifyResult result = verify(transformedJar, modName, targetVersion, targetIndex);
         long elapsed = System.currentTimeMillis() - start;
 
         if (result.passed()) {
-            LOGGER.info("Verification passed for {}: {} references checked in {} ms",
-                    modName, result.totalChecked(), elapsed);
+            LOGGER.info("Verification passed for {}: no unresolved references found in {} ms",
+                    modName, elapsed);
         } else {
             LOGGER.warn("Verification found {} issue(s) for {} in {} ms",
                     result.issueCount(), modName, elapsed);
@@ -192,7 +387,8 @@ public final class TransformVerifier {
 
     private static void scanClass(InputStream is, String sourceClass,
             Set<String> classes, Map<String, Set<String>> methods,
-            Map<String, Set<String>> fields, Map<String, Set<String>> ctors) throws IOException {
+            Map<String, Set<FieldReference>> fields,
+            Map<String, Set<String>> ctors) throws IOException {
 
         ClassReader cr = new ClassReader(is);
         cr.accept(new ClassVisitor(Opcodes.ASM9) {
@@ -214,32 +410,59 @@ public final class TransformVerifier {
                     public void visitMethodInsn(int opcode, String owner,
                                                 String mName, String mDesc,
                                                 boolean isInterface) {
-                        classes.add(owner);
-                        methods.computeIfAbsent(owner, k -> new LinkedHashSet<>())
-                               .add(mName + mDesc);
+                        addClassReference(classes, owner);
+                        if (isArrayType(owner)) return;
                         if ("<init>".equals(mName)) {
                             ctors.computeIfAbsent(owner, k -> new LinkedHashSet<>())
                                  .add(mDesc);
+                        } else {
+                            methods.computeIfAbsent(owner, k -> new LinkedHashSet<>())
+                                   .add(mName + mDesc);
                         }
                     }
 
                     @Override
                     public void visitFieldInsn(int opcode, String owner,
                                                String fName, String fDesc) {
-                        classes.add(owner);
+                        addClassReference(classes, owner);
+                        if (isArrayType(owner)) return;
                         fields.computeIfAbsent(owner, k -> new LinkedHashSet<>())
-                              .add(fName);
+                              .add(new FieldReference(fName, fDesc));
                     }
 
                     @Override
                     public void visitTypeInsn(int opcode, String type) {
-                        if (type != null && !type.startsWith("[")) {
-                            classes.add(type);
-                        }
+                        addClassReference(classes, type);
+                    }
+
+                    @Override
+                    public void visitMultiANewArrayInsn(String descriptor, int dimensions) {
+                        addClassReference(classes, descriptor);
                     }
                 };
             }
         }, ClassReader.SKIP_DEBUG);
+    }
+
+    private static void addClassReference(Set<String> classes, String reference) {
+        String normalized = normalizeClassReference(reference);
+        if (normalized != null) classes.add(normalized);
+    }
+
+    /** Returns an object array's element class, ignores primitive arrays, and keeps plain names. */
+    private static String normalizeClassReference(String reference) {
+        if (reference == null || !isArrayType(reference)) return reference;
+        try {
+            Type type = Type.getType(reference);
+            Type element = type.getElementType();
+            return element.getSort() == Type.OBJECT ? element.getInternalName() : null;
+        } catch (IllegalArgumentException malformed) {
+            return reference;
+        }
+    }
+
+    private static boolean isArrayType(String reference) {
+        return reference != null && reference.startsWith("[");
     }
 
     private static boolean isSafe(String className) {
@@ -247,6 +470,15 @@ public final class TransformVerifier {
             if (className.startsWith(prefix)) return true;
         }
         return false;
+    }
+
+    /**
+     * Build prefixes at runtime so Maven Shade cannot rewrite diagnostic allow-list strings along
+     * with Retromod's own bundled Gson and SLF4J references. The game still supplies the original
+     * packages to mods even though the standalone CLI relocates its private copies.
+     */
+    private static String runtimePrefix(String... components) {
+        return String.join("/", components) + "/";
     }
 
     /** Internal names of classes known to exist in the target MC, from the mapping. */
@@ -277,17 +509,57 @@ public final class TransformVerifier {
     }
 
     private static boolean canResolveClass(String internalName) {
+        String normalized = normalizeClassReference(internalName);
+        if (normalized == null) return isArrayType(internalName);
+        internalName = normalized;
         return ClassResourceInspector.exists(internalName) || isKnownTargetClass(internalName);
     }
 
+    private static boolean canResolveClass(String internalName, McSymbolIndex targetIndex) {
+        String normalized = normalizeClassReference(internalName);
+        if (normalized == null) return isArrayType(internalName);
+        internalName = normalized;
+        if (usesTargetIndex(internalName, targetIndex)) {
+            return targetIndex.hasClass(internalName);
+        }
+        return canResolveClass(internalName);
+    }
+
     private static boolean canResolveMethod(String ownerInternal, String name, String desc) {
+        if (isArrayType(ownerInternal)) return true;
         if (ClassResourceInspector.read(ownerInternal) == null) return true;
         return canResolveMethod(ownerInternal, name, countParameters(desc), new HashSet<>());
     }
 
+    private static boolean canResolveMethod(String ownerInternal, String name, String desc,
+            McSymbolIndex targetIndex) {
+        if (isArrayType(ownerInternal)) return true;
+        if (usesTargetIndex(ownerInternal, targetIndex)) {
+            return targetIndex.hasMethod(ownerInternal, name, desc);
+        }
+        return canResolveMethod(ownerInternal, name, desc);
+    }
+
     private static boolean canResolveField(String ownerInternal, String fieldName) {
+        if (isArrayType(ownerInternal)) return true;
         if (ClassResourceInspector.read(ownerInternal) == null) return true;
         return canResolveField(ownerInternal, fieldName, new HashSet<>());
+    }
+
+    private static boolean canResolveField(String ownerInternal, String fieldName,
+            String fieldDesc, McSymbolIndex targetIndex) {
+        if (isArrayType(ownerInternal)) return true;
+        if (usesTargetIndex(ownerInternal, targetIndex)) {
+            return targetIndex.hasField(ownerInternal, fieldName, fieldDesc);
+        }
+        return canResolveField(ownerInternal, fieldName);
+    }
+
+    private record FieldReference(String name, String descriptor) {}
+
+    private static boolean usesTargetIndex(String internalName, McSymbolIndex targetIndex) {
+        return targetIndex != null && targetIndex.isAvailable()
+                && isTargetOwnedClass(internalName);
     }
 
     private static boolean canResolveMethod(
@@ -411,9 +683,5 @@ public final class TransformVerifier {
     public record VerifyResult(String modName, String targetVersion, List<Issue> issues) {
         public boolean passed() { return issues.isEmpty(); }
         public int issueCount() { return issues.size(); }
-        public int totalChecked() {
-            // approximate count of references checked
-            return issueCount() > 0 ? issueCount() : 1;
-        }
     }
 }

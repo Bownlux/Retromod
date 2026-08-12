@@ -15,7 +15,9 @@ Run older Minecraft mods on newer game versions.
 
 Retromod gives older Minecraft mods a better chance of running on current versions of the game. It updates bytecode, mappings, mixins, and loader metadata while keeping a backup of the original mod.
 
-Its Mixin repair pass combines the mod's refmap with the exact methods in the target Minecraft jar. This lets it repair selected parameter-capturing handlers even when the annotation keeps a Yarn source name, while leaving ambiguous or unsafe changes for a reviewed port.
+Its Mixin repair pass combines the mod's refmap with the exact methods in the target Minecraft jar. This lets it repair selected parameter-capturing handlers even when the annotation keeps a Yarn source name. It also keeps complete target-argument captures on supported MixinExtras value modifiers. Ambiguous or unsafe changes remain unchanged for a reviewed port.
+
+Fabric runtime transforms recurse through four bundled jar levels. Classes, mixins, refmaps, access wideners, and per-archive compatibility helpers follow the nested path. On official-name targets, nested metadata and data files are updated too.
 
 Other compatibility layers move a mod between loaders. Retromod moves a mod **between game versions**, so a mod built for 1.20.1 can run on a current release without waiting for the author to port it.
 

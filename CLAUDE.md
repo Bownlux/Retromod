@@ -79,12 +79,12 @@ mvn package -P lite -DskipTests -Dexec.skip=true
 mvn exec:java -Dexec.mainClass="com.retromod.cli.RetromodCli" -Dexec.args="<command>" -q
 
 # Run the executable release CLI (dependencies bundled)
-java -jar dist/CLI/retromod-1.3.0-snapshot.6-cli.jar <command>
+java -jar dist/CLI/retromod-1.3.0-snapshot.7-cli.jar <command>
 ```
 
 **Important:** Always pass `-Dexec.skip=true` during build to prevent Maven from running the CLI entrypoint.
 
-Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 68 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.3.0-snapshot.6-cli.jar`.
+Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 68 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.3.0-snapshot.7-cli.jar`.
 
 ## Release integrity (self-hash)
 
@@ -93,7 +93,7 @@ Official builds embed a SHA-256 of the executable release surface in `SignatureV
 **Embed the hash as the LAST release step** (any covered code, provider, or transformation-data change shifts it):
 ```bash
 mvn clean package -Dexec.skip=true                          # build the final jars
-python3 scripts/compute-self-hash.py target/retromod-1.3.0-snapshot.6-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.3.0-snapshot.7-all.jar
 # embed the 64-hex result into SignatureVerifier.EXPECTED_SELF_HASH PROGRAMMATICALLY
 # (sed/python - never hand-typed), rebuild, then re-run the compute script and
 # compare against the embedded value (closed-loop verify)
@@ -105,7 +105,7 @@ After embedding and rebuilding, run `bash build-all.sh --skip-build --require-se
 ## Deploy to Minecraft
 
 ```bash
-cp dist/Fabric/26.1/retromod-1.3.0-snapshot.6+26.1.jar ~/Library/Application\ Support/minecraft/mods/
+cp dist/Fabric/26.1/retromod-1.3.0-snapshot.7+26.1.jar ~/Library/Application\ Support/minecraft/mods/
 ```
 
 Game directory (macOS): `~/Library/Application Support/minecraft/`
@@ -122,7 +122,7 @@ Game directory (macOS): `~/Library/Application Support/minecraft/`
 | `core/FabricModTransformer.java` | Patches fabric.mod.json version constraints |
 | `core/ForgeModTransformer.java` | Patches mods.toml/neoforge.mods.toml version constraints |
 | `core/ModVersionDetector.java` | Reads mod MC version from loader-specific metadata |
-| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,981 classes, 54,479 fields, and 57,520 methods at snapshot.6) |
+| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,981 classes, 54,479 fields, and 57,520 methods at snapshot.7) |
 | `mapping/MappingComposer.java` | Generates mapping files from TinyV2 + ProGuard sources |
 | `shim/ShimRegistry.java` | BFS chain finder with version aliases |
 | `cli/RetromodCli.java` | CLI tool (`TARGET_MC_VERSION = "26.1"`) |
@@ -148,8 +148,8 @@ Game directory (macOS): `~/Library/Application Support/minecraft/`
 ## ServiceLoader Registration
 
 Shims and polyfills are discovered via ServiceLoader:
-- `src/main/resources/META-INF/services/com.retromod.core.VersionShim` (120 registered providers at snapshot.6)
-- `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider` (36 registered providers at snapshot.6)
+- `src/main/resources/META-INF/services/com.retromod.core.VersionShim` (120 registered providers at snapshot.7)
+- `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider` (36 registered providers at snapshot.7)
 
 When adding a new shim or polyfill, ALWAYS register it in the corresponding services file.
 
@@ -211,6 +211,8 @@ When you fix a user-reported issue, add a regression case for it to the **Retrom
 17. **Pre-26.1 Fabric requires intermediary-native bridges.** Distributed Fabric mods and pre-26.1 Fabric runtimes both use intermediary names, so the full intermediary-to-Mojang pass must stay off there. Since 1.2.0, targeted bridges cover common old text, entity field, material, identifier constructor, entity model, biome category, interaction result, and entity-type build changes. Real 1.16.5 mods have reached a stable 1.20.1 server through this path. Coverage is still curated, not universal: a redesigned API without an intermediary-native bridge can fail even when an old Mojang-named shim exists. On 26.1 and newer hosts, use the full intermediary-to-Mojang map before Mojang-named repairs. See [Mods That Can't Be Translated](docs/incompatible-mods.md).
 
 18. **26.1 parses datapack JSON with STRICT gson: lenient JSON (comments / trailing commas) now fails, and ONE fatal mod cascades.** Old worldgen JSON has shipped `//` and `/* */` comments and trailing commas for years (Minecraft used to parse leniently; mod authors literally wrote *"Yes, worldgen json files can have comments"* in their `template_pool`s). On 26.1 each such file throws `MalformedJsonException: Use JsonReader.setStrictness(Strictness.LENIENT)` and the registry entry stays **unbound**. The trap: an unbound `worldgen/template_pool`/`processor_list` is **FATAL** (`FatalStartupException`, "Couldn't find Minecraft server thread") and aborts the **shared** worldgen `RegistryDataLoader` pass, so *co-loaded* structure mods then surface as "Unknown registry key in worldgen/feature" / "Unbound values" for **their** custom types even though their registration ran fine. So a multi-mod "custom worldgen types don't register" report is usually really *one* mod's strict-JSON crash taking the others down with it (verified: Philips Ruins fatal-crashed; YUNG's Extras looked broken beside it but loaded perfectly *alone*, and both load together once PR's comments are stripped). Fix lives in `ModDataMigrator.normalizeLenientJson` (string-aware strip of comments + trailing commas, so a `//` inside a URL value survives), applied to ALL datapack JSON. Diagnose with a **headless dedicated server** (`./run.sh nogui`): the client swallows these; the server prints the per-element `MalformedJsonException` and the fatal cascade. Also in this class: `minecraft:potion` (the thrown-potion **entity**) was split into `minecraft:splash_potion` + `minecraft:lingering_potion` (vanilla `ThrownPotionSplitFix`), so an `entity_type` tag listing `minecraft:potion` fails to load (the potion **item** is unchanged, so scope the rename to `tags/entity_type/` only).
+
+19. **Every Fabric mixin config naming form must enter runtime discovery.** The runtime repairs only classes listed by `findMixinClasses`. Missing either `modid.mixin.json` or `mixin.modid.json` leaves annotation selectors in intermediary form even though ordinary bytecode is remapped. Keep `isMixinConfigFile`, discovery tests, nested-jar handling, and the test mod aligned whenever another accepted form is added.
 
 ## Mixin discovery (finding mixins to translate)
 

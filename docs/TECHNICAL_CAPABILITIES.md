@@ -30,9 +30,11 @@ These changes are possible when the old and new behavior can be related explicit
 
 At game launch Retromod indexes the installed Minecraft classes. Offline `transform`, `aot`, and `batch` commands can get the same facts from `--mc-jar <target.jar>`.
 
-The automatic pass accepts a unique same-name target with the same return type when the old parameters remain an ordered subsequence and no more than three parameters were added. It also supports selected callback-only injections, exact-prefix captures, invokers with a unique semantic match, and safe call-mirroring injectors. Namespace and registered redirects run first.
+The automatic pass accepts a unique same-name target with the same return type when the old parameters remain an ordered subsequence and no more than three parameters were added. It also supports selected callback-only injections, exact-prefix captures, invokers with a unique semantic match, safe call-mirroring injectors, and MixinExtras value modifiers that capture the complete old target argument list. Namespace and registered redirects run first.
 
-It declines ambiguity, constructors, reordered or removed parameters, changed returns, semantic local captures, unsafe parameter annotations, multiple inferred handler layouts, frame-rebuild failures, and any relevant `remap = false`. Curated bridges still handle known semantic migrations such as the ValueIO save-data change.
+It declines ambiguity, constructors, partial captures, reordered or removed parameters, changed returns, semantic local captures, unsafe parameter annotations, multiple inferred handler layouts, frame-rebuild failures, and any relevant `remap = false`. Curated bridges still handle known semantic migrations such as the ValueIO save-data change.
+
+Some renderer migrations can be staged safely without claiming full visual compatibility. For a direct legacy `EntityRenderer` subclass with the exact old method shape, Retromod can satisfy the new render-state contract and remove the deleted direct-super call. The old render body is not converted into modern submit commands, so its custom geometry may still need a source port.
 
 ## Loader Namespace Boundaries
 

@@ -35,17 +35,21 @@ class FabricMixinConfigDiscoveryTest {
     }
 
     @Test
-    @DisplayName("Every Mixin config naming convention is discovered, including modid.mixin.json")
+    @DisplayName("Every supported Mixin config naming convention is discovered")
     void findsMixinConfigsUnderEveryNamingConvention(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve("standard.mixins.json"), config("com.a.mixin", "Standard"));
         // Singular: accepted everywhere else, and previously missed here.
         Files.writeString(dir.resolve("legacy.mixin.json"), config("com.b.mixin", "Legacy"));
+        Files.writeString(dir.resolve("mixin.revamped_phantoms.json"),
+                config("com.c.mixin", "SingularPrefixed"));
         Files.writeString(dir.resolve("mixins.modmenu.json"), config("com.c.mixin", "Prefixed"));
 
         Set<String> found = discover(dir);
 
         assertTrue(found.contains("com/a/mixin/Standard"), "standard name: " + found);
         assertTrue(found.contains("com/b/mixin/Legacy"), "modid.mixin.json: " + found);
+        assertTrue(found.contains("com/c/mixin/SingularPrefixed"),
+                "mixin.modid.json: " + found);
         assertTrue(found.contains("com/c/mixin/Prefixed"), "mixins.modid.json: " + found);
     }
 
@@ -54,6 +58,8 @@ class FabricMixinConfigDiscoveryTest {
     void ignoresUnrelatedJson(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve("fabric.mod.json"),
                 "{\"id\": \"example\", \"mixins\": [\"example.mixins.json\"]}");
+        Files.writeString(dir.resolve("mixin.example.refmap.json"),
+                config("com.example.mixin", "MustNotBeDiscovered"));
 
         assertTrue(discover(dir).isEmpty(), "fabric.mod.json is not a Mixin config");
     }

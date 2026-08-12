@@ -7,6 +7,9 @@ package com.retromod.core;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.retromod.mapping.IntermediaryToMojangMapper;
+import com.retromod.mixin.MixinCompatibilityTransformer;
+import com.retromod.mixin.MixinHandlerResignature;
+import com.retromod.mixin.MixinRefmapRepairIndex;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -58,6 +61,14 @@ class RuntimeRefmapRepairWiringTest {
             "(Ljava/lang/String;" + CALLBACK_INFO + ")V";
     private static final String NEW_HANDLER_DESCRIPTOR =
             "(Ljava/lang/String;I" + CALLBACK_INFO + ")V";
+    private static final String MIXED_DIRECT_SELECTOR =
+            "mixed(Ljava/lang/String;)Ljava/lang/String;";
+    private static final String MIXED_SOURCE_SELECTOR =
+            "sourceMixed(Ljava/lang/String;)Ljava/lang/String;";
+    private static final String MIXED_OLD_HANDLER =
+            "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+    private static final String MIXED_NEW_HANDLER =
+            "(Ljava/lang/String;ILjava/lang/String;)Ljava/lang/String;";
 
     @TempDir
     Path tempDir;
@@ -133,6 +144,35 @@ class RuntimeRefmapRepairWiringTest {
         assertRepairedArchive(output);
     }
 
+    @Test
+    @DisplayName("Post-remap repair plans direct and refmap selectors together")
+    void postRemapRepairUsesOneMixedSelectorPlan() {
+        byte[] input = mixedSelectorMixinClass();
+        MixinRefmapRepairIndex index = MixinRefmapRepairIndex.builder()
+                .put(MIXIN, MIXED_SOURCE_SELECTOR,
+                        new MixinRefmapRepairIndex.Repair(
+                                TARGET,
+                                "(Ljava/lang/String;)Ljava/lang/String;",
+                                "(ILjava/lang/String;)Ljava/lang/String;",
+                                Opcodes.ACC_PUBLIC,
+                                List.of(new MixinHandlerResignature.ParamInsert(0, "I"))))
+                .build();
+
+        byte[] output = new MixinCompatibilityTransformer(
+                RetromodTransformer.getInstance()).applyPostRemapRepairs(input, index);
+        ClassNode mixin = new ClassNode();
+        new ClassReader(output).accept(mixin, 0);
+        MethodNode handler = mixin.methods.stream()
+                .filter(method -> method.name.equals("handler"))
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals(MIXED_NEW_HANDLER, handler.desc);
+        assertEquals(List.of(
+                "mixed(ILjava/lang/String;)Ljava/lang/String;",
+                MIXED_SOURCE_SELECTOR), injectSelectors(handler));
+    }
+
     private static void assertRepairedArchive(Path archive) throws Exception {
         byte[] mixinBytes = readEntry(archive, MIXIN_ENTRY);
         assertNotNull(mixinBytes, "the transformed Mixin class must remain in the jar");
@@ -184,6 +224,30 @@ class RuntimeRefmapRepairWiringTest {
         return null;
     }
 
+    private static List<String> injectSelectors(MethodNode handler) {
+        for (List<AnnotationNode> annotations : List.of(
+                handler.visibleAnnotations != null
+                        ? handler.visibleAnnotations : List.<AnnotationNode>of(),
+                handler.invisibleAnnotations != null
+                        ? handler.invisibleAnnotations : List.<AnnotationNode>of())) {
+            for (AnnotationNode annotation : annotations) {
+                if (!annotation.desc.endsWith("ModifyReturnValue;")
+                        || annotation.values == null) {
+                    continue;
+                }
+                for (int i = 0; i + 1 < annotation.values.size(); i += 2) {
+                    if (!"method".equals(annotation.values.get(i))) continue;
+                    Object value = annotation.values.get(i + 1);
+                    if (value instanceof List<?> selectors) {
+                        return selectors.stream().map(String::valueOf).toList();
+                    }
+                    if (value instanceof String selector) return List.of(selector);
+                }
+            }
+        }
+        return List.of();
+    }
+
     private static void writeFixtureEntries(JarOutputStream out) throws Exception {
         writeEntry(out, MIXIN_ENTRY, mixinClass());
         writeEntry(out, CONFIG_ENTRY, mixinConfig());
@@ -200,6 +264,51 @@ class RuntimeRefmapRepairWiringTest {
         target.visitInsn(Opcodes.RETURN);
         target.visitMaxs(0, 2);
         target.visitEnd();
+
+        MethodVisitor mixed = writer.visitMethod(
+                Opcodes.ACC_PUBLIC, "mixed",
+                "(ILjava/lang/String;)Ljava/lang/String;", null, null);
+        mixed.visitCode();
+        mixed.visitVarInsn(Opcodes.ALOAD, 2);
+        mixed.visitInsn(Opcodes.ARETURN);
+        mixed.visitMaxs(1, 3);
+        mixed.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
+    private static byte[] mixedSelectorMixinClass() {
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC,
+                MIXIN, null, "java/lang/Object", null);
+
+        AnnotationVisitor mixin = writer.visitAnnotation(
+                "Lorg/spongepowered/asm/mixin/Mixin;", false);
+        AnnotationVisitor owners = mixin.visitArray("value");
+        owners.visit(null, Type.getObjectType(TARGET));
+        owners.visitEnd();
+        mixin.visitEnd();
+
+        MethodVisitor handler = writer.visitMethod(
+                Opcodes.ACC_PRIVATE, "handler", MIXED_OLD_HANDLER, null, null);
+        AnnotationVisitor modify = handler.visitAnnotation(
+                "Lcom/llamalad7/mixinextras/injector/ModifyReturnValue;", false);
+        AnnotationVisitor methods = modify.visitArray("method");
+        methods.visit(null, MIXED_DIRECT_SELECTOR);
+        methods.visit(null, MIXED_SOURCE_SELECTOR);
+        methods.visitEnd();
+        AnnotationVisitor at = modify.visitAnnotation(
+                "at", "Lorg/spongepowered/asm/mixin/injection/At;");
+        at.visit("value", "RETURN");
+        at.visitEnd();
+        modify.visitEnd();
+        handler.visitCode();
+        handler.visitVarInsn(Opcodes.ALOAD, 2);
+        handler.visitInsn(Opcodes.POP);
+        handler.visitVarInsn(Opcodes.ALOAD, 1);
+        handler.visitInsn(Opcodes.ARETURN);
+        handler.visitMaxs(1, 3);
+        handler.visitEnd();
         writer.visitEnd();
         return writer.toByteArray();
     }

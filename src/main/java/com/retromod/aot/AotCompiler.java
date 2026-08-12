@@ -524,7 +524,9 @@ public class AotCompiler {
             com.retromod.mixin.MixinRefmapRepairIndex repairs) {}
 
     private static boolean isRefmapEntry(String name) {
-        return name != null && (name.endsWith("-refmap.json") || name.contains("refmap"));
+        if (name == null) return false;
+        String lower = name.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".json") && lower.contains("refmap");
     }
 
     private static ArchiveRefmapPlan prepareRefmapPlan(JarFile jar,

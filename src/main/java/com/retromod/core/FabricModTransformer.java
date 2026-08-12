@@ -34,6 +34,10 @@ public class FabricModTransformer {
     private static final long MAX_ENTRY_SIZE = 50 * 1024 * 1024;
     /** Total extraction cap (zip-bomb guard). */
     private static final long MAX_TOTAL_SIZE = 500 * 1024 * 1024;
+    /** Bound for one archive traversal. */
+    private static final int MAX_ENTRY_COUNT = 100_000;
+    /** Maximum number of nested archive levels processed below the outer mod. */
+    private static final int MAX_JIJ_DEPTH = 4;
 
     /**
      * Fabric mod IDs for APIs Retromod ships compatibility shims for. A mod with a
@@ -180,7 +184,7 @@ public class FabricModTransformer {
 
             // 26.1+ uses the official namespace; remap class_/field_/method_ in mixin
             // configs, refmaps, and access wideners.
-            remapIntermediaryNames(tempDir);
+            boolean nestedArchivesPrepared = remapIntermediaryNames(tempDir, originalName);
 
             // Old mods bundle stale Fabric API modules that clash with the installed one.
             stripBundledFabricApiJars(tempDir);
@@ -196,7 +200,8 @@ public class FabricModTransformer {
                 LOGGER.info("Migrated 26.x data formats in {} data file(s)", dataMigrated);
             }
 
-            repackageJar(tempDir, outputJar, sourceJar);
+            repackageJar(tempDir, outputJar, sourceJar,
+                    originalName, 0, !nestedArchivesPrepared);
 
             LOGGER.info("Created transformed mod: {}", outputJar.getFileName());
 
@@ -406,20 +411,42 @@ public class FabricModTransformer {
      * written rather than the attacker-controlled {@link JarEntry#getSize()}.
      */
     private void extractJar(Path jarPath, Path outputDir) throws IOException {
+        extractJar(jarPath, outputDir, null);
+    }
+
+    /** Extracts one archive using caller-provided traversal limits when present. */
+    private void extractJar(Path jarPath, Path outputDir,
+            RetromodTransformer.NestedArchiveBudget nestedBudget) throws IOException {
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             var entries = jar.entries();
             long totalSize = 0;
+            int totalEntries = 0;
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
+                if (++totalEntries > MAX_ENTRY_COUNT) {
+                    throw new IOException("ZIP contains more than " + MAX_ENTRY_COUNT
+                            + " entries: " + jarPath.getFileName());
+                }
                 Path outputPath = ZipSecurity.safeResolve(outputDir, entry.getName());
 
                 if (entry.isDirectory()) {
+                    if (nestedBudget != null) {
+                        nestedBudget.reserve(0, entry.getName());
+                    }
                     Files.createDirectories(outputPath);
                 } else {
                     Files.createDirectories(outputPath.getParent());
                     long writtenBytes;
+                    long readLimit = MAX_ENTRY_SIZE;
+                    if (nestedBudget != null) {
+                        readLimit = nestedBudget.beginRead(MAX_ENTRY_SIZE, entry.getName());
+                    }
                     try (InputStream is = jar.getInputStream(entry)) {
-                        writtenBytes = ZipSecurity.copyBounded(is, outputPath, MAX_ENTRY_SIZE, entry.getName());
+                        writtenBytes = ZipSecurity.copyBounded(
+                                is, outputPath, readLimit, entry.getName());
+                    }
+                    if (nestedBudget != null) {
+                        nestedBudget.completeRead(readLimit, writtenBytes);
                     }
                     totalSize += writtenBytes;
                     if (totalSize > MAX_TOTAL_SIZE) {
@@ -828,14 +855,14 @@ public class FabricModTransformer {
      * Remap intermediary names (class_/field_/method_) to Mojang official names in
      * access wideners, mixin configs, refmaps, and nested JARs.
      */
-    private void remapIntermediaryNames(Path dir) {
+    private boolean remapIntermediaryNames(Path dir, String outerArchiveKey) {
         // 26.1+ only. A pre-26.1 Fabric runtime still uses intermediary names, so the
         // mod's metadata already matches it and remapping would make every mixin target
         // miss (#29). Same gate as the bytecode remap in RetromodPreLaunch.
         if (!RetromodPreLaunch.isUnobfuscatedTarget(targetMcVersion)) {
             LOGGER.info("Host MC {} is pre-26.1 - skipping intermediary→Mojang metadata "
                 + "remap (mods keep their working intermediary names)", targetMcVersion);
-            return;
+            return false;
         }
 
         com.retromod.mapping.IntermediaryToMojangMapper mapper =
@@ -843,10 +870,12 @@ public class FabricModTransformer {
 
         if (!mapper.isLoaded()) {
             LOGGER.warn("Intermediary→Mojang mapper not loaded, skipping metadata remap");
-            return;
+            return false;
         }
 
         int remappedFiles = 0;
+        RetromodTransformer.NestedArchiveBudget nestedBudget =
+                RetromodTransformer.NestedArchiveBudget.defaults();
 
         try (var stream = Files.walk(dir)) {
             for (Path file : stream.filter(Files::isRegularFile).toList()) {
@@ -861,11 +890,12 @@ public class FabricModTransformer {
                 } else if (isMixinConfigFile(entryPath)) {
                     remapMixinConfig(file, mapper);
                     remappedFiles++;
-                } else if (name.endsWith("-refmap.json") || name.contains("refmap")) {
-                    remapRefmap(file, mapper);
-                    remappedFiles++;
                 } else if (name.endsWith(".jar")) {
-                    remapNestedJar(file, mapper);
+                    String nestedKey = outerArchiveKey + "!/" + entryPath;
+                    remapNestedJar(file, mapper, 1, nestedKey, nestedBudget);
+                    remappedFiles++;
+                } else if (isRefmapResource(entryPath)) {
+                    remapRefmap(file, mapper);
                     remappedFiles++;
                 }
             }
@@ -876,6 +906,7 @@ public class FabricModTransformer {
         if (remappedFiles > 0) {
             LOGGER.info("Remapped intermediary→Mojang in {} metadata files", remappedFiles);
         }
+        return true;
     }
 
     /** Remap an access widener from the intermediary namespace to official. */
@@ -934,7 +965,7 @@ public class FabricModTransformer {
 
     /**
      * Builds the immutable handler plan before classes are transformed. Refmap resources are
-     * written later by {@link #remapIntermediaryNames(Path)}, but both passes use the same exact
+     * written later by the metadata remap, but both passes use the same exact
      * selector planner so the class and resource decisions cannot drift.
      */
     private com.retromod.mixin.MixinRefmapRepairIndex collectRefmapRepairs(Path dir) {
@@ -951,8 +982,9 @@ public class FabricModTransformer {
         try (var files = Files.walk(dir)) {
             for (Path refmap : files.filter(Files::isRegularFile)
                     .filter(path -> {
-                        String name = path.getFileName().toString();
-                        return name.endsWith("-refmap.json") || name.contains("refmap");
+                        String entryPath = dir.relativize(path).toString()
+                                .replace(File.separator, "/");
+                        return isRefmapResource(entryPath);
                     }).toList()) {
                 MixinRefmapRemapper.RemapResult result =
                         MixinRefmapRemapper.remapWithRepairs(
@@ -969,12 +1001,16 @@ public class FabricModTransformer {
      * Remap a nested JAR (Jar-in-Jar): extract, remap, strip broken mixin entries,
      * repack.
      */
-    private void remapNestedJar(Path jarFile,
-                                 com.retromod.mapping.IntermediaryToMojangMapper mapper) {
+    private boolean remapNestedJar(Path jarFile,
+            com.retromod.mapping.IntermediaryToMojangMapper mapper,
+            int depth, String syntheticKey,
+            RetromodTransformer.NestedArchiveBudget nestedBudget) {
+        if (depth > MAX_JIJ_DEPTH) return false;
         try {
+            nestedBudget.reserve(0, syntheticKey);
             Path tempDir = Files.createTempDirectory("retromod-jij-");
             try {
-                extractJar(jarFile, tempDir);
+                extractJar(jarFile, tempDir, nestedBudget);
 
                 // Count class transforms toward the repackage decision below. A pure
                 // registration/helper JIJ has no metadata to change, so its remapped
@@ -1017,7 +1053,13 @@ public class FabricModTransformer {
                                 LOGGER.debug("Could not strip mixins in nested JAR config {}: {}", entryPath, e.getMessage());
                             }
                             remapped++;
-                        } else if (name.endsWith("-refmap.json") || name.contains("refmap")) {
+                        } else if (depth < MAX_JIJ_DEPTH && isNestedJarEntry(entryPath)) {
+                            String childKey = syntheticKey + "!/" + entryPath;
+                            if (remapNestedJar(
+                                    file, mapper, depth + 1, childKey, nestedBudget)) {
+                                remapped++;
+                            }
+                        } else if (isRefmapResource(entryPath)) {
                             remapRefmap(file, mapper);
                             remapped++;
                         }
@@ -1043,11 +1085,18 @@ public class FabricModTransformer {
                 remapped += nestedDataMigrated;
 
                 if (remapped > 0 || metadataChanged) {
-                    Path tempJar = Files.createTempFile("retromod-jij-", ".jar");
-                    repackageJar(tempDir, tempJar, jarFile);
-                    Files.move(tempJar, jarFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                    LOGGER.info("  Updated nested JAR: {} (classes remapped: {}, metadata changed: {})",
-                            jarFile.getFileName(), remapped, metadataChanged);
+                    Path tempJar = Files.createTempFile(jarFile.getParent(),
+                            "." + jarFile.getFileName() + ".", ".tmp");
+                    try {
+                        repackageJar(tempDir, tempJar, jarFile,
+                                syntheticKey, depth, false);
+                        moveReplacing(tempJar, jarFile);
+                        LOGGER.info("  Updated nested JAR: {} (classes remapped: {}, metadata changed: {})",
+                                jarFile.getFileName(), remapped, metadataChanged);
+                        return true;
+                    } finally {
+                        Files.deleteIfExists(tempJar);
+                    }
                 }
 
             } finally {
@@ -1056,6 +1105,20 @@ public class FabricModTransformer {
         } catch (Exception e) {
             LOGGER.debug("Could not remap nested JAR {}: {}", jarFile.getFileName(), e.getMessage());
         }
+        return false;
+    }
+
+    private static boolean isNestedJarEntry(String entryPath) {
+        if (entryPath == null || !entryPath.endsWith(".jar")) return false;
+        return entryPath.startsWith("META-INF/jars/")
+                || entryPath.startsWith("META-INF/jarjar/");
+    }
+
+    private static boolean isRefmapResource(String entryPath) {
+        if (entryPath == null) return false;
+        String name = entryPath.substring(entryPath.lastIndexOf('/') + 1)
+                .toLowerCase(java.util.Locale.ROOT);
+        return name.endsWith(".json") && name.contains("refmap");
     }
 
     private static final Pattern MIXIN_PKG_PATTERN = Pattern.compile("\"package\"\\s*:\\s*\"([^\"]+)\"");
@@ -1068,8 +1131,8 @@ public class FabricModTransformer {
 
         try {
             try (var stream = Files.walk(dir)) {
-                // Same naming rules the rest of the pipeline uses. The narrower check here
-                // missed modid.mixin.json, and a mod named that way got no Mixin repairs at all.
+                // Same naming rules the rest of the pipeline uses. A narrower check here
+                // left accepted config names with no Mixin repairs at all.
                 stream.filter(p -> isMixinConfigFile(
                         dir.relativize(p).toString().replace(File.separator, "/")))
                     .forEach(mixinConfig -> {
@@ -1417,6 +1480,12 @@ public class FabricModTransformer {
 
     /** Repackage the extracted directory back into a JAR. */
     private void repackageJar(Path sourceDir, Path outputJar, Path originalJar) throws IOException {
+        repackageJar(sourceDir, outputJar, originalJar,
+                originalJar.getFileName().toString(), 0, true);
+    }
+
+    private void repackageJar(Path sourceDir, Path outputJar, Path originalJar,
+            String archiveKey, int depth, boolean processNestedArchives) throws IOException {
         Manifest manifest = null;
         try (JarFile original = new JarFile(originalJar.toFile())) {
             manifest = original.getManifest();
@@ -1436,7 +1505,7 @@ public class FabricModTransformer {
         // their shared registration names lets an older transformed jar win class lookup
         // for every other mod. Relocate only the helpers this jar references, just as the
         // module-based loaders do, so their bytecode and listener types stay per-mod.
-        SyntheticEmbedder.embed(sourceDir, originalJar.getFileName().toString(),
+        SyntheticEmbedder.embed(sourceDir, archiveKey,
                 bytecodeTransformer);
         if (SyntheticEmbedder.hasRegisteredSyntheticReferences(
                 sourceDir, bytecodeTransformer)) {
@@ -1485,17 +1554,22 @@ public class FabricModTransformer {
                 }
             }
 
-            // Process JiJ (Jar-in-Jar) nested JARs in META-INF/jars/. Fabric Loader loads
-            // these as separate mods, so their mixin configs need the same non-fatal
-            // treatment, bytecode transformation, and refmap cleaning.
-            Path jijDir = sourceDir.resolve("META-INF/jars");
-            if (Files.isDirectory(jijDir)) {
-                try (var jijStream = Files.list(jijDir)) {
-                    for (Path jijJar : jijStream.filter(p -> p.toString().endsWith(".jar")).toList()) {
+            // Fabric Loader treats each nested JAR as a separate mod. Apply the same class,
+            // resource, and helper processing recursively, while retaining the full parent path
+            // in the synthetic key so common names such as library.jar cannot collide.
+            if (processNestedArchives && depth < MAX_JIJ_DEPTH) {
+                RetromodTransformer.NestedArchiveBudget nestedBudget =
+                        RetromodTransformer.NestedArchiveBudget.defaults();
+                try (var jijStream = Files.walk(sourceDir)) {
+                    for (Path jijJar : jijStream.filter(Files::isRegularFile)
+                            .filter(path -> isNestedJarEntry(sourceDir.relativize(path).toString()
+                                    .replace(File.separator, "/")))
+                            .toList()) {
                         String nestedEntry = sourceDir.relativize(jijJar).toString()
                                 .replace(File.separator, "/");
-                        String syntheticKey = originalJar.getFileName() + "!/" + nestedEntry;
-                        processNestedJiJJar(jijJar, syntheticKey);
+                        String childKey = archiveKey + "!/" + nestedEntry;
+                        processNestedJiJJar(
+                                jijJar, childKey, depth + 1, nestedBudget);
                     }
                 }
             }
@@ -1506,7 +1580,7 @@ public class FabricModTransformer {
                 for (Path file : refmapStream.filter(Files::isRegularFile).toList()) {
                     String entryName = sourceDir.relativize(file).toString()
                         .replace(File.separator, "/");
-                    if (entryName.endsWith("-refmap.json") || entryName.contains("refmap")) {
+                    if (isRefmapResource(entryName)) {
                         try {
                             stripBrokenRefmapEntries(sourceDir, file);
                         } catch (Exception e) {
@@ -1647,13 +1721,15 @@ public class FabricModTransformer {
 
     /**
      * Whether a path looks like a mixin config JSON. Covers standard
-     * (modid.mixins.json) and non-standard names (mixins.modmenu.json) plus configs
-     * under a "mixins/" directory.
+     * (modid.mixins.json) and non-standard names (mixin.modid.json or
+     * mixins.modid.json), plus configs under a "mixins/" directory.
      */
     private boolean isMixinConfigFile(String path) {
+        if (isRefmapResource(path)) return false;
         String name = path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path;
         if (name.endsWith(".mixins.json")) return true;
         if (name.endsWith("mixin.json")) return true;
+        if (name.startsWith("mixin.") && name.endsWith(".json")) return true;
         if (name.startsWith("mixins.") && name.endsWith(".json")) return true;
         if (path.contains("mixins/") && name.endsWith(".json") && name.contains("mixin")) return true;
         return false;
@@ -1697,38 +1773,15 @@ public class FabricModTransformer {
      * Process a nested JiJ mod JAR: extract, transform bytecode, make mixin configs
      * non-fatal, clean refmaps, repack.
      */
-    private void processNestedJiJJar(Path jijJar, String syntheticKey) {
+    private boolean processNestedJiJJar(Path jijJar, String syntheticKey, int depth,
+            RetromodTransformer.NestedArchiveBudget nestedBudget) {
+        if (depth > MAX_JIJ_DEPTH) return false;
         String name = jijJar.getFileName().toString();
         try {
+            nestedBudget.reserve(0, syntheticKey);
             Path tempDir = Files.createTempDirectory("retromod-jij-");
             try {
-                // Bounded extraction (same caps as extractJar): a JIJ entry lying about
-                // its size can't stream gigabytes to disk.
-                long jijTotalSize = 0;
-                try (JarFile jf = new JarFile(jijJar.toFile())) {
-                    var entries = jf.entries();
-                    while (entries.hasMoreElements()) {
-                        JarEntry entry = entries.nextElement();
-                        Path target = ZipSecurity.safeResolve(tempDir, entry.getName());
-                        if (entry.isDirectory()) {
-                            Files.createDirectories(target);
-                        } else {
-                            Files.createDirectories(target.getParent());
-                            long writtenBytes;
-                            try (InputStream is = jf.getInputStream(entry)) {
-                                writtenBytes = ZipSecurity.copyBounded(
-                                    is, target, MAX_ENTRY_SIZE, entry.getName());
-                            }
-                            jijTotalSize += writtenBytes;
-                            if (jijTotalSize > MAX_TOTAL_SIZE) {
-                                throw new IOException("JIJ JAR total extracted size exceeds limit ("
-                                    + MAX_TOTAL_SIZE + " bytes) - possible zip bomb in nested "
-                                    + "JAR " + name + " (decompressed " + jijTotalSize
-                                    + " bytes so far)");
-                            }
-                        }
-                    }
-                }
+                extractJar(jijJar, tempDir, nestedBudget);
 
                 boolean modified = false;
 
@@ -1761,6 +1814,23 @@ public class FabricModTransformer {
                     }
                 }
 
+                if (depth < MAX_JIJ_DEPTH) {
+                    try (var nestedStream = Files.walk(tempDir)) {
+                        for (Path childJar : nestedStream.filter(Files::isRegularFile)
+                                .filter(path -> isNestedJarEntry(tempDir.relativize(path).toString()
+                                        .replace(File.separator, "/")))
+                                .toList()) {
+                            String childEntry = tempDir.relativize(childJar).toString()
+                                    .replace(File.separator, "/");
+                            String childKey = syntheticKey + "!/" + childEntry;
+                            if (processNestedJiJJar(
+                                    childJar, childKey, depth + 1, nestedBudget)) {
+                                modified = true;
+                            }
+                        }
+                    }
+                }
+
                 // Fabric Loader treats a JiJ as a separate mod, but it still shares Knot's
                 // class space. Give each nested entry its own helper copies after its classes
                 // have received redirects. The outer jar name plus entry path stays stable and
@@ -1775,6 +1845,15 @@ public class FabricModTransformer {
                     modified = true;
                     LOGGER.info("  Embedded {} referenced synthetic class(es) in JiJ {}",
                             embedded, name);
+                }
+
+                Path nestedModJson = tempDir.resolve("fabric.mod.json");
+                if (Files.exists(nestedModJson)) {
+                    String before = Files.readString(nestedModJson);
+                    updateFabricModJson(tempDir);
+                    if (!before.equals(Files.readString(nestedModJson))) {
+                        modified = true;
+                    }
                 }
 
                 // Patch mixin configs to be non-fatal
@@ -1805,7 +1884,7 @@ public class FabricModTransformer {
                     for (Path file : refmapStream.filter(Files::isRegularFile).toList()) {
                         String entryName = tempDir.relativize(file).toString()
                             .replace(File.separator, "/");
-                        if (entryName.endsWith("-refmap.json") || entryName.contains("refmap")) {
+                        if (isRefmapResource(entryName)) {
                             try {
                                 stripBrokenRefmapEntries(tempDir, file);
                                 modified = true;
@@ -1830,26 +1909,35 @@ public class FabricModTransformer {
                         manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
                     }
 
-                    Path tempJar = jijJar.getParent().resolve(name + ".tmp");
-                    try (JarOutputStream jos = new JarOutputStream(
-                            new FileOutputStream(tempJar.toFile()), manifest)) {
-                        // ZIP directory entries: package resources (ClassLoader.getResources) and classpath
-                        // scanners (Reflections - YungsApi @AutoRegister) silently find nothing without them.
-                        com.retromod.util.JarDirectoryEntries.writeAll(jos, tempDir);
-                        try (var stream = Files.walk(tempDir)) {
-                            for (Path file : stream.filter(Files::isRegularFile).toList()) {
-                                String entryName = tempDir.relativize(file).toString()
-                                    .replace(File.separator, "/");
-                                if (entryName.equalsIgnoreCase("META-INF/MANIFEST.MF")) continue;
-                                JarEntry entry = new JarEntry(entryName);
-                                jos.putNextEntry(entry);
-                                Files.copy(file, jos);
-                                jos.closeEntry();
+                    Path tempJar = Files.createTempFile(jijJar.getParent(),
+                            "." + name + ".", ".tmp");
+                    try {
+                        try (JarOutputStream jos = new JarOutputStream(
+                                Files.newOutputStream(tempJar), manifest)) {
+                            // ZIP directory entries: package resources (ClassLoader.getResources) and classpath
+                            // scanners (Reflections - YungsApi @AutoRegister) silently find nothing without them.
+                            com.retromod.util.JarDirectoryEntries.writeAll(jos, tempDir);
+                            try (var stream = Files.walk(tempDir)) {
+                                for (Path file : stream.filter(Files::isRegularFile).toList()) {
+                                    String entryName = tempDir.relativize(file).toString()
+                                        .replace(File.separator, "/");
+                                    if (entryName.equalsIgnoreCase("META-INF/MANIFEST.MF")) continue;
+                                    JarEntry entry = new JarEntry(entryName);
+                                    jos.putNextEntry(entry);
+                                    Files.copy(file, jos);
+                                    jos.closeEntry();
+                                }
                             }
                         }
+                        try (JarFile ignored = new JarFile(tempJar.toFile())) {
+                            // Validate the staged central directory before replacing the child.
+                        }
+                        moveReplacing(tempJar, jijJar);
+                    } finally {
+                        Files.deleteIfExists(tempJar);
                     }
-                    Files.move(tempJar, jijJar, StandardCopyOption.REPLACE_EXISTING);
                     LOGGER.info("  Repacked JiJ mod: {}", name);
+                    return true;
                 }
             } finally {
                 deleteRecursively(tempDir);
@@ -1857,6 +1945,7 @@ public class FabricModTransformer {
         } catch (Exception e) {
             LOGGER.warn("Failed to process JiJ mod {}: {}", name, e.getMessage());
         }
+        return false;
     }
 
     /** Map of class name to class bytes, for mixin analysis. */

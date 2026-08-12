@@ -24,6 +24,8 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         // Bridge_Block.onPlace crash). Bridged by a per-mod synthetic.
         IsOverloadBridgeSynthetic.register(transformer);
 
+        registerOfficialEntityTypeBuildBridge(transformer);
+
         // GuiGraphics -> GuiGraphicsExtractor
         transformer.registerClassRedirect(
             "net/minecraft/client/gui/GuiGraphics",
@@ -89,6 +91,24 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         registerRegistryValueGetterRename(transformer);
         registerClientAccessorRenames26_1(transformer);
         registerCorpus26xDescriptorAdaptations(transformer);
+    }
+
+    /**
+     * Register the official-name half of the EntityType builder descriptor bridge. Kept as a
+     * focused entry point because Forge mirrors the common vanilla table rather than calling
+     * {@link #register(RetromodTransformer)} wholesale.
+     */
+    public static void registerOfficialEntityTypeBuildBridge(RetromodTransformer transformer) {
+        // EntityType.Builder.build(String) changed to build(ResourceKey) before 26.1. Fabric mods
+        // remapped into the official namespace and Mojang-named loader mods still carry the old
+        // call, so reconstruct the key through the embedded reflective bridge (#162).
+        ensureSyntheticRegistered(transformer,
+                "com/retromod/polyfill/minecraft/RetroEntityTypeBuild");
+        transformer.registerMethodRedirect(
+                "net/minecraft/world/entity/EntityType$Builder", "build",
+                "(Ljava/lang/String;)Lnet/minecraft/world/entity/EntityType;",
+                "com/retromod/polyfill/minecraft/RetroEntityTypeBuild", "buildOfficial",
+                "(Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/Object;");
     }
 
     /**
@@ -552,8 +572,7 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                 ReloadListenerSynthetic.INTERNAL);
     }
 
-    /** Register a Retromod class as an embeddable synthetic (idempotent; best-effort).
-     *  Package-visible so {@link Mc26_1To26_2CoreMoves} can reuse it for the 26.2-epoch bridges. */
+    /** Register a Retromod class as an embeddable synthetic (idempotent and best-effort). */
     static void ensureSyntheticRegistered(RetromodTransformer t, String internalName) {
         if (t == null || t.getSyntheticClasses().containsKey(internalName)) return;
         try (java.io.InputStream in = Common_1_21_11_to_26_1_ClassMoves.class.getClassLoader()

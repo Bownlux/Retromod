@@ -72,6 +72,27 @@ class NestedJarSecurityTest {
     }
 
     @Test
+    @DisplayName("empty nested archives respect traversal limits")
+    void emptyNestedArchivesRespectTraversalLimits() throws Exception {
+        byte[] empty = jarOf(Map.of());
+        RetromodTransformer.NestedArchiveBudget traversal =
+                new RetromodTransformer.NestedArchiveBudget(10, 1);
+        RetromodTransformer.NestedArchiveBudget lookup =
+                new RetromodTransformer.NestedArchiveBudget(10, 1);
+
+        assertSame(empty,
+                RetromodCli.transformNestedJar(empty, 1, false, traversal, lookup));
+        assertEquals(1, traversal.usedEntries());
+        assertEquals(1, lookup.usedEntries());
+
+        assertSame(empty,
+                RetromodCli.transformNestedJar(empty, 1, false, traversal, lookup),
+                "processing stops when the traversal limit is reached");
+        assertEquals(1, traversal.usedEntries());
+        assertEquals(1, lookup.usedEntries());
+    }
+
+    @Test
     @DisplayName("rewritten nested output cannot grow beyond its limit")
     void rewrittenNestedOutputIsBounded() throws Exception {
         RetromodCli.BoundedNestedOutput output =

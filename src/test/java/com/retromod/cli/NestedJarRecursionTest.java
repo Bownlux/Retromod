@@ -125,11 +125,12 @@ class NestedJarRecursionTest {
 
             String refmap = "{\"mappings\":{\"MixinPortal\":{\"func_242974_d()I\":"
                     + "\"L" + oldOwner + ";func_242974_d()I\"}}}";
+            String refmapName = "mixins.portal.refmap.json";
             byte[] nested = jarOf(java.util.Map.of(
-                    "portal-refmap.json", refmap.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                    refmapName, refmap.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
             String transformed = new String(
-                    entry(RetromodCli.transformNestedJar(nested, 1, true), "portal-refmap.json"),
+                    entry(RetromodCli.transformNestedJar(nested, 1, true), refmapName),
                     java.nio.charset.StandardCharsets.UTF_8);
             assertTrue(transformed.contains("L" + newOwner + ";m_77745_()I"),
                     "the nested refmap value must use the target owner and member");
@@ -137,6 +138,29 @@ class NestedJarRecursionTest {
                     "the descriptor-shaped refmap key must follow the member redirect");
             assertFalse(transformed.contains("func_242974_d"),
                     "the source SRG selector must not survive in a nested refmap");
+        } finally {
+            transformer.clearRedirectsForTesting();
+        }
+    }
+
+    @Test
+    @DisplayName("a nested jar with refmap in its filename is still transformed")
+    void refmapNamedNestedJarIsTransformed() throws Exception {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        try {
+            transformer.registerClassRedirect(OLD, NEW);
+            byte[] library = jarOf(java.util.Map.of(
+                    "lib/RefmapLibrary.class", classRef("lib/RefmapLibrary")));
+            byte[] parent = jarOf(java.util.Map.of(
+                    "META-INF/jars/refmap-library.jar", library));
+
+            byte[] transformed = RetromodCli.transformNestedJar(parent, 1);
+            byte[] libraryOut = entry(transformed, "META-INF/jars/refmap-library.jar");
+
+            assertEquals("L" + NEW + ";",
+                    refDesc(libraryOut, "lib/RefmapLibrary.class"),
+                    "archive routing must not confuse a nested jar with a JSON refmap");
         } finally {
             transformer.clearRedirectsForTesting();
         }

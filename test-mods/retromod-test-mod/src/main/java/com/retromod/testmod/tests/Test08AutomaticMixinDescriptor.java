@@ -8,12 +8,12 @@ import com.retromod.testmod.Test;
 import com.retromod.testmod.TestResult;
 import net.minecraft.server.integrated.IntegratedServer;
 
-/** Load-time regression for automatic refmap descriptor repair. */
+/** Load-time regressions for automatic refmap and MixinExtras descriptor repair. */
 public class Test08AutomaticMixinDescriptor implements Test {
 
     @Override
     public String description() {
-        return "automatic mixin refmap parameter-addition repair";
+        return "automatic refmap and MixinExtras parameter-addition repair";
     }
 
     @Override

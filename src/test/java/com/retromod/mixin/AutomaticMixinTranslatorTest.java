@@ -44,9 +44,14 @@ class AutomaticMixinTranslatorTest {
     private static final String MIXIN = "Lorg/spongepowered/asm/mixin/Mixin;";
     private static final String INJECT = "Lorg/spongepowered/asm/mixin/injection/Inject;";
     private static final String REDIRECT = "Lorg/spongepowered/asm/mixin/injection/Redirect;";
+    private static final String GROUP = "Lorg/spongepowered/asm/mixin/injection/Group;";
     private static final String OVERWRITE = "Lorg/spongepowered/asm/mixin/Overwrite;";
     private static final String INVOKER = "Lorg/spongepowered/asm/mixin/gen/Invoker;";
     private static final String AT = "Lorg/spongepowered/asm/mixin/injection/At;";
+    private static final String MODIFY_RETURN =
+            "Lcom/llamalad7/mixinextras/injector/ModifyReturnValue;";
+    private static final String MODIFY_EXPRESSION =
+            "Lcom/llamalad7/mixinextras/injector/ModifyExpressionValue;";
     private static final String CALLBACK_INFO =
             "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;";
     private static final String LOCAL =
@@ -58,6 +63,9 @@ class AutomaticMixinTranslatorTest {
             + "Lnet/minecraft/client/multiplayer/ServerData;Z";
     private static final String TRANSFER_STATE =
             "Lnet/minecraft/client/multiplayer/TransferState;";
+    private static final String REVAMPED_VEC = "Lnet/minecraft/class_243;";
+    private static final String REVAMPED_ENTITY = "Lnet/minecraft/class_1297;";
+    private static final String REVAMPED_ATTACHMENTS = "Lnet/minecraft/class_9066;";
 
     @TempDir
     Path tempDir;
@@ -152,6 +160,398 @@ class AutomaticMixinTranslatorTest {
 
         assertArrayEquals(input, output,
                 "one handler cannot receive two independently discovered layouts");
+        assertEquals(oldHandler, handler(output).desc);
+    }
+
+    @Test
+    @DisplayName("A @ModifyReturnValue handler keeps its value before added target arguments")
+    void modifyReturnValueTargetCaptureIsTranslated() {
+        String oldSelector = "returnValue(Ljava/lang/String;)Ljava/lang/String;";
+        String oldHandler =
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+
+        byte[] output = translator.translate(valueModifierMixin(
+                "ModifyReturnMixin", MODIFY_RETURN, oldSelector, oldHandler));
+
+        assertEquals("returnValue(ILjava/lang/String;)Ljava/lang/String;",
+                injectorSelector(output, MODIFY_RETURN));
+        assertEquals("(Ljava/lang/String;ILjava/lang/String;)Ljava/lang/String;",
+                handler(output).desc,
+                "the added target int must follow the intercepted return value");
+        assertEquals(3, firstVar(handler(output), Opcodes.ALOAD),
+                "the captured String load must move past the inserted int slot");
+    }
+
+    @Test
+    @DisplayName("A grouped injector still receives its proven signature repair")
+    void groupedInjectorIsNotCountedAsTwoInjectors() {
+        String selector = "prepend(Ljava/lang/String;)V";
+        String oldHandler = "(Ljava/lang/String;" + CALLBACK_INFO + ")V";
+        byte[] input = addGroupAnnotation(injectMixin(
+                "GroupedMixin", selector, oldHandler, false));
+
+        byte[] output = translator.translate(input);
+
+        assertEquals("prepend(JLjava/lang/String;)V", injectSelector(output));
+        assertEquals("(JLjava/lang/String;" + CALLBACK_INFO + ")V", handler(output).desc,
+                "@Group is auxiliary metadata, not a second injector layout");
+        assertEquals("compatibility", annotationValue(annotation(handler(output), GROUP), "name"),
+                "the repair must retain the handler's injector group");
+    }
+
+    @Test
+    @DisplayName("A @ModifyExpressionValue handler keeps its expression before target arguments")
+    void modifyExpressionValueTargetCaptureIsTranslated() {
+        String oldSelector = "expression(Ljava/lang/String;)V";
+        String oldHandler = "(ZLjava/lang/String;)Z";
+
+        byte[] output = translator.translate(valueModifierMixin(
+                "ModifyExpressionMixin", MODIFY_EXPRESSION, oldSelector, oldHandler));
+
+        assertEquals("expression(JLjava/lang/String;)V",
+                injectorSelector(output, MODIFY_EXPRESSION));
+        assertEquals("(ZJLjava/lang/String;)Z", handler(output).desc,
+                "the added target long must follow the intercepted expression value");
+        assertEquals(4, firstVar(handler(output), Opcodes.ALOAD),
+                "the captured String load must move by both long slots");
+    }
+
+    @Test
+    @DisplayName("A value-only MixinExtras handler needs only its target selector updated")
+    void valueOnlyMixinExtrasHandlerKeepsDescriptor() {
+        String oldSelector = "returnValue(Ljava/lang/String;)Ljava/lang/String;";
+        String handlerDescriptor = "(Ljava/lang/String;)Ljava/lang/String;";
+
+        byte[] output = translator.translate(valueModifierMixin(
+                "ValueOnlyMixin", MODIFY_RETURN, oldSelector, handlerDescriptor));
+
+        assertEquals("returnValue(ILjava/lang/String;)Ljava/lang/String;",
+                injectorSelector(output, MODIFY_RETURN));
+        assertEquals(handlerDescriptor, handler(output).desc,
+                "a handler that captures no target arguments stays valid unchanged");
+    }
+
+    @Test
+    @DisplayName("A partial MixinExtras target-argument capture is not inferred")
+    void partialValueModifierCaptureIsRefused() {
+        String selector = "returnPair(Ljava/lang/String;J)Ljava/lang/String;";
+        String handlerDescriptor =
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+        byte[] input = valueModifierMixin(
+                "PartialValueCaptureMixin", MODIFY_RETURN, selector, handlerDescriptor);
+
+        byte[] output = translator.translate(input);
+
+        assertArrayEquals(input, output,
+                "omitting an old target argument makes the captured layout ambiguous");
+        assertEquals(selector, injectorSelector(output, MODIFY_RETURN));
+        assertEquals(handlerDescriptor, handler(output).desc);
+    }
+
+    @Test
+    @DisplayName("A semantic parameter annotation blocks MixinExtras descriptor repair")
+    void unsafeValueModifierParameterAnnotationIsRefused() {
+        String selector = "returnValue(Ljava/lang/String;)Ljava/lang/String;";
+        String handlerDescriptor =
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+        byte[] input = valueModifierMixin(
+                "AnnotatedValueMixin", MODIFY_RETURN, selector, handlerDescriptor,
+                Opcodes.ACC_PRIVATE, 1);
+
+        byte[] output = translator.translate(input);
+
+        assertArrayEquals(input, output,
+                "moving a @Local parameter could change which local it captures");
+        assertEquals(selector, injectorSelector(output, MODIFY_RETURN));
+        assertEquals(handlerDescriptor, handler(output).desc);
+    }
+
+    @Test
+    @DisplayName("A value parameter that differs from the handler return is refused")
+    void valueModifierArgumentReturnMismatchIsRefused() {
+        String selector = "expression(Ljava/lang/String;)V";
+        String handlerDescriptor = "(ILjava/lang/String;)Z";
+        byte[] input = valueModifierMixin(
+                "ValueReturnMismatchMixin", MODIFY_EXPRESSION, selector, handlerDescriptor);
+
+        byte[] output = translator.translate(input);
+
+        assertArrayEquals(input, output,
+                "the intercepted value and replacement value must have the same type");
+        assertEquals(selector, injectorSelector(output, MODIFY_EXPRESSION));
+        assertEquals(handlerDescriptor, handler(output).desc);
+    }
+
+    @Test
+    @DisplayName("A @ModifyReturnValue type that differs from its target return is refused")
+    void modifyReturnValueTargetReturnMismatchIsRefused() {
+        String selector = "returnValue(Ljava/lang/String;)Ljava/lang/String;";
+        String handlerDescriptor = "(ILjava/lang/String;)I";
+        byte[] input = valueModifierMixin(
+                "TargetReturnMismatchMixin", MODIFY_RETURN, selector, handlerDescriptor);
+
+        byte[] output = translator.translate(input);
+
+        assertArrayEquals(input, output,
+                "ModifyReturnValue must consume the enclosing target's return type");
+        assertEquals(selector, injectorSelector(output, MODIFY_RETURN));
+        assertEquals(handlerDescriptor, handler(output).desc);
+    }
+
+    @Test
+    @DisplayName("A static value modifier may target an instance method")
+    void staticValueModifierCanTargetInstanceMethod() {
+        String selector = "returnValue(Ljava/lang/String;)Ljava/lang/String;";
+        String handlerDescriptor =
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+        byte[] input = valueModifierMixin(
+                "StaticValueMixin", MODIFY_RETURN, selector, handlerDescriptor,
+                Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, -1);
+
+        byte[] output = translator.translate(input);
+
+        assertEquals("returnValue(ILjava/lang/String;)Ljava/lang/String;",
+                injectorSelector(output, MODIFY_RETURN));
+        assertEquals("(Ljava/lang/String;ILjava/lang/String;)Ljava/lang/String;",
+                handler(output).desc);
+        assertEquals(2, firstVar(handler(output), Opcodes.ALOAD),
+                "the captured String moves while a static handler has no receiver slot");
+    }
+
+    @Test
+    @DisplayName("A nonstatic value modifier cannot target a static method")
+    void nonstaticValueModifierCannotTargetStaticMethod() {
+        String selector = "returnValueStatic(Ljava/lang/String;)Ljava/lang/String;";
+        String handlerDescriptor =
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+        byte[] input = valueModifierMixin(
+                "NonstaticValueMixin", MODIFY_RETURN, selector, handlerDescriptor);
+
+        byte[] output = translator.translate(input);
+
+        assertArrayEquals(input, output,
+                "MixinExtras cannot load a receiver for a static target method");
+        assertEquals(selector, injectorSelector(output, MODIFY_RETURN));
+        assertEquals(handlerDescriptor, handler(output).desc);
+    }
+
+    @Test
+    @DisplayName("A shared handler is not retyped when an unchanged target rejects its layout")
+    void incompatibleUnchangedMultiTargetRefusesHandlerRepair() {
+        List<String> selectors = List.of(
+                "returnValueUnchanged(Ljava/lang/String;)Ljava/lang/String;",
+                "returnValue(Ljava/lang/String;)Ljava/lang/String;");
+        String handlerDescriptor =
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+        byte[] input = valueModifierMixin(
+                "IncompatibleMultiTargetMixin", MODIFY_RETURN, selectors, handlerDescriptor);
+
+        byte[] output = translator.translate(input);
+
+        assertArrayEquals(input, output,
+                "the repaired two-argument capture would no longer match the unchanged target");
+        assertEquals(selectors, injectorSelectors(output, MODIFY_RETURN));
+        assertEquals(handlerDescriptor, handler(output).desc);
+    }
+
+    @Test
+    @DisplayName("Compatible changed targets share one atomic handler layout")
+    void compatibleChangedMultiTargetsShareHandlerRepair() {
+        List<String> selectors = List.of(
+                "returnValue(Ljava/lang/String;)Ljava/lang/String;",
+                "returnValueAlsoChanged(Ljava/lang/String;)Ljava/lang/String;");
+        String handlerDescriptor =
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+
+        byte[] output = translator.translate(valueModifierMixin(
+                "CompatibleMultiTargetMixin", MODIFY_RETURN, selectors, handlerDescriptor));
+
+        assertEquals(List.of(
+                "returnValue(ILjava/lang/String;)Ljava/lang/String;",
+                "returnValueAlsoChanged(ILjava/lang/String;)Ljava/lang/String;"),
+                injectorSelectors(output, MODIFY_RETURN));
+        assertEquals("(Ljava/lang/String;ILjava/lang/String;)Ljava/lang/String;",
+                handler(output).desc);
+    }
+
+    @Test
+    @DisplayName("Revamped Phantoms full @ModifyReturnValue capture gains a leading long")
+    void revampedPhantomsFullModifyReturnValueShapeIsTranslated() {
+        String oldTargetArgs = REVAMPED_ENTITY + REVAMPED_ENTITY + REVAMPED_ATTACHMENTS;
+        String oldSelector = "method_55665(" + oldTargetArgs + ")" + REVAMPED_VEC;
+        String oldHandler = "(" + REVAMPED_VEC + oldTargetArgs + ")" + REVAMPED_VEC;
+
+        byte[] output = translator.translate(valueModifierMixin(
+                "RevampedPhantomsEntityMixin", MODIFY_RETURN, oldSelector, oldHandler));
+
+        assertEquals("method_55665(J" + oldTargetArgs + ")" + REVAMPED_VEC,
+                injectorSelector(output, MODIFY_RETURN));
+        assertEquals("(" + REVAMPED_VEC + "J" + oldTargetArgs + ")" + REVAMPED_VEC,
+                handler(output).desc,
+                "the complete target capture must remain after the intercepted Vec3 value");
+        assertEquals(4, firstVar(handler(output), Opcodes.ALOAD),
+                "the first captured Entity must move past both slots of the added long");
+    }
+
+    @Test
+    @DisplayName("A refmap-linked @ModifyReturnValue handler gains target arguments")
+    void refmapModifyReturnValueCaptureIsTranslated() {
+        String sourceSelector = "oldYarnReturn(Ljava/lang/String;)Ljava/lang/String;";
+        String oldHandler =
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+        byte[] input = valueModifierMixin(
+                "RefmapModifyReturnMixin", MODIFY_RETURN, sourceSelector, oldHandler);
+        MixinRefmapRepairIndex index = MixinRefmapRepairIndex.builder()
+                .put("test/mixin/RefmapModifyReturnMixin", sourceSelector,
+                        new MixinRefmapRepairIndex.Repair(
+                                TARGET, "(Ljava/lang/String;)Ljava/lang/String;",
+                                "(ILjava/lang/String;)Ljava/lang/String;",
+                                Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                                List.of(new MixinHandlerResignature.ParamInsert(0, "I"))))
+                .build();
+
+        byte[] output = translator.translateRefmapHandlers(input, index);
+
+        assertEquals(sourceSelector, injectorSelector(output, MODIFY_RETURN),
+                "the annotation must retain its refmap lookup key");
+        assertEquals("(Ljava/lang/String;ILjava/lang/String;)Ljava/lang/String;",
+                handler(output).desc);
+        assertEquals(3, firstVar(handler(output), Opcodes.ALOAD));
+    }
+
+    @Test
+    @DisplayName("A refmap-linked @ModifyExpressionValue handler gains target arguments")
+    void refmapModifyExpressionValueCaptureIsTranslated() {
+        String sourceSelector = "oldYarnExpression(Ljava/lang/String;)V";
+        String oldHandler = "(ZLjava/lang/String;)Z";
+        byte[] input = valueModifierMixin(
+                "RefmapModifyExpressionMixin", MODIFY_EXPRESSION, sourceSelector, oldHandler);
+        MixinRefmapRepairIndex index = MixinRefmapRepairIndex.builder()
+                .put("test/mixin/RefmapModifyExpressionMixin", sourceSelector,
+                        new MixinRefmapRepairIndex.Repair(
+                                TARGET, "(Ljava/lang/String;)V",
+                                "(JLjava/lang/String;)V",
+                                Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                                List.of(new MixinHandlerResignature.ParamInsert(0, "J"))))
+                .build();
+
+        byte[] output = translator.translateRefmapHandlers(input, index);
+
+        assertEquals(sourceSelector, injectorSelector(output, MODIFY_EXPRESSION),
+                "the annotation must retain its refmap lookup key");
+        assertEquals("(ZJLjava/lang/String;)Z", handler(output).desc);
+        assertEquals(4, firstVar(handler(output), Opcodes.ALOAD));
+    }
+
+    @Test
+    @DisplayName("A refmap handler is not retyped with an unproven shared selector")
+    void refmapSharedSelectorWithoutLayoutProofIsRefused() {
+        String changedSource = "oldYarnReturn(Ljava/lang/String;)Ljava/lang/String;";
+        String unchangedSource = "oldYarnUnchanged(Ljava/lang/String;)Ljava/lang/String;";
+        String oldHandler =
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+        byte[] input = valueModifierMixin(
+                "RefmapSharedMixin", MODIFY_RETURN,
+                List.of(changedSource, unchangedSource), oldHandler);
+        MixinRefmapRepairIndex index = MixinRefmapRepairIndex.builder()
+                .put("test/mixin/RefmapSharedMixin", changedSource,
+                        new MixinRefmapRepairIndex.Repair(
+                                TARGET, "(Ljava/lang/String;)Ljava/lang/String;",
+                                "(ILjava/lang/String;)Ljava/lang/String;",
+                                Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                                List.of(new MixinHandlerResignature.ParamInsert(0, "I"))))
+                .build();
+
+        byte[] output = translator.translateRefmapHandlers(input, index);
+
+        assertArrayEquals(input, output,
+                "every refmap source selector needs an exact compatible target relationship");
+        assertEquals(List.of(changedSource, unchangedSource),
+                injectorSelectors(output, MODIFY_RETURN));
+        assertEquals(oldHandler, handler(output).desc);
+    }
+
+    @Test
+    @DisplayName("Direct and refmap selectors can prove one shared MixinExtras layout")
+    void mixedDirectAndRefmapSelectorsShareHandlerRepair() {
+        String directSelector =
+                "returnValue(Ljava/lang/String;)Ljava/lang/String;";
+        String sourceSelector =
+                "oldYarnReturn(Ljava/lang/String;)Ljava/lang/String;";
+        String oldHandler =
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+        byte[] input = valueModifierMixin(
+                "MixedDirectRefmapMixin", MODIFY_RETURN,
+                List.of(directSelector, sourceSelector), oldHandler);
+        MixinRefmapRepairIndex index = MixinRefmapRepairIndex.builder()
+                .put("test/mixin/MixedDirectRefmapMixin", sourceSelector,
+                        new MixinRefmapRepairIndex.Repair(
+                                TARGET, "(Ljava/lang/String;)Ljava/lang/String;",
+                                "(ILjava/lang/String;)Ljava/lang/String;",
+                                Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                                List.of(new MixinHandlerResignature.ParamInsert(0, "I"))))
+                .build();
+
+        byte[] output = translator.translate(input, index);
+
+        assertEquals(List.of(
+                "returnValue(ILjava/lang/String;)Ljava/lang/String;",
+                sourceSelector), injectorSelectors(output, MODIFY_RETURN));
+        assertEquals("(Ljava/lang/String;ILjava/lang/String;)Ljava/lang/String;",
+                handler(output).desc);
+        assertEquals(3, firstVar(handler(output), Opcodes.ALOAD));
+    }
+
+    @Test
+    @DisplayName("Mixed selector layouts are refused before changing a shared handler")
+    void mixedDirectAndRefmapLayoutMismatchIsRefused() {
+        String directSelector =
+                "returnValue(Ljava/lang/String;)Ljava/lang/String;";
+        String sourceSelector =
+                "oldYarnReturn(Ljava/lang/String;)Ljava/lang/String;";
+        String oldHandler =
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+        byte[] input = valueModifierMixin(
+                "MixedLayoutMismatchMixin", MODIFY_RETURN,
+                List.of(directSelector, sourceSelector), oldHandler);
+        MixinRefmapRepairIndex index = MixinRefmapRepairIndex.builder()
+                .put("test/mixin/MixedLayoutMismatchMixin", sourceSelector,
+                        new MixinRefmapRepairIndex.Repair(
+                                TARGET, "(Ljava/lang/String;)Ljava/lang/String;",
+                                "(JLjava/lang/String;)Ljava/lang/String;",
+                                Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                                List.of(new MixinHandlerResignature.ParamInsert(0, "J"))))
+                .build();
+
+        byte[] output = translator.translate(input, index);
+
+        assertArrayEquals(input, output,
+                "different proven layouts must leave the class unchanged");
+        assertEquals(List.of(directSelector, sourceSelector),
+                injectorSelectors(output, MODIFY_RETURN));
+        assertEquals(oldHandler, handler(output).desc);
+    }
+
+    @Test
+    @DisplayName("Mixed selectors need evidence for every shared target")
+    void mixedDirectSelectorWithoutRefmapEvidenceIsRefused() {
+        String directSelector =
+                "returnValue(Ljava/lang/String;)Ljava/lang/String;";
+        String sourceSelector =
+                "oldYarnReturn(Ljava/lang/String;)Ljava/lang/String;";
+        String oldHandler =
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+        byte[] input = valueModifierMixin(
+                "MixedMissingEvidenceMixin", MODIFY_RETURN,
+                List.of(directSelector, sourceSelector), oldHandler);
+
+        byte[] output = translator.translate(
+                input, MixinRefmapRepairIndex.empty());
+
+        assertArrayEquals(input, output,
+                "an unproven selector must leave the class unchanged");
+        assertEquals(List.of(directSelector, sourceSelector),
+                injectorSelectors(output, MODIFY_RETURN));
         assertEquals(oldHandler, handler(output).desc);
     }
 
@@ -382,6 +782,20 @@ class AutomaticMixinTranslatorTest {
                 "(ILjava/lang/String;)Ljava/lang/String;");
         abstractMethod(writer, "substituted", "(I)V");
         abstractMethod(writer, "changedReturn", "(Ljava/lang/String;)I");
+        abstractMethod(writer, "returnValue",
+                "(ILjava/lang/String;)Ljava/lang/String;");
+        abstractMethod(writer, "returnValueUnchanged",
+                "(Ljava/lang/String;)Ljava/lang/String;");
+        abstractMethod(writer, "returnValueAlsoChanged",
+                "(ILjava/lang/String;)Ljava/lang/String;");
+        staticMethod(writer, "returnValueStatic",
+                "(ILjava/lang/String;)Ljava/lang/String;");
+        abstractMethod(writer, "expression", "(JLjava/lang/String;)V");
+        abstractMethod(writer, "returnPair",
+                "(ILjava/lang/String;J)Ljava/lang/String;");
+        abstractMethod(writer, "method_55665",
+                "(J" + REVAMPED_ENTITY + REVAMPED_ENTITY + REVAMPED_ATTACHMENTS + ")"
+                        + REVAMPED_VEC);
         writer.visitEnd();
         return writer.toByteArray();
     }
@@ -389,6 +803,15 @@ class AutomaticMixinTranslatorTest {
     private static void abstractMethod(ClassWriter writer, String name, String descriptor) {
         writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
                 name, descriptor, null, null).visitEnd();
+    }
+
+    private static void staticMethod(ClassWriter writer, String name, String descriptor) {
+        MethodVisitor method = writer.visitMethod(
+                Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, name, descriptor, null, null);
+        method.visitCode();
+        emitDefaultReturn(method, Type.getReturnType(descriptor));
+        method.visitMaxs(1, Type.getArgumentsAndReturnSizes(descriptor) >> 2);
+        method.visitEnd();
     }
 
     private static byte[] injectMixin(String simpleName, String selector,
@@ -465,6 +888,110 @@ class AutomaticMixinTranslatorTest {
         ClassWriter writer = new ClassWriter(0);
         node.accept(writer);
         return writer.toByteArray();
+    }
+
+    private static byte[] addGroupAnnotation(byte[] classBytes) {
+        ClassNode node = readClass(classBytes);
+        MethodNode method = node.methods.stream()
+                .filter(candidate -> candidate.name.equals("handler"))
+                .findFirst().orElseThrow();
+        if (method.invisibleAnnotations == null) {
+            method.invisibleAnnotations = new ArrayList<>();
+        }
+        AnnotationNode group = new AnnotationNode(GROUP);
+        group.values = new ArrayList<>(List.of("name", "compatibility"));
+        method.invisibleAnnotations.add(group);
+        ClassWriter writer = new ClassWriter(0);
+        node.accept(writer);
+        return writer.toByteArray();
+    }
+
+    private static byte[] valueModifierMixin(String simpleName, String injectorDescriptor,
+            String selector, String handlerDescriptor) {
+        return valueModifierMixin(simpleName, injectorDescriptor, List.of(selector),
+                handlerDescriptor, Opcodes.ACC_PRIVATE, -1);
+    }
+
+    private static byte[] valueModifierMixin(String simpleName, String injectorDescriptor,
+            List<String> selectors, String handlerDescriptor) {
+        return valueModifierMixin(simpleName, injectorDescriptor, selectors,
+                handlerDescriptor, Opcodes.ACC_PRIVATE, -1);
+    }
+
+    private static byte[] valueModifierMixin(String simpleName, String injectorDescriptor,
+            String selector, String handlerDescriptor, int handlerAccess,
+            int unsafeParameterIndex) {
+        return valueModifierMixin(simpleName, injectorDescriptor, List.of(selector),
+                handlerDescriptor, handlerAccess, unsafeParameterIndex);
+    }
+
+    private static byte[] valueModifierMixin(String simpleName, String injectorDescriptor,
+            List<String> selectors, String handlerDescriptor, int handlerAccess,
+            int unsafeParameterIndex) {
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC,
+                "test/mixin/" + simpleName, null, "java/lang/Object", null);
+        addMixinTarget(writer);
+
+        MethodVisitor handler = writer.visitMethod(
+                handlerAccess, "handler", handlerDescriptor, null, null);
+        AnnotationVisitor injector = handler.visitAnnotation(injectorDescriptor, false);
+        AnnotationVisitor methods = injector.visitArray("method");
+        for (String selector : selectors) methods.visit(null, selector);
+        methods.visitEnd();
+        AnnotationVisitor at = injector.visitAnnotation("at", AT);
+        at.visit("value", MODIFY_RETURN.equals(injectorDescriptor) ? "RETURN" : "CONSTANT");
+        at.visitEnd();
+        injector.visitEnd();
+        if (unsafeParameterIndex >= 0) {
+            handler.visitParameterAnnotation(unsafeParameterIndex, LOCAL, false).visitEnd();
+        }
+
+        Type[] args = Type.getArgumentTypes(handlerDescriptor);
+        handler.visitCode();
+        int firstSlot = (handlerAccess & Opcodes.ACC_STATIC) != 0 ? 0 : 1;
+        if (args.length > 1) {
+            int capturedSlot = firstSlot + args[0].getSize();
+            handler.visitVarInsn(args[1].getOpcode(Opcodes.ILOAD), capturedSlot);
+            handler.visitInsn(args[1].getSize() == 2 ? Opcodes.POP2 : Opcodes.POP);
+        }
+        Type returnType = Type.getReturnType(handlerDescriptor);
+        if (args[0].equals(returnType)) {
+            handler.visitVarInsn(args[0].getOpcode(Opcodes.ILOAD), firstSlot);
+            handler.visitInsn(returnType.getOpcode(Opcodes.IRETURN));
+        } else {
+            emitDefaultReturn(handler, returnType);
+        }
+        handler.visitMaxs(0, 0);
+        handler.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
+    private static void emitDefaultReturn(MethodVisitor method, Type returnType) {
+        switch (returnType.getSort()) {
+            case Type.VOID -> method.visitInsn(Opcodes.RETURN);
+            case Type.OBJECT, Type.ARRAY -> {
+                method.visitInsn(Opcodes.ACONST_NULL);
+                method.visitInsn(Opcodes.ARETURN);
+            }
+            case Type.LONG -> {
+                method.visitInsn(Opcodes.LCONST_0);
+                method.visitInsn(Opcodes.LRETURN);
+            }
+            case Type.FLOAT -> {
+                method.visitInsn(Opcodes.FCONST_0);
+                method.visitInsn(Opcodes.FRETURN);
+            }
+            case Type.DOUBLE -> {
+                method.visitInsn(Opcodes.DCONST_0);
+                method.visitInsn(Opcodes.DRETURN);
+            }
+            default -> {
+                method.visitInsn(Opcodes.ICONST_0);
+                method.visitInsn(Opcodes.IRETURN);
+            }
+        }
     }
 
     private static byte[] invokerMixin() {
@@ -582,6 +1109,23 @@ class AutomaticMixinTranslatorTest {
             return selectors.stream().map(String::valueOf).toList();
         }
         throw new AssertionError("expected @Inject method selectors, got " + value);
+    }
+
+    private static String injectorSelector(byte[] classBytes, String injectorDescriptor) {
+        List<String> selectors = injectorSelectors(classBytes, injectorDescriptor);
+        if (selectors.size() == 1) return selectors.get(0);
+        throw new AssertionError("expected one injector method selector, got " + selectors);
+    }
+
+    private static List<String> injectorSelectors(
+            byte[] classBytes, String injectorDescriptor) {
+        AnnotationNode injector = annotation(handler(classBytes), injectorDescriptor);
+        Object value = annotationValue(injector, "method");
+        if (value instanceof List<?> selectors) {
+            return selectors.stream().map(String::valueOf).toList();
+        }
+        if (value instanceof String selector) return List.of(selector);
+        throw new AssertionError("expected injector method selectors, got " + value);
     }
 
     private static AnnotationNode annotation(MethodNode method, String descriptor) {

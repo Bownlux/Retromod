@@ -225,8 +225,10 @@ public class RetromodTransformer implements ClassFileTransformer {
                     budget.reserve(0, entryName);
                     continue;
                 }
-                byte[] bytes = ZipSecurity.safeReadAllBytes(jar);
-                budget.reserve(bytes.length, entryName);
+                long allowance = budget.beginRead(
+                        ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, entryName);
+                byte[] bytes = ZipSecurity.safeReadAllBytes(jar, allowance);
+                budget.completeRead(allowance, bytes.length);
                 if (!entryName.endsWith(".class")) {
                     continue;
                 }
@@ -261,7 +263,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                     ZipSecurity.DEFAULT_MAX_TOTAL_SIZE, DEFAULT_MAX_ENTRIES);
         }
 
-        public void reserve(long bytes, String entryName) throws IOException {
+        public synchronized void reserve(long bytes, String entryName) throws IOException {
             if (bytes < 0) {
                 throw new IllegalArgumentException("nested archive entry size cannot be negative");
             }
@@ -277,11 +279,40 @@ public class RetromodTransformer implements ClassFileTransformer {
             usedBytes += bytes;
         }
 
-        public long usedBytes() {
+        /** Begins a bounded archive-entry read and returns the permitted byte count. */
+        public synchronized long beginRead(long requestedBytes, String entryName)
+                throws IOException {
+            if (requestedBytes <= 0) {
+                throw new IllegalArgumentException("nested archive read limit must be positive");
+            }
+            if (usedEntries >= maxEntries) {
+                throw new IOException("nested archive exceeds " + maxEntries
+                        + " entries at " + entryName);
+            }
+            usedEntries++;
+            long remaining = maxBytes - usedBytes;
+            if (remaining <= 0) {
+                throw new IOException("nested archive exceeds " + maxBytes
+                        + " expanded bytes at " + entryName);
+            }
+            long allowance = Math.min(requestedBytes, remaining);
+            usedBytes += allowance;
+            return allowance;
+        }
+
+        /** Records the actual size of a completed bounded read. */
+        public synchronized void completeRead(long allowance, long actualBytes) {
+            if (allowance <= 0 || actualBytes < 0 || actualBytes > allowance) {
+                throw new IllegalArgumentException("invalid nested archive read completion");
+            }
+            usedBytes -= allowance - actualBytes;
+        }
+
+        public synchronized long usedBytes() {
             return usedBytes;
         }
 
-        public int usedEntries() {
+        public synchronized int usedEntries() {
             return usedEntries;
         }
     }
@@ -1586,7 +1617,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                 fieldHopAccessors.isEmpty() && fieldStaticBridges.isEmpty() &&
                 intermediaryMethodNames.isEmpty() && intermediaryFieldNames.isEmpty() &&
                 srgMethodNames.isEmpty() && srgFieldNames.isEmpty()) {
-            return originalBytes;
+            return com.retromod.shim.common.LegacyInputEventCallAdapter.apply(originalBytes);
         }
 
         // Debug: log class redirect count for first few classes (once per class, not per pass)
@@ -1658,6 +1689,8 @@ public class RetromodTransformer implements ClassFileTransformer {
      */
     private byte[] postProcess(byte[] stableBytes, String className) {
         byte[] repaired = normalizeEmbeddedShimCalls(stableBytes);
+        repaired = com.retromod.shim.common.LegacyInputEventCallAdapter.apply(repaired);
+        repaired = com.retromod.shim.common.LegacyEntityRendererAdapter.apply(repaired);
         repaired = com.retromod.shim.fabric.LegacyFabricItemIdRepair
                 .apply(repaired, className);
         repaired = com.retromod.shim.fabric.LegacyPatchouliGsonRepair
@@ -1947,7 +1980,8 @@ public class RetromodTransformer implements ClassFileTransformer {
 
         Function<String, byte[]> classBytesProvider = currentJarClassBytesProvider();
         ClassWriter writer = hasClassRemaps
-            ? new SafeClassWriter(ClassWriter.COMPUTE_FRAMES, classBytesProvider)
+            ? new SafeClassWriter(ClassWriter.COMPUTE_FRAMES, classBytesProvider,
+                    classRemapper::mapType, this::targetSuperclass)
             : new SafeClassWriter(reader, ClassWriter.COMPUTE_FRAMES, classBytesProvider);
 
         ClassVisitor visitor = writer;
@@ -2438,6 +2472,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     private static class SafeClassWriter extends ClassWriter {
 
         private final Function<String, byte[]> jarClassBytes;
+        private final Function<String, String> hierarchyNameMapper;
+        private final Function<String, String> targetSuperclass;
 
         public SafeClassWriter(int flags) {
             this(flags, null);
@@ -2448,14 +2484,24 @@ public class RetromodTransformer implements ClassFileTransformer {
         }
 
         public SafeClassWriter(int flags, Function<String, byte[]> jarClassBytes) {
+            this(flags, jarClassBytes, Function.identity(), null);
+        }
+
+        public SafeClassWriter(int flags, Function<String, byte[]> jarClassBytes,
+                               Function<String, String> hierarchyNameMapper,
+                               Function<String, String> targetSuperclass) {
             super(flags);
             this.jarClassBytes = jarClassBytes;
+            this.hierarchyNameMapper = hierarchyNameMapper;
+            this.targetSuperclass = targetSuperclass;
         }
 
         public SafeClassWriter(ClassReader classReader, int flags,
                                Function<String, byte[]> jarClassBytes) {
             super(classReader, flags);
             this.jarClassBytes = jarClassBytes;
+            this.hierarchyNameMapper = Function.identity();
+            this.targetSuperclass = null;
         }
 
         @Override
@@ -2465,7 +2511,8 @@ public class RetromodTransformer implements ClassFileTransformer {
             } catch (Exception | LinkageError e) {
                 // Mod classes are often unavailable to Class.forName during transformation.
                 // Read their hierarchy from the jar before using the broader fallback.
-                String viaBytes = commonSuperViaBytes(type1, type2, jarClassBytes);
+                String viaBytes = commonSuperViaBytes(
+                        type1, type2, jarClassBytes, hierarchyNameMapper, targetSuperclass);
                 if (viaBytes != null) {
                     return viaBytes;
                 }
@@ -2481,46 +2528,75 @@ public class RetromodTransformer implements ClassFileTransformer {
      */
     static String commonSuperViaBytes(String type1, String type2,
                                       Function<String, byte[]> provider) {
+        return commonSuperViaBytes(type1, type2, provider, Function.identity());
+    }
+
+    /**
+     * Finds a common superclass while translating hierarchy names read from original jar bytes.
+     * Fabric input classes still declare intermediary superclasses even though frame computation
+     * runs after the class remapper. Mapping each discovered parent keeps a mod class connected to
+     * the official host hierarchy instead of widening a valid Entity join to Object.
+     */
+    static String commonSuperViaBytes(String type1, String type2,
+                                      Function<String, byte[]> provider,
+                                      Function<String, String> hierarchyNameMapper) {
+        return commonSuperViaBytes(type1, type2, provider, hierarchyNameMapper, null);
+    }
+
+    static String commonSuperViaBytes(String type1, String type2,
+                                      Function<String, byte[]> provider,
+                                      Function<String, String> hierarchyNameMapper,
+                                      Function<String, String> targetSuperclass) {
         if (type1 == null || type2 == null) {
             return null;
         }
         if (type1.equals(type2)) {
             return type1;
         }
-        LinkedHashSet<String> firstChain = superChain(type1, provider);
+        Function<String, String> mapper = hierarchyNameMapper == null
+                ? Function.identity() : hierarchyNameMapper;
+        LinkedHashSet<String> firstChain = superChain(
+                type1, provider, mapper, targetSuperclass);
         if (firstChain.isEmpty()) {
             return null;
         }
 
         String name = type2;
         for (int guard = 0; guard < 64 && name != null && !"java/lang/Object".equals(name); guard++) {
-            if (firstChain.contains(name) && isRuntimeResolvable(name, provider)) {
+            if (firstChain.contains(name)
+                    && isRuntimeResolvable(name, provider, targetSuperclass)) {
                 return name;
             }
-            name = superOf(name, provider);
+            name = superOf(name, provider, mapper, targetSuperclass);
         }
         return null;
     }
 
-    private static LinkedHashSet<String> superChain(String type, Function<String, byte[]> provider) {
+    private static LinkedHashSet<String> superChain(String type, Function<String, byte[]> provider,
+                                                     Function<String, String> hierarchyNameMapper,
+                                                     Function<String, String> targetSuperclass) {
         LinkedHashSet<String> chain = new LinkedHashSet<>();
         String name = type;
         for (int guard = 0; guard < 64 && name != null && !"java/lang/Object".equals(name); guard++) {
             if (!chain.add(name)) {
                 break;
             }
-            name = superOf(name, provider);
+            name = superOf(name, provider, hierarchyNameMapper, targetSuperclass);
         }
         return chain;
     }
 
-    private static String superOf(String name, Function<String, byte[]> provider) {
+    private static String superOf(String name, Function<String, byte[]> provider,
+                                  Function<String, String> hierarchyNameMapper,
+                                  Function<String, String> targetSuperclass) {
         byte[] bytes = readClassBytes(name, provider);
         if (bytes == null) {
-            return null;
+            String indexed = targetSuperclass == null ? null : targetSuperclass.apply(name);
+            return indexed == null ? null : hierarchyNameMapper.apply(indexed);
         }
         try {
-            return new ClassReader(bytes).getSuperName();
+            String superName = new ClassReader(bytes).getSuperName();
+            return superName == null ? null : hierarchyNameMapper.apply(superName);
         } catch (RuntimeException e) {
             return null;
         }
@@ -2541,7 +2617,8 @@ public class RetromodTransformer implements ClassFileTransformer {
         }
     }
 
-    private static boolean isRuntimeResolvable(String name, Function<String, byte[]> provider) {
+    private static boolean isRuntimeResolvable(String name, Function<String, byte[]> provider,
+                                               Function<String, String> targetSuperclass) {
         if (name == null) {
             return false;
         }
@@ -2551,12 +2628,21 @@ public class RetromodTransformer implements ClassFileTransformer {
         if (provider != null && provider.apply(name) != null) {
             return true;
         }
+        if (targetSuperclass != null && targetSuperclass.apply(name) != null) {
+            return true;
+        }
         try {
             Class.forName(name.replace('/', '.'), false, RetromodTransformer.class.getClassLoader());
             return true;
         } catch (Throwable ignored) {
             return false;
         }
+    }
+
+    private String targetSuperclass(String name) {
+        FuzzyMethodResolver resolver = fuzzyResolver;
+        return resolver == null || !resolver.isIndexed()
+                ? null : resolver.directSuperclass(name);
     }
 
     /** Tri-state result of {@link #classifyThrowable}. */

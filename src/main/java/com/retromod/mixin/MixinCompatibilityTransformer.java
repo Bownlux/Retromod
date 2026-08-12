@@ -310,8 +310,7 @@ public final class MixinCompatibilityTransformer {
             byte[] classBytes, MixinRefmapRepairIndex refmapRepairs) {
         AutomaticMixinTranslator automatic =
                 new AutomaticMixinTranslator(transformer.getFuzzyResolver());
-        byte[] translated = automatic.translate(classBytes);
-        translated = automatic.translateRefmapHandlers(translated, refmapRepairs);
+        byte[] translated = automatic.translate(classBytes, refmapRepairs);
         byte[] bridged = applyLegacyMemberBridges(translated);
         return adaptValueIoHandlers(bridged);
     }

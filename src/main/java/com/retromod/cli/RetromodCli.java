@@ -1148,8 +1148,13 @@ public class RetromodCli {
             // high-entry-count jar could still force hundreds of GB of inflate/deflate work (CPU DoS).
             // The runtime extractJar paths cap the total; match that here for the offline path.
             long totalRead = 0;
+            int totalEntries = 0;
             while (entries.hasMoreElements()) {
                 var entry = entries.nextElement();
+                if (++totalEntries > MAX_ARCHIVE_ENTRY_COUNT) {
+                    throw new IOException("mod jar contains more than "
+                            + MAX_ARCHIVE_ENTRY_COUNT + " entries: " + input);
+                }
 
                 // Decide the output entry name up front so a promoted mods.toml lands under its
                 // NeoForge filename. safeEntryName throws on path-traversal patterns.
@@ -1212,6 +1217,8 @@ public class RetromodCli {
                                                 java.nio.charset.StandardCharsets.UTF_8))
                                         .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                             }
+                        } else if (isRefmapEntry(entry.getName())) {
+                            data = refmapPlan.resources().getOrDefault(entry.getName(), data);
                         } else if (entry.getName().endsWith(".mixins.json") ||
                                    entry.getName().endsWith("mixin.json") ||
                                    (entry.getName().contains("mixin") && entry.getName().endsWith(".json"))) {
@@ -1228,8 +1235,6 @@ public class RetromodCli {
                                     new String(data, java.nio.charset.StandardCharsets.UTF_8),
                                     com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
                                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                        } else if (isRefmapEntry(entry.getName())) {
-                            data = refmapPlan.resources().getOrDefault(entry.getName(), data);
                         } else if (com.retromod.resources.ModDataMigrator.isMigratableData(entry.getName())) {
                             // 26.x data-only changes the bytecode pass can't reach (item renames,
                             // JSON shape changes); gated to 26.x inside migrate()
@@ -1311,7 +1316,14 @@ public class RetromodCli {
         }
         if (!verify) return;
 
-        var result = TransformVerifier.verifyAndReport(outputJar, modName, TARGET_MC_VERSION);
+        com.retromod.core.verify.McSymbolIndex targetIndex = null;
+        var resolver = RetromodTransformer.getInstance().getFuzzyResolver();
+        if (resolver != null && resolver.isIndexed()) {
+            targetIndex = new com.retromod.core.verify.FuzzyBackedSymbolIndex(
+                    resolver, TARGET_MC_VERSION);
+        }
+        var result = TransformVerifier.verifyAndReport(
+                outputJar, modName, TARGET_MC_VERSION, targetIndex);
         if (result.passed()) {
             System.out.println("Verification passed.");
         } else {
@@ -1396,7 +1408,9 @@ public class RetromodCli {
             com.retromod.mixin.MixinRefmapRepairIndex repairs) {}
 
     private static boolean isRefmapEntry(String name) {
-        return name != null && (name.endsWith("-refmap.json") || name.contains("refmap"));
+        if (name == null) return false;
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        return lower.endsWith(".json") && lower.contains("refmap");
     }
 
     private static ArchiveRefmapPlan prepareRefmapPlan(
@@ -1495,6 +1509,7 @@ public class RetromodCli {
 
     /** Max Jar-in-Jar nesting depth Retromod recurses through (libraries inside libraries). */
     private static final int MAX_JIJ_DEPTH = 4;
+    private static final int MAX_ARCHIVE_ENTRY_COUNT = 100_000;
     private static final long MAX_NESTED_OUTPUT_BYTES =
             com.retromod.util.ZipSecurity.DEFAULT_MAX_ENTRY_SIZE;
 
@@ -1558,6 +1573,8 @@ public class RetromodCli {
         Objects.requireNonNull(syntheticKey, "syntheticKey");
 
         try {
+            traversalBudget.reserve(0, syntheticKey);
+            lookupBudget.reserve(0, syntheticKey);
             var bais = new java.io.ByteArrayInputStream(jarData);
             var boundedOutput = new BoundedNestedOutput(
                     MAX_NESTED_OUTPUT_BYTES, jarData.length);
@@ -1592,8 +1609,10 @@ public class RetromodCli {
                         continue;
                     }
 
-                    byte[] data = com.retromod.util.ZipSecurity.safeReadAllBytes(jis);
-                    traversalBudget.reserve(data.length, name);
+                    long allowance = traversalBudget.beginRead(
+                            com.retromod.util.ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, name);
+                    byte[] data = com.retromod.util.ZipSecurity.safeReadAllBytes(jis, allowance);
+                    traversalBudget.completeRead(allowance, data.length);
 
                     if (name.endsWith(".class")) {
                             String className = name.substring(0, name.length() - ".class".length());
@@ -1608,6 +1627,12 @@ public class RetromodCli {
                             byte[] repaired = repairNestedMixin(
                                     nestedMixins, data, className, refmapPlan.repairs());
                             if (repaired != data) { data = repaired; modified = true; }
+                        } else if (isRefmapEntry(name)) {
+                            byte[] t2 = refmapPlan.resources().getOrDefault(name, data);
+                            if (!java.util.Arrays.equals(t2, data)) {
+                                data = t2;
+                                modified = true;
+                            }
                         } else if (name.endsWith(".mixins.json") || name.endsWith("mixin.json")
                                 || (name.contains("mixin") && name.endsWith(".json"))) {
                             byte[] patched = makeMixinConfigNonFatal(data);
@@ -1624,12 +1649,6 @@ public class RetromodCli {
                                     com.retromod.mapping.IntermediaryToMojangMapper.getInstance());
                             byte[] t = remapped.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                             if (!java.util.Arrays.equals(t, data)) { data = t; modified = true; }
-                        } else if (isRefmapEntry(name)) {
-                            byte[] t2 = refmapPlan.resources().getOrDefault(name, data);
-                            if (!java.util.Arrays.equals(t2, data)) {
-                                data = t2;
-                                modified = true;
-                            }
                         } else if (name.equals("fabric.mod.json") || name.equals("quilt.mod.json")) {
                             data = relaxFabricModDependencies(data);
                             modified = true;

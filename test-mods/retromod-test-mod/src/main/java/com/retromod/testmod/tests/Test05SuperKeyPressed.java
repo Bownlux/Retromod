@@ -30,13 +30,9 @@ import net.minecraft.text.Text;
  *   interface method to invoke is not in a direct superinterface
  * </pre>
  *
- * <p>Retromod's {@code emitMethodInsn} fixup catches this and rewrites the
- * call to use the direct superclass. If the fixup is missing or buggy,
- * loading {@code SuperCallScreen} below throws {@link VerifyError} and the
- * test fails.
- *
- * <p>We don't need to instantiate the screen - class load alone forces the
- * JVM to verify its methods, which is what we care about.
+ * <p>Retromod preserves the direct-superclass {@code INVOKESPECIAL}, constructs
+ * the new key event from the old primitive arguments, and updates the call descriptor. The test
+ * invokes the old entry point because class loading alone does not resolve the stale method call.
  */
 public class Test05SuperKeyPressed implements Test {
 
@@ -48,13 +44,9 @@ public class Test05SuperKeyPressed implements Test {
     @Override
     public TestResult run() {
         try {
-            // Class literal access triggers load + verify of SuperCallScreen.
-            // If the rewritten keyPressed has a bad invokespecial, the
-            // VerifyError surfaces here.
-            Class<?> cls = SuperCallScreen.class;
-            if (cls == null) {
-                return TestResult.fail("SuperCallScreen.class returned null (impossible)");
-            }
+            // An unused key avoids closing the screen or triggering navigation. Executing this
+            // method forces resolution of the transformed super call and its KeyEvent constructor.
+            new SuperCallScreen().keyPressed(-1, 0, 0);
             return TestResult.success();
         } catch (Throwable t) {
             return TestResult.fail(t.getClass().getSimpleName() + ": " + t.getMessage());
@@ -62,9 +54,8 @@ public class Test05SuperKeyPressed implements Test {
     }
 
     /**
-     * Deliberately a separate class so the {@code SuperCallScreen.class}
-     * literal in {@link #run()} forces a fresh load on the first call.
-     * Doesn't need to be instantiated - class verification covers our needs.
+     * Deliberately a separate class so its old override and super call are independently
+     * transformed before {@link #run()} executes them.
      */
     private static class SuperCallScreen extends Screen {
         protected SuperCallScreen() {

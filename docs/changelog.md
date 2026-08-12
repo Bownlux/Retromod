@@ -10,12 +10,25 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.3.0 Snapshot Line
 
-### Snapshot 7, August 11, 2026
+### Snapshot 7, August 12, 2026
 
 - Fixed parameter-capturing Fabric mixins whose annotation keeps a Yarn source selector while the refmap alone identifies the changed target method.
 - Carries an exact, unique target parameter-addition proof from refmap remapping into the matching class repair, while preserving the source selector that Mixin expects.
+- Repairs `@ModifyReturnValue` and `@ModifyExpressionValue` handlers that capture the complete old target argument list when a proven target change only adds parameters.
+- Keeps value-only handlers unchanged and refuses partial, extra, ambiguous, or semantic captures instead of guessing a layout.
 - Refuses ambiguous targets, `remap = false`, unsafe parameter annotations, staticness mismatches, and owner mismatches instead of guessing.
 - Uses the same repair context for runtime transforms, the CLI, normal and full AOT, and nested jars.
+- Recursively transforms Fabric libraries bundled inside other libraries, including their classes, mixins, refmaps, access wideners, and generated helpers.
+- Keeps nested helper names unique across the complete archive chain. Runtime recursion is capped at four levels below the outer mod.
+- Uses the exact `--mc-jar` index for CLI verification, removing false missing-class reports for current Minecraft classes that are not on the standalone CLI classpath.
+- Checks game-owned links inside recursively bundled libraries against the exact target, while intentionally ignoring their optional third-party integrations.
+- Keeps DataFixerUpper, SLF4J, Gson, and other Minecraft runtime libraries outside the client jar from appearing as false missing-class issues in executable CLI reports.
+- Adapts legacy `super.keyPressed(key, scanCode, modifiers)` calls to construct the 26.x `KeyEvent`, while preserving direct-superclass invocation semantics.
+- Recognizes Fabric `mixin.<modid>.json` configs so every listed mixin receives selector repair on official-name hosts.
+- Keeps rebuilt Fabric stack-map frames precise when a mod-owned class reaches its Minecraft ancestor through remapped hierarchy names, fixing the Revamped Phantoms `Shockwave` verifier failure.
+- Bridges Revamped Phantoms' remaining 26.x entity registration, tag, damage, targeting, nearby-query, and camera links with exact 26.1 and 26.2 API shapes.
+- Lets narrowly matched legacy entity renderers satisfy the modern render-state contract without a linkage crash. Their old custom geometry may remain invisible until it receives a real submit-pipeline port.
+- Keeps `mixins.<modid>.refmap.json` resources on the CLI refmap path in outer and nested jars.
 
 ### Snapshot 6, August 11, 2026
 
