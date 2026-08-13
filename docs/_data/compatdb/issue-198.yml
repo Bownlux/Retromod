@@ -1,0 +1,14 @@
+name: "Thaumcraft"
+badge: borked
+mod_version: "1.12.2-6.1.BETA26"
+host_mc: "1.21.1"
+loader: "forge"
+retromod: "1.30-snapshot4"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/thaumcraft"
+summary: "thaumcraft couldn't load something about Icommand"
+details: "after relaunching the game it refuses to load and says \"Thaumcraft (thaumcraft) has failed to load correctly\" with \"java.lang.NoClassFoundError: net/minecraft/command/Icommand"
+reporter: "explodingtomatos544-code"
+date: "2026-08-06"
+issue: 198
+
