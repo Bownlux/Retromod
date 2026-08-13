@@ -1,0 +1,14 @@
+name: "tinkers construct"
+badge: borked
+mod_version: "1.20.1"
+host_mc: "1.21.1"
+loader: "forge"
+retromod: "1.30-snapshot4"
+links:
+  modrinth: "https://modrinth.com/mod/tinkers-construct"
+summary: "error screen shows \"mod tconstruct requires minecraft 1.20.1 or above, and below 1.20.2 currently, minecraft 1.21.1\" \"mod mantle requires minecraft 1.20.1 or above, and below 1.20.2 currently, minecraft is 1.21.1\""
+details: "doesn't load"
+reporter: "explodingtomatos544-code"
+date: "2026-08-06"
+issue: 196
+
