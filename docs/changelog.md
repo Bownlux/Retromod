@@ -29,24 +29,6 @@ This page keeps the release history readable. The [full technical changelog](htt
 - Bridges Revamped Phantoms' remaining 26.x entity registration, tag, damage, targeting, nearby-query, and camera links with exact 26.1 and 26.2 API shapes.
 - Lets narrowly matched legacy entity renderers satisfy the modern render-state contract without a linkage crash. Their old custom geometry may remain invisible until it receives a real submit-pipeline port.
 - Keeps `mixins.<modid>.refmap.json` resources on the CLI refmap path in outer and nested jars.
-- Completes AutoClicky's 26.x client calls and GUI input and render bridges, and verifies the exact jar through stable 26.2 client startup.
-- Repairs Double Hotbar's complete seven-handler HUD mixin for the 26.1 extraction renames and the 26.2 `Gui` to `Hud` move.
-- Repairs inherited intermediary method calls when an exact jar or host hierarchy proves the mod-owned caller is a subclass, fixing ENGRAM's remaining entity world calls.
-- Disables ENGRAM's paired optional screenshot mixins together on the verified 1.21.11 host instead of leaving a delayed accessor crash.
-- Prevents an old Fabric API staged with a bundle from being translated into a duplicate of the host API.
-- Uses Mojang runtime member names for Forge 1.20.6 and newer, fixing CoFH Core's reported Forge 1.21.1 mixin shadow.
-- Adapts the removed Forge 1.20.1 channel builder and payload context to Forge 1.20.6 through 1.21.x. Forge 26.x needs a separate event-listener adapter.
-- Keeps Forge-only distribution markers on Forge instead of moving them into the NeoForge package.
-- Normalizes legacy class-only AccessTransformer descriptor syntax, fixing Mana and Artifice's NeoForge discovery error.
-- Repairs Management Wanted's reported abstract tick listeners and several early Forge-to-NeoForge companion links, including promoted loader metadata and discarded message-registration results.
-- Clarifies that version-incompatible Forge and NeoForge jars must start in `retromod-input/` or be prepared with the CLI.
-- Uses each loader's selected side so a merged Forge server jar cannot make a dedicated server look like a client.
-
-CoFH Core now passes its reported mixin failure and its next removed networking-builder failure on Forge 1.21.1. It is not fully compatible: Minecraft 1.21 replaced subclassed enchantment objects and their static registry with a final, data-driven system, which needs a manual data and behavior port.
-
-The Medieval Origins bundle no longer risks installing a translated duplicate of Fabric API. A full bundle result still requires its matching Origins pre-release plus the missing Spell Engine and Icarus dependencies.
-
-Management Wanted's reported tick-event crash is fixed in the exact three-jar bundle. Complete compatibility remains unconfirmed because its companions still depend on deeper Forge networking and lifecycle behavior, and the current packet bridge does not replay delivery.
 
 ### Snapshot 6, August 11, 2026
 

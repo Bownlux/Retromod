@@ -93,7 +93,7 @@ public final class NetworkShim {
         }
         
         /** Mirrors SimpleChannel.registerMessage. */
-        public <T> Object registerMessage(int id, Class<T> messageType,
+        public <T> void registerMessage(int id, Class<T> messageType,
                 BiConsumer<T, Object> encoder,
                 Function<Object, T> decoder,
                 BiConsumer<T, Object> messageConsumer) {
@@ -101,7 +101,6 @@ public final class NetworkShim {
             registrations.add(new PacketRegistration<>(
                 id, messageType, encoder, decoder, messageConsumer
             ));
-            return null;
         }
 
         public <T> MessageBuilder<T> messageBuilder(Class<T> type, int id) {
@@ -115,12 +114,12 @@ public final class NetworkShim {
         }
 
         /** The Optional&lt;NetworkDirection&gt; overload of registerMessage; same erasure story. */
-        public <T> Object registerMessage(int id, Class<T> messageType,
+        public <T> void registerMessage(int id, Class<T> messageType,
                 BiConsumer<T, Object> encoder,
                 Function<Object, T> decoder,
                 BiConsumer<T, Object> messageConsumer,
                 java.util.Optional<?> direction) {
-            return registerMessage(id, messageType, encoder, decoder, messageConsumer);
+            registerMessage(id, messageType, encoder, decoder, messageConsumer);
         }
 
         public void sendToServer(Object message) {

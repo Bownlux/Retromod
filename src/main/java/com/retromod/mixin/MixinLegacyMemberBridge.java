@@ -10,7 +10,6 @@ import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FrameNode;
-import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.InsnList;
 import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
@@ -41,26 +40,10 @@ final class MixinLegacyMemberBridge {
     private static final String BUILT_IN_REGISTRIES = "net/minecraft/core/registries/BuiltInRegistries";
     private static final String POSE = "net/minecraft/world/entity/Pose";
     private static final String GUI = "net/minecraft/client/gui/Gui";
-    private static final String HUD = "net/minecraft/client/gui/Hud";
     private static final String MINECRAFT = "net/minecraft/client/Minecraft";
     private static final String ENTITY = "net/minecraft/world/entity/Entity";
     private static final String PLAYER = "net/minecraft/world/entity/player/Player";
     private static final String CAMERA_PLAYER_DESC = "()L" + PLAYER + ";";
-    private static final String GUI_GRAPHICS_EXTRACTOR =
-            "net/minecraft/client/gui/GuiGraphicsExtractor";
-    private static final String DELTA_TRACKER = "net/minecraft/client/DeltaTracker";
-    private static final String CALLBACK_INFO =
-            "org/spongepowered/asm/mixin/injection/callback/CallbackInfo";
-    private static final String HOTBAR_EXTRACT_DESC =
-            "(L" + GUI_GRAPHICS_EXTRACTOR + ";L" + DELTA_TRACKER + ";)V";
-    private static final String HOTBAR_HANDLER_DESC =
-            "(L" + GUI_GRAPHICS_EXTRACTOR + ";L" + DELTA_TRACKER + ";L"
-                    + CALLBACK_INFO + ";)V";
-    private static final String HOTBAR_SLOT_DESC =
-            "(L" + GUI_GRAPHICS_EXTRACTOR + ";IIL" + DELTA_TRACKER + ";L" + PLAYER
-                    + ";Lnet/minecraft/world/item/ItemStack;I)V";
-    private static final String INJECT_DESC =
-            "Lorg/spongepowered/asm/mixin/injection/Inject;";
     private static final String CODEC = "com/mojang/serialization/Codec";
     private static final String MAP_CODEC = "com/mojang/serialization/MapCodec";
     private static final String MAP_CODEC_CODEC = "com/mojang/serialization/MapCodec$MapCodecCodec";
@@ -120,7 +103,6 @@ final class MixinLegacyMemberBridge {
             modified |= bridgeMobEffectMembers(classNode);
         }
         if (targets.contains(GUI)) {
-            modified |= repairDoubleHotbarMixin(classNode, targets);
             modified |= bridgeGuiCameraPlayer(classNode);
         }
         if (targets.contains(SMITHING_TRANSFORM_INTERMEDIARY)) {
@@ -145,125 +127,6 @@ final class MixinLegacyMemberBridge {
             }
         }
         return modified;
-    }
-
-    /**
-     * Repairs the exact HUD mixin shape shipped by Double Hotbar 1.3.4 (#181).
-     *
-     * <p>On 26.1 the hotbar implementation is still on {@code Gui}, but its three private
-     * methods were renamed from render-oriented names to extract-oriented names. In 26.2 those
-     * methods, their fields, and their bytecode moved intact to {@code Hud}. A global
-     * {@code Gui} to {@code Hud} redirect would move unrelated mixins, so this repair requires
-     * all seven handlers, their exact selectors, the slot shadow, the hotbar sprite shadow, and
-     * the slot call inside the drawing handler before changing anything.
-     */
-    private static boolean repairDoubleHotbarMixin(ClassNode classNode, List<String> targets) {
-        if (targets.size() != 1 || !GUI.equals(targets.get(0))) return false;
-
-        FieldNode hotbarSprite = findAnnotatedField(classNode, "HOTBAR_SPRITE",
-                "Lnet/minecraft/resources/Identifier;", SHADOW_DESC);
-        MethodNode slot = findAnnotatedMethod(
-                classNode, "renderSlot", HOTBAR_SLOT_DESC, SHADOW_DESC);
-        MethodNode drawItems = findMethod(classNode, "renderHotbarItems", HOTBAR_HANDLER_DESC);
-        if (hotbarSprite == null || slot == null || drawItems == null
-                || countCalls(drawItems, classNode.name, "renderSlot", HOTBAR_SLOT_DESC) != 1) {
-            return false;
-        }
-
-        String oldItems = "renderItemHotbar" + HOTBAR_EXTRACT_DESC;
-        String newItems = "extractItemHotbar" + HOTBAR_EXTRACT_DESC;
-        String oldDecorations = "renderHotbarAndDecorations" + HOTBAR_EXTRACT_DESC;
-        String newDecorations = "extractHotbarAndDecorations" + HOTBAR_EXTRACT_DESC;
-        List<SelectorRepair> selectors = new ArrayList<>();
-        for (String handler : List.of(
-                "renderHotbarFrame", "shiftHotbarSelector", "returnHotbarSelector",
-                "shiftHotbarItems", "renderHotbarItems")) {
-            SelectorRepair repair = exactSelectorRepair(
-                    classNode, handler, oldItems, newItems);
-            if (repair == null) return false;
-            selectors.add(repair);
-        }
-        for (String handler : List.of("shiftStatusBars", "returnStatusBars")) {
-            SelectorRepair repair = exactSelectorRepair(
-                    classNode, handler, oldDecorations, newDecorations);
-            if (repair == null) return false;
-            selectors.add(repair);
-        }
-
-        slot.name = "extractSlot";
-        for (MethodNode method : classNode.methods) {
-            for (AbstractInsnNode instruction : method.instructions.toArray()) {
-                if (instruction instanceof MethodInsnNode call
-                        && classNode.name.equals(call.owner)
-                        && "renderSlot".equals(call.name)
-                        && HOTBAR_SLOT_DESC.equals(call.desc)) {
-                    call.name = "extractSlot";
-                }
-            }
-        }
-        for (SelectorRepair repair : selectors) repair.apply();
-
-        if (com.retromod.core.RetromodVersion.compareMcVersions(
-                    com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "26.2") >= 0) {
-            retargetMixin(classNode, GUI, HUD);
-        }
-        return true;
-    }
-
-    private static SelectorRepair exactSelectorRepair(
-            ClassNode classNode, String methodName, String oldSelector, String newSelector) {
-        MethodNode method = findMethod(classNode, methodName, HOTBAR_HANDLER_DESC);
-        AnnotationNode inject = method != null ? findAnnotation(method, INJECT_DESC) : null;
-        if (inject == null || inject.values == null) return null;
-        for (int i = 0; i + 1 < inject.values.size(); i += 2) {
-            if (!"method".equals(inject.values.get(i))) continue;
-            Object value = inject.values.get(i + 1);
-            if (!(value instanceof List<?> selectors)
-                    || selectors.size() != 1 || !oldSelector.equals(selectors.get(0))) {
-                return null;
-            }
-            return new SelectorRepair(inject, i + 1, newSelector);
-        }
-        return null;
-    }
-
-    private static int countCalls(MethodNode method, String owner, String name, String desc) {
-        int count = 0;
-        for (AbstractInsnNode instruction : method.instructions.toArray()) {
-            if (instruction instanceof MethodInsnNode call
-                    && owner.equals(call.owner) && name.equals(call.name)
-                    && desc.equals(call.desc)) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private static void retargetMixin(ClassNode classNode, String oldTarget, String newTarget) {
-        for (List<AnnotationNode> annotations : annotationLists(
-                classNode.visibleAnnotations, classNode.invisibleAnnotations)) {
-            for (AnnotationNode annotation : annotations) {
-                if (!MIXIN_DESC.equals(annotation.desc) || annotation.values == null) continue;
-                for (int i = 0; i + 1 < annotation.values.size(); i += 2) {
-                    if (!"value".equals(annotation.values.get(i))) continue;
-                    Object value = annotation.values.get(i + 1);
-                    if (!(value instanceof List<?> targets) || targets.size() != 1
-                            || !(targets.get(0) instanceof Type type)
-                            || !oldTarget.equals(type.getInternalName())) {
-                        continue;
-                    }
-                    annotation.values.set(i + 1,
-                            new ArrayList<>(List.of(Type.getObjectType(newTarget))));
-                    return;
-                }
-            }
-        }
-    }
-
-    private record SelectorRepair(AnnotationNode annotation, int valueIndex, String selector) {
-        void apply() {
-            annotation.values.set(valueIndex, new ArrayList<>(List.of(selector)));
-        }
     }
 
     /**
@@ -399,9 +262,11 @@ final class MixinLegacyMemberBridge {
     }
 
     /**
-     * Keeps a legacy HUD mixin's camera-player lookup independent of the private target helper.
-     * This lets an exact mixin repair follow the {@code Gui} to {@code Hud} move without carrying
-     * a private shadow dependency across the target change (#181, Double Hotbar).
+     * The HUD rework dropped {@code Gui.getCameraPlayer()}, and a mod that shadows it loses its
+     * whole HUD mixin: the shadow cannot attach, so Mixin refuses the class and none of the mod's
+     * HUD drawing runs. That reads as "the mod loads but nothing appears" rather than a crash
+     * (#181, Double Hotbar). The shadow becomes a mixin-owned method that asks the client for the
+     * camera entity, which is what the removed method did.
      */
     private static boolean bridgeGuiCameraPlayer(ClassNode classNode) {
         MethodNode shadow = findAnnotatedMethod(classNode, "getCameraPlayer",
@@ -645,17 +510,6 @@ final class MixinLegacyMemberBridge {
         return null;
     }
 
-    private static FieldNode findAnnotatedField(ClassNode classNode, String name, String desc,
-            String annotationDesc) {
-        for (FieldNode field : classNode.fields) {
-            if (name.equals(field.name) && desc.equals(field.desc)
-                    && findAnnotation(field, annotationDesc) != null) {
-                return field;
-            }
-        }
-        return null;
-    }
-
     private static MethodNode findMethod(ClassNode classNode, String name, String desc) {
         for (MethodNode method : classNode.methods) {
             if (name.equals(method.name) && desc.equals(method.desc)) return method;
@@ -702,16 +556,6 @@ final class MixinLegacyMemberBridge {
     private static AnnotationNode findAnnotation(MethodNode method, String desc) {
         for (List<AnnotationNode> annotations : annotationLists(method.visibleAnnotations,
                 method.invisibleAnnotations)) {
-            for (AnnotationNode annotation : annotations) {
-                if (desc.equals(annotation.desc)) return annotation;
-            }
-        }
-        return null;
-    }
-
-    private static AnnotationNode findAnnotation(FieldNode field, String desc) {
-        for (List<AnnotationNode> annotations : annotationLists(field.visibleAnnotations,
-                field.invisibleAnnotations)) {
             for (AnnotationNode annotation : annotations) {
                 if (desc.equals(annotation.desc)) return annotation;
             }

@@ -24,16 +24,15 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Adapts legacy calls to primitive {@code Screen} keyboard and mouse methods on 26.x hosts.
+ * Adapts legacy calls to {@code Screen.keyPressed(int, int, int)} on 26.x hosts.
  *
  * <p>The input overhaul replaced those three primitive parameters with one
- * {@code KeyEvent}, while mouse clicks now take a {@code MouseButtonEvent} and a double-click flag.
- * A descriptor-only redirect is invalid because the old operands remain on the stack. Renaming old
- * overrides and generating reverse bridges is also unsafe: it changes virtual dispatch for every
- * mod screen. This pass instead changes only exact call sites whose owner is {@code Screen}. It
- * saves the primitive arguments in fresh locals, constructs the corresponding event, and invokes
+ * {@code KeyEvent}. A descriptor-only redirect is invalid because the old operands remain on the
+ * stack. Renaming old overrides and generating reverse bridges is also unsafe: it changes virtual
+ * dispatch for every mod screen. This pass instead changes only an exact call site whose owner is
+ * {@code Screen}. It saves the three arguments in fresh locals, constructs the event, and invokes
  * the same owner with the new descriptor. The original invocation opcode is retained, including
- * {@code INVOKESPECIAL} for real {@code super} calls.
+ * {@code INVOKESPECIAL} for a real {@code super.keyPressed(...)} call.
  */
 public final class LegacyInputEventCallAdapter {
 
@@ -41,22 +40,12 @@ public final class LegacyInputEventCallAdapter {
 
     private static final String SCREEN = "net/minecraft/client/gui/screens/Screen";
     private static final String KEY_EVENT = "net/minecraft/client/input/KeyEvent";
-    private static final String MOUSE_EVENT = "net/minecraft/client/input/MouseButtonEvent";
-    private static final String MOUSE_INFO = "net/minecraft/client/input/MouseButtonInfo";
-    private static final String OLD_KEY_DESCRIPTOR = "(III)Z";
-    private static final String NEW_KEY_DESCRIPTOR = "(L" + KEY_EVENT + ";)Z";
-    private static final String OLD_MOUSE_DESCRIPTOR = "(DDI)Z";
-    private static final String NEW_MOUSE_DESCRIPTOR = "(L" + MOUSE_EVENT + ";Z)Z";
+    private static final String OLD_DESCRIPTOR = "(III)Z";
+    private static final String NEW_DESCRIPTOR = "(L" + KEY_EVENT + ";)Z";
 
     private static final byte[] SCREEN_BYTES = SCREEN.getBytes(StandardCharsets.ISO_8859_1);
-    private static final byte[] KEY_METHOD_BYTES =
-            "keyPressed".getBytes(StandardCharsets.ISO_8859_1);
-    private static final byte[] MOUSE_METHOD_BYTES =
-            "mouseClicked".getBytes(StandardCharsets.ISO_8859_1);
-    private static final byte[] KEY_DESCRIPTOR_BYTES =
-            OLD_KEY_DESCRIPTOR.getBytes(StandardCharsets.ISO_8859_1);
-    private static final byte[] MOUSE_DESCRIPTOR_BYTES =
-            OLD_MOUSE_DESCRIPTOR.getBytes(StandardCharsets.ISO_8859_1);
+    private static final byte[] METHOD_BYTES = "keyPressed".getBytes(StandardCharsets.ISO_8859_1);
+    private static final byte[] DESCRIPTOR_BYTES = OLD_DESCRIPTOR.getBytes(StandardCharsets.ISO_8859_1);
 
     private LegacyInputEventCallAdapter() {}
 
@@ -66,7 +55,8 @@ public final class LegacyInputEventCallAdapter {
                 || RetromodVersion.compareMcVersions(
                         RetromodVersion.TARGET_MC_VERSION, "26.1") < 0
                 || !contains(classBytes, SCREEN_BYTES)
-                || !(hasKeyCallBytes(classBytes) || hasMouseCallBytes(classBytes))) {
+                || !contains(classBytes, METHOD_BYTES)
+                || !contains(classBytes, DESCRIPTOR_BYTES)) {
             return classBytes;
         }
 
@@ -77,74 +67,36 @@ public final class LegacyInputEventCallAdapter {
             int rewrites = 0;
 
             for (MethodNode method : classNode.methods) {
-                List<MethodInsnNode> keyCalls = legacyCalls(
-                        method, "keyPressed", OLD_KEY_DESCRIPTOR);
-                List<MethodInsnNode> mouseCalls = legacyCalls(
-                        method, "mouseClicked", OLD_MOUSE_DESCRIPTOR);
-                if (keyCalls.isEmpty() && mouseCalls.isEmpty()) continue;
+                List<MethodInsnNode> calls = legacyCalls(method);
+                if (calls.isEmpty()) continue;
 
-                if (!keyCalls.isEmpty()) {
-                    // The three slots are reused for every matching key call in this method. Each
-                    // inserted sequence stores and reloads them without a branch target between.
-                    int keyLocal = method.maxLocals;
-                    int scanCodeLocal = keyLocal + 1;
-                    int modifiersLocal = keyLocal + 2;
-                    method.maxLocals += 3;
+                // The three slots are reused for every matching call in this method. Each inserted
+                // sequence stores and reloads them without a branch target in between.
+                int keyLocal = method.maxLocals;
+                int scanCodeLocal = keyLocal + 1;
+                int modifiersLocal = keyLocal + 2;
+                method.maxLocals += 3;
 
-                    for (MethodInsnNode call : keyCalls) {
-                        InsnList event = new InsnList();
-                        // [..., screen, key, scancode, modifiers] -> [..., screen]
-                        event.add(new VarInsnNode(Opcodes.ISTORE, modifiersLocal));
-                        event.add(new VarInsnNode(Opcodes.ISTORE, scanCodeLocal));
-                        event.add(new VarInsnNode(Opcodes.ISTORE, keyLocal));
-                        // [..., screen] -> [..., screen, new KeyEvent(key, scancode, modifiers)]
-                        event.add(new TypeInsnNode(Opcodes.NEW, KEY_EVENT));
-                        event.add(new org.objectweb.asm.tree.InsnNode(Opcodes.DUP));
-                        event.add(new VarInsnNode(Opcodes.ILOAD, keyLocal));
-                        event.add(new VarInsnNode(Opcodes.ILOAD, scanCodeLocal));
-                        event.add(new VarInsnNode(Opcodes.ILOAD, modifiersLocal));
-                        event.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, KEY_EVENT,
-                                "<init>", "(III)V", false));
-                        method.instructions.insertBefore(call, event);
+                for (MethodInsnNode call : calls) {
+                    InsnList event = new InsnList();
+                    // [..., screen, key, scancode, modifiers] -> [..., screen]
+                    event.add(new VarInsnNode(Opcodes.ISTORE, modifiersLocal));
+                    event.add(new VarInsnNode(Opcodes.ISTORE, scanCodeLocal));
+                    event.add(new VarInsnNode(Opcodes.ISTORE, keyLocal));
+                    // [..., screen] -> [..., screen, new KeyEvent(key, scancode, modifiers)]
+                    event.add(new TypeInsnNode(Opcodes.NEW, KEY_EVENT));
+                    event.add(new org.objectweb.asm.tree.InsnNode(Opcodes.DUP));
+                    event.add(new VarInsnNode(Opcodes.ILOAD, keyLocal));
+                    event.add(new VarInsnNode(Opcodes.ILOAD, scanCodeLocal));
+                    event.add(new VarInsnNode(Opcodes.ILOAD, modifiersLocal));
+                    event.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, KEY_EVENT,
+                            "<init>", "(III)V", false));
+                    method.instructions.insertBefore(call, event);
 
-                        call.desc = NEW_KEY_DESCRIPTOR;
-                        rewrites++;
-                    }
-                }
-
-                if (!mouseCalls.isEmpty()) {
-                    int buttonLocal = method.maxLocals;
-                    int yLocal = buttonLocal + 1;
-                    int xLocal = yLocal + 2;
-                    method.maxLocals += 5;
-
-                    for (MethodInsnNode call : mouseCalls) {
-                        InsnList event = new InsnList();
-                        // [..., screen, x(double), y(double), button] -> [..., screen]
-                        event.add(new VarInsnNode(Opcodes.ISTORE, buttonLocal));
-                        event.add(new VarInsnNode(Opcodes.DSTORE, yLocal));
-                        event.add(new VarInsnNode(Opcodes.DSTORE, xLocal));
-                        // Old mouseClicked had no modifier mask. Zero preserves that absence.
-                        event.add(new TypeInsnNode(Opcodes.NEW, MOUSE_EVENT));
-                        event.add(new org.objectweb.asm.tree.InsnNode(Opcodes.DUP));
-                        event.add(new VarInsnNode(Opcodes.DLOAD, xLocal));
-                        event.add(new VarInsnNode(Opcodes.DLOAD, yLocal));
-                        event.add(new TypeInsnNode(Opcodes.NEW, MOUSE_INFO));
-                        event.add(new org.objectweb.asm.tree.InsnNode(Opcodes.DUP));
-                        event.add(new VarInsnNode(Opcodes.ILOAD, buttonLocal));
-                        event.add(new org.objectweb.asm.tree.InsnNode(Opcodes.ICONST_0));
-                        event.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, MOUSE_INFO,
-                                "<init>", "(II)V", false));
-                        event.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, MOUSE_EVENT,
-                                "<init>", "(DDL" + MOUSE_INFO + ";)V", false));
-                        // The old API had no double-click argument. A direct legacy call is one
-                        // click, so false is the exact non-synthesized value.
-                        event.add(new org.objectweb.asm.tree.InsnNode(Opcodes.ICONST_0));
-                        method.instructions.insertBefore(call, event);
-
-                        call.desc = NEW_MOUSE_DESCRIPTOR;
-                        rewrites++;
-                    }
+                    // Preserve INVOKESPECIAL for direct super calls and INVOKEVIRTUAL for ordinary
+                    // Screen-typed calls. Only the operand shape and exact descriptor change.
+                    call.desc = NEW_DESCRIPTOR;
+                    rewrites++;
                 }
             }
 
@@ -153,18 +105,17 @@ public final class LegacyInputEventCallAdapter {
             // the fresh transient locals without asking the offline classpath to resolve Screen.
             SafeClassWriter writer = new SafeClassWriter(reader, ClassWriter.COMPUTE_MAXS);
             classNode.accept(writer);
-            LOGGER.debug("Adapted {} legacy Screen input call(s) in {}",
+            LOGGER.debug("Adapted {} legacy Screen.keyPressed call(s) in {}",
                     rewrites, classNode.name);
             return writer.toByteArray();
         } catch (Throwable t) {
-            LOGGER.debug("Legacy Screen input adaptation skipped ({}); left unchanged",
+            LOGGER.debug("Legacy Screen.keyPressed adaptation skipped ({}); left unchanged",
                     t.toString());
             return classBytes;
         }
     }
 
-    private static List<MethodInsnNode> legacyCalls(
-            MethodNode method, String methodName, String descriptor) {
+    private static List<MethodInsnNode> legacyCalls(MethodNode method) {
         List<MethodInsnNode> calls = new ArrayList<>();
         for (AbstractInsnNode instruction : method.instructions.toArray()) {
             if (!(instruction instanceof MethodInsnNode call)) continue;
@@ -172,22 +123,12 @@ public final class LegacyInputEventCallAdapter {
             if ((opcode == Opcodes.INVOKESPECIAL || opcode == Opcodes.INVOKEVIRTUAL)
                     && !call.itf
                     && SCREEN.equals(call.owner)
-                    && methodName.equals(call.name)
-                    && descriptor.equals(call.desc)) {
+                    && "keyPressed".equals(call.name)
+                    && OLD_DESCRIPTOR.equals(call.desc)) {
                 calls.add(call);
             }
         }
         return calls;
-    }
-
-    private static boolean hasKeyCallBytes(byte[] classBytes) {
-        return contains(classBytes, KEY_METHOD_BYTES)
-                && contains(classBytes, KEY_DESCRIPTOR_BYTES);
-    }
-
-    private static boolean hasMouseCallBytes(byte[] classBytes) {
-        return contains(classBytes, MOUSE_METHOD_BYTES)
-                && contains(classBytes, MOUSE_DESCRIPTOR_BYTES);
     }
 
     private static boolean contains(byte[] haystack, byte[] needle) {

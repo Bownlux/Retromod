@@ -4,11 +4,6 @@
  */
 package com.retromod.core;
 
-import com.retromod.mapping.IntermediaryToMojangMapper;
-import com.retromod.shim.common.LegacyClientInteractionSynthetic;
-import com.retromod.shim.fabric.Fabric_1_21_11_to_26_1;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
@@ -17,17 +12,13 @@ import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FrameNode;
-import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -47,10 +38,6 @@ class AutoClickyFrameMergeTest {
             Path.of("test-jars-mixin/autoclicky-1.2.1+mc1.20.5-1.21.1.jar");
     private static final String OWNER = "com/breelock/autoclicky/AutoClicky";
     private static final String LAMBDA = "lambda$onInitialize$0";
-    private static final String OLD_COMBAT = "com/breelock/autoclicky/pages/OldCombat";
-    private static final String SLIDER = "com/breelock/autoclicky/widgets/TooltipSliderWidget";
-    private static final String PLAYER_METHODS = "com/breelock/autoclicky/PlayerMethods";
-    private static final String GUI = "net/minecraft/client/gui/GuiGraphicsExtractor";
 
     private String savedVersion;
 
@@ -69,19 +56,6 @@ class AutoClickyFrameMergeTest {
                 return in.readAllBytes();
             }
         }
-    }
-
-    @Test
-    @DisplayName("AutoClicky legacy Fabric API dependency uses the current mod ID")
-    void migratesLegacyFabricApiDependencyFromExactJar() throws Exception {
-        byte[] metadata = entry(FIXTURE, "fabric.mod.json");
-        byte[] migrated = FabricMetadataCompat.migrateLegacyFabricApiDependency(metadata);
-        JsonObject depends = JsonParser.parseString(new String(migrated,
-                java.nio.charset.StandardCharsets.UTF_8))
-                .getAsJsonObject().getAsJsonObject("depends");
-
-        assertFalse(depends.has("fabric"), "retired Fabric API umbrella ID survived");
-        assertEquals("*", depends.get("fabric-api").getAsString());
     }
 
     /** Every reference type that appears on the operand stack of the lambda's frames. */
@@ -113,49 +87,6 @@ class AutoClickyFrameMergeTest {
                     Files.write(out, in.readAllBytes());
                 }
             }
-        }
-    }
-
-    private static Map<String, byte[]> classes(Path jar) throws Exception {
-        Map<String, byte[]> classes = new HashMap<>();
-        try (ZipFile zip = new ZipFile(jar.toFile())) {
-            for (ZipEntry e : java.util.Collections.list(zip.entries())) {
-                if (!e.getName().endsWith(".class")) continue;
-                try (InputStream in = zip.getInputStream(e)) {
-                    classes.put(e.getName().substring(0, e.getName().length() - 6),
-                            in.readAllBytes());
-                }
-            }
-        }
-        return classes;
-    }
-
-    private static List<MethodInsnNode> calls(byte[] classBytes) {
-        ClassNode node = new ClassNode();
-        new ClassReader(classBytes).accept(node, 0);
-        List<MethodInsnNode> calls = new ArrayList<>();
-        for (MethodNode method : node.methods) {
-            for (var instruction : method.instructions.toArray()) {
-                if (instruction instanceof MethodInsnNode call) calls.add(call);
-            }
-        }
-        return calls;
-    }
-
-    private static boolean hasMethod(byte[] classBytes, String name, String descriptor) {
-        ClassNode node = new ClassNode();
-        new ClassReader(classBytes).accept(node, 0);
-        return node.methods.stream().anyMatch(method -> name.equals(method.name)
-                && descriptor.equals(method.desc));
-    }
-
-    private static void assertNoCall(Map<String, byte[]> transformed,
-            String owner, String name, String descriptor) {
-        for (Map.Entry<String, byte[]> entry : transformed.entrySet()) {
-            assertFalse(calls(entry.getValue()).stream().anyMatch(call -> owner.equals(call.owner)
-                            && name.equals(call.name) && descriptor.equals(call.desc)),
-                    () -> "stale call survived in " + entry.getKey() + ": "
-                            + owner + "." + name + descriptor);
         }
     }
 
@@ -221,75 +152,5 @@ class AutoClickyFrameMergeTest {
         assertFalse(after.contains("java/lang/Object"),
                 "frame merge widened to Object, which the verifier rejects when the value is "
                         + "passed to setScreen(Screen). Stack types: " + after);
-    }
-
-    @Test
-    @DisplayName("#180: the exact AutoClicky jar receives the bounded 26.x call and GUI repairs")
-    void exactJarReceivesInteractionAndGuiRepairs() throws Exception {
-        Assumptions.assumeTrue(Files.isRegularFile(FIXTURE), "autoclicky fixture present");
-        assertEquals("535eed931ffd7fcea6a889fd898268529b2bf5f289b208ef46fe264964dd859d",
-                java.util.HexFormat.of().formatHex(
-                        MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(FIXTURE))),
-                "the regression fixture must remain byte-identical to the reported release jar");
-
-        savedVersion = RetromodVersion.TARGET_MC_VERSION;
-        RetromodVersion.TARGET_MC_VERSION = "26.2";
-        Map<String, byte[]> source = classes(FIXTURE);
-        RetromodTransformer transformer = RetromodTransformer.getInstance();
-        transformer.clearRedirectsForTesting();
-        transformer.setJarClassBytesProvider(source::get);
-        IntermediaryToMojangMapper.applyTo(transformer);
-        new Fabric_1_21_11_to_26_1().registerRedirects(transformer);
-
-        Map<String, byte[]> transformed = new HashMap<>();
-        for (Map.Entry<String, byte[]> entry : source.entrySet()) {
-            transformed.put(entry.getKey(),
-                    transformer.transformClass(entry.getValue(), entry.getKey()));
-        }
-
-        String component = "Lnet/minecraft/network/chat/Component;";
-        String player = "Lnet/minecraft/world/entity/player/Player;";
-        String entity = "Lnet/minecraft/world/entity/Entity;";
-        String hand = "Lnet/minecraft/world/InteractionHand;";
-        String result = "Lnet/minecraft/world/InteractionResult;";
-        String render = "(L" + GUI + ";IIF)V";
-        String font = "Lnet/minecraft/client/gui/Font;";
-
-        assertNoCall(transformed, "net/minecraft/client/player/LocalPlayer",
-                "displayClientMessage", "(" + component + "Z)V");
-        assertNoCall(transformed, "net/minecraft/client/multiplayer/MultiPlayerGameMode",
-                "interact", "(" + player + entity + hand + ")" + result);
-        assertNoCall(transformed, "net/minecraft/client/multiplayer/MultiPlayerGameMode",
-                "hasInfiniteItems", "()Z");
-        assertNoCall(transformed, "net/minecraft/world/InteractionResult",
-                "shouldSwing", "()Z");
-        assertNoCall(transformed, "net/minecraft/client/gui/components/Checkbox",
-                "render", render);
-        assertNoCall(transformed, "net/minecraft/client/gui/screens/Screen",
-                "mouseClicked", "(DDI)Z");
-        assertNoCall(transformed, GUI, "text", "(" + font + component + "IIIZ)I");
-        assertNoCall(transformed, GUI, "extractTooltip",
-                "(" + font + component + "II)V");
-
-        assertTrue(calls(transformed.get(OWNER)).stream().anyMatch(call ->
-                        LegacyClientInteractionSynthetic.INTERNAL.equals(call.owner)
-                                && "displayClientMessage".equals(call.name)),
-                "the action-bar boolean must reach the semantic message bridge");
-        assertTrue(calls(transformed.get(PLAYER_METHODS)).stream().anyMatch(call ->
-                        LegacyClientInteractionSynthetic.INTERNAL.equals(call.owner)
-                                && "shouldSwing".equals(call.name)),
-                "the swing decision must not be fuzzily changed to consumesAction");
-
-        assertTrue(hasMethod(transformed.get(OLD_COMBAT), "extractRenderState", render));
-        assertTrue(hasMethod(transformed.get(OLD_COMBAT), "mouseClicked",
-                "(Lnet/minecraft/client/input/MouseButtonEvent;Z)Z"));
-        assertTrue(hasMethod(transformed.get(OLD_COMBAT), "keyPressed",
-                "(Lnet/minecraft/client/input/KeyEvent;)Z"));
-        assertTrue(hasMethod(transformed.get(SLIDER), "extractWidgetRenderState", render));
-        assertTrue(calls(transformed.get(SLIDER)).stream().anyMatch(call ->
-                        GUI.equals(call.owner) && "setTooltipForNextFrame".equals(call.name)),
-                "the legacy tooltip call must enter the current deferred-tooltip API");
-        assertTrue(transformer.getSyntheticClasses().containsKey(
-                LegacyClientInteractionSynthetic.INTERNAL));
     }
 }

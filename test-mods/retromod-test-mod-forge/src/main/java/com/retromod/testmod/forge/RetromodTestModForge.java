@@ -6,8 +6,6 @@ package com.retromod.testmod.forge;
 
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraftforge.fml.common.Mod;
@@ -63,17 +61,6 @@ public class RetromodTestModForge {
         n++; passed += check(n, "#192 Forge 1.20.1 target SRG block state", () ->
             Blocks.DIRT.defaultBlockState().getBlock() == Blocks.DIRT);
 
-        // The 1.20.1 production jar stores this call as m_21211_. Forge 1.20.6+
-        // exposes getUseItem instead, so resolving this call catches the #204 namespace gap.
-        n++; passed += check(n, "#204 Forge official-name LivingEntity.getUseItem", () -> {
-            try {
-                callLegacyGetUseItem(null);
-                return false;
-            } catch (NullPointerException expected) {
-                return true;
-            }
-        });
-
         // ─── #85/#115: FMLJavaModLoadingContext Forge->NeoForge bridge ───
         // The idiom nearly every Forge @Mod constructor opens with, to grab its event bus for
         // DeferredRegister. On a Forge host this is the native FML class and the check passes
@@ -90,15 +77,6 @@ public class RetromodTestModForge {
         // redirect assertion lives in the JUnit ForgeEventMigrationTest.
         n++; passed += check(n, "#85/#115 FMLJavaModLoadingContext.get().getModEventBus() bridge", () ->
             net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus() != null);
-
-        // #207: these Forge FML types moved as a package, and 26.x replaced the dist field with
-        // an accessor. Class literals keep the checks side-effect free while still forcing linkage.
-        n++; passed += check(n, "#207 Forge FML package migration", () ->
-            net.minecraftforge.fml.loading.FMLEnvironment.dist != null
-                && net.minecraftforge.fml.util.thread.SidedThreadGroups.SERVER != null
-                && net.minecraftforge.forgespi.language.IModInfo.class.getName() != null);
-        n++; passed += check(n, "#207 Forge spawn egg replacement is loadable", () ->
-            net.minecraftforge.common.ForgeSpawnEggItem.class.getName() != null);
 
         LOG.info("{} SUMMARY: {}/{} passed", PREFIX, passed, n);
     }
@@ -120,9 +98,5 @@ public class RetromodTestModForge {
                     t.getClass().getSimpleName(), t.getMessage());
             return 0;
         }
-    }
-
-    private static ItemStack callLegacyGetUseItem(LivingEntity entity) {
-        return entity.getUseItem();
     }
 }

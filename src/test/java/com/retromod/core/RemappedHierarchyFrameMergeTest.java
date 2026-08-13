@@ -64,15 +64,6 @@ class RemappedHierarchyFrameMergeTest {
         transformer.registerClassRedirect(OLD_ABSTRACT_LIST, "java/util/AbstractList");
         transformer.setJarClassBytesProvider(name -> CHILD.equals(name) ? original : null);
 
-        assertEquals("java/util/AbstractList", RetromodTransformer.commonSuperViaBytes(
-                "java/util/AbstractList", CHILD,
-                name -> CHILD.equals(name) ? original : null,
-                name -> switch (name) {
-                    case OLD_LIST -> "java/util/ArrayList";
-                    case OLD_ABSTRACT_LIST -> "java/util/AbstractList";
-                    default -> name;
-                }));
-
         byte[] transformed = transformer.transformClass(original, CHILD);
         assertNotNull(transformed);
 

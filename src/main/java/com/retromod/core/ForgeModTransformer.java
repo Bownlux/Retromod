@@ -137,7 +137,6 @@ public class ForgeModTransformer {
 
             makeMixinConfigsNonFatal(tempDir);
             stripAccessWideners(tempDir);
-            sanitizeAccessTransformer(tempDir);
             stripMixinSyntheticPackage(tempDir);
 
             // Embed registered synthetic classes this mod references under a
@@ -458,7 +457,6 @@ public class ForgeModTransformer {
                     collectRefmapRepairs(tempDir);
             int classesTransformed = transformClasses(tempDir, refmapRepairs);
             int refmapsTransformed = transformRefmaps(tempDir);
-            boolean accessTransformerNormalized = sanitizeAccessTransformer(tempDir);
 
             boolean hasForgeToml      = Files.exists(tempDir.resolve("META-INF/mods.toml"));
             boolean hasNeoForgeToml   = Files.exists(tempDir.resolve("META-INF/neoforge.mods.toml"));
@@ -476,7 +474,6 @@ public class ForgeModTransformer {
             int nestedPatched = (depth < MAX_JIJ_DEPTH) ? patchJarInJarMetadata(tempDir, depth + 1) : 0;
 
             boolean changed = classesTransformed > 0 || refmapsTransformed > 0
-                    || accessTransformerNormalized
                     || hasForgeToml || hasNeoForgeToml
                     || dataMigrated > 0 || nestedPatched > 0;
             if (!changed) {
@@ -910,26 +907,12 @@ public class ForgeModTransformer {
     }
 
     /**
-     * Repoint a mod's mandatory {@code forge} loader dependency at {@code neoforge} and discard
-     * its Forge loader-version floor. NeoForge has no mod with id {@code forge}, and its version
-     * does not track Forge's 47.x numbering, so carrying a range such as {@code [47,)} across the
-     * rename still rejects NeoForge 26.1 before any mod code runs (#42, #207).
+     * Repoint a mod's mandatory {@code forge} loader dependency at {@code neoforge}.
+     * NeoForge has no mod with id {@code forge}, so without this it rejects the mod
+     * even after the toml is promoted (#42). Only the {@code forge} dependency id is touched.
      */
     static String pointForgeDependencyAtNeoForge(String toml) {
-        StringBuilder result = new StringBuilder(toml.length());
-        String[] blocks = toml.split("(?m)(?=^\\s*\\[\\[dependencies\\.)", -1);
-        for (String block : blocks) {
-            Matcher modId = MOD_ID_PATTERN.matcher(block);
-            if (modId.find() && "forge".equals(modId.group(1))) {
-                block = block.replaceFirst(
-                        "(modId\\s*=\\s*)\"forge\"", "$1\"neoforge\"");
-                block = block.replaceFirst(
-                        "(?m)^(\\s*versionRange\\s*=\\s*)(\"[^\"]*\"|'[^']*')",
-                        "$1\"[0,)\"");
-            }
-            result.append(block);
-        }
-        return result.toString();
+        return toml.replaceAll("(modId\\s*=\\s*)\"forge\"", "$1\"neoforge\"");
     }
 
     /**
@@ -1160,45 +1143,6 @@ public class ForgeModTransformer {
                 LOGGER.warn("Failed to write generated accesstransformer.cfg: {}", e.getMessage());
             }
         }
-    }
-
-    /**
-     * Normalize legacy AccessTransformer syntax that current NeoForge rejects.
-     * Some older Forge mods wrote a class target like a JVM object descriptor,
-     * with a trailing semicolon. Old Forge accepted it, but the current parser
-     * treats the semicolon as part of the binary class name and aborts discovery.
-     */
-    private boolean sanitizeAccessTransformer(Path dir) {
-        Path atFile = dir.resolve("META-INF").resolve("accesstransformer.cfg");
-        if (!Files.isRegularFile(atFile)) {
-            return false;
-        }
-
-        try {
-            String original = Files.readString(atFile, java.nio.charset.StandardCharsets.UTF_8);
-            String normalized = normalizeAccessTransformer(original);
-            if (!normalized.equals(original)) {
-                Files.writeString(atFile, normalized, java.nio.charset.StandardCharsets.UTF_8);
-                LOGGER.info("Normalized legacy class descriptors in META-INF/accesstransformer.cfg");
-                return true;
-            }
-        } catch (IOException e) {
-            LOGGER.warn("Failed to normalize META-INF/accesstransformer.cfg: {}", e.getMessage());
-        }
-        return false;
-    }
-
-    /**
-     * Remove a trailing descriptor semicolon only from class-only AT entries.
-     * Member descriptors legitimately contain semicolons, so those lines must
-     * remain byte-for-byte unchanged.
-     */
-    public static String normalizeAccessTransformer(String content) {
-        Pattern legacyClassDescriptor = Pattern.compile(
-                "(?m)^(\\s*(?:public|protected|private|default)(?:[+-]f)?\\s+)"
-              + "([A-Za-z_$][\\w$]*(?:[./][A-Za-z_$][\\w$]*)*);"
-              + "(?=\\s*(?:#.*)?\\r?$)");
-        return legacyClassDescriptor.matcher(content).replaceAll("$1$2");
     }
 
     // --- Runtime transform cache + membership stamp (Sinytra Tier A #1/#2) ---

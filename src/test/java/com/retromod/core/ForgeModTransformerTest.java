@@ -25,80 +25,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class ForgeModTransformerTest {
 
     @Test
-    @DisplayName("#221: legacy descriptor semicolon is removed from class-only AT targets")
-    void normalizesLegacyAccessTransformerClassTarget() {
-        String in = "public net.minecraft.world.level.storage.loot.LootContext; # Loot Context\n"
-                + "public net.minecraft.world.entity.LivingEntity "
-                + "m_21244_(Lnet/minecraft/world/entity/EquipmentSlot;)"
-                + "Lnet/minecraft/world/item/ItemStack; # member descriptors stay intact\n";
-
-        String out = ForgeModTransformer.normalizeAccessTransformer(in);
-
-        assertTrue(out.startsWith(
-                "public net.minecraft.world.level.storage.loot.LootContext # Loot Context"), out);
-        assertTrue(out.contains("EquipmentSlot;)Lnet/minecraft/world/item/ItemStack;"),
-                "valid member descriptor semicolons must remain: " + out);
-    }
-
-    @Test
-    @DisplayName("#221: runtime transform sanitizes an author-provided AccessTransformer")
-    void transformModSanitizesAuthorAccessTransformer(@TempDir Path tmp) throws Exception {
-        Path src = tmp.resolve("mna-at-fixture.jar");
-        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(src))) {
-            writeEntry(jos, "META-INF/mods.toml",
-                    "modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\nlicense=\"MIT\"\n"
-                  + "[[mods]]\nmodId=\"mna_fixture\"\n"
-                  + "[[dependencies.mna_fixture]]\nmodId=\"minecraft\"\n"
-                  + "versionRange=\"[1.20.1,1.21)\"\n");
-            writeEntry(jos, "META-INF/accesstransformer.cfg",
-                    "public net.minecraft.world.level.storage.loot.LootContext; # Loot Context\n");
-        }
-
-        Path out = new ForgeModTransformer("26.1")
-                .transformMod(src, Files.createDirectory(tmp.resolve("out")));
-
-        assertNotNull(out, "transformMod should produce an output jar");
-        assertEquals(
-                "public net.minecraft.world.level.storage.loot.LootContext # Loot Context\n",
-                readEntry(out, "META-INF/accesstransformer.cfg"));
-    }
-
-    @Test
-    @DisplayName("#221: runtime transform sanitizes an AccessTransformer inside Jar-in-Jar")
-    void transformModSanitizesNestedAccessTransformer(@TempDir Path tmp) throws Exception {
-        byte[] nested = jarBytes("META-INF/accesstransformer.cfg",
-                "public net.minecraft.world.level.storage.loot.LootContext; # nested\n");
-        Path src = tmp.resolve("outer-with-nested-at.jar");
-        try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(src))) {
-            writeEntry(output, "META-INF/mods.toml",
-                    "modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\nlicense=\"MIT\"\n"
-                  + "[[mods]]\nmodId=\"outer_fixture\"\n"
-                  + "[[dependencies.outer_fixture]]\nmodId=\"minecraft\"\n"
-                  + "versionRange=\"[1.20.1,1.21)\"\n");
-            output.putNextEntry(new JarEntry("META-INF/jarjar/nested.jar"));
-            output.write(nested);
-            output.closeEntry();
-        }
-
-        Path transformed = new ForgeModTransformer("26.1")
-                .transformMod(src, Files.createDirectory(tmp.resolve("out")));
-
-        assertNotNull(transformed);
-        byte[] nestedOutput;
-        try (JarFile outer = new JarFile(transformed.toFile())) {
-            try (var input = outer.getInputStream(
-                    outer.getJarEntry("META-INF/jarjar/nested.jar"))) {
-                nestedOutput = input.readAllBytes();
-            }
-        }
-        Path nestedPath = tmp.resolve("nested-output.jar");
-        Files.write(nestedPath, nestedOutput);
-        assertEquals(
-                "public net.minecraft.world.level.storage.loot.LootContext # nested\n",
-                readEntry(nestedPath, "META-INF/accesstransformer.cfg"));
-    }
-
-    @Test
     @DisplayName("refmap discovery accepts JSON resources but not nested jar filenames")
     void refmapDiscoveryRequiresJson() {
         assertTrue(ForgeModTransformer.isRefmapResource("mappings/compat-refmap.json"));
@@ -144,16 +70,13 @@ class ForgeModTransformerTest {
         // a forge dep plus a minecraft dep
         String in = "[[dependencies.twigs]]\n"
                 + "modId=\"forge\"\n"
-                + "versionRange=\"[47,)\"\n"
+                + "versionRange=\"[0,)\"\n"
                 + "[[dependencies.twigs]]\n"
                 + "modId = \"minecraft\"\n"
                 + "versionRange=\"[1.21.1,)\"\n";
         String out = ForgeModTransformer.pointForgeDependencyAtNeoForge(in);
         assertTrue(out.contains("modId=\"neoforge\""), "forge dep must be repointed at neoforge: " + out);
         assertFalse(out.contains("modId=\"forge\""), "no `forge` dependency should remain");
-        assertFalse(out.contains("[47,)"), "Forge's loader version must not constrain NeoForge");
-        assertTrue(out.contains("versionRange=\"[0,)\""),
-                "the promoted NeoForge dependency should accept the current loader: " + out);
         // the minecraft dependency and its versionRange stay untouched
         assertTrue(out.contains("modId = \"minecraft\""), "minecraft dep untouched");
         assertTrue(out.contains("versionRange=\"[1.21.1,)\""), "minecraft versionRange untouched");
@@ -216,14 +139,6 @@ class ForgeModTransformerTest {
         jos.putNextEntry(new JarEntry(name));
         jos.write(content.getBytes(StandardCharsets.UTF_8));
         jos.closeEntry();
-    }
-
-    private static byte[] jarBytes(String name, String content) throws Exception {
-        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
-        try (JarOutputStream output = new JarOutputStream(bytes)) {
-            writeEntry(output, name, content);
-        }
-        return bytes.toByteArray();
     }
 
     private static String readEntry(Path jar, String name) throws Exception {

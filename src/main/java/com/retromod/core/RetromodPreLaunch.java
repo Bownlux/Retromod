@@ -6,13 +6,11 @@ package com.retromod.core;
 
 import net.fabricmc.loader.api.entrypoint.PreLaunchEntrypoint;
 import net.fabricmc.loader.api.FabricLoader;
-import net.fabricmc.api.EnvType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.retromod.util.ZipSecurity;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -37,7 +35,6 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
     private static final String PRIMARY_INPUT = "retromod-input";
     private static final String SECONDARY_INPUT = "mods/retromod-input";
     private static final String PROCESSED_SUFFIX = "/processed";
-    private static final long MAX_METADATA_SIZE = 2L * 1024 * 1024;
 
     // CurseForge-export folder (#78): loader-ready jars (Retromod + already-transformed
     // mods shipped as CF pack overrides), not raw old mods. NeoForge loads it in-place
@@ -66,11 +63,6 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
     public void onPreLaunch() {
         LOGGER.info("Starting Retromod {} on Fabric", RetromodVersion.RETROMOD_VERSION);
         RetromodVersion.logPresenceBanner(LOGGER);
-
-        // Fabric already knows the logical side here. Publish it before any generic
-        // environment helper probes class resources during pre-launch.
-        boolean client = FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT;
-        EnvironmentDetector.setLoaderEnvironment(client);
         
         try {
             Path gameDir = FabricLoader.getInstance().getGameDir();
@@ -89,8 +81,6 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
             // RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION), which would
             // otherwise still hold its compile-time default during prelaunch (#9).
             RetromodVersion.TARGET_MC_VERSION = targetVersion;
-
-            boolean hostFabricApiLoaded = hasLoadedFabricApi();
 
             // Register shims before transforming so redirects are available. Pass the
             // host so 26.1-only transforms aren't applied to pre-26.1 hosts, where the
@@ -125,16 +115,14 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 gameDir.resolve(PRIMARY_INPUT),
                 gameDir.resolve(PRIMARY_INPUT + PROCESSED_SUFFIX),
                 gameDir.resolve("mods"),
-                targetVersion,
-                hostFabricApiLoaded
+                targetVersion
             );
             
             int fromSecondary = transformModsFromFolder(
                 gameDir.resolve(SECONDARY_INPUT),
                 gameDir.resolve(SECONDARY_INPUT + PROCESSED_SUFFIX),
                 gameDir.resolve("mods"),
-                targetVersion,
-                hostFabricApiLoaded
+                targetVersion
             );
 
             // Drain the CF-export folder into mods/. Skip when -Dfabric.addMods already
@@ -511,9 +499,8 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
     }
     
     /** Transform all mods from one input folder. */
-    int transformModsFromFolder(Path inputFolder, Path processedFolder,
-                                Path outputFolder, String targetVersion,
-                                boolean hostFabricApiLoaded) {
+    private int transformModsFromFolder(Path inputFolder, Path processedFolder,
+                                        Path outputFolder, String targetVersion) {
         if (!Files.exists(inputFolder)) {
             return 0;
         }
@@ -549,32 +536,12 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
             ZipSecurity.validateNotSymlink(processedFolder);
             ZipSecurity.validateNotSymlink(outputFolder);
 
-            FabricModTransformer transformer = null;
+            FabricModTransformer transformer = new FabricModTransformer(targetVersion);
 
             for (Path modJar : modsToTransform) {
                 try {
                     String fileName = modJar.getFileName().toString();
-
-                    if (isFabricApiJar(modJar)) {
-                        if (!hostFabricApiLoaded) {
-                            LOGGER.warn("Keeping {} in {}. Retromod does not translate Fabric API itself. "
-                                    + "Install Fabric API for Minecraft {} in mods/, then retry the other mods.",
-                                    fileName, inputFolder.getFileName(), targetVersion);
-                            continue;
-                        }
-
-                        Files.move(modJar, processedFolder.resolve(fileName),
-                                StandardCopyOption.REPLACE_EXISTING);
-                        LOGGER.info("Archived staged Fabric API {} in processed/. The host already loaded "
-                                + "its Fabric API, so Retromod did not create a duplicate copy.", fileName);
-                        continue;
-                    }
-
                     String modVersion = extractModMinecraftVersion(modJar);
-
-                    if (transformer == null) {
-                        transformer = new FabricModTransformer(targetVersion);
-                    }
 
                     LOGGER.info("Checking {} (source {}, target {})",
                         fileName, modVersion != null ? modVersion : "unknown", targetVersion);
@@ -633,44 +600,6 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
         }
 
         return count;
-    }
-
-    private boolean hasLoadedFabricApi() {
-        try {
-            FabricLoader loader = FabricLoader.getInstance();
-            return loader.getModContainer("fabric-api").isPresent()
-                    || loader.getModContainer("fabric").isPresent();
-        } catch (Exception e) {
-            LOGGER.debug("Could not determine whether Fabric API is loaded: {}", e.getMessage());
-            return false;
-        }
-    }
-
-    /** True when the top-level staged jar identifies itself as Fabric API. */
-    static boolean isFabricApiJar(Path jarPath) {
-        try (JarFile jar = new JarFile(jarPath.toFile())) {
-            ZipEntry entry = jar.getEntry("fabric.mod.json");
-            if (entry == null) {
-                return false;
-            }
-            String content;
-            try (InputStream input = jar.getInputStream(entry)) {
-                content = new String(ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE),
-                        StandardCharsets.UTF_8);
-            }
-            com.google.gson.JsonObject metadata = com.google.gson.JsonParser.parseString(content)
-                    .getAsJsonObject();
-            if (metadata.has("id") && isFabricApiId(metadata.get("id").getAsString())) {
-                return true;
-            }
-        } catch (Exception e) {
-            LOGGER.debug("Could not identify staged mod {}: {}", jarPath.getFileName(), e.getMessage());
-        }
-        return false;
-    }
-
-    private static boolean isFabricApiId(String id) {
-        return "fabric-api".equals(id) || "fabric".equals(id);
     }
 
     /**

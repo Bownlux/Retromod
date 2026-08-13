@@ -60,18 +60,4 @@ class LoaderIsolationTest {
         assertFalse(cp.contains("net/neoforged/"), "RetromodVersion must stay NeoForge-free");
         assertFalse(cp.contains("net/minecraftforge/"), "RetromodVersion must stay Forge-free");
     }
-
-    @Test
-    @DisplayName("Forge entry points publish their own loader side to EnvironmentDetector")
-    void forgeEntryPointsOwnLogicalSideDetection() throws IOException {
-        String neoForge = constantPool("com/retromod/core/RetromodNeoForge");
-        assertTrue(neoForge.contains("net.neoforged.fml.loading.FMLEnvironment"));
-        assertTrue(neoForge.contains("setLoaderEnvironment"));
-        assertFalse(neoForge.contains("net.minecraftforge.fml.loading.FMLEnvironment"));
-
-        String forge = constantPool("com/retromod/core/RetromodForge");
-        assertTrue(forge.contains("net.minecraftforge.fml.loading.FMLEnvironment"));
-        assertTrue(forge.contains("setLoaderEnvironment"));
-        assertFalse(forge.contains("net.neoforged.fml.loading.FMLEnvironment"));
-    }
 }

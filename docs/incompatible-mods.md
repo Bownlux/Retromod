@@ -30,7 +30,6 @@ These need a manual port from the mod author.
 | Applied Energistics 2 | Broad networking, storage, and platform integration |
 | Tinkers' Construct | Version-specific material, data, and rendering systems |
 | IndustrialCraft and older Thaumcraft | Deep integration with deleted game systems |
-| CoFH and Thermal across the 1.20.1 to 1.21 enchantment change | Custom enchantment subclasses and eager enchantment registration target a system that became final and data-driven |
 
 This list describes broad compatibility, not a judgment about those projects.
 
@@ -39,8 +38,6 @@ This list describes broad compatibility, not a judgment about those projects.
 Minecraft 1.13's flattening replaced major block, item, command, and registry APIs. Forge 1.12.2 mods may transform far enough to be discovered, but many still require a real port.
 
 Old Forge mods on modern NeoForge face another large API migration. Retromod now bridges several common 1.20.1 Forge registration, event-bus, networking, and removed-class paths. This is partial compatibility, not a complete Forge runtime. Registry lifecycle, packet delivery, data generation, or other deep Forge internals can still need a manual port. Use a Forge host when a mod depends heavily on those systems.
-
-Forge 1.21 also uses Mojang member names at runtime. Retromod can decode older SRG references and bridge the earlier networking surface, but Minecraft 1.21's data-driven enchantment system is not a member rename. A mod that subclasses the old `Enchantment` class or eagerly registers enchantment objects needs its data and behavior ported together.
 
 Fabric mods use intermediary names. On 26.1 and newer hosts, Retromod maps that namespace to Mojang names before applying later repairs. On pre-26.1 Fabric hosts, that global remap must stay off because the runtime is still intermediary-named. Retromod has curated intermediary bridges for common old text, entity, material, identifier, model, and entity-type changes, including real 1.16.5 to 1.20.1 launch coverage. It is not a complete translation of every redesigned pre-26 API.
 

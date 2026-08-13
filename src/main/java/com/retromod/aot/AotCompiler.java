@@ -436,10 +436,6 @@ public class AotCompiler {
                                 new String(data, java.nio.charset.StandardCharsets.UTF_8),
                                 com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
                                 .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                    } else if (resourceName.equals("META-INF/accesstransformer.cfg")) {
-                        data = com.retromod.core.ForgeModTransformer.normalizeAccessTransformer(
-                                new String(data, java.nio.charset.StandardCharsets.UTF_8))
-                                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                     }
                 } catch (Exception e) {
                     LOGGER.warn("Could not remap {} ({}). Keeping the original.",
@@ -716,12 +712,6 @@ public class AotCompiler {
                             byte[] t = com.retromod.core.AccessWidenerRemapper.remapToOfficial(
                                     new String(d, java.nio.charset.StandardCharsets.UTF_8),
                                     com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
-                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                            if (!java.util.Arrays.equals(t, d)) { d = t; modified = true; }
-                        } else if (name.equals("META-INF/accesstransformer.cfg")) {
-                            byte[] t = com.retromod.core.ForgeModTransformer
-                                    .normalizeAccessTransformer(new String(
-                                            d, java.nio.charset.StandardCharsets.UTF_8))
                                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                             if (!java.util.Arrays.equals(t, d)) { d = t; modified = true; }
                         } else if (isRefmapEntry(name)) {
@@ -1210,7 +1200,6 @@ public class AotCompiler {
     /** Relax Fabric mod version constraints for 26.1+ compatibility. */
     private static byte[] relaxFabricModDependencies(byte[] jsonData) {
         try {
-            jsonData = FabricMetadataCompat.migrateLegacyFabricApiDependency(jsonData);
             String json = new String(jsonData, java.nio.charset.StandardCharsets.UTF_8);
             json = json.replaceAll(
                 "(\"minecraft\"\\s*:\\s*)(?:\"[^\"]*\"|\\[[^\\]]*\\]|\\{[^}]*\\})",

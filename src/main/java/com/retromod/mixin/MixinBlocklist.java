@@ -8,7 +8,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.retromod.core.RetromodVersion;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,10 +17,8 @@ import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -55,25 +52,26 @@ public final class MixinBlocklist {
     private static final String BUNDLED_RESOURCE = "/retromod/mixin-blocklist.json";
     private static final Path USER_FILE = Path.of("config/retromod/mixin-blocklist.json");
 
-    /** Mixin internal name ({@code a/b/C}) to its independently gated block rules. */
-    private static volatile Map<String, List<BlockRule>> blocked;
+    /**
+     * Mixin internal name ({@code a/b/C}) → set of handler method names to strip.
+     * An empty set means "strip every injector handler on the class".
+     */
+    private static volatile Map<String, Set<String>> blocked;
 
-    private record TargetRange(String atLeast, String atMost) {
-        boolean includes(String target) {
-            if (atLeast == null && atMost == null) return true;
-            if (target == null || target.isBlank()) return false;
-            if (atLeast != null && RetromodVersion.compareMcVersions(target, atLeast) < 0) {
-                return false;
-            }
-            return atMost == null || RetromodVersion.compareMcVersions(target, atMost) <= 0;
-        }
-    }
-
-    private record BlockRule(Set<String> methods, boolean fullStrip, TargetRange targets) {
-        boolean applies() {
-            return targets.includes(RetromodVersion.TARGET_MC_VERSION);
-        }
-    }
+    /**
+     * Mixin internal names whose <b>entire</b> mixin should be neutralized, not
+     * just handler methods. For cases handler-stripping can't fix: mixins that add
+     * an interface to a target class (True Darkness's
+     * {@code MixinLightTexture implements LightmapAccess}, #68) or have a critical
+     * {@code @Inject} failure where the surrounding mixin is interdependent. Here
+     * {@link MixinCompatibilityTransformer} rewrites the {@code @Mixin} annotation
+     * to point at a non-existent target so the mixin framework skips the whole
+     * class, the same "target not found" path MC's own moved inner classes take.
+     *
+     * <p>Set via {@code "strip": "class"} on a blocklist entry. Defaults to the
+     * handler-strip behavior when absent.
+     */
+    private static volatile Set<String> fullStrip;
 
     private MixinBlocklist() {}
 
@@ -82,18 +80,7 @@ public final class MixinBlocklist {
      * not blocklisted. An empty (but non-null) set means "strip all injectors".
      */
     public static Set<String> methodsToStrip(String mixinInternalName) {
-        List<BlockRule> rules = entries().get(mixinInternalName);
-        if (rules == null) return null;
-
-        Set<String> methods = new HashSet<>();
-        boolean active = false;
-        for (BlockRule rule : rules) {
-            if (!rule.applies()) continue;
-            active = true;
-            if (rule.methods().isEmpty()) return Set.of();
-            methods.addAll(rule.methods());
-        }
-        return active ? Set.copyOf(methods) : null;
+        return entries().get(mixinInternalName);
     }
 
     /**
@@ -102,9 +89,9 @@ public final class MixinBlocklist {
      * nothing rather than surgically removing methods.
      */
     public static boolean isFullStrip(String mixinInternalName) {
-        List<BlockRule> rules = entries().get(mixinInternalName);
-        if (rules == null) return false;
-        return rules.stream().anyMatch(rule -> rule.fullStrip() && rule.applies());
+        entries(); // ensure loaded
+        Set<String> fs = fullStrip;
+        return fs != null && fs.contains(mixinInternalName);
     }
 
     /** Whether the blocklist has any entries (lets callers skip work cheaply). */
@@ -112,13 +99,15 @@ public final class MixinBlocklist {
         return entries().isEmpty();
     }
 
-    private static Map<String, List<BlockRule>> entries() {
-        Map<String, List<BlockRule>> b = blocked;
+    private static Map<String, Set<String>> entries() {
+        Map<String, Set<String>> b = blocked;
         if (b == null) {
             synchronized (MixinBlocklist.class) {
                 b = blocked;
                 if (b == null) {
-                    b = load();
+                    Set<String> fs = new HashSet<>();
+                    b = load(fs);
+                    fullStrip = fs;
                     blocked = b;
                 }
             }
@@ -126,13 +115,13 @@ public final class MixinBlocklist {
         return b;
     }
 
-    private static Map<String, List<BlockRule>> load() {
-        Map<String, List<BlockRule>> result = new HashMap<>();
+    private static Map<String, Set<String>> load(Set<String> fullStripOut) {
+        Map<String, Set<String>> result = new HashMap<>();
 
         // bundled curated list
         try (InputStream in = MixinBlocklist.class.getResourceAsStream(BUNDLED_RESOURCE)) {
             if (in != null) {
-                parseInto(new InputStreamReader(in, StandardCharsets.UTF_8), result, "bundled");
+                parseInto(new InputStreamReader(in, StandardCharsets.UTF_8), result, fullStripOut, "bundled");
             } else {
                 LOGGER.debug("{} not present", BUNDLED_RESOURCE);
             }
@@ -144,7 +133,7 @@ public final class MixinBlocklist {
         try {
             if (Files.isRegularFile(USER_FILE)) {
                 try (Reader r = Files.newBufferedReader(USER_FILE, StandardCharsets.UTF_8)) {
-                    parseInto(r, result, "user config");
+                    parseInto(r, result, fullStripOut, "user config");
                 }
             }
         } catch (Exception e) {
@@ -152,15 +141,14 @@ public final class MixinBlocklist {
         }
 
         if (!result.isEmpty()) {
-            long fullStrips = result.values().stream().flatMap(List::stream)
-                    .filter(BlockRule::fullStrip).count();
-            LOGGER.info("Mixin blocklist active: {} mixin class(es) ({} full-class strip rules)",
-                    result.size(), fullStrips);
+            LOGGER.info("Mixin blocklist active: {} mixin class(es) ({} full-class strips)",
+                    result.size(), fullStripOut.size());
         }
         return result;
     }
 
-    private static void parseInto(Reader reader, Map<String, List<BlockRule>> out, String source) {
+    private static void parseInto(Reader reader, Map<String, Set<String>> out,
+                                  Set<String> fullStripOut, String source) {
         JsonElement parsed = JsonParser.parseReader(reader);
         if (parsed == null || !parsed.isJsonObject()) return;
         JsonObject root = parsed.getAsJsonObject();
@@ -175,41 +163,23 @@ public final class MixinBlocklist {
             // Accept both '.'-separated and '/'-separated class names.
             String mixin = o.get("mixin").getAsString().trim().replace('.', '/');
             if (mixin.isEmpty()) continue;
-            Set<String> methods = new HashSet<>();
+            Set<String> methods = out.computeIfAbsent(mixin, k -> new HashSet<>());
             if (o.has("methods") && o.get("methods").isJsonArray()) {
                 for (JsonElement m : o.getAsJsonArray("methods")) {
                     String name = m.getAsString().trim();
                     if (!name.isEmpty()) methods.add(name);
                 }
             }
-            boolean fullStrip = o.has("strip")
-                    && "class".equalsIgnoreCase(o.get("strip").getAsString().trim());
-            String targetAtLeast = optionalString(o, "targetAtLeast");
-            String targetAtMost = optionalString(o, "targetAtMost");
-            out.computeIfAbsent(mixin, ignored -> new ArrayList<>()).add(new BlockRule(
-                    Set.copyOf(methods), fullStrip,
-                    new TargetRange(targetAtLeast, targetAtMost)));
+            // "strip": "class" → neutralize the whole mixin, not just handlers.
+            if (o.has("strip") && "class".equalsIgnoreCase(o.get("strip").getAsString().trim())) {
+                fullStripOut.add(mixin);
+            }
             n++;
         }
         LOGGER.debug("Loaded {} mixin blocklist entr(ies) from {}", n, source);
     }
 
-    private static String optionalString(JsonObject object, String key) {
-        if (!object.has(key)) return null;
-        String value = object.get(key).getAsString().trim();
-        return value.isEmpty() ? null : value;
-    }
-
-    static void setForTesting(Map<String, Set<String>> entries) {
-        setForTesting(entries, Set.of());
-    }
-
-    static void setForTesting(Map<String, Set<String>> entries, Set<String> fullStrips) {
-        Map<String, List<BlockRule>> rules = new HashMap<>();
-        entries.forEach((mixin, methods) -> rules.put(mixin, List.of(new BlockRule(
-                Set.copyOf(methods), fullStrips.contains(mixin), new TargetRange(null, null)))));
-        blocked = rules;
-    }
-
-    static void resetForTesting() { blocked = null; }
+    static void setForTesting(Map<String, Set<String>> e) { blocked = e; }
+    static void setForTesting(Map<String, Set<String>> e, Set<String> fs) { blocked = e; fullStrip = fs; }
+    static void resetForTesting() { blocked = null; fullStrip = null; }
 }

@@ -25,7 +25,6 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         IsOverloadBridgeSynthetic.register(transformer);
 
         registerOfficialEntityTypeBuildBridge(transformer);
-        registerLegacyContainerInput(transformer);
 
         // GuiGraphics -> GuiGraphicsExtractor
         transformer.registerClassRedirect(
@@ -110,28 +109,6 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                 "(Ljava/lang/String;)Lnet/minecraft/world/entity/EntityType;",
                 "com/retromod/polyfill/minecraft/RetroEntityTypeBuild", "buildOfficial",
                 "(Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/Object;");
-    }
-
-    /**
-     * Keeps the legacy inventory-swap call on the container-input side of the 26.1 split.
-     *
-     * <p>The old {@code ClickType} enum held container operations such as {@code SWAP}. Current
-     * Minecraft uses {@code ContainerInput} for those operations and reserves
-     * {@code ClickAction} for the unrelated primary and secondary item-click choice. Mapping the
-     * old enum to {@code ClickAction} therefore linked neither the {@code SWAP} field nor the
-     * multiplayer controller call (#181, Double Hotbar).
-     */
-    public static void registerLegacyContainerInput(RetromodTransformer transformer) {
-        String oldInput = "net/minecraft/world/inventory/ClickType";
-        String newInput = "net/minecraft/world/inventory/ContainerInput";
-        transformer.registerClassRedirect(oldInput, newInput);
-        transformer.registerMethodRedirect(
-                "net/minecraft/client/multiplayer/MultiPlayerGameMode",
-                "handleInventoryMouseClick",
-                "(IIIL" + oldInput + ";Lnet/minecraft/world/entity/player/Player;)V",
-                "net/minecraft/client/multiplayer/MultiPlayerGameMode",
-                "handleContainerInput",
-                "(IIIL" + newInput + ";Lnet/minecraft/world/entity/player/Player;)V");
     }
 
     /**
@@ -293,51 +270,6 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         registerKeyMappingBridges26x(t);
         registerReloadListenerBridge26x(t);
         registerClientStructureBridges26x(t);
-        registerLegacyClientInteractionBridges26x(t);
-        registerLegacyGuiCalls26x(t);
-    }
-
-    /** Exact client call migrations found by verifying AutoClicky 1.2.1 against 26.1 and 26.2. */
-    public static void registerLegacyClientInteractionBridges26x(RetromodTransformer t) {
-        LegacyClientInteractionSynthetic.register(t);
-    }
-
-    /**
-     * GUI calls whose receiver, arguments, and behavior stayed intact through the 26.x extraction
-     * rename. These are descriptor-scoped so unrelated mod methods with the same short names are
-     * never changed.
-     */
-    public static void registerLegacyGuiCalls26x(RetromodTransformer t) {
-        String graphics = "net/minecraft/client/gui/GuiGraphicsExtractor";
-        String renderDesc = "(L" + graphics + ";IIF)V";
-        // Old Renderable.render was the public wrapper. Its direct successor is the public
-        // extractRenderState wrapper, not a widget's inner extractContents implementation.
-        t.registerMethodRedirect(
-                "net/minecraft/client/gui/screens/Screen", "render", renderDesc,
-                "net/minecraft/client/gui/screens/Screen", "extractRenderState", renderDesc);
-        for (String owner : new String[]{
-                "net/minecraft/client/gui/components/AbstractWidget",
-                "net/minecraft/client/gui/components/AbstractSliderButton",
-                "net/minecraft/client/gui/components/Checkbox"}) {
-            t.registerMethodRedirect(owner, "render", renderDesc,
-                    "net/minecraft/client/gui/components/AbstractWidget",
-                    "extractRenderState", renderDesc);
-        }
-        t.registerMethodRedirect(
-                "net/minecraft/client/gui/components/AbstractSliderButton",
-                "renderWidget", renderDesc,
-                "net/minecraft/client/gui/components/AbstractSliderButton",
-                "extractWidgetRenderState", renderDesc);
-
-        String font = "Lnet/minecraft/client/gui/Font;";
-        String component = "Lnet/minecraft/network/chat/Component;";
-        t.registerConvertingRedirect(
-                graphics, "text", "(" + font + component + "IIIZ)I",
-                graphics, "text", "(" + font + component + "IIIZ)V",
-                0, Opcodes.ICONST_0);
-        t.registerMethodRedirect(
-                graphics, "extractTooltip", "(" + font + component + "II)V",
-                graphics, "setTooltipForNextFrame", "(" + font + component + "II)V");
     }
 
     /**

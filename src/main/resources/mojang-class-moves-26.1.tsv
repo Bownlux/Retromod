@@ -620,8 +620,8 @@ net/minecraft/world/level/block/state/properties/DirectionProperty	net/minecraft
 # LazyLoadedValue was deprecated (use Suppliers.memoize), NOT renamed to Unit
 # Keep it as-is. A polyfill should handle it if it is absent in 26.1.
 # net/minecraft/util/LazyLoadedValue	DO_NOT_REMAP
-# ClickType was split. Its container action values moved to ContainerInput.
-net/minecraft/world/inventory/ClickType	net/minecraft/world/inventory/ContainerInput
+# ClickType → ClickAction
+net/minecraft/world/inventory/ClickType	net/minecraft/world/inventory/ClickAction
 # CompiledShaderProgram → ShaderManager (shader system redesigned)
 net/minecraft/client/renderer/CompiledShaderProgram	net/minecraft/client/renderer/ShaderManager
 

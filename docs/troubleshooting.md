@@ -13,10 +13,6 @@ Restart after transformation. Fabric needs one launch to transform the jars and 
 
 Old Fabric mods belong directly in `retromod-input/`, not `mods/` or `retromod-input/processed/`. Successfully transformed jars move to `mods/`.
 
-Use `retromod-input/` for Forge and NeoForge mods whose declared Minecraft range does not include the host. Those loaders can reject an incompatible jar during discovery, before Retromod can transform anything in place. A jar already accepted by the loader may still use the in-place path.
-
-Do not put an old Fabric API jar in the input folder as a substitute for the host library. Install one Fabric API build made for the host version in `mods/`. Current Retromod builds archive a staged old Fabric API instead of translating and installing a duplicate.
-
 ## Graphics Break on Minecraft 26.2
 
 Choose **Video Settings > Graphics API > OpenGL**. Old mods that render directly through OpenGL may fail on Vulkan.

@@ -8,7 +8,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import com.retromod.util.McReflect;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -39,20 +38,16 @@ class RetromodNeoForgePolyfillTest {
 
     private final RetromodTransformer t = RetromodTransformer.getInstance();
     private String savedVersion;
-    private boolean savedForceNeoForge;
 
     @BeforeEach
     void setUp() {
         savedVersion = RetromodVersion.TARGET_MC_VERSION;
-        savedForceNeoForge = McReflect.isForceNeoForge();
-        McReflect.setForceNeoForge(true);
         t.clearRedirectsForTesting();
     }
 
     @AfterEach
     void tearDown() {
         RetromodVersion.TARGET_MC_VERSION = savedVersion;
-        McReflect.setForceNeoForge(savedForceNeoForge);
         t.clearRedirectsForTesting();
     }
 

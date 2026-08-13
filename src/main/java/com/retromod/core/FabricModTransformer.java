@@ -1188,10 +1188,7 @@ public class FabricModTransformer {
 
         String content = Files.readString(modJson);
         String originalMcVersion = extractVersionFromContent(content);
-        String migrated = new String(FabricMetadataCompat.migrateLegacyFabricApiDependency(
-                content.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
-                java.nio.charset.StandardCharsets.UTF_8);
-        String updated = updateVersionRequirements(migrated, originalMcVersion);
+        String updated = updateVersionRequirements(content, originalMcVersion);
 
         updated = stripFabricApiJarReferences(updated);
 

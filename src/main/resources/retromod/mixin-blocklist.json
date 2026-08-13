@@ -101,22 +101,6 @@
       "mixin": "com.yungnickyoung.minecraft.yungsapi.mixin.accessor.NoiseChunkAccessor",
       "strip": "class",
       "reason": "DEAD-CODE companion of NoiseChunkMixin (repaired by MixinShadowFieldDemotion, not stripped - see the RETIRED note above). Same removed-field target class on 26.x; verified zero .class references in the yungsapi jar (5.1.6), so stripping the unused accessor is harmless and avoids an unbindable @Accessor. (Kept stripped even though NoiseChunkMixin itself is now translated - the accessor targets the renamed pieces/junctions-style internals and is genuinely dead.)"
-    },
-    {
-      "mixin": "horror.blueice129.mixin.client.GameRendererAccessor",
-      "strip": "class",
-      "targetAtLeast": "1.21.11",
-      "targetAtMost": "1.21.11",
-      "issue": "#179",
-      "reason": "ENGRAM 0.8.0-beta targets GameRenderer's removed field_3992. The accessor cannot bind on Fabric 1.21.11, and ENGRAM's delayed screenshot path casts GameRenderer to it. Disable this exact mixin on the affected host so the optional screenshot feature stays inert instead of crashing later."
-    },
-    {
-      "mixin": "horror.blueice129.mixin.client.GameRendererMixin",
-      "strip": "class",
-      "targetAtLeast": "1.21.11",
-      "targetAtMost": "1.21.11",
-      "issue": "#179",
-      "reason": "ENGRAM 0.8.0-beta's render injection drives the screenshot path that depends on its unbindable GameRendererAccessor and several removed render internals. Disable the exact companion mixin on Fabric 1.21.11 so the screenshot feature is consistently inert rather than failing after its delayed scheduler fires."
     }
   ]
 }

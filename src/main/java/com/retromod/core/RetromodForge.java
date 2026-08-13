@@ -39,7 +39,6 @@ public class RetromodForge {
         // First-time users need a real file they can edit.
         RetromodConfig.ensureDefaultConfig();
 
-        publishForgeEnvironment();
         boolean isServer = EnvironmentDetector.isDedicatedServer();
         LOGGER.info("Running on a {}", isServer ? "dedicated server" : "client");
 
@@ -59,11 +58,11 @@ public class RetromodForge {
             LOGGER.warn("Could not load polyfills", e);
         }
 
-        // Forge 1.20.6+ runs Minecraft with Mojang member names. Older Forge targets instead
-        // need source SRG -> Mojang -> the target version's SRG namespace.
+        // Forge 26.x needs SRG -> Mojang. Older Forge targets instead need
+        // source SRG -> Mojang -> the target version's SRG namespace.
         try {
             int srgEntries = 0;
-            boolean officialTarget = RetromodVersion.usesOfficialForgeRuntimeNames(
+            boolean officialTarget = RetromodVersion.isUnobfuscatedTarget(
                     RetromodVersion.TARGET_MC_VERSION);
             var targetSrg = com.retromod.mapping.TargetSrgMapper.forVersion(
                     RetromodVersion.TARGET_MC_VERSION);
@@ -195,30 +194,6 @@ public class RetromodForge {
             LOGGER.info("Retromod is running in server mode.");
             LOGGER.info("Bytecode transforms and ahead-of-time compilation are enabled.");
             LOGGER.info("GUI features are unavailable on a headless server.");
-        }
-    }
-
-    /** Publish Forge's authoritative logical side before generic environment checks run. */
-    private static void publishForgeEnvironment() {
-        try {
-            Class<?> environment = Class.forName(
-                    "net.minecraftforge.fml.loading.FMLEnvironment", false,
-                    RetromodForge.class.getClassLoader());
-            Object side;
-            try {
-                side = environment.getField("dist").get(null);
-            } catch (NoSuchFieldException missingField) {
-                side = environment.getMethod("getDist").invoke(null);
-            }
-            String sideName = side instanceof Enum<?> value ? value.name() : String.valueOf(side);
-            Boolean client = EnvironmentDetector.clientSideFromLoaderName(sideName);
-            if (client != null) {
-                EnvironmentDetector.setLoaderEnvironment(client);
-            } else {
-                LOGGER.warn("Forge reported an unknown logical side: {}", sideName);
-            }
-        } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
-            LOGGER.warn("Could not read Forge's logical side; using resource detection", e);
         }
     }
     

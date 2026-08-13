@@ -27,8 +27,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LegacyInputEventCallAdapterTest {
 
     private static final String KEY_EVENT = "net/minecraft/client/input/KeyEvent";
-    private static final String MOUSE_EVENT = "net/minecraft/client/input/MouseButtonEvent";
-    private static final String MOUSE_INFO = "net/minecraft/client/input/MouseButtonInfo";
     private static final String SCREEN = "net/minecraft/client/gui/screens/Screen";
     private static final String OLD_SCREEN = "net/minecraft/client/gui/screen/Screen";
     private static final String LEGACY_SCREEN = "test/input/LegacyScreen";
@@ -97,57 +95,6 @@ class LegacyInputEventCallAdapterTest {
         assertArrayEquals(input, transformer.transformClass(input, LEGACY_SCREEN + ".class"));
     }
 
-    @Test
-    void transformedMouseSuperCallConstructsEventAndPreservesCoordinatesAndButton()
-            throws Exception {
-        RetromodVersion.TARGET_MC_VERSION = "26.2";
-        RetromodTransformer transformer = RetromodTransformer.getInstance();
-        transformer.clearRedirectsForTesting();
-        transformer.registerClassRedirect(OLD_SCREEN, SCREEN);
-
-        byte[] transformed = transformer.transformClass(
-                legacyMouseScreen(OLD_SCREEN), LEGACY_SCREEN + ".class");
-        ClassNode output = read(transformed);
-        var method = output.methods.stream()
-                .filter(candidate -> "mouseClicked".equals(candidate.name))
-                .findFirst().orElseThrow();
-        var calls = java.util.Arrays.stream(method.instructions.toArray())
-                .filter(MethodInsnNode.class::isInstance)
-                .map(MethodInsnNode.class::cast)
-                .toList();
-
-        assertFalse(calls.stream().anyMatch(call -> SCREEN.equals(call.owner)
-                && "mouseClicked".equals(call.name) && "(DDI)Z".equals(call.desc)));
-        assertTrue(calls.stream().anyMatch(call -> call.getOpcode() == Opcodes.INVOKESPECIAL
-                && MOUSE_INFO.equals(call.owner) && "<init>".equals(call.name)
-                && "(II)V".equals(call.desc)));
-        assertTrue(calls.stream().anyMatch(call -> call.getOpcode() == Opcodes.INVOKESPECIAL
-                && MOUSE_EVENT.equals(call.owner) && "<init>".equals(call.name)
-                && ("(DDL" + MOUSE_INFO + ";)V").equals(call.desc)));
-        assertTrue(calls.stream().anyMatch(call -> call.getOpcode() == Opcodes.INVOKESPECIAL
-                && SCREEN.equals(call.owner) && "mouseClicked".equals(call.name)
-                && ("(L" + MOUSE_EVENT + ";Z)Z").equals(call.desc)));
-
-        Map<String, byte[]> definitions = new HashMap<>();
-        definitions.put(MOUSE_INFO.replace('/', '.'), mouseButtonInfo());
-        definitions.put(MOUSE_EVENT.replace('/', '.'), mouseButtonEvent());
-        definitions.put(SCREEN.replace('/', '.'), currentScreen());
-        definitions.put(LEGACY_SCREEN.replace('/', '.'), transformed);
-        ClassLoader loader = new ByteArrayClassLoader(definitions);
-        Class<?> screenClass = Class.forName(LEGACY_SCREEN.replace('/', '.'), true, loader);
-        Object screen = screenClass.getConstructor().newInstance();
-        Method legacyEntry = screenClass.getMethod(
-                "mouseClicked", double.class, double.class, int.class);
-
-        assertEquals(Boolean.TRUE, legacyEntry.invoke(screen, 12.5d, 19.75d, 2));
-        Class<?> hostScreen = Class.forName(SCREEN.replace('/', '.'), false, loader);
-        assertEquals(12.5d, hostScreen.getField("lastX").getDouble(null));
-        assertEquals(19.75d, hostScreen.getField("lastY").getDouble(null));
-        assertEquals(2, hostScreen.getField("lastButton").getInt(null));
-        assertEquals(0, hostScreen.getField("lastMouseModifiers").getInt(null));
-        assertFalse(hostScreen.getField("lastDoubleClick").getBoolean(null));
-    }
-
     private static ClassNode read(byte[] bytes) {
         ClassNode node = new ClassNode();
         new ClassReader(bytes).accept(node, 0);
@@ -189,16 +136,6 @@ class LegacyInputEventCallAdapterTest {
             writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, name, "I", null, null)
                     .visitEnd();
         }
-        writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "lastX", "D", null, null)
-                .visitEnd();
-        writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "lastY", "D", null, null)
-                .visitEnd();
-        writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "lastButton", "I", null, null)
-                .visitEnd();
-        writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
-                "lastMouseModifiers", "I", null, null).visitEnd();
-        writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
-                "lastDoubleClick", "Z", null, null).visitEnd();
         noArgConstructor(writer, "java/lang/Object");
 
         MethodVisitor method = writer.visitMethod(Opcodes.ACC_PUBLIC, "keyPressed",
@@ -211,94 +148,6 @@ class LegacyInputEventCallAdapterTest {
         method.visitInsn(Opcodes.IRETURN);
         method.visitMaxs(0, 0);
         method.visitEnd();
-
-        MethodVisitor mouse = writer.visitMethod(Opcodes.ACC_PUBLIC, "mouseClicked",
-                "(L" + MOUSE_EVENT + ";Z)Z", null, null);
-        mouse.visitCode();
-        mouse.visitVarInsn(Opcodes.ALOAD, 1);
-        mouse.visitMethodInsn(Opcodes.INVOKEVIRTUAL, MOUSE_EVENT, "x", "()D", false);
-        mouse.visitFieldInsn(Opcodes.PUTSTATIC, SCREEN, "lastX", "D");
-        mouse.visitVarInsn(Opcodes.ALOAD, 1);
-        mouse.visitMethodInsn(Opcodes.INVOKEVIRTUAL, MOUSE_EVENT, "y", "()D", false);
-        mouse.visitFieldInsn(Opcodes.PUTSTATIC, SCREEN, "lastY", "D");
-        mouse.visitVarInsn(Opcodes.ALOAD, 1);
-        mouse.visitMethodInsn(Opcodes.INVOKEVIRTUAL, MOUSE_EVENT, "button", "()I", false);
-        mouse.visitFieldInsn(Opcodes.PUTSTATIC, SCREEN, "lastButton", "I");
-        mouse.visitVarInsn(Opcodes.ALOAD, 1);
-        mouse.visitMethodInsn(Opcodes.INVOKEVIRTUAL, MOUSE_EVENT, "modifiers", "()I", false);
-        mouse.visitFieldInsn(Opcodes.PUTSTATIC, SCREEN, "lastMouseModifiers", "I");
-        mouse.visitVarInsn(Opcodes.ILOAD, 2);
-        mouse.visitFieldInsn(Opcodes.PUTSTATIC, SCREEN, "lastDoubleClick", "Z");
-        mouse.visitInsn(Opcodes.ICONST_1);
-        mouse.visitInsn(Opcodes.IRETURN);
-        mouse.visitMaxs(0, 0);
-        mouse.visitEnd();
-        writer.visitEnd();
-        return writer.toByteArray();
-    }
-
-    private static byte[] mouseButtonInfo() {
-        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
-        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL,
-                MOUSE_INFO, null, "java/lang/Object", null);
-        writer.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "button", "I", null, null)
-                .visitEnd();
-        writer.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "modifiers", "I", null, null)
-                .visitEnd();
-        MethodVisitor constructor = writer.visitMethod(
-                Opcodes.ACC_PUBLIC, "<init>", "(II)V", null, null);
-        constructor.visitCode();
-        constructor.visitVarInsn(Opcodes.ALOAD, 0);
-        constructor.visitMethodInsn(Opcodes.INVOKESPECIAL,
-                "java/lang/Object", "<init>", "()V", false);
-        constructor.visitVarInsn(Opcodes.ALOAD, 0);
-        constructor.visitVarInsn(Opcodes.ILOAD, 1);
-        constructor.visitFieldInsn(Opcodes.PUTFIELD, MOUSE_INFO, "button", "I");
-        constructor.visitVarInsn(Opcodes.ALOAD, 0);
-        constructor.visitVarInsn(Opcodes.ILOAD, 2);
-        constructor.visitFieldInsn(Opcodes.PUTFIELD, MOUSE_INFO, "modifiers", "I");
-        constructor.visitInsn(Opcodes.RETURN);
-        constructor.visitMaxs(0, 0);
-        constructor.visitEnd();
-        intGetter(writer, MOUSE_INFO, "button");
-        intGetter(writer, MOUSE_INFO, "modifiers");
-        writer.visitEnd();
-        return writer.toByteArray();
-    }
-
-    private static byte[] mouseButtonEvent() {
-        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
-        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL,
-                MOUSE_EVENT, null, "java/lang/Object", null);
-        writer.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "x", "D", null, null)
-                .visitEnd();
-        writer.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "y", "D", null, null)
-                .visitEnd();
-        writer.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL,
-                "buttonInfo", "L" + MOUSE_INFO + ";", null, null).visitEnd();
-        MethodVisitor constructor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>",
-                "(DDL" + MOUSE_INFO + ";)V", null, null);
-        constructor.visitCode();
-        constructor.visitVarInsn(Opcodes.ALOAD, 0);
-        constructor.visitMethodInsn(Opcodes.INVOKESPECIAL,
-                "java/lang/Object", "<init>", "()V", false);
-        constructor.visitVarInsn(Opcodes.ALOAD, 0);
-        constructor.visitVarInsn(Opcodes.DLOAD, 1);
-        constructor.visitFieldInsn(Opcodes.PUTFIELD, MOUSE_EVENT, "x", "D");
-        constructor.visitVarInsn(Opcodes.ALOAD, 0);
-        constructor.visitVarInsn(Opcodes.DLOAD, 3);
-        constructor.visitFieldInsn(Opcodes.PUTFIELD, MOUSE_EVENT, "y", "D");
-        constructor.visitVarInsn(Opcodes.ALOAD, 0);
-        constructor.visitVarInsn(Opcodes.ALOAD, 5);
-        constructor.visitFieldInsn(Opcodes.PUTFIELD,
-                MOUSE_EVENT, "buttonInfo", "L" + MOUSE_INFO + ";");
-        constructor.visitInsn(Opcodes.RETURN);
-        constructor.visitMaxs(0, 0);
-        constructor.visitEnd();
-        doubleGetter(writer, "x");
-        doubleGetter(writer, "y");
-        delegatedMouseIntGetter(writer, "button");
-        delegatedMouseIntGetter(writer, "modifiers");
         writer.visitEnd();
         return writer.toByteArray();
     }
@@ -325,27 +174,6 @@ class LegacyInputEventCallAdapterTest {
         return writer.toByteArray();
     }
 
-    private static byte[] legacyMouseScreen(String screenOwner) {
-        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
-        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC,
-                LEGACY_SCREEN, null, screenOwner, null);
-        noArgConstructor(writer, screenOwner);
-        MethodVisitor method = writer.visitMethod(
-                Opcodes.ACC_PUBLIC, "mouseClicked", "(DDI)Z", null, null);
-        method.visitCode();
-        method.visitVarInsn(Opcodes.ALOAD, 0);
-        method.visitVarInsn(Opcodes.DLOAD, 1);
-        method.visitVarInsn(Opcodes.DLOAD, 3);
-        method.visitVarInsn(Opcodes.ILOAD, 5);
-        method.visitMethodInsn(Opcodes.INVOKESPECIAL,
-                screenOwner, "mouseClicked", "(DDI)Z", false);
-        method.visitInsn(Opcodes.IRETURN);
-        method.visitMaxs(0, 0);
-        method.visitEnd();
-        writer.visitEnd();
-        return writer.toByteArray();
-    }
-
     private static void field(ClassWriter writer, String name) {
         FieldVisitor field = writer.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL,
                 name, "I", null, null);
@@ -359,36 +187,10 @@ class LegacyInputEventCallAdapterTest {
     }
 
     private static void intGetter(ClassWriter writer, String name) {
-        intGetter(writer, KEY_EVENT, name);
-    }
-
-    private static void intGetter(ClassWriter writer, String owner, String name) {
         MethodVisitor method = writer.visitMethod(Opcodes.ACC_PUBLIC, name, "()I", null, null);
         method.visitCode();
         method.visitVarInsn(Opcodes.ALOAD, 0);
-        method.visitFieldInsn(Opcodes.GETFIELD, owner, name, "I");
-        method.visitInsn(Opcodes.IRETURN);
-        method.visitMaxs(0, 0);
-        method.visitEnd();
-    }
-
-    private static void doubleGetter(ClassWriter writer, String name) {
-        MethodVisitor method = writer.visitMethod(Opcodes.ACC_PUBLIC, name, "()D", null, null);
-        method.visitCode();
-        method.visitVarInsn(Opcodes.ALOAD, 0);
-        method.visitFieldInsn(Opcodes.GETFIELD, MOUSE_EVENT, name, "D");
-        method.visitInsn(Opcodes.DRETURN);
-        method.visitMaxs(0, 0);
-        method.visitEnd();
-    }
-
-    private static void delegatedMouseIntGetter(ClassWriter writer, String name) {
-        MethodVisitor method = writer.visitMethod(Opcodes.ACC_PUBLIC, name, "()I", null, null);
-        method.visitCode();
-        method.visitVarInsn(Opcodes.ALOAD, 0);
-        method.visitFieldInsn(Opcodes.GETFIELD,
-                MOUSE_EVENT, "buttonInfo", "L" + MOUSE_INFO + ";");
-        method.visitMethodInsn(Opcodes.INVOKEVIRTUAL, MOUSE_INFO, name, "()I", false);
+        method.visitFieldInsn(Opcodes.GETFIELD, KEY_EVENT, name, "I");
         method.visitInsn(Opcodes.IRETURN);
         method.visitMaxs(0, 0);
         method.visitEnd();

@@ -33,8 +33,6 @@ import com.retromod.testmod.tests.Test11ChatOptionsSuperclass;
 import com.retromod.testmod.tests.Test12ClientCommandParserAccessor;
 import com.retromod.testmod.tests.Test13WindowHandleShim;
 import com.retromod.testmod.tests.Test14RevampedEntityBridges;
-import com.retromod.testmod.tests.Test15InheritedEntityWorld;
-import com.retromod.testmod.tests.Test16SingleFabricApiProvider;
 import com.retromod.testmod.tests.TextTests;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -89,7 +87,6 @@ public final class TestRunner {
         all.add(new Test11ChatOptionsSuperclass());
         all.add(new Test12ClientCommandParserAccessor());
         all.add(new Test14RevampedEntityBridges());
-        all.add(new Test16SingleFabricApiProvider());
         return List.copyOf(all);
     }
 
@@ -106,7 +103,6 @@ public final class TestRunner {
         all.addAll(EnchantmentTests.all());
         all.addAll(StatusEffectTests.all());
         all.add(Test14RevampedEntityBridges.entityTagMembership());
-        all.add(new Test15InheritedEntityWorld());
         return List.copyOf(all);
     }
 

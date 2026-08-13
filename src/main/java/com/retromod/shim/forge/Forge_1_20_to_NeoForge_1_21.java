@@ -5,8 +5,6 @@
 package com.retromod.shim.forge;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.RetromodVersion;
-import com.retromod.core.SyntheticEmbedder;
 import com.retromod.core.VersionShim;
 import com.retromod.util.McReflect;
 import org.slf4j.Logger;
@@ -44,12 +42,6 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
     
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
-        if (!McReflect.isNeoForge()
-                && supportsForgeOfficialNetworkBridge(
-                        RetromodVersion.TARGET_MC_VERSION)) {
-            registerForgeOfficialNetworkBridge(transformer);
-        }
-
         // These only apply on a NeoForge runtime; on Forge they break @Mod lookup (see class javadoc).
         if (!McReflect.isNeoForge()) {
             LOGGER.debug("Skipping Forge → NeoForge migration redirects (runtime is not NeoForge)");
@@ -164,40 +156,6 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "net/minecraftforge/fml/loading/FMLPaths",
             "net/neoforged/fml/loading/FMLPaths"
         );
-        transformer.registerClassRedirect(
-            "net/minecraftforge/fml/loading/FMLEnvironment",
-            "net/neoforged/fml/loading/FMLEnvironment"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraftforge/fml/LogicalSide",
-            "net/neoforged/fml/LogicalSide"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraftforge/fml/util/thread/SidedThreadGroup",
-            "net/neoforged/fml/util/thread/SidedThreadGroup"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraftforge/fml/util/thread/SidedThreadGroups",
-            "net/neoforged/fml/util/thread/SidedThreadGroups"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraftforge/forgespi/language/IModInfo",
-            "net/neoforged/neoforgespi/language/IModInfo"
-        );
-        transformer.registerFieldRedirect(
-            "net/neoforged/fml/loading/FMLEnvironment", "dist",
-            "Lnet/neoforged/api/distmarker/Dist;",
-            "net/neoforged/fml/loading/FMLEnvironment", "getDist",
-            "()Lnet/neoforged/api/distmarker/Dist;"
-        );
-
-        // ForgeSpawnEggItem's constructor has the same supplier and color shape as the removed
-        // DeferredSpawnEggItem API. The embedded replacement moves the entity type onto the modern
-        // item properties before calling SpawnEggItem, so generated Forge content can still bind.
-        transformer.registerClassRedirect(
-            "net/minecraftforge/common/ForgeSpawnEggItem",
-            "net/neoforged/neoforge/common/DeferredSpawnEggItem"
-        );
         // FMLJavaModLoadingContext (the get().getModEventBus() entry point NeoForge deleted) is
         // redirected to the B4 synthetic's name in ForgeEventApiShim, an API shim that runs on BOTH
         // the offline CLI/AOT batch and the live runtime. This migration shim only runs at runtime
@@ -267,71 +225,6 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         );
     }
 
-    /** True where Forge still exposes the event-channel object-registration bridge. */
-    static boolean supportsForgeOfficialNetworkBridge(String targetVersion) {
-        return RetromodVersion.compareMcVersions(targetVersion, "1.20.6") >= 0
-                && RetromodVersion.compareMcVersions(targetVersion, "26.1") < 0;
-    }
-
-    /** Bridges Forge 1.20.1 networking to the Forge 1.20.6 through 1.21.x surface. */
-    static void registerForgeOfficialNetworkBridge(RetromodTransformer transformer) {
-        String builder = "com/retromod/shim/forge/embedded/LegacyForgeChannelBuilder";
-        String eventAdapter = "com/retromod/shim/forge/embedded/LegacyForgeNetworkEventAdapter";
-        String oldBuilder = "net/minecraftforge/network/NetworkRegistry$ChannelBuilder";
-        String oldEventChannel = "net/minecraftforge/network/event/EventNetworkChannel";
-        String eventChannel = "net/minecraftforge/network/EventNetworkChannel";
-        String oldClientPayload =
-                "net/minecraftforge/network/NetworkEvent$ClientCustomPayloadEvent";
-        String oldServerPayload =
-                "net/minecraftforge/network/NetworkEvent$ServerCustomPayloadEvent";
-        String payload = "net/minecraftforge/event/network/CustomPayloadEvent";
-        String oldContext = "net/minecraftforge/network/NetworkEvent$Context";
-        String context = "net/minecraftforge/event/network/CustomPayloadEvent$Context";
-
-        SyntheticEmbedder.registerClassResource(transformer, builder,
-                com.retromod.shim.forge.embedded.LegacyForgeChannelBuilder.class);
-        SyntheticEmbedder.registerClassResource(transformer, eventAdapter,
-                com.retromod.shim.forge.embedded.LegacyForgeNetworkEventAdapter.class);
-
-        transformer.registerClassRedirect(oldBuilder, builder);
-        transformer.registerClassRedirect(oldEventChannel, eventChannel);
-        transformer.registerClassRedirect(oldClientPayload, payload);
-        transformer.registerClassRedirect(oldServerPayload, payload);
-        transformer.registerClassRedirect(oldContext, context);
-
-        for (String resourceId : new String[]{
-                "Lnet/minecraft/resources/ResourceLocation;",
-                "Lnet/minecraft/resources/Identifier;"}) {
-            transformer.registerMethodRedirect(
-                    builder, "named", "(" + resourceId + ")L" + builder + ";",
-                    builder, "named", "(Ljava/lang/Object;)L" + builder + ";");
-        }
-        transformer.registerMethodRedirect(
-                builder, "eventNetworkChannel", "()L" + eventChannel + ";",
-                builder, "eventNetworkChannel", "()Ljava/lang/Object;");
-        transformer.registerMethodRedirect(
-                builder, "simpleChannel",
-                "()Lnet/minecraftforge/network/simple/SimpleChannel;",
-                builder, "simpleChannel", "()Ljava/lang/Object;");
-
-        transformer.registerConvertingRedirect(
-                eventChannel, "registerObject", "(Ljava/lang/Object;)V",
-                eventChannel, "registerObject", "(Ljava/lang/Object;)L" + eventChannel + ";",
-                0, org.objectweb.asm.Opcodes.POP);
-        transformer.registerConvertingRedirect(
-                eventChannel, "addListener", "(Ljava/util/function/Consumer;)V",
-                eventChannel, "addListener", "(Ljava/util/function/Consumer;)L" + eventChannel + ";",
-                0, org.objectweb.asm.Opcodes.POP);
-
-        transformer.registerMethodRedirect(
-                payload, "getSource", "()Ljava/util/function/Supplier;",
-                eventAdapter, "getSource",
-                "(Ljava/lang/Object;)Ljava/util/function/Supplier;", true);
-        transformer.registerMethodRedirect(
-                context, "getNetworkManager", "()Lnet/minecraft/network/Connection;",
-                context, "getConnection", "()Lnet/minecraft/network/Connection;");
-    }
-
     /**
      * The SimpleChannel surface bridge (#156); package-visible so the transform-shape test
      * can exercise it without the NeoForge-host gate.
@@ -386,19 +279,6 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             wrapper, "send",
             "(Lnet/minecraftforge/network/PacketDistributor$PacketTarget;Ljava/lang/Object;)V",
             wrapper, "send", "(Ljava/lang/Object;Ljava/lang/Object;)V");
-
-        // Forge 47 returns an IndexedMessageCodec.MessageHandler even when callers only discard
-        // it. That class no longer exists on NeoForge. Retype the call to the wrapper's erased
-        // Object result so the registration is collected without retaining the deleted class.
-        String registrationArgs = "(ILjava/lang/Class;Ljava/util/function/BiConsumer;"
-                + "Ljava/util/function/Function;Ljava/util/function/BiConsumer;)";
-        String oldHandler = "Lnet/minecraftforge/network/simple/IndexedMessageCodec$MessageHandler;";
-        for (String owner : new String[]{
-                "net/minecraftforge/network/simple/SimpleChannel", wrapper}) {
-            transformer.registerConvertingRedirect(
-                    owner, "registerMessage", registrationArgs + oldHandler,
-                    wrapper, "registerMessage", registrationArgs + "Ljava/lang/Object;", 0, 0);
-        }
     }
 
     @Override

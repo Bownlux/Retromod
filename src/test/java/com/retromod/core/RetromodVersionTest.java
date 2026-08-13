@@ -18,15 +18,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class RetromodVersionTest {
 
     @Test
-    @DisplayName("Forge switches its production Minecraft namespace at 1.20.6")
-    void detectsOfficialForgeRuntimeNamespace() {
-        assertFalse(RetromodVersion.usesOfficialForgeRuntimeNames("1.20.4"));
-        assertTrue(RetromodVersion.usesOfficialForgeRuntimeNames("1.20.6"));
-        assertTrue(RetromodVersion.usesOfficialForgeRuntimeNames("1.21.1"));
-        assertTrue(RetromodVersion.usesOfficialForgeRuntimeNames("26.1.2"));
-    }
-
-    @Test
     @DisplayName("#60: a bare-minor mod matches a patch host (1.21 ~ 1.21.1) → skip transform")
     void bareMinorMatchesPatchHost() {
         assertTrue(RetromodVersion.sameMinorVersion("1.21", "1.21.1"));
