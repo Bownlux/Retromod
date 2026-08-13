@@ -211,7 +211,8 @@ public class EnvironmentDetector {
 
     private static boolean detectDedicatedServer() {
         // The MC runtime ships a merged jar, so server classes exist on a client
-        // too. Absence of a client class is the only reliable dedicated signal.
+        // too. Loader entry points publish their authoritative side through
+        // setEnvironment before using this fallback.
         boolean clientPresent = classExists("net.minecraft.client.MinecraftClient")
                 || classExists("net.minecraft.client.Minecraft")
                 || classExists("net.minecraft.class_310");
@@ -223,6 +224,13 @@ public class EnvironmentDetector {
             return true;
         }
         return detectHeadless();
+    }
+
+    /** Package-visible for the loader-side regression. */
+    static Boolean clientSideFromLoaderName(String side) {
+        if ("CLIENT".equals(side)) return true;
+        if ("SERVER".equals(side) || "DEDICATED_SERVER".equals(side)) return false;
+        return null;
     }
 
     /**
@@ -289,5 +297,12 @@ public class EnvironmentDetector {
         isClient = client;
         isHeadless = headless;
         isDedicatedServer = !client;
+    }
+
+    /** Publish the logical side selected by a loader while retaining real headless detection. */
+    static void setLoaderEnvironment(boolean client) {
+        isClient = client;
+        isDedicatedServer = !client;
+        isHeadless = null;
     }
 }

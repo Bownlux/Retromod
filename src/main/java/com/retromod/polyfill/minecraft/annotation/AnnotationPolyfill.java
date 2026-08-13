@@ -6,6 +6,7 @@ package com.retromod.polyfill.minecraft.annotation;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.polyfill.PolyfillProvider;
+import com.retromod.util.McReflect;
 
 /**
  * Redirects annotation classes that 26.1 and the Forge->NeoForge move dropped or relocated:
@@ -58,18 +59,20 @@ public class AnnotationPolyfill implements PolyfillProvider {
             "com/google/common/annotations/VisibleForTesting",
             "org/jetbrains/annotations/VisibleForTesting");
 
-        // NeoForge dropped @OnlyIn; point it at a no-op @Retention so it doesn't CNFE.
-        transformer.registerClassRedirect(
-            "net/minecraftforge/api/distmarker/OnlyIn",
-            "java/lang/annotation/Retention");
+        // These classes remain live on Forge. Only a NeoForge target needs the relocation.
+        if (McReflect.isNeoForge()) {
+            transformer.registerClassRedirect(
+                "net/minecraftforge/api/distmarker/OnlyIn",
+                "java/lang/annotation/Retention");
 
-        transformer.registerClassRedirect(
-            "net/minecraftforge/api/distmarker/Dist",
-            "net/neoforged/api/distmarker/Dist");
+            transformer.registerClassRedirect(
+                "net/minecraftforge/api/distmarker/Dist",
+                "net/neoforged/api/distmarker/Dist");
 
-        transformer.registerClassRedirect(
-            "net/minecraftforge/api/distmarker/OnlyIns",
-            "java/lang/annotation/Retention");
+            transformer.registerClassRedirect(
+                "net/minecraftforge/api/distmarker/OnlyIns",
+                "java/lang/annotation/Retention");
+        }
 
         // FindBugs annotations some old Forge mods used.
         transformer.registerClassRedirect(

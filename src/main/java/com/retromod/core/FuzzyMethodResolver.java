@@ -258,6 +258,15 @@ public class FuzzyMethodResolver {
     }
 
     /**
+     * Whether the indexed hierarchy proves that {@code child} is {@code ancestor} or one of its
+     * descendants. This is an exact relationship query. It never uses fuzzy member scoring.
+     */
+    public boolean isSubtypeOf(String child, String ancestor) {
+        if (!indexed || child == null || ancestor == null) return false;
+        return hasMemberInHierarchy(child, ancestor::equals);
+    }
+
+    /**
      * Whether {@code owner} or any ancestor declares this method. Walks the hierarchy so a reference
      * to an inherited method (Level#getBlockState) isn't a false negative.
      */

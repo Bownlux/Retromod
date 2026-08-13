@@ -127,4 +127,25 @@ class CommonSuperViaBytesTest {
                         name -> remaps.getOrDefault(name, name),
                         targetParents::get));
     }
+
+    @Test
+    @DisplayName("A Java parent remains usable when its class file is newer than ASM")
+    void followsRuntimeJavaParentWhenClassBytesCannotBeParsed() {
+        Map<String, byte[]> source = new HashMap<>();
+        source.put(CHILD, classWithSuper(CHILD, "java/util/ArrayList"));
+        source.put("java/util/ArrayList", unsupportedClassVersion(
+                classWithSuper("java/util/ArrayList", "java/util/AbstractList")));
+        source.put("java/util/AbstractList", unsupportedClassVersion(
+                classWithSuper("java/util/AbstractList", "java/util/AbstractCollection")));
+
+        assertEquals("java/util/AbstractList", RetromodTransformer.commonSuperViaBytes(
+                "java/util/AbstractList", CHILD, source::get));
+    }
+
+    private static byte[] unsupportedClassVersion(byte[] bytes) {
+        byte[] result = bytes.clone();
+        result[6] = 0x7f;
+        result[7] = (byte) 0xff;
+        return result;
+    }
 }

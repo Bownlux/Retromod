@@ -18,6 +18,15 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class EnvironmentDetectorTest {
 
+    @Test
+    @DisplayName("Loader side names distinguish merged-jar dedicated servers")
+    void loaderSideNamesAreAuthoritative() {
+        assertTrue(EnvironmentDetector.clientSideFromLoaderName("CLIENT"));
+        assertFalse(EnvironmentDetector.clientSideFromLoaderName("SERVER"));
+        assertFalse(EnvironmentDetector.clientSideFromLoaderName("DEDICATED_SERVER"));
+        assertNull(EnvironmentDetector.clientSideFromLoaderName("UNKNOWN"));
+    }
+
     // flag kept in a separate class so the test can read it without initializing the probe target
     static final class InitFlag {
         static volatile boolean SIDE_EFFECT_RAN = false;

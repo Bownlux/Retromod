@@ -33,8 +33,10 @@ Fabric checks mod versions before Retromod runs. Old mods placed directly in `mo
 ## Forge and NeoForge
 
 1. Put Retromod in `mods/`.
-2. Put old mods in `mods/` or `retromod-input/`.
+2. Put old mods in `retromod-input/`.
 3. Launch and restart when prompted.
+
+Forge and NeoForge can reject an old Minecraft version range while scanning `mods/`, before Retromod's entry point runs. Use `retromod-input/` for an incompatible jar or prepare it with the CLI first. In-place transformation from `mods/` remains available only when the loader already accepts the source metadata.
 
 Mods transformed from `retromod-input/` keep their originals in `retromod-input/processed/`. Forge and NeoForge in-place transforms keep originals in `mods/retromod-backups/`. Retromod can also create `retromod-backups/` at the game-directory root for health recovery. These jar backups do not include worlds or configuration files.
 

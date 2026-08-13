@@ -44,6 +44,18 @@ public final class RetromodVersion {
         }
     }
 
+    /** Returns whether Forge runs Minecraft with Mojang member names on this host. */
+    public static boolean usesOfficialForgeRuntimeNames(String hostVersion) {
+        if (isUnobfuscatedTarget(hostVersion)) {
+            return true;
+        }
+        try {
+            return compareMcVersions(hostVersion, "1.20.6") >= 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** Returns whether {@code a} is newer than {@code b}, without excluding unknown versions. */
     public static boolean mcVersionExceeds(String a, String b) {
         try {
