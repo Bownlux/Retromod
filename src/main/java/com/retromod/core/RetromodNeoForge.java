@@ -48,6 +48,7 @@ public class RetromodNeoForge {
         // First-time users need a real file they can edit.
         RetromodConfig.ensureDefaultConfig();
 
+        publishNeoForgeEnvironment();
         boolean isServer = EnvironmentDetector.isDedicatedServer();
         LOGGER.info("Environment: {}", isServer ? "Dedicated Server" : "Client");
 
@@ -209,6 +210,30 @@ public class RetromodNeoForge {
             LOGGER.info("Retromod is running in NeoForge server mode.");
             LOGGER.info("Bytecode transforms, ahead-of-time compilation, and Forge migration are enabled.");
             LOGGER.info("GUI features are unavailable on a headless server.");
+        }
+    }
+
+    /** Publish NeoForge's authoritative logical side before generic environment checks run. */
+    private static void publishNeoForgeEnvironment() {
+        try {
+            Class<?> environment = Class.forName(
+                    "net.neoforged.fml.loading.FMLEnvironment", false,
+                    RetromodNeoForge.class.getClassLoader());
+            Object side;
+            try {
+                side = environment.getMethod("getDist").invoke(null);
+            } catch (NoSuchMethodException missingGetter) {
+                side = environment.getField("dist").get(null);
+            }
+            String sideName = side instanceof Enum<?> value ? value.name() : String.valueOf(side);
+            Boolean client = EnvironmentDetector.clientSideFromLoaderName(sideName);
+            if (client != null) {
+                EnvironmentDetector.setLoaderEnvironment(client);
+            } else {
+                LOGGER.warn("NeoForge reported an unknown logical side: {}", sideName);
+            }
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
+            LOGGER.warn("Could not read NeoForge's logical side; using resource detection", e);
         }
     }
     

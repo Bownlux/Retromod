@@ -193,6 +193,50 @@ class SimpleChannelBridgeTest {
     }
 
     @Test
+    @DisplayName("#207: discarded Forge 47 registerMessage result loses the deleted handler type")
+    void registerMessageResultIsErased() {
+        String args = "(ILjava/lang/Class;Ljava/util/function/BiConsumer;"
+                + "Ljava/util/function/Function;Ljava/util/function/BiConsumer;)";
+        String oldHandler = "Lnet/minecraftforge/network/simple/IndexedMessageCodec$MessageHandler;";
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(Opcodes.V17, ACC_PUBLIC, "test/ManagementWantedNetwork", null,
+                "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "register",
+                "(Lnet/minecraftforge/network/simple/SimpleChannel;Ljava/lang/Class;"
+                        + "Ljava/util/function/BiConsumer;Ljava/util/function/Function;"
+                        + "Ljava/util/function/BiConsumer;)V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitInsn(ICONST_0);
+        for (int local = 1; local < 5; local++) mv.visitVarInsn(ALOAD, local);
+        mv.visitMethodInsn(INVOKEVIRTUAL,
+                "net/minecraftforge/network/simple/SimpleChannel", "registerMessage",
+                args + oldHandler, false);
+        mv.visitInsn(POP);
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(6, 5);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        byte[] out = transformer.transformClass(cw.toByteArray(),
+                "test/ManagementWantedNetwork");
+        ClassNode cn = new ClassNode();
+        new ClassReader(out).accept(cn, 0);
+        MethodInsnNode call = cn.methods.stream()
+                .flatMap(method -> java.util.Arrays.stream(method.instructions.toArray()))
+                .filter(MethodInsnNode.class::isInstance)
+                .map(MethodInsnNode.class::cast)
+                .filter(method -> method.name.equals("registerMessage"))
+                .findFirst().orElseThrow();
+
+        assertEquals(WRAPPER, call.owner);
+        assertEquals(args + "Ljava/lang/Object;", call.desc,
+                "the deleted IndexedMessageCodec handler must not remain in the call descriptor");
+        assertFalse(new String(out, java.nio.charset.StandardCharsets.ISO_8859_1)
+                .contains("net/minecraftforge/network/simple/IndexedMessageCodec$MessageHandler"));
+    }
+
+    @Test
     @DisplayName("the shim inner classes are all listed for embedding")
     void innerClassesListed() {
         var listed = java.util.Set.of(new Forge_1_20_to_NeoForge_1_21().getShimClasses());

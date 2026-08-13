@@ -137,7 +137,10 @@ class OfflineNeoForgeTargetTest {
                 + "[[dependencies.examplemod]]\n"
                 + "modId=\"forge\"\n"
                 + "mandatory=true\n"
-                + "versionRange=\"[47,)\"\n";
+                + "versionRange=\"[47,)\"\n"
+                + "[[dependencies.examplemod]]\n"
+                + "modId=\"minecraft\"\n"
+                + "versionRange=\"[1.20.1,1.21)\"\n";
         String promoted = ForgeModTransformer.promoteTomlContentForNeoForge(forgeToml);
 
         assertTrue(promoted.contains("modId=\"neoforge\""),
@@ -146,6 +149,10 @@ class OfflineNeoForgeTargetTest {
                 "no forge loader dependency id should survive");
         assertTrue(promoted.contains("loaderVersion=\"[1,)\""),
                 "loaderVersion should be relaxed to [1,)");
+        assertTrue(promoted.contains("versionRange=\"[0,)\""),
+                "the repointed loader dependency must not keep Forge's 47.x floor");
+        assertTrue(promoted.contains("versionRange=\"[1.20.1,1.21)\""),
+                "promotion should leave the Minecraft range for the metadata patching pass");
     }
 
     /** A class that implements net/minecraftforge/common/extensions/IForgeItem (a mod's custom Item). */

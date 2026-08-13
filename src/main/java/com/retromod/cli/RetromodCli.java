@@ -1235,6 +1235,10 @@ public class RetromodCli {
                                     new String(data, java.nio.charset.StandardCharsets.UTF_8),
                                     com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
                                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        } else if (entry.getName().equals("META-INF/accesstransformer.cfg")) {
+                            data = com.retromod.core.ForgeModTransformer.normalizeAccessTransformer(
+                                    new String(data, java.nio.charset.StandardCharsets.UTF_8))
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                         } else if (com.retromod.resources.ModDataMigrator.isMigratableData(entry.getName())) {
                             // 26.x data-only changes the bytecode pass can't reach (item renames,
                             // JSON shape changes); gated to 26.x inside migrate()
@@ -1337,6 +1341,7 @@ public class RetromodCli {
     /** Relax version constraints in fabric.mod.json so the mod can load on the target MC version. */
     private static byte[] relaxFabricModDependencies(byte[] jsonData) {
         try {
+            jsonData = FabricMetadataCompat.migrateLegacyFabricApiDependency(jsonData);
             String json = new String(jsonData, java.nio.charset.StandardCharsets.UTF_8);
 
             // string-level edits: minecraft -> "*", fabricloader -> permissive minimum,
@@ -1649,6 +1654,12 @@ public class RetromodCli {
                                     com.retromod.mapping.IntermediaryToMojangMapper.getInstance());
                             byte[] t = remapped.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                             if (!java.util.Arrays.equals(t, data)) { data = t; modified = true; }
+                        } else if (name.equals("META-INF/accesstransformer.cfg")) {
+                            byte[] t = com.retromod.core.ForgeModTransformer
+                                    .normalizeAccessTransformer(new String(
+                                            data, java.nio.charset.StandardCharsets.UTF_8))
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                            if (!java.util.Arrays.equals(t, data)) { data = t; modified = true; }
                         } else if (name.equals("fabric.mod.json") || name.equals("quilt.mod.json")) {
                             data = relaxFabricModDependencies(data);
                             modified = true;
@@ -1834,6 +1845,10 @@ public class RetromodCli {
                         } else if (entry.getName().equals("META-INF/mods.toml") ||
                                    entry.getName().equals("META-INF/neoforge.mods.toml")) {
                             data = relaxNeoForgeDependencies(data);
+                        } else if (entry.getName().equals("META-INF/accesstransformer.cfg")) {
+                            data = com.retromod.core.ForgeModTransformer.normalizeAccessTransformer(
+                                    new String(data, java.nio.charset.StandardCharsets.UTF_8))
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                         } else if (com.retromod.resources.ModDataMigrator.isMigratableData(entry.getName())) {
                             // a "compatible by version" mod takes this metadata-only branch yet can
                             // still ship data hitting a 26.x change; gated to 26.x inside migrate()

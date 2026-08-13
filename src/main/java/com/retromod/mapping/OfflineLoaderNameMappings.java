@@ -45,7 +45,7 @@ public final class OfflineLoaderNameMappings {
         try {
             // NeoForge uses Mojang member names. A Forge source mod aimed at NeoForge still needs
             // its source SRG names decoded, but must not receive a Forge target-SRG namespace.
-            boolean mojangTarget = RetromodVersion.isUnobfuscatedTarget(targetMcVersion)
+            boolean mojangTarget = RetromodVersion.usesOfficialForgeRuntimeNames(targetMcVersion)
                     || neoForgeTarget || "neoforge".equalsIgnoreCase(loader);
             if (mojangTarget) {
                 int source = SrgToMojangMapper.getInstance().applyTo(transformer);

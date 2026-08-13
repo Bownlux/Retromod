@@ -8,6 +8,7 @@
 package com.retromod.shim.fabric;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
 import com.retromod.core.VersionShim;
 
 /**
@@ -39,11 +40,21 @@ public class Fabric_1_21_8_to_1_21_9 implements VersionShim {
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
 
-        // Entity#getWorld -> getEntityWorld, including overriding subclasses.
+        // Entity#getWorld -> getEntityWorld, including common named subclasses.
         transformer.registerMethodRedirect(
             "net/minecraft/entity/Entity", "getWorld", "()Lnet/minecraft/world/World;",
             "net/minecraft/entity/Entity", "getEntityWorld", "()Lnet/minecraft/world/World;"
         );
+
+        // Fabric-distributed bytecode uses intermediary names on every pre-26 host. This alias
+        // changed at the same 1.21.8 -> 1.21.9 boundary and has the inherited-owner shape from
+        // #179. On 26.x the full intermediary-to-Mojang remap owns this call instead.
+        if (!RetromodVersion.isUnobfuscatedTarget(RetromodVersion.TARGET_MC_VERSION)) {
+            transformer.registerInheritedMethodRedirect(
+                "net/minecraft/class_1297", "method_37908", "()Lnet/minecraft/class_1937;",
+                "net/minecraft/class_1297", "method_73183", "()Lnet/minecraft/class_1937;"
+            );
+        }
 
         transformer.registerMethodRedirect(
             "net/minecraft/entity/LivingEntity", "getWorld", "()Lnet/minecraft/world/World;",

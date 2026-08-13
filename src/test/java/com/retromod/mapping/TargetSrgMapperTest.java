@@ -49,6 +49,21 @@ class TargetSrgMapperTest {
     }
 
     @Test
+    @DisplayName("#204: Forge 1.21.1 decodes CoFH's LivingEntity shadow to Mojang names")
+    void forge1211DecodesCofhShadowToMojang() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        OfflineLoaderNameMappings.Result result = OfflineLoaderNameMappings.configure(
+                transformer, "forge", "1.21.1", false);
+
+        assertTrue(result.srgMappings() > 50_000);
+        assertEquals("getUseItem", transformer.remapQualifiedMethodName(
+                "net/minecraft/world/entity/LivingEntity",
+                "m_21211_", "()Lnet/minecraft/world/item/ItemStack;"));
+        assertEquals(0, TargetSrgMapper.forVersion("1.21.1").methodCount(),
+                "Forge 1.21.1 runs Mojang names and must not receive a target SRG table");
+    }
+
+    @Test
     @DisplayName("#192 old Forge members become the exact Forge 1.20.1 SRG members")
     void oldSrgBecomesTargetSrg() {
         RetromodTransformer transformer = RetromodTransformer.getInstance();

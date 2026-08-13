@@ -56,6 +56,14 @@ public class RetromodTransformer implements ClassFileTransformer {
     // visitMethodInsn since matching needs owner+name+descriptor, not just name.
     private final Map<MethodKey, MethodTarget> methodRedirects = new ConcurrentHashMap<>(256);
 
+    // Exact method aliases that also apply when javac writes the CALLER'S subclass as the
+    // constant-pool owner of an inherited invocation. The ordinary redirect table cannot match
+    // that shape because the owner is a mod class, not the Minecraft class that declared the
+    // renamed method. Entries remain descriptor-qualified, and a rewrite is allowed only after
+    // the current jar or target index proves that the call owner inherits the registered owner.
+    private final Map<MethodShape, Set<InheritedMethodRedirect>> inheritedMethodRedirects =
+            new ConcurrentHashMap<>();
+
     // Calls to a method deleted on the host: discard the args (and receiver), push a default
     // return, so the mod loads instead of hitting NoSuchMethodError. Motivating case: the
     // RenderSystem state setters (enableBlend/blendFunc/depthMask) removed in the 26.x
@@ -197,6 +205,81 @@ public class RetromodTransformer implements ClassFileTransformer {
     private Function<String, byte[]> currentJarClassBytesProvider() {
         ArrayDeque<Function<String, byte[]>> providers = scopedJarClassBytes.get();
         return providers.isEmpty() ? jarClassBytes : providers.peek();
+    }
+
+    /** Read one jar-local class for a conservative post-remap adapter. */
+    public static byte[] readCurrentJarClassForAdapter(String internalName) {
+        Function<String, byte[]> provider = INSTANCE.currentJarClassBytesProvider();
+        return provider != null ? provider.apply(internalName) : null;
+    }
+
+    /** Find one uniquely proven inherited redirect for an instance call. */
+    private MethodTarget inheritedMethodTarget(
+            int opcode, String owner, String name, String descriptor) {
+        if (opcode != Opcodes.INVOKEVIRTUAL && opcode != Opcodes.INVOKEINTERFACE) {
+            return null;
+        }
+        Set<InheritedMethodRedirect> candidates =
+                inheritedMethodRedirects.get(new MethodShape(name, descriptor));
+        if (candidates == null || candidates.isEmpty()) {
+            return null;
+        }
+
+        MethodTarget match = null;
+        for (InheritedMethodRedirect candidate : candidates) {
+            if (!inheritsFrom(owner, candidate.oldOwner())) {
+                continue;
+            }
+            if (match != null && !match.equals(candidate.target())) {
+                LOGGER.debug("Declined ambiguous inherited method redirect for {}.{}{}",
+                        owner, name, descriptor);
+                return null;
+            }
+            match = candidate.target();
+        }
+        return match;
+    }
+
+    /**
+     * Prove a subtype relationship from class bytes in the current mod first, then continue through
+     * the indexed Minecraft hierarchy. No name similarity or package heuristic is accepted here.
+     */
+    private boolean inheritsFrom(String child, String ancestor) {
+        if (child == null || ancestor == null) return false;
+        Function<String, byte[]> provider = currentJarClassBytesProvider();
+        Set<String> visited = new HashSet<>();
+        Deque<String> pending = new ArrayDeque<>();
+        pending.push(child);
+
+        while (!pending.isEmpty() && visited.size() < 128) {
+            String current = pending.pop();
+            if (!visited.add(current)) continue;
+            if (ancestor.equals(current)) return true;
+
+            byte[] bytes = readClassBytes(current, provider);
+            if (bytes != null) {
+                try {
+                    ClassReader reader = new ClassReader(bytes);
+                    String superName = reader.getSuperName();
+                    if (superName != null && !visited.contains(superName)) pending.push(superName);
+                    for (String iface : reader.getInterfaces()) {
+                        if (iface != null && !visited.contains(iface)) pending.push(iface);
+                    }
+                    continue;
+                } catch (RuntimeException ignored) {
+                    // One unreadable side branch, such as a newer JDK's java/lang/Object reached
+                    // through an interface, cannot disprove a superclass path still on the stack.
+                    continue;
+                }
+            }
+
+            FuzzyMethodResolver resolver = fuzzyResolver;
+            if (resolver != null && resolver.isIndexed()
+                    && resolver.isSubtypeOf(current, ancestor)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Reads the class entries of an in-memory nested jar for frame hierarchy resolution. */
@@ -549,6 +632,34 @@ public class RetromodTransformer implements ClassFileTransformer {
         registerRemappedMethodAlias(oldOwner, oldName, oldDesc, target);
         
         LOGGER.debug("Registered method redirect: {}.{}{} -> {}.{}{}",
+                oldOwner, oldName, oldDesc, newOwner, newName, newDesc);
+    }
+
+    /**
+     * Register an exact method redirect that may also match an inherited call whose bytecode owner
+     * is a subclass from the mod jar. Java commonly emits {@code SomeModEntity.oldMethod()} with
+     * {@code SomeModEntity} as the constant-pool owner even though Minecraft's base entity declares
+     * the method. Such a call is rewritten only when the available class hierarchy proves that the
+     * bytecode owner inherits {@code oldOwner}. Unknown and ambiguous hierarchies are left alone.
+     */
+    public void registerInheritedMethodRedirect(
+            String oldOwner, String oldName, String oldDesc,
+            String newOwner, String newName, String newDesc) {
+        if (oldOwner.equals(newOwner) && oldName.equals(newName) && oldDesc.equals(newDesc)) {
+            LOGGER.debug("Ignored identity inherited method-redirect registration for: {}.{}{}",
+                    oldOwner, oldName, oldDesc);
+            return;
+        }
+
+        MethodTarget target = new MethodTarget(newOwner, newName, newDesc);
+        inheritedMethodRedirects
+                .computeIfAbsent(new MethodShape(oldName, oldDesc),
+                        ignored -> ConcurrentHashMap.newKeySet())
+                .add(new InheritedMethodRedirect(oldOwner, target));
+
+        // Keep the ordinary exact-owner behavior, including descriptor aliases and diagnostics.
+        registerMethodRedirect(oldOwner, oldName, oldDesc, newOwner, newName, newDesc);
+        LOGGER.debug("Registered hierarchy-aware method redirect: {}.{}{} -> {}.{}{}",
                 oldOwner, oldName, oldDesc, newOwner, newName, newDesc);
     }
     
@@ -1338,6 +1449,7 @@ public class RetromodTransformer implements ClassFileTransformer {
      */
     public void clearRedirectsForTesting() {
         methodRedirects.clear();
+        inheritedMethodRedirects.clear();
         interfaceSyntheticTargets.clear();
         classShimTargets.clear();
         argDropRedirects.clear();
@@ -1473,6 +1585,14 @@ public class RetromodTransformer implements ClassFileTransformer {
             if (isPhantom.test(e.getValue().owner())) { dropped.add(e.getValue().owner()); return true; }
             return false;
         });
+        inheritedMethodRedirects.values().forEach(entries -> entries.removeIf(entry -> {
+            if (isPhantom.test(entry.target().owner())) {
+                dropped.add(entry.target().owner());
+                return true;
+            }
+            return false;
+        }));
+        inheritedMethodRedirects.entrySet().removeIf(e -> e.getValue().isEmpty());
         argDropRedirects.entrySet().removeIf(e -> {
             if (isPhantom.test(e.getValue().owner())) { dropped.add(e.getValue().owner()); return true; }
             return false;
@@ -1559,6 +1679,9 @@ public class RetromodTransformer implements ClassFileTransformer {
         };
         java.util.SortedSet<String> phantoms = new java.util.TreeSet<>();
         methodRedirects.values().forEach(v -> { if (isPhantom.test(v.owner())) phantoms.add(v.owner()); });
+        inheritedMethodRedirects.values().forEach(entries -> entries.forEach(entry -> {
+            if (isPhantom.test(entry.target().owner())) phantoms.add(entry.target().owner());
+        }));
         argDropRedirects.values().forEach(v -> { if (isPhantom.test(v.owner())) phantoms.add(v.owner()); });
         classRedirects.values().forEach(v -> { if (isPhantom.test(v)) phantoms.add(v); });
         fieldRedirects.values().forEach(v -> { if (isPhantom.test(v.owner())) phantoms.add(v.owner()); });
@@ -1690,6 +1813,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     private byte[] postProcess(byte[] stableBytes, String className) {
         byte[] repaired = normalizeEmbeddedShimCalls(stableBytes);
         repaired = com.retromod.shim.common.LegacyInputEventCallAdapter.apply(repaired);
+        // GUI override repair matches Mojang descriptors and proven post-remap base classes.
+        repaired = com.retromod.shim.common.LegacyGuiOverrideAdapter.apply(repaired);
         repaired = com.retromod.shim.common.LegacyEntityRendererAdapter.apply(repaired);
         repaired = com.retromod.shim.fabric.LegacyFabricItemIdRepair
                 .apply(repaired, className);
@@ -2592,12 +2717,33 @@ public class RetromodTransformer implements ClassFileTransformer {
         byte[] bytes = readClassBytes(name, provider);
         if (bytes == null) {
             String indexed = targetSuperclass == null ? null : targetSuperclass.apply(name);
-            return indexed == null ? null : hierarchyNameMapper.apply(indexed);
+            return indexed == null
+                    ? runtimeJavaSuperclass(name, hierarchyNameMapper)
+                    : hierarchyNameMapper.apply(indexed);
         }
         try {
             String superName = new ClassReader(bytes).getSuperName();
             return superName == null ? null : hierarchyNameMapper.apply(superName);
         } catch (RuntimeException e) {
+            // A newer JDK can expose java.base class files with a major version newer than the
+            // bundled ASM understands. Java platform classes are safe to inspect without class
+            // initialization, so keep walking that hierarchy instead of widening the join.
+            return runtimeJavaSuperclass(name, hierarchyNameMapper);
+        }
+    }
+
+    private static String runtimeJavaSuperclass(
+            String name, Function<String, String> hierarchyNameMapper) {
+        if (name == null || !name.startsWith("java/")) {
+            return null;
+        }
+        try {
+            Class<?> type = Class.forName(name.replace('/', '.'), false,
+                    RetromodTransformer.class.getClassLoader());
+            Class<?> parent = type.getSuperclass();
+            return parent == null ? null
+                    : hierarchyNameMapper.apply(Type.getInternalName(parent));
+        } catch (ClassNotFoundException | LinkageError | SecurityException ignored) {
             return null;
         }
     }
@@ -2933,7 +3079,8 @@ public class RetromodTransformer implements ClassFileTransformer {
             // redirects skipped the wrapper and never applied the super-ctor rewrite. It was
             // masked whenever the same shim also registered a method redirect, and surfaced once
             // the phantom-target sweep dropped those (Forge_1_12_2_to_1_13_2's FlatteningShim).
-            if (methodRedirects.isEmpty() && fieldRedirects.isEmpty() && constructorRedirects.isEmpty()
+            if (methodRedirects.isEmpty() && inheritedMethodRedirects.isEmpty()
+                    && fieldRedirects.isEmpty() && constructorRedirects.isEmpty()
                     && fieldAccessorRedirects.isEmpty() && superclassRedirects.isEmpty()
                     && superCtorRedirects.isEmpty()
                     && neutralizedMethods.isEmpty() && staticFieldAccessors.isEmpty()
@@ -3668,10 +3815,17 @@ public class RetromodTransformer implements ClassFileTransformer {
                 return;
             }
 
+            // javac may record a mod subclass as the owner of an inherited call. Exact aliases
+            // opted into hierarchy matching can still apply, but only after the jar or MC index
+            // proves the registered base owner is in that subclass's hierarchy.
+            MethodTarget inheritedTarget = inheritedMethodTarget(
+                    opcode, owner, name, descriptor);
+
             // Fast path: owner not in the redirect set. Still try pattern heuristics and fuzzy
             // resolution for unresolved references, since they cover the whole MC API surface.
             if (!methodRedirectOwners.contains(owner) && !argDropOwners.contains(owner)
-                    && !convertingOwners.contains(owner) && !singletonOwners.contains(owner)) {
+                    && !convertingOwners.contains(owner) && !singletonOwners.contains(owner)
+                    && inheritedTarget == null) {
                 // JVM special methods must never enter heuristic resolution. In particular,
                 // rewriting a constructor call to an ordinary ()V method leaves the value from
                 // NEW uninitialized and produces a VerifyError. Exact constructor redirects are
@@ -3737,6 +3891,9 @@ public class RetromodTransformer implements ClassFileTransformer {
                     MethodKey resolvedKey = new MethodKey(owner, name, resolvedDesc);
                     target = methodRedirects.get(resolvedKey);
                 }
+            }
+            if (target == null) {
+                target = inheritedTarget;
             }
 
             // Arg-dropping redirect: the new method dropped trailing param(s) the call still passes.
@@ -4135,6 +4292,10 @@ public class RetromodTransformer implements ClassFileTransformer {
 
     /** Lookup key for method redirects: matches (owner class, method name, descriptor). */
     public record MethodKey(String owner, String name, String desc) {}
+    /** Exact name and descriptor shared by hierarchy-aware redirect candidates. */
+    private record MethodShape(String name, String desc) {}
+    /** Base owner that must be proven in the call owner's hierarchy before retargeting. */
+    private record InheritedMethodRedirect(String oldOwner, MethodTarget target) {}
     /** Target of a method redirect. If devirtualize=true, instance calls become static. */
     public record MethodTarget(String owner, String name, String desc, boolean devirtualize) {
         /** Convenience constructor without devirtualize flag */
