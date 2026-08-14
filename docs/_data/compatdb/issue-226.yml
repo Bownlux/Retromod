@@ -1,0 +1,25 @@
+name: "1.12.2 Personal Build Pack"
+bundle: true
+badge: borked
+host_mc: "1.20.1"
+loader: "forge"
+retromod: "1.3.0"
+mods:
+  - name: "MiniaTuria"
+    version: "8.4"
+    source_mc: "1.12.2"
+    link: "https://miniaturia.club/en/mt1122/"
+  - name: "cocricotMOD"
+    version: "1.11.0"
+    source_mc: "1.12.2"
+    link: "https://cocricot.pics/download"
+  - name: "rojiuramod"
+    version: "0.1.4.a"
+    source_mc: "1.12.2"
+    link: "https://rojiuramod.cloudfree.jp/"
+summary: "Minecraft ‘launches’ but displays a warning about missing classes."
+details: "[_Mod__MiniaTuria_1.12.2__v8.4_.jar.txt](https://github.com/user-attachments/files/31070273/_Mod__MiniaTuria_1.12.2__v8.4_.jar.txt) [cocricotMOD_1.12.2_v1.11.0.jar.txt](https://github.com/user-attachments/files/31070271/cocricotMOD_1.12.2_v1.11.0.jar.txt) [rojiuramod-1.12.2_0.1.4.a.jar.txt](https://github.com/user-attachments/files/31070272/rojiuramod-1.12.2_0.1.4.a.jar.txt)"
+reporter: "Flogaming"
+date: "2026-08-14"
+issue: 226
+
