@@ -10,6 +10,14 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.3.0 Snapshot Line
 
+### Snapshot 8, August 17, 2026
+
+A maintenance build. Updates the bytecode library behind every transform, along with logging and build tooling. Nothing changes about which mods translate or which Minecraft versions are supported, and the same jar still runs on Java 17, 21, and 25.
+
+Retromod still builds against the oldest Fabric loader it accepts, so it cannot call an API that an older loader lacks.
+
+Because the change reaches every transform, this build was checked by re-translating mods from scratch on 26.2 Fabric and 26.2 NeoForge clients.
+
 ### Snapshot 7, August 12, 2026
 
 - Fixed parameter-capturing Fabric mixins whose annotation keeps a Yarn source selector while the refmap alone identifies the changed target method.

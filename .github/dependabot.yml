@@ -5,6 +5,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Pinned deliberately, not stale. fabric-loader is a provided dependency, so the host
+      # supplies it at runtime and a newer compile version buys nothing. fabric.mod.json accepts
+      # fabricloader >=0.16.0, so compiling against a newer one lets an API we promise to run
+      # without slip in and fail with NoSuchMethodError on a loader we claim to support.
+      - dependency-name: net.fabricmc:fabric-loader
 
   - package-ecosystem: github-actions
     directory: /

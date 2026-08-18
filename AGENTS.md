@@ -8,11 +8,59 @@ Retromod transforms older Minecraft mod bytecode so old mods work on newer MC ve
 
 **Do not use em-dashes (the long dash, Unicode U+2014) anywhere:** not in chat replies, not in code comments, docs, CHANGELOG/ROADMAP entries, or commit messages. Also avoid en-dashes (U+2013). They are annoying to copy out of responses. Use a comma, parentheses, a colon, or two separate sentences instead. (Ordinary hyphens `-`, e.g. in version ranges like `1.20-26.2`, are fine.)
 
-Write like a maintainer talking to another person:
+Write like the published docs at https://bownlux.github.io/Retromod/. They are the house style, and
+they are built from `docs/`. Read `docs/faq.md`, `docs/troubleshooting.md`, or `docs/index.md` before
+writing user-facing text and match what is there. This applies to chat replies too.
 
-- Lead public text with what changed for the user. Add implementation detail only when it helps someone understand a limitation or diagnose a problem.
-- Prefer short sentences and ordinary words. Avoid all-caps emphasis, canned headings, breathless claims, and long parenthetical asides.
-- Keep changelog entries focused. State the symptom, the fix, any honest limitation, and the test coverage. Leave the full debugging history in the issue or commit.
+This governs prose aimed at users: `docs/`, `README.md`, both changelogs, release notes, issue and PR
+text, and chat. It does not govern this guide, which stays a dense internal reference. American
+spelling throughout.
+
+### The house style
+
+- **Answer first.** Open with the answer, then qualify it. "No. Normal transformation, caching, and
+  verification are local." "Sometimes. Retromod bridges selected common 1.20.1 Forge metadata..."
+  Never open with background, a restatement of the question, or a summary label.
+- **Short declarative sentences.** Most run 8 to 20 words. One idea each. Break a long sentence in two
+  rather than joining it with a semicolon or a parenthetical.
+- **State the limit in the same breath as the capability.** This is the most recognizable habit in
+  these docs. "It can repair many renamed or moved APIs, but it cannot recreate an entire rendering
+  engine or loader subsystem." "Retromod relaxes stale version ranges when it knows the dependency can
+  be bridged. It does not invent a missing library." Never let a claim stand without its boundary.
+- **Name what it refuses, concretely.** "It refuses ambiguous overloads, constructors, partial
+  captures, reordered or removed parameters, return-type changes, semantic local captures, unsafe
+  annotations, and `remap = false` scopes." A concrete refusal list beats "some cases are unsupported".
+- **Third person for Retromod, second person for the reader.** "Retromod translates...", "It updates
+  bytecode...", "Use OpenGL", "Back up important worlds". Never "we", never "I".
+- **Prefer the exact path, key, or flag over a description of it.** `retromod-input/processed/`,
+  `config/retromod/aot-cache/`, `--mc-jar <target.jar>`, `check_for_native_versions`. Backtick every
+  one of them, including error class names like `UnsupportedClassVersionError`.
+- **Bold is for UI paths only**, as in **Video Settings > Graphics API > OpenGL**. Do not bold concepts,
+  warnings, or lead-in labels.
+- **Lists only for real enumerations**: version floors, symptom-to-cause pairs, what to attach to a bug
+  report. Explanation stays in prose.
+- **Title Case for section headings** ("Start Here", "Cache Looks Stale"). FAQ headings are the reader's
+  question in sentence case ("Does it work on servers?").
+- Keep sections short. One to three paragraphs, then the next heading.
+
+Do not use: marketing adjectives, "simply", "just", "easily", "seamlessly", exclamation marks, all-caps
+emphasis, hedging filler, apologies, or any narration of how a fix was found. State the limit flatly
+instead of softening it.
+
+### Changelog and release notes
+
+Public entries are short and declarative. One or two sentences per bullet.
+
+- Start each bullet with a present-tense verb describing what the build does now: "Repairs...", "Updates...", "Keeps...", "Prevents...", "Clarifies...". Do not open with a bold summary label followed by a paragraph.
+- One clause of mechanism is enough. The reader wants to know whether their mod works, not how the transform is wired.
+- Leave issue numbers, mod names used only as evidence, and test class names out of the bullet. They belong in the commit, the issue, or `CHANGELOG.md` at most.
+- Put limitations in plain sentences after the bullets, stating what still does not work and what a real fix would need. Do not label them or apologize for them.
+- Do not append test coverage to public entries. The suite is the guarantee; saying so adds nothing for a user.
+
+`CHANGELOG.md` may carry a little more detail than `docs/changelog.md`, but both follow this shape. `docs/changelog.md` is the user-facing summary and should stay the shortest.
+
+### Code, comments, errors, and tests
+
 - Comments should explain why a choice is necessary, especially when the obvious implementation would be wrong. Do not restate the code or narrate the investigation.
 - Use clear names and small helpers so the code explains its own mechanics. Avoid dense nested conditionals, clever one-liners, and temporary abbreviations that make readers decode the implementation.
 - Make errors actionable. Say what failed, which input was involved, and what the user can do next. Do not blame the user or expose irrelevant internals.
@@ -30,7 +78,7 @@ Write like a maintainer talking to another person:
 ## Critical Context
 
 - **Target MC version:** 26.1 (Mojang removed ALL code obfuscation); 26.2 supported since 1.1.0-snapshot.4 (shims/aliases/Fabric build target in place, verified on 26.2-rc-1)
-- **Java:** Built WITH Java 25 (we need the modern compiler to use ASM 9.8 features that read MC 26.1's class file format), but bytecode targets `--release 17` so the SAME JAR runs on Java 17, 21, and 25. Broad runtime compat is the entire point. `build-all.sh` sets the per-MC `"java"` constraint in fabric.mod.json based on what each MC version itself needs: `>=17` for MC 1.20-1.20.4, `>=21` for MC 1.20.5-1.21.x, **`>=25` for MC 26.x** (MC 26.1's own class files are Java 25 bytecode, so a Java 21 JVM can't load them). Don't accidentally bump `<release>` higher, or that locks out MC 1.20.x users on Java 17. ASM 9.8 itself runs on Java 8+; it just READS class files up to v69 (Java 25), which has nothing to do with what bytecode WE emit.
+- **Java:** Built WITH Java 25 (we need the modern compiler to use ASM 9.10.1 features that read MC 26.1's class file format), but bytecode targets `--release 17` so the SAME JAR runs on Java 17, 21, and 25. Broad runtime compat is the entire point. `build-all.sh` sets the per-MC `"java"` constraint in fabric.mod.json based on what each MC version itself needs: `>=17` for MC 1.20-1.20.4, `>=21` for MC 1.20.5-1.21.x, **`>=25` for MC 26.x** (MC 26.1's own class files are Java 25 bytecode, so a Java 21 JVM can't load them). Don't accidentally bump `<release>` higher, or that locks out MC 1.20.x users on Java 17. ASM itself runs on Java 8+; it just READS class files up to v69 (Java 25), which has nothing to do with what bytecode WE emit.
 - **Intermediary names are dead in 26.1+.** All `class_XXXX`, `method_XXXX`, `field_XXXX` must map to Mojang official names.
 - **NeoForge already uses Mojang names** since 1.17. NeoForge mods mainly need metadata patching, not name remapping.
 - **Fabric mods use intermediary names**, so they need full intermediary→Mojang remapping for 26.1+.
@@ -79,12 +127,12 @@ mvn package -P lite -DskipTests -Dexec.skip=true
 mvn exec:java -Dexec.mainClass="com.retromod.cli.RetromodCli" -Dexec.args="<command>" -q
 
 # Run the executable release CLI (dependencies bundled)
-java -jar dist/CLI/retromod-1.3.0-snapshot.7-cli.jar <command>
+java -jar dist/CLI/retromod-1.3.0-snapshot.8-cli.jar <command>
 ```
 
 **Important:** Always pass `-Dexec.skip=true` during build to prevent Maven from running the CLI entrypoint.
 
-Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 68 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.3.0-snapshot.7-cli.jar`.
+Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 68 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.3.0-snapshot.8-cli.jar`.
 
 ## Release integrity (self-hash)
 
@@ -93,19 +141,21 @@ Official builds embed a SHA-256 of the executable release surface in `SignatureV
 **Embed the hash as the LAST release step** (any covered code, provider, or transformation-data change shifts it):
 ```bash
 mvn clean package -Dexec.skip=true                          # build the final jars
-python3 scripts/compute-self-hash.py target/retromod-1.3.0-snapshot.7-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.3.0-snapshot.8-all.jar
 # embed the 64-hex result into SignatureVerifier.EXPECTED_SELF_HASH PROGRAMMATICALLY
 # (sed/python - never hand-typed), rebuild, then re-run the compute script and
 # compare against the embedded value (closed-loop verify)
 ```
 The excluded loader-variant classes are the only covered-surface differences between distributions, so **one value matches every per-loader dist jar and the standalone CLI** from `build-all.sh`. In dev, leave `EXPECTED_SELF_HASH=""`: the verifier then reports `UNKNOWN` and logs the computed hash so you can grab it. No keystore, no signing.
 
-After embedding and rebuilding, run `bash build-all.sh --skip-build --require-self-hash`. A complete release has 23 Fabric, 23 Forge, 22 NeoForge, and 1 CLI artifact. That is 68 loader jars plus the CLI, or 69 artifacts total. Verify all rows in `dist/SHA256SUMS.txt` before publishing. Modrinth and CurseForge receive only the 68 loader jars; the CLI and checksum manifest ship on GitHub Releases.
+After embedding and rebuilding, run `bash build-all.sh --skip-build --require-self-hash`. A complete release has 23 Fabric, 23 Forge, 22 NeoForge, and 1 CLI artifact. That is 68 loader jars plus the CLI, or 69 artifacts total. Verify all rows in `dist/SHA256SUMS.txt` before publishing.
+
+**`build-all.sh` does not clean `dist/`.** It writes over same-named files, so the previous version's 69 artifacts survive a version bump and sit alongside the new ones. `validate_release_artifacts` then rejects the tree for unexpected jars, and a stale jar can reach a publisher. `rm -rf dist` before a version-bumped release build. It also does not regenerate `dist/MODRINTH_CHANGELOG.md`, which is hand-written per release and carries the self-hash, so recreate it after clearing `dist/`. Confirm the tree with `PYTHONPATH=. python3 -c "from scripts.release_artifacts import validate_release_artifacts as v; v('<version>')"` and check the self-hash is one value across a Fabric, Forge, NeoForge, and the CLI jar. Modrinth and CurseForge receive only the 68 loader jars; the CLI and checksum manifest ship on GitHub Releases.
 
 ## Deploy to Minecraft
 
 ```bash
-cp dist/Fabric/26.1/retromod-1.3.0-snapshot.7+26.1.jar ~/Library/Application\ Support/minecraft/mods/
+cp dist/Fabric/26.1/retromod-1.3.0-snapshot.8+26.1.jar ~/Library/Application\ Support/minecraft/mods/
 ```
 
 Game directory (macOS): `~/Library/Application Support/minecraft/`
@@ -122,7 +172,7 @@ Game directory (macOS): `~/Library/Application Support/minecraft/`
 | `core/FabricModTransformer.java` | Patches fabric.mod.json version constraints |
 | `core/ForgeModTransformer.java` | Patches mods.toml/neoforge.mods.toml version constraints |
 | `core/ModVersionDetector.java` | Reads mod MC version from loader-specific metadata |
-| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,981 classes, 54,479 fields, and 57,520 methods at snapshot.7) |
+| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,981 classes, 54,479 fields, and 57,520 methods at snapshot.8) |
 | `mapping/MappingComposer.java` | Generates mapping files from TinyV2 + ProGuard sources |
 | `shim/ShimRegistry.java` | BFS chain finder with version aliases |
 | `cli/RetromodCli.java` | CLI tool (`TARGET_MC_VERSION = "26.1"`) |
@@ -148,8 +198,8 @@ Game directory (macOS): `~/Library/Application Support/minecraft/`
 ## ServiceLoader Registration
 
 Shims and polyfills are discovered via ServiceLoader:
-- `src/main/resources/META-INF/services/com.retromod.core.VersionShim` (120 registered providers at snapshot.7)
-- `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider` (36 registered providers at snapshot.7)
+- `src/main/resources/META-INF/services/com.retromod.core.VersionShim` (120 registered providers at snapshot.8)
+- `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider` (36 registered providers at snapshot.8)
 
 When adding a new shim or polyfill, ALWAYS register it in the corresponding services file.
 
@@ -196,7 +246,7 @@ When you fix a user-reported issue, add a regression case for it to the **Retrom
 
 10. **NeoForge 1.20.1 mods need the toml RENAMED, not just patched.** NeoForge 1.20.2+ reads `META-INF/neoforge.mods.toml`; a 1.20.1 (Neo)Forge mod ships only `META-INF/mods.toml` and NeoForge SKIPS it at scan time ("is for Minecraft Forge or an older version of NeoForge") *before bytecode runs* (#42, and the real cause of #38, which was wrongly blamed on the shim gate). `ForgeModTransformer.promoteToNeoForgeToml` (gated on `McReflect.isNeoForge()` + target ≥ 1.20.2) renames it, relaxes top-level `loaderVersion` to `[1,)`, and repoints the `forge` loader dependency → `neoforge` (NeoForge has no `forge` mod). Forge hosts keep `mods.toml`.
 
-11. **Versioning: bump published builds, but fix unpublished builds in place.** If someone reports a bug in a published snapshot or release candidate, use a new version so they can tell the fixed build apart. Update `pom.xml`, the `VERSION` in `build-all.sh`, version constants and banners, the README badge, the full `CHANGELOG.md`, the shorter release summary at `docs/changelog.md`, and version references in the docs. Shields.io escapes literal hyphens by doubling them in the badge URL. Patch releases such as `1.0.1` ship directly. Minor and major releases use a snapshot, then a release candidate, before the stable build. Embed the self-hash only after every covered code, provider, and transformation-data edit. Leave `EXPECTED_SELF_HASH=""` during development.
+11. **Versioning: bump published builds, but fix unpublished builds in place.** If someone reports a bug in a published snapshot or release candidate, use a new version so they can tell the fixed build apart. Update `pom.xml`, the `VERSION` in `build-all.sh`, version constants and banners, the README badge, the full `CHANGELOG.md`, the shorter release summary at `docs/changelog.md`, and version references in the docs. Shields.io escapes literal hyphens by doubling them in the badge URL. Patch releases such as `1.0.1` ship directly. Minor and major releases use a snapshot, then a release candidate, before the stable build. Embed the self-hash only after every covered code, provider, and transformation-data edit. Leave `EXPECTED_SELF_HASH=""` during development. Do not blanket find-replace the old version string: `scripts/tests/test_release_artifacts.py` needs a version that deliberately does *not* match the pom, and it used to spell that as the next release, so bumping to that release silently made the value correct and killed three of its seven tests. It now uses a `MISMATCHED_VERSION` sentinel and derives its artifact paths from `VERSION`, so only that one constant changes. Run it after any bump with `PYTHONPATH=. python3 scripts/tests/test_release_artifacts.py`; CI does not.
 
 12. **Heavy/coremod mods can't be translated.** Create (ships Flywheel, a custom GL renderer plus coremods), Flywheel, Veil (rendering framework), and similar deep-integration/rendering mods are on [Mods That Can't Be Translated](docs/incompatible-mods.md). They fail with coremod/`getLoadingModList`/`VerifyError`/`CancellationException`-teardown symptoms regardless of metadata fixes (#25/#43). Don't chase these as transform bugs. Confirm the mod list against the incompatible list first.
 
@@ -231,12 +281,19 @@ Caveat: these surface CANDIDATES, not confirmations. A predicted break is a hypo
 
 | Dependency | Version | Purpose |
 |-----------|---------|---------|
-| ASM | 9.8 | Bytecode manipulation (9.8 required for Java 25) |
+| ASM | 9.10.1 | Bytecode manipulation (9.8+ required for Java 25) |
 | Gson | 2.10.1 | JSON parsing |
-| SLF4J | 2.0.9 | Logging |
+| SLF4J | 2.0.18 | Logging |
 | JUnit 5 | 5.10.1 | Testing |
 | Mixin | 0.8.5 | Mixin API (provided) |
-| Fabric Loader | 0.16.10 | Fabric API (provided) |
+| Fabric Loader | 0.16.10 | Fabric API (provided), pinned deliberately |
+
+**Fabric Loader is pinned at 0.16.10 on purpose. Do not bump it.** It is a `provided` dependency, so the
+running loader supplies it and a newer compile version gains nothing at runtime. `fabric.mod.json`
+declares `fabricloader >=0.16.0`, so compiling against a newer release lets an API that 0.16.x lacks
+compile cleanly and then throw `NoSuchMethodError` on a host we claim to support. `.github/dependabot.yml`
+ignores it so the bump stops being proposed weekly. Bumping ASM, Gson, or SLF4J shifts the self-hash;
+re-embed it as the last release step.
 
 ## Skills
 

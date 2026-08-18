@@ -54,7 +54,7 @@ jobs:
 
     steps:
       - name: Checkout the commit CI ran against
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # workflow_run runs in the context of the default branch by default,
           # not the triggering commit. Explicitly check out the SHA that CI
@@ -80,7 +80,7 @@ jobs:
           fi
 
       - name: Set up JDK 25
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -149,7 +149,7 @@ jobs:
           echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
 
       - name: Publish rolling release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: latest
           # The action force-updates this tag to the current SHA on each run.

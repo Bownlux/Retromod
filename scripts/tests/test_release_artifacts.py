@@ -14,7 +14,9 @@ from scripts.release_artifacts import (
 )
 
 
-VERSION = "1.3.0-snapshot.7"
+VERSION = "1.3.0-snapshot.8"
+# Deliberately not a real release, so a version bump can never make it match.
+MISMATCHED_VERSION = "0.0.0-not-the-pom-version"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -69,11 +71,12 @@ class ReleaseArtifactValidationTest(unittest.TestCase):
     def test_rejects_version_that_does_not_match_pom(self):
         with self.assertRaisesRegex(
                 ReleaseArtifactError,
-                "requested version '1.3.0-snapshot.8' does not match pom.xml version"):
-            self._validate("1.3.0-snapshot.8")
+                "requested version '" + MISMATCHED_VERSION
+                + "' does not match pom.xml version"):
+            self._validate(MISMATCHED_VERSION)
 
     def test_rejects_missing_and_unexpected_retromod_jars(self):
-        expected = self.dist / "Fabric/1.20/retromod-1.3.0-snapshot.7+1.20.jar"
+        expected = self.dist / f"Fabric/1.20/retromod-{VERSION}+1.20.jar"
         stale = expected.with_name("retromod-1.3.0-snapshot.6+1.20.jar")
         expected.rename(stale)
 
@@ -85,7 +88,7 @@ class ReleaseArtifactValidationTest(unittest.TestCase):
         self.assertIn("unexpected Retromod JAR in release tree: Fabric/1.20/", message)
 
     def test_rejects_symlinked_artifact(self):
-        artifact = self.dist / "Forge/26.2/retromod-1.3.0-snapshot.7+26.2.jar"
+        artifact = self.dist / f"Forge/26.2/retromod-{VERSION}+26.2.jar"
         content = artifact.read_bytes()
         artifact.unlink()
         target = self.root / "outside.jar"
@@ -111,7 +114,7 @@ class ReleaseArtifactValidationTest(unittest.TestCase):
         self.assertIn("checksum manifest has unexpected entries:", message)
 
     def test_rejects_checksum_mismatch(self):
-        artifact = self.dist / "NeoForge/26.2/retromod-1.3.0-snapshot.7+26.2.jar"
+        artifact = self.dist / f"NeoForge/26.2/retromod-{VERSION}+26.2.jar"
         artifact.write_bytes(b"changed after checksums were generated\n")
 
         with self.assertRaisesRegex(
@@ -145,7 +148,7 @@ class ReleaseArtifactValidationTest(unittest.TestCase):
                         sys.executable,
                         os.fspath(REPOSITORY_ROOT / "scripts" / publisher),
                         "--version",
-                        "1.3.0-snapshot.8",
+                        MISMATCHED_VERSION,
                         "--dist",
                         os.fspath(self.root / "does-not-exist"),
                     ],

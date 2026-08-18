@@ -2,6 +2,19 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
+## [1.3.0-snapshot.8] - 2026-08-17
+
+**Eighth snapshot of the 1.3.0 line.** A maintenance build: dependency and toolchain updates with no change to transform behavior.
+
+### Changed
+- Updates ASM, the bytecode library behind every transform, from 9.8 to 9.10.1. The supported Java and Minecraft ranges are unchanged, and one jar still runs on Java 17, 21, and 25.
+- Updates SLF4J from 2.0.9 to 2.0.18, the enforcer plugin to 3.6.3, the source plugin to 3.4.0, and the test-only log4j API to 2.26.1.
+- Updates the build workflow actions to their current major versions, keeping the commit-pinned form they already used.
+- Keeps the Fabric loader compile dependency at 0.16.10. The running loader supplies it, so building against a newer release only risks calling an API that the older loaders Retromod accepts do not have.
+- Derives the release artifact test's expected paths from its version constant, so a version bump no longer breaks its own mismatch cases.
+
+Because this snapshot changes the bytecode library rather than any single transform rule, it was verified by re-transforming mods from scratch on 26.2 Fabric and 26.2 NeoForge clients, not by the test suite alone.
+
 ## [1.3.0-snapshot.7] - 2026-08-12
 
 **Seventh snapshot of the 1.3.0 line.**
