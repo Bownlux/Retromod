@@ -7,10 +7,10 @@ nav_order: 5
 
 The CLI transforms mods without launching Minecraft. It is useful for servers, modpacks, CI, and compatibility checks.
 
-Download `retromod-1.3.0-snapshot.8-cli.jar` from the GitHub release. It bundles its dependencies and has an executable manifest:
+Download `retromod-1.3.0-snapshot.9-cli.jar` from the GitHub release. It bundles its dependencies and has an executable manifest:
 
 ```bash
-java -jar retromod-1.3.0-snapshot.8-cli.jar <command> <args>
+java -jar retromod-1.3.0-snapshot.9-cli.jar <command> <args>
 ```
 
 From a repository checkout, Maven is a useful fallback:
@@ -25,30 +25,30 @@ mvn exec:java \
 
 ```bash
 # Inspect a mod
-java -jar retromod-1.3.0-snapshot.8-cli.jar analyze path/to/mod.jar
+java -jar retromod-1.3.0-snapshot.9-cli.jar analyze path/to/mod.jar
 
 # Transform one mod and use the exact target jar for safe Mixin repairs
-java -jar retromod-1.3.0-snapshot.8-cli.jar transform path/to/mod.jar \
+java -jar retromod-1.3.0-snapshot.9-cli.jar transform path/to/mod.jar \
   --target 26.2 --mc-jar path/to/minecraft-26.2-client.jar --verify
 
 # Transform a folder
-java -jar retromod-1.3.0-snapshot.8-cli.jar batch path/to/mods \
+java -jar retromod-1.3.0-snapshot.9-cli.jar batch path/to/mods \
   --aot --mc-jar path/to/minecraft-26.2-client.jar --verify
 
 # Prepare a Minecraft instance
-java -jar retromod-1.3.0-snapshot.8-cli.jar prepare path/to/.minecraft --aot
+java -jar retromod-1.3.0-snapshot.9-cli.jar prepare path/to/.minecraft --aot
 
 # List registered shims
-java -jar retromod-1.3.0-snapshot.8-cli.jar shims
+java -jar retromod-1.3.0-snapshot.9-cli.jar shims
 
 # Compare two version points
-java -jar retromod-1.3.0-snapshot.8-cli.jar diff fabric 1.21.1 26.2
+java -jar retromod-1.3.0-snapshot.9-cli.jar diff fabric 1.21.1 26.2
 ```
 
 Run `--help` for the full command and option list:
 
 ```bash
-java -jar retromod-1.3.0-snapshot.8-cli.jar --help
+java -jar retromod-1.3.0-snapshot.9-cli.jar --help
 ```
 
 ## Useful Flags

@@ -17,7 +17,7 @@ Download the jar that matches both your loader and Minecraft version from [Modri
 
 Every build is also on [GitHub Releases](https://github.com/Bownlux/Retromod/releases) if you prefer to grab it directly.
 
-Choose a jar from the matching loader and Minecraft folder. The release matrix contains 23 Fabric jars, 23 Forge jars, and 22 NeoForge jars. The separate `retromod-1.3.0-snapshot.8-cli.jar` is a command-line tool, not a mod, and does not belong in `mods/`.
+Choose a jar from the matching loader and Minecraft folder. The release matrix contains 23 Fabric jars, 23 Forge jars, and 22 NeoForge jars. The separate `retromod-1.3.0-snapshot.9-cli.jar` is a command-line tool, not a mod, and does not belong in `mods/`.
 
 Before testing a translated mod, copy the instance or back up every world you care about. Retromod backs up mod jars, not Minecraft saves. Start with a new test world when the mod changes world generation, registries, inventories, entities, or save data.
 

@@ -14,7 +14,7 @@ from scripts.release_artifacts import (
 )
 
 
-VERSION = "1.3.0-snapshot.8"
+VERSION = "1.3.0-snapshot.9"
 # Deliberately not a real release, so a version bump can never make it match.
 MISMATCHED_VERSION = "0.0.0-not-the-pom-version"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]

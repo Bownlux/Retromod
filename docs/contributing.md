@@ -47,7 +47,7 @@ Use a loader-specific jar from `build-all.sh` for in-game testing. The raw `-all
 The published standalone CLI is executable because it keeps the bundled dependencies:
 
 ```bash
-java -jar dist/CLI/retromod-1.3.0-snapshot.8-cli.jar --help
+java -jar dist/CLI/retromod-9-cli.jar --help
 ```
 
 From a source checkout, `mvn exec:java` remains the fallback while developing.
@@ -58,7 +58,7 @@ Keep `SignatureVerifier.EXPECTED_SELF_HASH` empty during development. Finish the
 
 ```bash
 mvn clean package -Dexec.skip=true
-python3 scripts/compute-self-hash.py target/retromod-1.3.0-snapshot.8-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.3.0-snapshot.9-all.jar
 # Update EXPECTED_SELF_HASH programmatically, then rebuild.
 mvn clean package -Dexec.skip=true
 bash build-all.sh --skip-build --require-self-hash
@@ -76,7 +76,7 @@ sha256sum --check SHA256SUMS.txt
 shasum -a 256 --check SHA256SUMS.txt
 ```
 
-Upload only the 68 loader jars to loader-specific Modrinth or CurseForge versions. Publish `dist/CLI/retromod-1.3.0-snapshot.8-cli.jar` and `dist/SHA256SUMS.txt` with the GitHub release.
+Upload only the 68 loader jars to loader-specific Modrinth or CurseForge versions. Publish `dist/CLI/retromod-1.3.0-snapshot.9-cli.jar` and `dist/SHA256SUMS.txt` with the GitHub release.
 
 ## Style
 

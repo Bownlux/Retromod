@@ -81,6 +81,7 @@ public class ResourcePackTransformer {
     private static final Map<String, String> TEXTURE_RENAMES = new HashMap<>();
     static {
         // 1.13 flattening renames
+        // initial set added all the way back in the initial commit
         TEXTURE_RENAMES.put("grass_side", "grass_block_side");
         TEXTURE_RENAMES.put("grass_top", "grass_block_top");
         TEXTURE_RENAMES.put("hardened_clay", "terracotta");
@@ -93,6 +94,24 @@ public class ResourcePackTransformer {
         TEXTURE_RENAMES.put("redstone_torch_on", "redstone_torch_lit");
         TEXTURE_RENAMES.put("comparator_on", "comparator_lit");
         TEXTURE_RENAMES.put("repeater_on", "repeater_lit");
+        // Wool colors
+        TEXTURE_RENAMES.put("wool_colored_black", "black_wool");
+        TEXTURE_RENAMES.put("wool_colored_blue", "blue_wool");
+        TEXTURE_RENAMES.put("wool_colored_brown", "brown_wool");
+        TEXTURE_RENAMES.put("wool_colored_cyan", "cyan_wool");
+        TEXTURE_RENAMES.put("wool_colored_gray", "gray_wool");
+        TEXTURE_RENAMES.put("wool_colored_green", "green_wool");
+        TEXTURE_RENAMES.put("wool_colored_light_blue", "light_blue_wool");
+        TEXTURE_RENAMES.put("wool_colored_lime", "lime_wool");
+        TEXTURE_RENAMES.put("wool_colored_magenta", "magenta_wool");
+        TEXTURE_RENAMES.put("wool_colored_orange", "orange_wool");
+        TEXTURE_RENAMES.put("wool_colored_pink", "pink_wool");
+        TEXTURE_RENAMES.put("wool_colored_purple", "purple_wool");
+        TEXTURE_RENAMES.put("wool_colored_red", "red_wool");
+        TEXTURE_RENAMES.put("wool_colored_silver", "light_gray_wool");
+        TEXTURE_RENAMES.put("wool_colored_white", "white_wool");
+        TEXTURE_RENAMES.put("wool_colored_yellow", "yellow_wool");
+
         // Add more as needed
     }
     
