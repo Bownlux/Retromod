@@ -456,7 +456,7 @@ public class ResourcePackTransformer {
         TEXTURE_RENAMES.put("door_iron", "iron_door");
         TEXTURE_RENAMES.put("door_jungle", "jungle_door");
         TEXTURE_RENAMES.put("door_spruce", "spruce_door");
-        TEXTURE_RENAMES.put("door_wood", "wood_door");
+        TEXTURE_RENAMES.put("door_wood", "oak_door");
         TEXTURE_RENAMES.put("dye_powder_black", "ink_sac");
         TEXTURE_RENAMES.put("dye_powder_blue", "lapis_lazuli");
         TEXTURE_RENAMES.put("dye_powder_brown", "cocoa_beans");
