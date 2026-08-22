@@ -81,7 +81,7 @@ public class ResourcePackTransformer {
     private static final Map<String, String> TEXTURE_RENAMES = new HashMap<>();
     static {
         // 1.13 flattening renames
-        // initial set added all the way back in the initial commit
+        // initial set, partially corrected from original commit
         TEXTURE_RENAMES.put("grass_side", "grass_block_side");
         TEXTURE_RENAMES.put("grass_top", "grass_block_top");
         TEXTURE_RENAMES.put("hardened_clay", "terracotta");
@@ -89,12 +89,40 @@ public class ResourcePackTransformer {
         TEXTURE_RENAMES.put("stone_slab_side", "smooth_stone_slab_side");
         TEXTURE_RENAMES.put("mob_spawner", "spawner");
         TEXTURE_RENAMES.put("noteblock", "note_block");
-        TEXTURE_RENAMES.put("workbench", "crafting_table");
-        TEXTURE_RENAMES.put("furnace_front_on", "furnace_front_lit");
-        TEXTURE_RENAMES.put("redstone_torch_on", "redstone_torch_lit");
-        TEXTURE_RENAMES.put("comparator_on", "comparator_lit");
-        TEXTURE_RENAMES.put("repeater_on", "repeater_lit");
-        // Wool colors
+        TEXTURE_RENAMES.put("redstone_torch_on", "redstone_torch");
+        TEXTURE_RENAMES.put("comparator_off", "comparator");
+        TEXTURE_RENAMES.put("repeater_off", "repeater");
+
+        // other state/orientation based textures
+        TEXTURE_RENAMES.put("grass_side_overlay", "grass_block_side_overlay");
+        TEXTURE_RENAMES.put("grass_side_snowed", "grass_block_snow");
+        TEXTURE_RENAMES.put("comparator_off", "comparator");
+        TEXTURE_RENAMES.put("dispenser_front_horizontal", "dispenser_front");
+        TEXTURE_RENAMES.put("dropper_front_horizontal", "dropper_front");
+        TEXTURE_RENAMES.put("endframe_ey", "end_portal_frame_eye");
+        TEXTURE_RENAMES.put("endframe_side", "end_portal_frame_side");
+        TEXTURE_RENAMES.put("endframe_top", "end_portal_frame_top");
+        TEXTURE_RENAMES.put("farmland_wet", "farmland_moist");
+        TEXTURE_RENAMES.put("farmland_dry", "farmland");
+        TEXTURE_RENAMES.put("furnace_front_off", "furnace_front");
+        TEXTURE_RENAMES.put("observer_back_lit", "observer_back_on");
+        TEXTURE_RENAMES.put("piston_top_normal", "piston_top");
+        TEXTURE_RENAMES.put("pumpkin_face_off", "carved_pumpkin");
+        TEXTURE_RENAMES.put("pumpkin_face_on", "jack_o_lantern");
+        TEXTURE_RENAMES.put("redstone_lamp_off", "redstone_lamp");
+        TEXTURE_RENAMES.put("torch_on", "torch");
+
+        // rails
+        TEXTURE_RENAMES.put("rail_activator", "activator_rail");
+        TEXTURE_RENAMES.put("rail_powered", "activator_rail_on");
+        TEXTURE_RENAMES.put("rail_detector", "detector_rail");
+        TEXTURE_RENAMES.put("rail_detector_powered", "detector_rail_on");
+        TEXTURE_RENAMES.put("rail_golden", "golden_rail");
+        TEXTURE_RENAMES.put("rail_golden_powered", "golden_rail_on");
+        TEXTURE_RENAMES.put("rail_normal", "rail");
+        TEXTURE_RENAMES.put("rail_normal_turned", "rail_corner");
+
+        // wool colors
         TEXTURE_RENAMES.put("wool_colored_black", "black_wool");
         TEXTURE_RENAMES.put("wool_colored_blue", "blue_wool");
         TEXTURE_RENAMES.put("wool_colored_brown", "brown_wool");
@@ -112,6 +140,299 @@ public class ResourcePackTransformer {
         TEXTURE_RENAMES.put("wool_colored_white", "white_wool");
         TEXTURE_RENAMES.put("wool_colored_yellow", "yellow_wool");
 
+        // crops
+        TEXTURE_RENAMES.put("beetroots_stage_0", "beetroots_stage0");
+        TEXTURE_RENAMES.put("beetroots_stage_1", "beetroots_stage1");
+        TEXTURE_RENAMES.put("beetroots_stage_2", "beetroots_stage2");
+        TEXTURE_RENAMES.put("beetroots_stage_3", "beetroots_stage3");
+        TEXTURE_RENAMES.put("carrots_stage_0", "carrots_stage0");
+        TEXTURE_RENAMES.put("carrots_stage_1", "carrots_stage1");
+        TEXTURE_RENAMES.put("carrots_stage_2", "carrots_stage2");
+        TEXTURE_RENAMES.put("carrots_stage_3", "carrots_stage3");
+        TEXTURE_RENAMES.put("cocoa_stage_0", "cocoa_stage0");
+        TEXTURE_RENAMES.put("cocoa_stage_1", "cocoa_stage1");
+        TEXTURE_RENAMES.put("cocoa_stage_2", "cocoa_stage2");
+        TEXTURE_RENAMES.put("nether_wart_stage_0", "nether_wart_stage0");
+        TEXTURE_RENAMES.put("nether_wart_stage_1", "nether_wart_stage1");
+        TEXTURE_RENAMES.put("nether_wart_stage_2", "nether_wart_stage2");
+        TEXTURE_RENAMES.put("potatoes_stage_0", "potatoes_stage0");
+        TEXTURE_RENAMES.put("potatoes_stage_1", "potatoes_stage1");
+        TEXTURE_RENAMES.put("potatoes_stage_2", "potatoes_stage2");
+        TEXTURE_RENAMES.put("potatoes_stage_3", "potatoes_stage3");
+        TEXTURE_RENAMES.put("wheat_stage_0", "wheat_stage0");
+        TEXTURE_RENAMES.put("wheat_stage_1", "wheat_stage1");
+        TEXTURE_RENAMES.put("wheat_stage_2", "wheat_stage2");
+        TEXTURE_RENAMES.put("wheat_stage_3", "wheat_stage3");
+        TEXTURE_RENAMES.put("wheat_stage_4", "wheat_stage4");
+        TEXTURE_RENAMES.put("wheat_stage_5", "wheat_stage5");
+        TEXTURE_RENAMES.put("wheat_stage_6", "wheat_stage6");
+        TEXTURE_RENAMES.put("wheat_stage_7", "wheat_stage7");
+
+        // stems
+        TEXTURE_RENAMES.put("melon_stem_connected", "attached_melon_stem");
+        TEXTURE_RENAMES.put("melon_stem_disconnected", "melon_stem");
+        TEXTURE_RENAMES.put("pumpkin_stem_connected", "attached_pumpkin_stem");
+        TEXTURE_RENAMES.put("pumpkin_stem_disconnected", "pumpkin_stem");
+
+        // plants and flowers
+        TEXTURE_RENAMES.put("deadbush", "deadbush");
+        TEXTURE_RENAMES.put("double_plant_fern_bottom", "large_fern_bottom");
+        TEXTURE_RENAMES.put("double_plant_fern_top", "large_fern_top");
+        TEXTURE_RENAMES.put("double_plant_grass_bottom", "tall_grass_bottom");
+        TEXTURE_RENAMES.put("double_plant_grass_top", "tall_grass_top");
+        TEXTURE_RENAMES.put("double_plant_paeonia_bottom", "peony_bottom");
+        TEXTURE_RENAMES.put("double_plant_paeonia_top", "peony_top");
+        TEXTURE_RENAMES.put("double_plant_rose_bottom", "rose_bush_bottom");
+        TEXTURE_RENAMES.put("double_plant_rose_top", "rose_bush_top");
+        TEXTURE_RENAMES.put("double_plant_sunflower_back", "sunflower_back");
+        TEXTURE_RENAMES.put("double_plant_sunflower_bottom", "sunflower_bottom");
+        TEXTURE_RENAMES.put("double_plant_sunflower_front", "sunflower_front");
+        TEXTURE_RENAMES.put("double_plant_sunflower_top", "sunflower_top");
+        TEXTURE_RENAMES.put("double_plant_syringa_bottom", "lilac_bottom");
+        TEXTURE_RENAMES.put("double_plant_syringa_top", "lilac_top");
+        TEXTURE_RENAMES.put("flower_allium", "allium");
+        TEXTURE_RENAMES.put("flower_blue_orchid", "blue_orchid");
+        TEXTURE_RENAMES.put("flower_dandelion", "dandelion");
+        TEXTURE_RENAMES.put("flower_houstonia", "azure_bluet");
+        TEXTURE_RENAMES.put("flower_oxeye_daisy", "oxeye_daisy");
+        TEXTURE_RENAMES.put("flower_rose", "poppy");
+        TEXTURE_RENAMES.put("flower_tulip_orange", "orange_tulip");
+        TEXTURE_RENAMES.put("flower_tulip_pink", "pink_tulip");
+        TEXTURE_RENAMES.put("flower_tulip_red", "red_tulip");
+        TEXTURE_RENAMES.put("flower_tulip_white", "white_tulip");
+        TEXTURE_RENAMES.put("mushroom_brown", "brown_mushroom");
+        TEXTURE_RENAMES.put("mushroom_red", "red_mushroom");
+        TEXTURE_RENAMES.put("reeds", "sugar_cane");
+        TEXTURE_RENAMES.put("tallgrass", "grass");
+        TEXTURE_RENAMES.put("waterlily", "lily_pad");
+
+        // anvils
+        TEXTURE_RENAMES.put("anvil_base", "anvil");
+        TEXTURE_RENAMES.put("anvil_top_damaged_0", "anvil_top");
+        TEXTURE_RENAMES.put("anvil_top_damaged_1", "chipped_anvil_top");
+        TEXTURE_RENAMES.put("anvil_top_damaged_2", "damaged_anvil_top");
+
+        // wood stuff (doors, logs, planks, leaves and saplings)
+        TEXTURE_RENAMES.put("door_acacia_lower", "acacia_door_bottom");
+        TEXTURE_RENAMES.put("door_acacia_upper", "acacia_door_top");
+        TEXTURE_RENAMES.put("door_birch_lower", "birch_door_bottom");
+        TEXTURE_RENAMES.put("door_birch_upper", "birch_door_top");
+        TEXTURE_RENAMES.put("door_dark_oak_lower", "dark_oak_door_bottom");
+        TEXTURE_RENAMES.put("door_dark_oak_upper", "dark_oak_door_top");
+        TEXTURE_RENAMES.put("door_iron_lower", "iron_door_bottom");
+        TEXTURE_RENAMES.put("door_iron_upper", "iron_door_top");
+        TEXTURE_RENAMES.put("door_jungle_lower", "jungle_door_bottom");
+        TEXTURE_RENAMES.put("door_jungle_upper", "jungle_door_top");
+        TEXTURE_RENAMES.put("door_spruce_lower", "spruce_door_bottom");
+        TEXTURE_RENAMES.put("door_spruce_upper", "spruce_door_top");
+        TEXTURE_RENAMES.put("door_wood_lower", "oak_door_bottom");
+        TEXTURE_RENAMES.put("door_wood_upper", "oak_door_top");
+        TEXTURE_RENAMES.put("leaves_acacia", "acacia_leaves");
+        TEXTURE_RENAMES.put("leaves_big_oak", "dark_oak_leaves");
+        TEXTURE_RENAMES.put("leaves_birch", "birch_leaves");
+        TEXTURE_RENAMES.put("leaves_jungle", "jungle_leaves");
+        TEXTURE_RENAMES.put("leaves_oak", "oak_leaves");
+        TEXTURE_RENAMES.put("leaves_spruce", "spruce_leaves");
+        TEXTURE_RENAMES.put("log_acacia", "acacia_log");
+        TEXTURE_RENAMES.put("log_acacia_top", "acacia_log_top");
+        TEXTURE_RENAMES.put("log_big_oak", "dark_oak_log");
+        TEXTURE_RENAMES.put("log_big_oak_top", "dark_oak_log_top");
+        TEXTURE_RENAMES.put("log_birch", "birch_log");
+        TEXTURE_RENAMES.put("log_birch_top", "birch_log_top");
+        TEXTURE_RENAMES.put("log_jungle", "jungle_log");
+        TEXTURE_RENAMES.put("log_jungle_top", "jungle_log_top");
+        TEXTURE_RENAMES.put("log_oak", "oak_log");
+        TEXTURE_RENAMES.put("log_oak_top", "oak_log_top");
+        TEXTURE_RENAMES.put("log_spruce", "spruce_log");
+        TEXTURE_RENAMES.put("log_spruce_top", "spruce_log_top");
+        TEXTURE_RENAMES.put("planks_acacia", "acacia_planks");
+        TEXTURE_RENAMES.put("planks_big_oak", "dark_oak_planks");
+        TEXTURE_RENAMES.put("planks_birch", "birch_planks");
+        TEXTURE_RENAMES.put("planks_jungle", "jungle_planks");
+        TEXTURE_RENAMES.put("planks_oak", "oak_planks");
+        TEXTURE_RENAMES.put("planks_spruce", "spruce_planks");
+        TEXTURE_RENAMES.put("sapling_acacia", "acacia_sapling");
+        TEXTURE_RENAMES.put("sapling_birch", "birch_sapling");
+        TEXTURE_RENAMES.put("sapling_jungle", "jungle_sapling");
+        TEXTURE_RENAMES.put("sapling_oak", "oak_sapling");
+        TEXTURE_RENAMES.put("sapling_roofed_oak", "dark_oak_sapling");
+        TEXTURE_RENAMES.put("sapling_spruce", "spruce_sapling");
+
+        // animated textures
+        TEXTURE_RENAMES.put("fire_layer_0", "fire_0");
+        TEXTURE_RENAMES.put("fire_layer_1", "fire_1");
+        TEXTURE_RENAMES.put("portal", "nether_portal");
+
+        // terracotta color variants
+        TEXTURE_RENAMES.put("hardened_clay_stained_black", "black_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_blue", "blue_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_brown", "brown_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_cyan", "cyan_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_gray", "gray_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_green", "green_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_light_blue", "light_blue_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_lime", "lime_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_magenta", "magenta_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_orange", "orange_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_pink", "pink_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_purple", "purple_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_red", "red_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_silver", "light_gray_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_white", "white_terracotta");
+        TEXTURE_RENAMES.put("hardened_clay_stained_yellow", "yellow_terracotta");
+
+        // glazed terracotta
+        TEXTURE_RENAMES.put("glazed_terracotta_black", "black_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_blue", "blue_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_brown", "brown_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_cyan", "cyan_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_gray", "gray_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_green", "green_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_light_blue", "light_blue_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_lime", "lime_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_magenta", "magenta_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_orange", "orange_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_pink", "pink_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_purple", "purple_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_red", "red_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_silver", "light_gray_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_white", "white_glazed_terracotta");
+        TEXTURE_RENAMES.put("glazed_terracotta_yellow", "yellow_glazed_terracotta");
+
+        // concrete
+        TEXTURE_RENAMES.put("concrete_black", "black_concrete");
+        TEXTURE_RENAMES.put("concrete_blue", "blue_concrete");
+        TEXTURE_RENAMES.put("concrete_brown", "brown_concrete");
+        TEXTURE_RENAMES.put("concrete_cyan", "cyan_concrete");
+        TEXTURE_RENAMES.put("concrete_gray", "gray_concrete");
+        TEXTURE_RENAMES.put("concrete_green", "green_concrete");
+        TEXTURE_RENAMES.put("concrete_light_blue", "light_blue_concrete");
+        TEXTURE_RENAMES.put("concrete_lime", "lime_concrete");
+        TEXTURE_RENAMES.put("concrete_magenta", "magenta_concrete");
+        TEXTURE_RENAMES.put("concrete_orange", "orange_concrete");
+        TEXTURE_RENAMES.put("concrete_pink", "pink_concrete");
+        TEXTURE_RENAMES.put("concrete_purple", "purple_concrete");
+        TEXTURE_RENAMES.put("concrete_red", "red_concrete");
+        TEXTURE_RENAMES.put("concrete_silver", "light_gray_concrete");
+        TEXTURE_RENAMES.put("concrete_white", "white_concrete");
+        TEXTURE_RENAMES.put("concrete_yellow", "yellow_concrete");
+
+        // concrete powder
+        TEXTURE_RENAMES.put("concrete_powder_black", "black_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_blue", "blue_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_brown", "brown_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_cyan", "cyan_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_gray", "gray_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_green", "green_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_light_blue", "light_blue_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_lime", "lime_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_magenta", "magenta_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_orange", "orange_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_pink", "pink_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_purple", "purple_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_red", "red_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_silver", "light_gray_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_white", "white_concrete_powder");
+        TEXTURE_RENAMES.put("concrete_powder_yellow", "yellow_concrete_powder");
+
+        // glass
+        TEXTURE_RENAMES.put("glass_black", "black_stained_glass");
+        TEXTURE_RENAMES.put("glass_blue", "blue_stained_glass");
+        TEXTURE_RENAMES.put("glass_brown", "brown_stained_glass");
+        TEXTURE_RENAMES.put("glass_cyan", "cyan_stained_glass");
+        TEXTURE_RENAMES.put("glass_gray", "gray_stained_glass");
+        TEXTURE_RENAMES.put("glass_green", "green_stained_glass");
+        TEXTURE_RENAMES.put("glass_light_blue", "light_blue_stained_glass");
+        TEXTURE_RENAMES.put("glass_lime", "lime_stained_glass");
+        TEXTURE_RENAMES.put("glass_magenta", "magenta_stained_glass");
+        TEXTURE_RENAMES.put("glass_orange", "orange_stained_glass");
+        TEXTURE_RENAMES.put("glass_pink", "pink_stained_glass");
+        TEXTURE_RENAMES.put("glass_purple", "purple_stained_glass");
+        TEXTURE_RENAMES.put("glass_red", "red_stained_glass");
+        TEXTURE_RENAMES.put("glass_silver", "light_gray_stained_glass");
+        TEXTURE_RENAMES.put("glass_white", "white_stained_glass");
+        TEXTURE_RENAMES.put("glass_yellow", "yellow_stained_glass");
+
+        // glass panes
+        TEXTURE_RENAMES.put("glass_pane_top_black", "black_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_blue", "blue_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_brown", "brown_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_cyan", "cyan_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_gray", "gray_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_green", "green_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_light_blue", "light_blue_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_lime", "lime_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_magenta", "magenta_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_orange", "orange_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_pink", "pink_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_purple", "purple_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_red", "red_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_silver", "light_gray_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_white", "white_stained_glass_pane_top");
+        TEXTURE_RENAMES.put("glass_pane_top_yellow", "yellow_stained_glass_pane_top");
+
+        // Shulker boxes
+        TEXTURE_RENAMES.put("shulker_top_black", "black_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_blue", "blue_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_brown", "brown_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_cyan", "cyan_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_gray", "gray_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_green", "green_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_light_blue", "light_blue_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_lime", "lime_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_magenta", "magenta_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_orange", "orange_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_pink", "pink_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_purple", "purple_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_red", "red_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_silver", "light_gray_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_white", "white_shulker_box");
+        TEXTURE_RENAMES.put("shulker_top_yellow", "yellow_shulker_box");
+
+        // stone and bricks
+        TEXTURE_RENAMES.put("brick", "bricks");
+        TEXTURE_RENAMES.put("cobblestone_mossy", "mossy_cobblestone");
+        TEXTURE_RENAMES.put("end_bricks", "end_stone_bricks");
+        TEXTURE_RENAMES.put("nether_brick", "nether_bricks");
+        TEXTURE_RENAMES.put("prismarine_dark", "dark_prismarine");
+        TEXTURE_RENAMES.put("prismarine_rough", "prismarine");
+        TEXTURE_RENAMES.put("sandstone_carved", "chiseled_sandstone");
+        TEXTURE_RENAMES.put("sandstone_normal", "sandstone");
+        TEXTURE_RENAMES.put("sandstone_smooth", "cut_sandstone");
+        TEXTURE_RENAMES.put("red_sandstone_carved", "chiseled_red_sandstone");
+        TEXTURE_RENAMES.put("red_sandstone_normal", "red_sandstone");
+        TEXTURE_RENAMES.put("red_sandstone_smooth", "cut_red_sandstone");
+        TEXTURE_RENAMES.put("stone_andesite", "andesite");
+        TEXTURE_RENAMES.put("stone_andesite_smooth", "polished_andesite");
+        TEXTURE_RENAMES.put("stone_diorite", "diorite");
+        TEXTURE_RENAMES.put("stone_diorite_smooth", "polished_diorite");
+        TEXTURE_RENAMES.put("stone_granite", "granite");
+        TEXTURE_RENAMES.put("stone_granite_smooth", "granite_smooth");
+        TEXTURE_RENAMES.put("stonebrick", "stone_bricks");
+        TEXTURE_RENAMES.put("stonebrick_carved", "chiseled_stone_bricks");
+        TEXTURE_RENAMES.put("stonebrick_cracked", "cracked_stone_bricks");
+        TEXTURE_RENAMES.put("stonebrick_mossy", "mossy_stone_bricks");
+
+        // miscellaneous block textures
+        TEXTURE_RENAMES.put("dirt_podzol_side", "podzol_side");
+        TEXTURE_RENAMES.put("dirt_podzol_top", "podzol_top");
+        TEXTURE_RENAMES.put("ice_packed", "packed_ice");
+        TEXTURE_RENAMES.put("itemframe_background", "item_frame");
+        TEXTURE_RENAMES.put("mushroom_block_skin_brown", "brown_mushroom_block");
+        TEXTURE_RENAMES.put("mushroom_block_skin_red", "red_mushroom_block");
+        TEXTURE_RENAMES.put("mushroom_block_skin_stem", "mushroom_stem");
+        TEXTURE_RENAMES.put("quartz_block_chiseled", "chiseled_quartz_block");
+        TEXTURE_RENAMES.put("quartz_block_chiseled_top", "chiseled_quartz_block_top");
+        TEXTURE_RENAMES.put("quartz_block_lines", "quartz_pillar");
+        TEXTURE_RENAMES.put("quartz_block_lines_top", "quartz_pillar_top");
+        TEXTURE_RENAMES.put("quartz_ore", "nether_quartz_ore");
+        TEXTURE_RENAMES.put("slime", "slime_block");
+        TEXTURE_RENAMES.put("sponge_wet", "wet_sponge");
+        TEXTURE_RENAMES.put("trapdoor", "oak_trapdoor");
+        TEXTURE_RENAMES.put("trip_wire", "tripwire");
+        TEXTURE_RENAMES.put("trip_wire_source", "tripwire_hook");
+        TEXTURE_RENAMES.put("web", "cobweb");
+        
         // Add more as needed
     }
     
