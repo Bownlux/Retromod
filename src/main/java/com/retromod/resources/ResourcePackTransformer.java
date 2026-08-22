@@ -41,7 +41,14 @@ import java.util.regex.*;
  * - 32: 1.20.5 - 1.20.6
  * - 34: 1.21 - 1.21.1
  * - 42: 1.21.2 - 1.21.3
- * - 46: 1.21.4+
+ * - 46: 1.21.4
+ * - 55: 1.21.5
+ * - 63: 1.21.6
+ * - 64: 1.21.7 - 1.21.8
+ * - 69.0: 1.21.9 - 1.21.10
+ * - 75.0: 1.21.11
+ * - 84.0: 26.1 - 26.1.2
+ * - 88.0: 26.2
  */
 public class ResourcePackTransformer {
     
@@ -50,21 +57,24 @@ public class ResourcePackTransformer {
     // Pack format for target MC versions
     private static final Map<String, Integer> PACK_FORMATS = new HashMap<>();
     static {
+        PACK_FORMATS.put("1.20", 15);
+        PACK_FORMATS.put("1.20.1", 15);
+        PACK_FORMATS.put("1.20.2", 18);
+        PACK_FORMATS.put("1.20.3", 22);
+        PACK_FORMATS.put("1.20.4", 22);
+        PACK_FORMATS.put("1.20.5", 32);
+        PACK_FORMATS.put("1.20.6", 32);
         PACK_FORMATS.put("1.21", 34);
         PACK_FORMATS.put("1.21.1", 34);
         PACK_FORMATS.put("1.21.2", 42);
         PACK_FORMATS.put("1.21.3", 42);
         PACK_FORMATS.put("1.21.4", 46);
-        PACK_FORMATS.put("1.21.5", 46);
-        PACK_FORMATS.put("1.21.6", 46);
-        PACK_FORMATS.put("1.21.7", 46);
-        PACK_FORMATS.put("1.21.8", 46);
-        PACK_FORMATS.put("1.21.9", 46);
-        PACK_FORMATS.put("1.21.10", 46);
-        PACK_FORMATS.put("1.21.11", 46);
-        // Future versions (estimate)
-        PACK_FORMATS.put("1.22", 50);
-        PACK_FORMATS.put("26.1.0", 60);
+        PACK_FORMATS.put("1.21.5", 55);
+        PACK_FORMATS.put("1.21.6", 63);
+        PACK_FORMATS.put("1.21.7", 64);
+        PACK_FORMATS.put("1.21.8", 64);
+        // 1.21.9 and newer use versions with dots in them
+        // and are not included in this map.
     }
     
     // Texture path renames between versions (old -> new)
