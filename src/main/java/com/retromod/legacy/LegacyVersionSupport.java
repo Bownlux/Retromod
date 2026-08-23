@@ -4,10 +4,12 @@
  */
 package com.retromod.legacy;
 
+import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.Properties;
 import java.util.jar.*;
@@ -25,6 +27,7 @@ import java.util.regex.*;
 public class LegacyVersionSupport {
     
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
+    private static final long MAX_METADATA_SIZE = 2L * 1024 * 1024;
     
     public enum ModLoaderEra {
         CLASSIC_FORGE(false),    // 1.1-1.5.2: NOT supported
@@ -78,39 +81,47 @@ public class LegacyVersionSupport {
     
     /** Detect which era a mod is from. */
     public ModLoaderEra detectModEra(Path jarPath) {
-        try (JarFile jar = new JarFile(jarPath.toFile())) {
-            // Fabric
-            if (jar.getEntry("fabric.mod.json") != null) {
-                String mcVer = extractVersion(jar, "fabric.mod.json", "\"minecraft\"\\s*:\\s*\"([^\"]+)\"");
-                return getFabricEra(mcVer);
-            }
-            // NeoForge
-            if (jar.getEntry("META-INF/neoforge.mods.toml") != null) return ModLoaderEra.NEOFORGE;
-            // Modern Forge
-            if (jar.getEntry("META-INF/mods.toml") != null) {
-                String mcVer = extractVersion(jar, "META-INF/mods.toml", "versionRange\\s*=\\s*\"\\[([0-9.]+)");
-                return getForgeEra(mcVer);
-            }
-            // Old Forge
-            if (jar.getEntry("mcmod.info") != null) {
-                String mcVer = extractVersion(jar, "mcmod.info", "\"mcversion\"\\s*:\\s*\"([^\"]+)\"");
-                return getForgeEra(mcVer);
+        try {
+            validateArchiveInput(jarPath);
+            try (JarFile jar = new JarFile(jarPath.toFile())) {
+                // Fabric
+                if (jar.getEntry("fabric.mod.json") != null) {
+                    String mcVer = extractVersion(jar, "fabric.mod.json", "\"minecraft\"\\s*:\\s*\"([^\"]+)\"");
+                    return getFabricEra(mcVer);
+                }
+                // NeoForge
+                if (jar.getEntry("META-INF/neoforge.mods.toml") != null) return ModLoaderEra.NEOFORGE;
+                // Modern Forge
+                if (jar.getEntry("META-INF/mods.toml") != null) {
+                    String mcVer = extractVersion(jar, "META-INF/mods.toml", "versionRange\\s*=\\s*\"\\[([0-9.]+)");
+                    return getForgeEra(mcVer);
+                }
+                // Old Forge
+                if (jar.getEntry("mcmod.info") != null) {
+                    String mcVer = extractVersion(jar, "mcmod.info", "\"mcversion\"\\s*:\\s*\"([^\"]+)\"");
+                    return getForgeEra(mcVer);
+                }
             }
         } catch (Exception e) { /* ignore */ }
         return null;
     }
     
-    private String extractVersion(JarFile jar, String entry, String pattern) {
-        try {
-            var ze = jar.getEntry(entry);
-            if (ze == null) return null;
-            String content;
-            try (java.io.InputStream in = jar.getInputStream(ze)) {
-                content = new String(in.readAllBytes());
-            }
-            Matcher m = Pattern.compile(pattern).matcher(content);
-            return m.find() ? m.group(1) : null;
-        } catch (Exception e) { return null; }
+    static String extractVersion(JarFile jar, String entry, String pattern) throws IOException {
+        var ze = jar.getEntry(entry);
+        if (ze == null) return null;
+        String content;
+        try (InputStream input = jar.getInputStream(ze)) {
+            content = new String(ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE),
+                    StandardCharsets.UTF_8);
+        }
+        Matcher matcher = Pattern.compile(pattern).matcher(content);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private static void validateArchiveInput(Path jarPath) throws IOException {
+        if (!Files.isRegularFile(jarPath, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Mod input is not a regular file: " + jarPath);
+        }
     }
     
     private ModLoaderEra getFabricEra(String mcVer) {

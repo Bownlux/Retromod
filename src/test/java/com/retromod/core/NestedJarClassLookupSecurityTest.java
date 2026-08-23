@@ -84,6 +84,12 @@ class NestedJarClassLookupSecurityTest {
         byte[] duplicate = duplicateEntryJar();
         assertThrows(IOException.class,
                 () -> RetromodTransformer.readJarClassBytes(duplicate));
+
+        byte[] normalizedDuplicate = jarOf(Map.of(
+                "test/Fixture.class", new byte[] {1},
+                "test//Fixture.class", new byte[] {2}));
+        assertThrows(IOException.class,
+                () -> RetromodTransformer.readJarClassBytes(normalizedDuplicate));
     }
 
     private static byte[] duplicateEntryJar() throws Exception {

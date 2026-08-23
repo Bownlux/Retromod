@@ -5,16 +5,24 @@
 package com.retromod.resources;
 
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.JsonSecurity;
+import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.regex.Pattern;
+
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonToken;
 
 /**
  * Migrates a mod's bundled data-pack JSON across the 1.21.x to 26.x data changes the
@@ -50,6 +58,8 @@ import java.util.regex.Pattern;
 public final class ModDataMigrator {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-DataMigrate");
+    private static final int MAX_JSON_DEPTH = 256;
+    private static final long MAX_MIGRATABLE_FILE_BYTES = 16L * 1024 * 1024;
 
     private static final String CHAIN_OLD = "\"minecraft:chain\"";
     private static final String CHAIN_NEW = "\"minecraft:iron_chain\"";
@@ -103,6 +113,13 @@ public final class ModDataMigrator {
         if (!isMigratableData(entryName)) return json;
         if (isLegacyItemVertexShader(entryName)) {
             return migrateLegacyItemVertexShader(json, targetMcVersion);
+        }
+
+        try {
+            JsonSecurity.validate(json, MAX_MIGRATABLE_FILE_BYTES, MAX_JSON_DEPTH,
+                    "Data pack JSON");
+        } catch (IOException refused) {
+            return json;
         }
 
         // Make the file parse under 26.1's strict gson (strip // /* */ comments and trailing
@@ -185,6 +202,12 @@ public final class ModDataMigrator {
      * can detect a change by reference identity.
      */
     static byte[] normalizeLenientJson(byte[] json) {
+        try {
+            JsonSecurity.validate(json, MAX_MIGRATABLE_FILE_BYTES, MAX_JSON_DEPTH,
+                    "Data pack JSON");
+        } catch (IOException refused) {
+            return json;
+        }
         String in = new String(json, StandardCharsets.UTF_8);
         if (!LENIENT_JSON_HINT.matcher(in).find()) return json;   // already strict; cheap exit
         String out = stripLenientJson(in);
@@ -217,9 +240,10 @@ public final class ModDataMigrator {
                 continue;
             }
             if (c == '/' && i + 1 < n && s.charAt(i + 1) == '*') {       // block comment
-                i += 2;
-                while (i + 1 < n && !(s.charAt(i) == '*' && s.charAt(i + 1) == '/')) i++;
-                i++;                              // skip the closing '/'
+                int closing = s.indexOf("*/", i + 2);
+                if (closing < 0) return s;
+                out.append(' ');                  // keep adjacent JSON tokens separate
+                i = closing + 1;                  // skip the closing '/'
                 continue;
             }
             if (c == ',' && trailingComma(s, i + 1)) continue;            // drop a dangling comma
@@ -260,18 +284,37 @@ public final class ModDataMigrator {
      * @return the number of files rewritten.
      */
     public static int migrateTree(Path root, String targetMcVersion) {
+        try {
+            return migrateTreeChecked(root, targetMcVersion);
+        } catch (IOException e) {
+            LOGGER.debug("Could not migrate data tree {}: {}", root, e.getMessage());
+            return 0;
+        }
+    }
+
+    /** Applies tree migration with bounded reads and fail-closed filesystem validation. */
+    public static int migrateTreeChecked(Path root, String targetMcVersion) throws IOException {
         // not gated on 26.x as a whole: the client item-definition split below applies from
         // 1.21.4 (review finding - a 1.21.1 -> 1.21.11 translation also needs the definitions).
-        if (root == null || !Files.isDirectory(root)) return 0;
+        if (root == null || !Files.exists(root, LinkOption.NOFOLLOW_LINKS)) return 0;
+        if (Files.isSymbolicLink(root)
+                || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Data migration root is not a regular directory: " + root);
+        }
         boolean is26x = RetromodVersion.isUnobfuscatedTarget(targetMcVersion);
 
         int changed = 0;
-        final List<Path> files;
-        try (var stream = Files.walk(root)) {
-            files = stream.filter(Files::isRegularFile).toList();
-        } catch (IOException e) {
-            LOGGER.debug("Could not walk {} for data migration: {}", root, e.getMessage());
-            return 0;
+        List<Path> files = new java.util.ArrayList<>();
+        for (Path path : PackArchive.collectBoundedPaths(
+                root, PackArchive.MAX_ARCHIVE_ENTRIES)) {
+            if (Files.isSymbolicLink(path)) {
+                throw new IOException("Data migration tree contains a symbolic link: " + path);
+            }
+            if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                files.add(path);
+            } else if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("Data migration entry is not a regular file: " + path);
+            }
         }
 
         java.util.Set<String> relNames = new java.util.HashSet<>();
@@ -280,15 +323,14 @@ public final class ModDataMigrator {
             relNames.add(rel);
             if (!is26x) continue;                 // the data rewrites below are 26.x-only
             if (!isMigratableData(rel)) continue;
-            try {
-                byte[] before = Files.readAllBytes(p);
-                byte[] after = migrate(rel, before, targetMcVersion);
-                if (after != before) {        // same array back means nothing matched
-                    Files.write(p, after);
-                    changed++;
-                }
-            } catch (IOException e) {
-                LOGGER.debug("Could not migrate data file {}: {}", rel, e.getMessage());
+            byte[] before;
+            try (InputStream input = Files.newInputStream(p)) {
+                before = ZipSecurity.safeReadAllBytes(input, MAX_MIGRATABLE_FILE_BYTES);
+            }
+            byte[] after = migrate(rel, before, targetMcVersion);
+            if (after != before) {        // same array back means nothing matched
+                Files.write(p, after);
+                changed++;
             }
         }
 
@@ -296,16 +338,108 @@ public final class ModDataMigrator {
         // without an assets/<ns>/items/<id>.json per item everything renders as the purple/black
         // missing model ("Missing item model for location <ns>:<id>").
         for (var def : synthesizeItemDefinitionEntries(relNames, targetMcVersion).entrySet()) {
-            try {
-                Path out = root.resolve(def.getKey());
-                Files.createDirectories(out.getParent());
-                Files.write(out, def.getValue());
-                changed++;
-            } catch (IOException e) {
-                LOGGER.debug("Could not write item definition {}: {}", def.getKey(), e.getMessage());
+            Path out = root.resolve(def.getKey()).normalize();
+            if (!out.startsWith(root.normalize())) {
+                throw new IOException("Generated data path escapes migration root: " + def.getKey());
             }
+            Files.createDirectories(out.getParent());
+            Files.write(out, def.getValue());
+            changed++;
         }
         return changed;
+    }
+
+    /**
+     * Validates every final JSON file below {@code data/} with Gson's strict streaming reader.
+     * The structural depth check runs first so an untrusted file cannot grow the reader stack
+     * without a fixed limit.
+     */
+    static void validateStrictDataJsonTree(Path root) throws IOException {
+        Path dataRoot = root.resolve("data");
+        if (!Files.exists(dataRoot, LinkOption.NOFOLLOW_LINKS)) return;
+        if (Files.isSymbolicLink(dataRoot)
+                || !Files.isDirectory(dataRoot, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Data pack data path is not a regular directory: " + dataRoot);
+        }
+
+        for (Path path : PackArchive.collectBoundedPaths(
+                dataRoot, PackArchive.MAX_ARCHIVE_ENTRIES)) {
+            if (Files.isSymbolicLink(path)) {
+                throw new IOException("Data pack data tree contains a symbolic link: " + path);
+            }
+            if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) continue;
+            if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("Data pack entry is not a regular file: " + path);
+            }
+            if (!path.getFileName().toString().endsWith(".json")) continue;
+
+            String entryName = root.relativize(path).toString().replace(File.separatorChar, '/');
+            String content = PackArchive.readRegularFile(path, MAX_MIGRATABLE_FILE_BYTES,
+                "data pack JSON " + entryName);
+            validateStrictJson(content, entryName);
+        }
+    }
+
+    private static void validateStrictJson(String content, String entryName) throws IOException {
+        JsonSecurity.validate(content, MAX_MIGRATABLE_FILE_BYTES, MAX_JSON_DEPTH,
+            "Data pack JSON " + entryName);
+
+        try (JsonReader reader = new JsonReader(new StringReader(content))) {
+            reader.setLenient(false);
+            boolean valueSeen = false;
+            int depth = 0;
+            while (true) {
+                JsonToken token = reader.peek();
+                switch (token) {
+                    case BEGIN_ARRAY -> {
+                        reader.beginArray();
+                        depth++;
+                        valueSeen = true;
+                    }
+                    case END_ARRAY -> {
+                        reader.endArray();
+                        depth--;
+                    }
+                    case BEGIN_OBJECT -> {
+                        reader.beginObject();
+                        depth++;
+                        valueSeen = true;
+                    }
+                    case END_OBJECT -> {
+                        reader.endObject();
+                        depth--;
+                    }
+                    case NAME -> reader.nextName();
+                    case STRING, NUMBER -> {
+                        reader.nextString();
+                        valueSeen = true;
+                    }
+                    case BOOLEAN -> {
+                        reader.nextBoolean();
+                        valueSeen = true;
+                    }
+                    case NULL -> {
+                        reader.nextNull();
+                        valueSeen = true;
+                    }
+                    case END_DOCUMENT -> {
+                        if (!valueSeen || depth != 0) {
+                            throw new IOException("Data pack JSON has no complete value: "
+                                + entryName);
+                        }
+                        return;
+                    }
+                }
+            }
+        } catch (IOException | RuntimeException failure) {
+            if (failure instanceof IOException ioFailure
+                    && ioFailure.getMessage() != null
+                    && ioFailure.getMessage().contains(entryName)) {
+                throw ioFailure;
+            }
+            throw new IOException("Data pack JSON is not valid strict JSON: " + entryName
+                + " (" + failure.getMessage() + ")", failure);
+        }
     }
 
     // 1.21.x EntityPredicate field name -> 26.x sub-predicate registry id. Keys not in this map
@@ -332,6 +466,12 @@ public final class ModDataMigrator {
     }
 
     static byte[] migrateEntityPredicates(byte[] json, boolean advancementMode) {
+        try {
+            JsonSecurity.validate(json, MAX_MIGRATABLE_FILE_BYTES, MAX_JSON_DEPTH,
+                    "Data pack JSON");
+        } catch (IOException refused) {
+            return json;
+        }
         try {
             com.google.gson.JsonElement root = com.google.gson.JsonParser
                     .parseString(new String(json, StandardCharsets.UTF_8));
@@ -450,7 +590,7 @@ public final class ModDataMigrator {
             int m = name.indexOf("/models/item/");
             if (m < 0) continue;
             String ns = name.substring("assets/".length(), m);
-            if (ns.isEmpty() || ns.indexOf('/') >= 0) continue;   // exactly assets/<ns>/models/item/
+            if (!ns.matches("[a-z0-9_.\\-]+")) continue;         // valid Identifier namespace
             String file = name.substring(m + "/models/item/".length());
             if (file.indexOf('/') >= 0) continue;                 // nested = not an item id
             String id = file.substring(0, file.length() - ".json".length());

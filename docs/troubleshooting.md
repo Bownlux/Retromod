@@ -35,7 +35,7 @@ Retromod did not finish loading, the jar is in another instance, or a title-scre
 
 ## Quilt
 
-Use the Fabric build with Quilted Fabric API. There is no separate Quilt jar.
+Use the Fabric build with the matching Fabric API. On older hosts where Quilted Fabric API is available, it is also supported. The Retromod artifact carries both `fabric.mod.json` and `quilt.mod.json`. There is no separate Quilt jar. Retromod reads Quilt metadata first and updates its declared Minecraft dependency during a transform.
 
 ## Verification Reports Missing a Class or Member
 
@@ -52,7 +52,7 @@ Attach the report to an issue. Contributors can use [Adding SRG Mappings]({{ '/s
 
 Errors such as `MixinApplyError`, `InvalidInjectionException`, missing `@Shadow` fields, or `mixinextras$bridge` verification failures mean the target bytecode changed more than a name.
 
-Retromod can redirect many targets and update selected handler signatures. Loader transforms index the installed Minecraft jar automatically; offline transforms need `--mc-jar <target.jar>` for the same exact target-method checks. Ambiguous overloads, constructors, reordered or removed parameters, changed returns, semantic local captures, and `remap = false` scopes are left for a reviewed bridge. When Retromod cannot repair a known handler safely, it may disable that feature so the rest of the mod can load. File an issue with the first mixin error and the affected mod jar.
+Retromod can redirect many targets and update selected handler signatures. Loader transforms index the installed Minecraft jar automatically. Offline transforms need `--mc-jar <target.jar>` for the same exact target-method checks. Ambiguous overloads, constructors, reordered or removed parameters, changed returns, semantic local captures, and `remap = false` scopes are left for a reviewed bridge. When Retromod cannot repair a known handler safely, it may disable that feature so the rest of the mod can load. File an issue with the first mixin error and the affected mod jar.
 
 For a known fatal handler, advanced users can extend `config/retromod/mixin-blocklist.json`:
 

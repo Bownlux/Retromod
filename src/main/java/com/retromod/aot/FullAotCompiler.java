@@ -7,6 +7,7 @@ package com.retromod.aot;
 import com.retromod.core.EnvironmentDetector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.shim.ShimRegistry;
+import com.retromod.util.JsonSecurity;
 import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.*;
 import java.util.zip.*;
 
@@ -35,6 +37,8 @@ public class FullAotCompiler {
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-FullAOT");
 
     private static final String CACHE_DIR = "retromod-cache/full-aot";
+    private static final int MAX_ARCHIVE_ENTRIES = 100_000;
+    private static final int MAX_WORKER_THREADS = 4;
     private static final long MAX_EXPANDED_BYTES = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
 
     private static FullAotCompiler instance;
@@ -42,12 +46,13 @@ public class FullAotCompiler {
     private final ShimRegistry shimRegistry;
     private final String targetVersion;
     private final Path cacheDir;
+    private volatile boolean cacheReady;
 
     private volatile int totalClasses = 0;
     private volatile int compiledClasses = 0;
     private volatile String currentMod = "";
     private volatile String currentClass = "";
-    private volatile boolean isRunning = false;
+    private final AtomicBoolean isRunning = new AtomicBoolean(false);
     private volatile boolean wasCancelled = false;
 
     private final List<ProgressListener> listeners = new CopyOnWriteArrayList<>();
@@ -66,7 +71,7 @@ public class FullAotCompiler {
         // Creates the cache dir AND wipes it when the Retromod build changed since it was
         // written: nothing below validates the cached per-class files, so without the stamp
         // an updated Retromod would keep serving the previous build's transforms.
-        AotCacheStamp.ensureCurrent(cacheDir);
+        this.cacheReady = AotCacheStamp.ensureCurrentForTarget(cacheDir, targetVersion);
     }
     
     public static synchronized FullAotCompiler getInstance(Path gameDir, String targetVersion) {
@@ -97,6 +102,7 @@ public class FullAotCompiler {
     }
 
     public boolean hasCachedCompilation(String modId) {
+        if (!cacheReady) return false;
         Path modCache = safeModCacheDir(modId);
         return isCompletedCache(modCache);
     }
@@ -114,6 +120,7 @@ public class FullAotCompiler {
     }
 
     public byte[] getCachedClass(String modId, String className) {
+        if (!cacheReady) return null;
         Path modCache = safeModCacheDir(modId);
         Path classCache = modCache.resolve(safeClassCacheFileName(className));
 
@@ -139,11 +146,14 @@ public class FullAotCompiler {
      * Transform and cache every class in the given mod JARs. Returns the count of classes compiled.
      */
     public CompletableFuture<Integer> runFullCompilation(List<Path> modsToCompile) {
-        if (isRunning) {
+        if (!cacheReady) {
+            return CompletableFuture.failedFuture(
+                    new IOException("Full AOT cache could not be validated: " + cacheDir));
+        }
+        if (!isRunning.compareAndSet(false, true)) {
             return CompletableFuture.completedFuture(0);
         }
-        
-        isRunning = true;
+
         wasCancelled = false;
         compiledClasses = 0;
         totalClasses = 0;
@@ -152,11 +162,12 @@ public class FullAotCompiler {
             long startTime = System.currentTimeMillis();
             
             try {
+                List<Path> validatedMods = validateModInputs(modsToCompile);
                 LOGGER.info("Full AOT pre-compilation starting, {} mods (may take several minutes)",
-                    modsToCompile.size());
+                    validatedMods.size());
 
                 LOGGER.info("Counting classes...");
-                for (Path modJar : modsToCompile) {
+                for (Path modJar : validatedMods) {
                     totalClasses += countClasses(modJar);
                 }
                 LOGGER.info("Total classes to compile: {}", totalClasses);
@@ -168,7 +179,7 @@ public class FullAotCompiler {
                 ExpandedByteBudget cacheOutputBudget =
                         new ExpandedByteBudget(MAX_EXPANDED_BYTES);
                 
-                for (Path modJar : modsToCompile) {
+                for (Path modJar : validatedMods) {
                     if (wasCancelled) {
                         LOGGER.info("Compilation cancelled by user");
                         break;
@@ -187,11 +198,14 @@ public class FullAotCompiler {
 
                 return compiledClasses;
 
+            } catch (IOException e) {
+                LOGGER.error("Full AOT compilation refused unsafe input", e);
+                throw new CompletionException(e);
             } catch (Exception e) {
                 LOGGER.error("Full AOT compilation failed", e);
                 return compiledClasses;
             } finally {
-                isRunning = false;
+                isRunning.set(false);
                 // onComplete must fire on every exit path, else the modal progress dialog never disposes
                 long elapsed = System.currentTimeMillis() - startTime;
                 for (ProgressListener listener : listeners) {
@@ -205,20 +219,43 @@ public class FullAotCompiler {
         });
     }
     
-    private int countClasses(Path jarPath) {
+    private static List<Path> validateModInputs(List<Path> modsToCompile) throws IOException {
+        if (modsToCompile == null) {
+            throw new IOException("Full AOT mod input list is missing");
+        }
+        List<Path> validated = new ArrayList<>();
+        for (Path modJar : modsToCompile) {
+            Path regularJar = ZipSecurity.requireRegularFileNoFollow(
+                    modJar, "Full AOT mod input");
+            validateArchiveEntries(regularJar);
+            validated.add(regularJar);
+        }
+        return List.copyOf(validated);
+    }
+
+    private static void validateArchiveEntries(Path jarPath) throws IOException {
+        try (JarFile jar = new JarFile(jarPath.toFile())) {
+            ArchiveEntryTracker entries = new ArchiveEntryTracker(jarPath);
+            var enumeration = jar.entries();
+            while (enumeration.hasMoreElements()) {
+                entries.register(enumeration.nextElement());
+            }
+        }
+    }
+
+    private int countClasses(Path jarPath) throws IOException {
         int count = 0;
         try (JarFile jar = new JarFile(jarPath.toFile())) {
+            ArchiveEntryTracker tracker = new ArchiveEntryTracker(jarPath);
             var entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                String entryName = ZipSecurity.safeEntryName(entry.getName());
+                String entryName = tracker.register(entry);
                 if (entryName.endsWith(".class") &&
                     !entryName.startsWith("META-INF/")) {
                     count++;
                 }
             }
-        } catch (Exception e) {
-            LOGGER.debug("Could not count classes in: {}", jarPath.getFileName());
         }
         return count;
     }
@@ -239,10 +276,11 @@ public class FullAotCompiler {
             ExpandedByteBudget expandedInputBudget) throws IOException {
         var repairs = com.retromod.mixin.MixinRefmapRepairIndex.empty();
         int files = 0;
+        ArchiveEntryTracker tracker = new ArchiveEntryTracker(Path.of(jar.getName()));
         var entries = jar.entries();
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
-            String name = ZipSecurity.safeEntryName(entry.getName());
+            String name = tracker.register(entry);
             if (entry.isDirectory() || !isRefmapResource(name)) {
                 continue;
             }
@@ -255,6 +293,8 @@ public class FullAotCompiler {
                 data = ZipSecurity.safeReadAllBytes(input);
             }
             expandedInputBudget.reserve(data.length, name);
+            JsonSecurity.validate(data, JsonSecurity.DEFAULT_MAX_BYTES,
+                    JsonSecurity.DEFAULT_MAX_DEPTH, "Mixin refmap JSON");
             String json = new String(data, StandardCharsets.UTF_8);
             if (forgeRefmaps) {
                 com.retromod.core.MixinRefmapRemapper.RemapResult forge =
@@ -278,7 +318,7 @@ public class FullAotCompiler {
     /** Transform every class in a mod JAR in parallel and write the results to the mod's cache dir. */
     private void compileAllClassesInMod(Path jarPath, RetromodTransformer transformer,
                                         ExpandedByteBudget expandedInputBudget,
-                                        ExpandedByteBudget cacheOutputBudget) {
+                                        ExpandedByteBudget cacheOutputBudget) throws IOException {
         // Selectors live in annotation text, which the class remap leaves alone, so a cached
         // Mixin would still point at the name the mod was built against.
         com.retromod.mixin.MixinCompatibilityTransformer mixinTransformer =
@@ -288,7 +328,7 @@ public class FullAotCompiler {
             modId = extractModId(jarPath, expandedInputBudget);
         } catch (IOException e) {
             LOGGER.error("Could not read metadata from {}: {}", jarPath.getFileName(), e.getMessage());
-            return;
+            throw e;
         }
         if (modId == null) {
             modId = jarPath.getFileName().toString().replace(".jar", "");
@@ -299,18 +339,25 @@ public class FullAotCompiler {
         Path normalizedCacheDir = cacheDir.toAbsolutePath().normalize();
         Path stagingDir;
         try {
-            ZipSecurity.validateNotSymlink(cacheDir);
-            ZipSecurity.validateNotSymlink(modCacheDir);
-            Files.createDirectories(normalizedCacheDir);
+            requireRegularCacheDirectory(normalizedCacheDir);
+            if (Files.isSymbolicLink(modCacheDir)) {
+                throw new IOException("refusing symlinked full AOT mod cache: " + modCacheDir);
+            }
+            if (Files.exists(modCacheDir, LinkOption.NOFOLLOW_LINKS)
+                    && !Files.isDirectory(modCacheDir, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("full AOT mod cache is not a directory: " + modCacheDir);
+            }
             stagingDir = Files.createTempDirectory(normalizedCacheDir,
                     ".retromod-aot-stage-");
+            requireDirectCacheChild(normalizedCacheDir, stagingDir, "staged cache");
         } catch (IOException e) {
             LOGGER.error("Could not create staged mod cache", e);
-            return;
+            throw e;
         }
         
-        int threads = Math.max(2, Runtime.getRuntime().availableProcessors() - 1);
+        int threads = workerThreadCount(Runtime.getRuntime().availableProcessors());
         ExecutorService executor = Executors.newFixedThreadPool(threads);
+        boolean workersJoined = false;
 
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             boolean forgeRefmaps = jar.getEntry("META-INF/mods.toml") != null
@@ -321,10 +368,11 @@ public class FullAotCompiler {
                                     .isUnobfuscatedTarget(targetVersion),
                             expandedInputBudget);
             Map<String, byte[]> classEntries = new LinkedHashMap<>();
+            ArchiveEntryTracker entryTracker = new ArchiveEntryTracker(jarPath);
             var entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                String entryName = ZipSecurity.safeEntryName(entry.getName());
+                String entryName = entryTracker.register(entry);
                 if (entryName.endsWith(".class") &&
                     !entryName.startsWith("META-INF/")) {
                     byte[] original;
@@ -371,10 +419,13 @@ public class FullAotCompiler {
                         try {
                             byte[] original = entry.getValue();
 
-                            byte[] transformed = transformer.transformClass(original, className);
+                            byte[] preparedMixin = AotMixinRepair.applyPreRemap(
+                                    mixinTransformer, original, className);
+                            byte[] transformed = transformer.transformClass(
+                                    preparedMixin, className);
                             transformed = AotMixinRepair.apply(
                                     mixinTransformer,
-                                    transformed != null ? transformed : original,
+                                    transformed != null ? transformed : preparedMixin,
                                     className, refmapRepairs);
 
                             if (transformed != null && transformed != original) {
@@ -386,6 +437,8 @@ public class FullAotCompiler {
                                         "full AOT cache for " + className);
                                 String cacheFileName = safeClassCacheFileName(className);
                                 Path cacheFile = finalStagingDir.resolve(cacheFileName);
+                                requireDirectCacheChild(finalStagingDir, cacheFile,
+                                        "staged class cache file");
                                 ZipSecurity.validateNotSymlink(cacheFile);
                                 Files.write(cacheFile, transformed);
 
@@ -411,13 +464,8 @@ public class FullAotCompiler {
                 }));
             }
             
-            for (Future<?> future : futures) {
-                try {
-                    future.get();
-                } catch (Exception e) {
-                    LOGGER.debug("Batch compilation error", e);
-                }
-            }
+            waitForWorkers(futures);
+            workersJoined = true;
 
             if (fatalFailure.get() != null) throw fatalFailure.get();
             if (wasCancelled) {
@@ -426,6 +474,7 @@ public class FullAotCompiler {
             }
 
             Path marker = stagingDir.resolve(".complete");
+            requireDirectCacheChild(stagingDir, marker, "staged completion marker");
             Files.writeString(marker, String.valueOf(System.currentTimeMillis()));
             if (wasCancelled) {
                 LOGGER.info("Discarding cancelled full AOT cache for {}", currentMod);
@@ -438,27 +487,95 @@ public class FullAotCompiler {
                 listener.onProgress(compiledClasses, totalClasses, currentMod, "Complete");
             }
             
+        } catch (IOException e) {
+            LOGGER.error("Error processing mod: {}", jarPath.getFileName(), e);
+            throw e;
         } catch (Exception e) {
             LOGGER.error("Error processing mod: {}", jarPath.getFileName(), e);
         } finally {
-            executor.shutdown();
-            try {
-                executor.awaitTermination(5, TimeUnit.SECONDS);
-            } catch (InterruptedException ignored) {}
-            if (stagingDir != null) {
+            boolean workersTerminated = stopExecutor(executor, !workersJoined);
+            if (stagingDir != null && workersTerminated) {
                 try {
                     deleteCacheTree(stagingDir, normalizedCacheDir);
                 } catch (IOException e) {
                     LOGGER.warn("Could not clean staged full AOT cache {}: {}",
                             stagingDir.getFileName(), e.getMessage());
                 }
+            } else if (stagingDir != null) {
+                LOGGER.warn("Full AOT workers did not stop. Unpublished staging remains at {}",
+                        stagingDir);
             }
         }
+    }
+
+    static void waitForWorkers(List<? extends Future<?>> futures) throws IOException {
+        for (Future<?> future : futures) {
+            try {
+                future.get();
+            } catch (InterruptedException interrupted) {
+                cancelWorkers(futures);
+                Thread.currentThread().interrupt();
+                throw new IOException("Full AOT worker wait was interrupted", interrupted);
+            } catch (ExecutionException workerFailure) {
+                cancelWorkers(futures);
+                Throwable cause = workerFailure.getCause();
+                if (cause instanceof IOException ioFailure) throw ioFailure;
+                throw new IOException("Full AOT worker failed", cause);
+            } catch (CancellationException cancelled) {
+                cancelWorkers(futures);
+                throw new IOException("Full AOT worker was cancelled", cancelled);
+            }
+        }
+    }
+
+    private static void cancelWorkers(List<? extends Future<?>> futures) {
+        for (Future<?> future : futures) {
+            future.cancel(true);
+        }
+    }
+
+    private static boolean stopExecutor(ExecutorService executor, boolean force) {
+        boolean interrupted = Thread.interrupted();
+        try {
+            executor.shutdown();
+            if (force) executor.shutdownNow();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (!executor.isTerminated()) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    executor.shutdownNow();
+                    return executor.isTerminated();
+                }
+                try {
+                    if (executor.awaitTermination(remaining, TimeUnit.NANOSECONDS)) {
+                        return true;
+                    }
+                } catch (InterruptedException waitInterrupted) {
+                    interrupted = true;
+                    executor.shutdownNow();
+                }
+            }
+            return true;
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Keeps parallel ASM work bounded while retaining useful concurrency on normal hosts. */
+    static int workerThreadCount(int availableProcessors) {
+        if (availableProcessors <= 1) return 1;
+        return Math.min(MAX_WORKER_THREADS, Math.max(2, availableProcessors - 1));
     }
     
     private String extractModId(Path jarPath, ExpandedByteBudget expandedByteBudget)
             throws IOException {
         try (JarFile jar = new JarFile(jarPath.toFile())) {
+            ArchiveEntryTracker tracker = new ArchiveEntryTracker(jarPath);
+            var entries = jar.entries();
+            while (entries.hasMoreElements()) {
+                tracker.register(entries.nextElement());
+            }
+
             ZipEntry fabricEntry = jar.getEntry("fabric.mod.json");
             if (fabricEntry != null) {
                 String content;
@@ -572,6 +689,14 @@ public class FullAotCompiler {
         }
     }
 
+    private static void requireRegularCacheDirectory(Path cacheRoot) throws IOException {
+        if (Files.isSymbolicLink(cacheRoot)
+                || !Files.isDirectory(cacheRoot, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("full AOT cache is not a regular non-symlink directory: "
+                    + cacheRoot);
+        }
+    }
+
     private static void deleteCacheTree(Path path, Path cacheRoot) throws IOException {
         Path normalizedRoot = cacheRoot.toAbsolutePath().normalize();
         Path normalizedPath = path.toAbsolutePath().normalize();
@@ -629,6 +754,31 @@ public class FullAotCompiler {
         }
     }
 
+    private static final class ArchiveEntryTracker {
+        private final Path jarPath;
+        private final Set<String> canonicalNames = new HashSet<>();
+        private int entryCount;
+
+        private ArchiveEntryTracker(Path jarPath) {
+            this.jarPath = jarPath;
+        }
+
+        private String register(ZipEntry entry) throws IOException {
+            String entryName = ZipSecurity.safeEntryName(entry.getName());
+            entryCount++;
+            if (entryCount > MAX_ARCHIVE_ENTRIES) {
+                throw new IOException("Full AOT mod archive contains more than "
+                        + MAX_ARCHIVE_ENTRIES + " entries: " + jarPath.getFileName());
+            }
+            String canonicalName = ZipSecurity.canonicalEntryName(entryName);
+            if (!canonicalNames.add(canonicalName)) {
+                throw new IOException("duplicate normalized entry in Full AOT mod archive "
+                        + jarPath.getFileName() + ": " + entryName);
+            }
+            return entryName;
+        }
+    }
+
     static final class ExpandedByteBudget {
         private final long limit;
         private long used;
@@ -657,7 +807,7 @@ public class FullAotCompiler {
     }
 
     public boolean isRunning() {
-        return isRunning;
+        return isRunning.get();
     }
 
     /** Percent of total classes compiled so far. */
@@ -786,18 +936,15 @@ public class FullAotCompiler {
     }
     
     public void clearCache() {
+        if (!cacheReady) {
+            LOGGER.warn("Could not clear an AOT cache that failed validation: {}", cacheDir);
+            return;
+        }
         try {
-            if (Files.exists(cacheDir)) {
-                try (var walk = Files.walk(cacheDir)) {
-                    walk.sorted((a, b) -> b.toString().length() - a.toString().length())
-                        .forEach(p -> {
-                            try {
-                                Files.delete(p);
-                            } catch (IOException ignored) {}
-                        });
-                }
+            cacheReady = AotCacheStamp.clearCurrentForTarget(cacheDir, targetVersion);
+            if (!cacheReady) {
+                throw new IOException("Full AOT cache could not be cleared and restamped");
             }
-            Files.createDirectories(cacheDir);
             LOGGER.info("AOT cache cleared");
         } catch (Exception e) {
             LOGGER.error("Could not clear cache", e);
@@ -806,6 +953,7 @@ public class FullAotCompiler {
     
     /** Total size of the cache directory in bytes. */
     public long getCacheSize() {
+        if (!cacheReady) return 0;
         try {
             if (!Files.exists(cacheDir)) return 0;
             try (var walk = Files.walk(cacheDir)) {

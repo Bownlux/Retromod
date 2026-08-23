@@ -14,8 +14,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p>A Mixin selector is annotation text, so remapping a class does not touch it. Both AOT
  * compilers used to stop at the class remap, which left every selector on the name the mod was
- * built against and made all of a prepared mod's Mixins fail to apply on a current host. These
- * are the same repairs the transform and batch commands run, in the same post-remap position.
+ * built against and made all of a prepared mod's Mixins fail to apply on a current host. Selector
+ * and annotation changes run before the ordinary class remap. Descriptor-based repairs run after
+ * it, matching the runtime and batch pipelines.
  */
 final class AotMixinRepair {
 
@@ -23,8 +24,20 @@ final class AotMixinRepair {
 
     private AotMixinRepair() {}
 
+    /** Applies annotation and selector repairs before the ordinary class remap. */
+    static byte[] applyPreRemap(MixinCompatibilityTransformer mixinTransformer,
+            byte[] classBytes, String className) {
+        try {
+            return mixinTransformer.transformMixinClass(classBytes);
+        } catch (Throwable t) {
+            LOGGER.warn("Could not prepare the Mixin in {} ({}). Keeping its original bytecode.",
+                    className, t.toString());
+            return classBytes;
+        }
+    }
+
     /**
-     * Repairs the Mixin in {@code classBytes}, which must already be remapped.
+     * Applies repairs to {@code classBytes}, which must already be remapped.
      *
      * @return the repaired class, or the input unchanged when it holds no Mixin or a repair fails
      */

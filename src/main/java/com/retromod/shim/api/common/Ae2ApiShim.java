@@ -5,10 +5,10 @@
 package com.retromod.shim.api.common;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /** AE2 storage/grid/cell/crafting API renames between AE2 12.x and 15.x. */
-public class Ae2ApiShim implements VersionShim {
+public class Ae2ApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

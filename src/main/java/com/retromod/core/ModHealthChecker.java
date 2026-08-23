@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.ArchivePublication;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -104,7 +105,7 @@ public final class ModHealthChecker {
             backupPath = backupFolder.resolve(backupName);
             
             if (!Files.exists(backupPath)) {
-                Files.copy(originalPath, backupPath, StandardCopyOption.REPLACE_EXISTING);
+                ArchivePublication.copyNew(originalPath, backupPath);
                 LOGGER.debug("Created backup: {}", backupPath.getFileName());
             }
         } catch (IOException e) {
@@ -120,6 +121,31 @@ public final class ModHealthChecker {
         modErrors.put(modId, new CopyOnWriteArrayList<>());
         
         LOGGER.debug("Monitoring mod health: {}", modId);
+    }
+
+    /** Repoints a health record after a staged transform is published. */
+    static void relocateTransformedPath(Path stagedPath, Path publishedPath) {
+        Path staged = stagedPath.toAbsolutePath().normalize();
+        for (Map.Entry<String, ModHealthInfo> entry : monitoredMods.entrySet()) {
+            ModHealthInfo info = entry.getValue();
+            if (!info.transformedPath().toAbsolutePath().normalize().equals(staged)) continue;
+            monitoredMods.replace(entry.getKey(), info, new ModHealthInfo(
+                info.modId(), info.modName(), publishedPath, info.backupPath(),
+                info.transformTime(), info.isHealthy()));
+        }
+    }
+
+    /** Drops health records whose staged output was never published. */
+    static void forgetTransformedPathsUnder(Path stagingDirectory) {
+        Path staging = stagingDirectory.toAbsolutePath().normalize();
+        for (Map.Entry<String, ModHealthInfo> entry : monitoredMods.entrySet()) {
+            ModHealthInfo info = entry.getValue();
+            Path transformed = info.transformedPath().toAbsolutePath().normalize();
+            if (!transformed.startsWith(staging)) continue;
+            if (monitoredMods.remove(entry.getKey(), info)) {
+                modErrors.remove(entry.getKey());
+            }
+        }
     }
     
     /** Record an error caught from a mod; marks it broken past the threshold. */
@@ -310,7 +336,9 @@ public final class ModHealthChecker {
                 }
 
                 if (jar.getEntry("fabric.mod.json") == null &&
-                    jar.getEntry("META-INF/mods.toml") == null) {
+                    jar.getEntry("quilt.mod.json") == null &&
+                    jar.getEntry("META-INF/mods.toml") == null &&
+                    jar.getEntry("META-INF/neoforge.mods.toml") == null) {
                     LOGGER.warn("The transformed jar has no supported mod metadata");
                     return false;
                 }

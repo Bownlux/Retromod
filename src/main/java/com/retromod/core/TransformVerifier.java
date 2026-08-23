@@ -71,9 +71,18 @@ public final class TransformVerifier {
      */
     public static VerifyResult verify(Path transformedJar, String modName, String targetVersion,
             McSymbolIndex targetIndex) {
+        return verify(transformedJar, modName, targetVersion, targetIndex,
+                RetromodTransformer.NestedArchiveBudget.defaults());
+    }
+
+    /** Testable variant with an explicit shared budget for the complete archive tree. */
+    static VerifyResult verify(Path transformedJar, String modName, String targetVersion,
+            McSymbolIndex targetIndex,
+            RetromodTransformer.NestedArchiveBudget archiveBudget) {
         List<Issue> issues = new ArrayList<>();
 
         try {
+            Objects.requireNonNull(archiveBudget, "archiveBudget");
             Set<String> modClasses = new HashSet<>();
             Set<String> referencedClasses = new LinkedHashSet<>();
             Map<String, Set<String>> referencedMethods = new LinkedHashMap<>();
@@ -86,39 +95,27 @@ public final class TransformVerifier {
             boolean scanNestedTargets = targetIndex != null && targetIndex.isAvailable();
 
             try (JarFile jar = new JarFile(transformedJar.toFile())) {
-                // Pass 1 learns every class packaged with the mod, including recursively bundled
-                // libraries. Otherwise a library under META-INF/jars looks like an absent external
-                // dependency even though the loader will put it on the mod's classpath.
-                walkArchive(jar, RetromodTransformer.NestedArchiveBudget.defaults(),
+                // Learn every packaged class and scan outer classes in the same bounded read.
+                // Validation happens after the complete walk, so later classes still satisfy
+                // references found earlier without a second archive expansion.
+                walkArchive(jar, archiveBudget,
                         (entryName, classBytes, nested) -> {
                             String discoveredClass = className(entryName);
                             modClasses.add(discoveredClass);
-                            if (!nested || !scanNestedTargets) return;
+                            if (nested && !scanNestedTargets) return;
                             try (InputStream input = new ByteArrayInputStream(classBytes)) {
-                                scanClass(input, discoveredClass, nestedReferencedClasses,
-                                        nestedReferencedMethods, nestedReferencedFields,
-                                        nestedReferencedCtors);
+                                if (nested) {
+                                    scanClass(input, discoveredClass, nestedReferencedClasses,
+                                            nestedReferencedMethods, nestedReferencedFields,
+                                            nestedReferencedCtors);
+                                } else {
+                                    scanClass(input, discoveredClass, referencedClasses,
+                                            referencedMethods, referencedFields, referencedCtors);
+                                }
                             } catch (Exception ignored) {
-                                // An unreadable optional library class does not invalidate the mod.
+                                // One unreadable class must not disable checks for the rest of a mod.
                             }
                         });
-
-                // Pass 2 scans the outer mod bytecode. Nested libraries have their own optional
-                // dependency graph, so treating every library reference as a required mod link
-                // produces reports for formats the mod never selects at runtime. Their classes
-                // still entered modClasses above, which is the information outer calls need.
-                var entries = jar.entries();
-                while (entries.hasMoreElements()) {
-                    JarEntry entry = entries.nextElement();
-                    if (!entry.getName().endsWith(".class") || entry.isDirectory()) continue;
-                    String sourceClass = entry.getName().replace(".class", "");
-                    try (InputStream is = jar.getInputStream(entry)) {
-                        scanClass(is, sourceClass, referencedClasses,
-                                referencedMethods, referencedFields, referencedCtors);
-                    } catch (Exception ignored) {
-                        // One unreadable class must not disable checks for the rest of a mod.
-                    }
-                }
             }
 
             for (String cls : referencedClasses) {
@@ -183,6 +180,7 @@ public final class TransformVerifier {
             // (a transformer-layer LinkageError can surface through a probe) and return
             // whatever we gathered (#102).
             LOGGER.warn("Could not verify the transformed mod {}: {}", modName, t.toString());
+            addIssue(issues, new Issue(IssueType.VERIFICATION_INCOMPLETE, "", null, null));
         }
 
         return new VerifyResult(modName, targetVersion, issues);
@@ -201,23 +199,33 @@ public final class TransformVerifier {
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
             String name = ZipSecurity.safeEntryName(entry.getName());
-            if (!names.add(name)) {
+            String canonicalName = ZipSecurity.canonicalEntryName(name);
+            if (!names.add(canonicalName)) {
                 throw new IOException("duplicate JAR entry: " + name);
             }
-            if (entry.isDirectory()) continue;
-            if (name.endsWith(".class")) {
+            if (entry.isDirectory()) {
+                budget.reserve(0, canonicalName);
+                continue;
+            }
+            if (canonicalName.endsWith(".class")) {
                 try (InputStream in = jar.getInputStream(entry)) {
-                    visitor.visit(name, ZipSecurity.safeReadAllBytes(in), false);
+                    long allowance = budget.beginRead(
+                            ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, canonicalName);
+                    byte[] classBytes = ZipSecurity.safeReadAllBytes(in, allowance);
+                    budget.completeRead(allowance, classBytes.length);
+                    visitor.visit(canonicalName, classBytes, false);
                 }
-            } else if (isNestedJarEntry(name)) {
+            } else if (isNestedJarEntry(canonicalName)) {
                 byte[] nested;
                 try (InputStream in = jar.getInputStream(entry)) {
                     long allowance = budget.beginRead(
-                            ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, name);
+                            ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, canonicalName);
                     nested = ZipSecurity.safeReadAllBytes(in, allowance);
                     budget.completeRead(allowance, nested.length);
                 }
                 walkNestedArchive(nested, 1, budget, visitor);
+            } else {
+                budget.reserve(0, canonicalName);
             }
         }
     }
@@ -230,20 +238,22 @@ public final class TransformVerifier {
             java.util.zip.ZipEntry entry;
             while ((entry = in.getNextEntry()) != null) {
                 String name = ZipSecurity.safeEntryName(entry.getName());
-                if (!names.add(name)) {
+                String canonicalName = ZipSecurity.canonicalEntryName(name);
+                if (!names.add(canonicalName)) {
                     throw new IOException("duplicate nested JAR entry: " + name);
                 }
                 if (entry.isDirectory()) {
-                    budget.reserve(0, name);
+                    budget.reserve(0, canonicalName);
                     continue;
                 }
                 long allowance = budget.beginRead(
-                        ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, name);
+                        ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, canonicalName);
                 byte[] bytes = ZipSecurity.safeReadAllBytes(in, allowance);
                 budget.completeRead(allowance, bytes.length);
-                if (name.endsWith(".class")) {
-                    visitor.visit(name, bytes, true);
-                } else if (depth < MAX_NESTED_VERIFY_DEPTH && isNestedJarEntry(name)) {
+                if (canonicalName.endsWith(".class")) {
+                    visitor.visit(canonicalName, bytes, true);
+                } else if (depth < MAX_NESTED_VERIFY_DEPTH
+                        && isNestedJarEntry(canonicalName)) {
                     walkNestedArchive(bytes, depth + 1, budget, visitor);
                 }
             }
@@ -372,17 +382,12 @@ public final class TransformVerifier {
 
     /** True when verify_transforms is enabled in config. */
     public static boolean isEnabled() {
-        try {
-            Path configPath = Path.of("config/retromod/config.json");
-            if (Files.exists(configPath)) {
-                String json = Files.readString(configPath);
-                return json.contains("\"verify_transforms\": true") ||
-                       json.contains("\"verify_transforms\":true");
-            }
-        } catch (Exception e) {
-            // default to false
-        }
-        return false;
+        return isEnabled(RetromodConfig.CONFIG_PATH);
+    }
+
+    static boolean isEnabled(Path configPath) {
+        return RetromodConfig.getBooleanIfPresent(
+                configPath, "verify_transforms", false);
     }
 
     private static void scanClass(InputStream is, String sourceClass,
@@ -656,6 +661,7 @@ public final class TransformVerifier {
     }
 
     public enum IssueType {
+        VERIFICATION_INCOMPLETE("Verification Incomplete"),
         MISSING_CLASS("Missing Classes"),
         MISSING_METHOD("Missing Methods"),
         MISSING_FIELD("Missing Fields"),
@@ -669,6 +675,8 @@ public final class TransformVerifier {
         public String toReadableString(String targetVersion) {
             String ownerDot = owner.replace('/', '.');
             return switch (type) {
+                case VERIFICATION_INCOMPLETE ->
+                        "Verification did not finish. Check that the mod jar is readable and within archive limits";
                 case MISSING_CLASS -> ownerDot + " not found in MC " + targetVersion;
                 case MISSING_METHOD -> ownerDot + "." + name + "() not found in MC " + targetVersion;
                 case MISSING_FIELD -> ownerDot + "." + name + " not found in MC " + targetVersion;

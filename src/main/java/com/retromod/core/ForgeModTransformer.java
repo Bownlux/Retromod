@@ -5,6 +5,9 @@
 package com.retromod.core;
 
 import com.retromod.mixin.MixinCompatibilityTransformer;
+import com.retromod.util.ArchivePublication;
+import com.retromod.util.JarSignatureSanitizer;
+import com.retromod.util.JsonSecurity;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.*;
 import org.objectweb.asm.tree.*;
@@ -30,6 +33,9 @@ public class ForgeModTransformer {
     /** Per-entry and total extracted size caps (zip-bomb guard). */
     private static final long MAX_ENTRY_SIZE = 50 * 1024 * 1024;
     private static final long MAX_TOTAL_SIZE = 500 * 1024 * 1024;
+    private static final int MAX_ENTRY_COUNT = 100_000;
+    /** Loader metadata cap. These files are parsed as text and should stay small. */
+    private static final long MAX_METADATA_SIZE = 2L * 1024 * 1024;
 
     /**
      * Forge/NeoForge mod IDs for APIs Retromod shims. A restrictive versionRange
@@ -90,11 +96,13 @@ public class ForgeModTransformer {
 
         LOGGER.info("Checking Forge/NeoForge mod: {}", originalName);
 
+        validateArchiveInput(sourceJar);
+
         // Honor mod-author opt-out (META-INF/retromod-opt-out marker).
         if (com.retromod.util.OptOutCheck.isOptedOut(sourceJar)) {
             com.retromod.util.OptOutCheck.logSkipped(sourceJar);
             Path passthrough = outputDir.resolve(originalName);
-            Files.copy(sourceJar, passthrough, StandardCopyOption.REPLACE_EXISTING);
+            copyArchiveReplacingAtomically(sourceJar, passthrough);
             return passthrough;
         }
 
@@ -102,7 +110,7 @@ public class ForgeModTransformer {
         if (targetMcVersion.equals(modMcVersion)) {
             LOGGER.info("  {} is already for MC {} - no transformation needed", originalName, targetMcVersion);
             Path directCopy = outputDir.resolve(originalName);
-            Files.copy(sourceJar, directCopy, StandardCopyOption.REPLACE_EXISTING);
+            copyArchiveReplacingAtomically(sourceJar, directCopy);
             return directCopy;
         }
 
@@ -159,14 +167,16 @@ public class ForgeModTransformer {
 
             // Patch metadata in nested Jar-in-Jar deps. A bundled dep carries its
             // own mods.toml with a stale minecraft versionRange Forge would reject.
-            int jijPatched = patchJarInJarMetadata(tempDir);
+            int jijPatched = patchJarInJarMetadata(tempDir, 1,
+                    RetromodTransformer.NestedArchiveBudget.defaults(), originalName);
             if (jijPatched > 0) {
                 LOGGER.info("Patched metadata in {} JIJ dependencies", jijPatched);
             }
 
             // Migrate bundled data-pack JSON across the 1.21.x -> 26.x format
             // changes the bytecode pass can't reach. Gated to 26.x in ModDataMigrator.
-            int dataMigrated = com.retromod.resources.ModDataMigrator.migrateTree(tempDir, targetMcVersion);
+            int dataMigrated = com.retromod.resources.ModDataMigrator.migrateTreeChecked(
+                    tempDir, targetMcVersion);
             if (dataMigrated > 0) {
                 LOGGER.info("Migrated 26.x data formats in {} data file(s)", dataMigrated);
             }
@@ -203,13 +213,14 @@ public class ForgeModTransformer {
     }
 
     /** Read the minecraft version a Forge/NeoForge mod JAR targets, or null. */
-    private String extractMinecraftVersion(Path jarPath) {
+    private String extractMinecraftVersion(Path jarPath) throws IOException {
+        validateArchiveInput(jarPath);
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             ZipEntry entry = jar.getEntry("META-INF/neoforge.mods.toml");
             if (entry == null) entry = jar.getEntry("META-INF/mods.toml");
 
             if (entry != null) {
-                String content = new String(jar.getInputStream(entry).readAllBytes());
+                String content = readUtf8Metadata(jar, entry);
                 Pattern p = Pattern.compile("versionRange\\s*=\\s*\"\\[([0-9.]+)");
                 Matcher m = p.matcher(content);
                 // first match is usually the forge/neoforge version; keep
@@ -221,10 +232,21 @@ public class ForgeModTransformer {
                     }
                 }
             }
-        } catch (Exception e) {
-            // ignore
         }
         return null;
+    }
+
+    private static String readUtf8Metadata(JarFile jar, ZipEntry entry) throws IOException {
+        try (InputStream input = jar.getInputStream(entry)) {
+            return new String(ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE),
+                    java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
+
+    private static void validateArchiveInput(Path jarPath) throws IOException {
+        if (!Files.isRegularFile(jarPath, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Mod input is not a regular file: " + jarPath);
+        }
     }
 
     /**
@@ -232,12 +254,24 @@ public class ForgeModTransformer {
      * entry size. See {@link FabricModTransformer#extractJar}.
      */
     private void extractJar(Path jarPath, Path outputDir) throws IOException {
+        Set<String> entryNames = new HashSet<>();
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             var entries = jar.entries();
             long totalSize = 0;
+            int totalEntries = 0;
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                Path outputPath = ZipSecurity.safeResolve(outputDir, entry.getName());
+                if (++totalEntries > MAX_ENTRY_COUNT) {
+                    throw new IOException("Mod archive contains more than "
+                            + MAX_ENTRY_COUNT + " entries: " + jarPath.getFileName());
+                }
+                String name = ZipSecurity.safeEntryName(entry.getName());
+                String canonicalName = ZipSecurity.canonicalEntryName(name);
+                if (!entryNames.add(canonicalName)) {
+                    throw new IOException("Mod archive contains a duplicate normalized entry: "
+                            + name);
+                }
+                Path outputPath = ZipSecurity.safeResolve(outputDir, name);
 
                 if (entry.isDirectory()) {
                     Files.createDirectories(outputPath);
@@ -245,7 +279,7 @@ public class ForgeModTransformer {
                     Files.createDirectories(outputPath.getParent());
                     long writtenBytes;
                     try (InputStream is = jar.getInputStream(entry)) {
-                        writtenBytes = copyBounded(is, outputPath, MAX_ENTRY_SIZE, entry.getName());
+                        writtenBytes = copyBounded(is, outputPath, MAX_ENTRY_SIZE, name);
                     }
                     totalSize += writtenBytes;
                     if (totalSize > MAX_TOTAL_SIZE) {
@@ -258,28 +292,52 @@ public class ForgeModTransformer {
         }
     }
 
+    /** Extract one nested archive while charging the complete sibling and recursion tree. */
+    private void extractNestedJar(Path jarPath, Path outputDir,
+            RetromodTransformer.NestedArchiveBudget budget, String archiveKey)
+            throws IOException {
+        validateArchiveInput(jarPath);
+        Set<String> entryNames = new HashSet<>();
+        try (JarFile jar = new JarFile(jarPath.toFile())) {
+            var entries = jar.entries();
+            long totalSize = 0;
+            while (entries.hasMoreElements()) {
+                JarEntry entry = entries.nextElement();
+                String name = ZipSecurity.safeEntryName(entry.getName());
+                String canonicalName = ZipSecurity.canonicalEntryName(name);
+                String qualifiedName = archiveKey + "!/" + name;
+                if (!entryNames.add(canonicalName)) {
+                    throw new IOException("duplicate nested JAR entry: " + qualifiedName);
+                }
+                Path outputPath = ZipSecurity.safeResolve(outputDir, name);
+
+                if (entry.isDirectory()) {
+                    budget.reserve(0, qualifiedName);
+                    Files.createDirectories(outputPath);
+                } else {
+                    Files.createDirectories(outputPath.getParent());
+                    long allowance = budget.beginRead(MAX_ENTRY_SIZE, qualifiedName);
+                    long writtenBytes;
+                    try (InputStream input = jar.getInputStream(entry)) {
+                        writtenBytes = copyBounded(
+                                input, outputPath, allowance, qualifiedName);
+                    }
+                    budget.completeRead(allowance, writtenBytes);
+                    totalSize += writtenBytes;
+                    if (totalSize > MAX_TOTAL_SIZE) {
+                        throw new IOException("ZIP total extracted size exceeds limit ("
+                                + MAX_TOTAL_SIZE + " bytes) - possible zip bomb (decompressed "
+                                + totalSize + " bytes so far)");
+                    }
+                }
+            }
+        }
+    }
+
     /** @see FabricModTransformer#copyBounded */
     private static long copyBounded(InputStream is, Path target, long maxBytes,
                                      String entryNameForError) throws IOException {
-        long written = 0;
-        byte[] buf = new byte[8192];
-        try (var out = java.nio.file.Files.newOutputStream(target,
-                java.nio.file.StandardOpenOption.CREATE,
-                java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
-                java.nio.file.StandardOpenOption.WRITE)) {
-            int n;
-            while ((n = is.read(buf)) > 0) {
-                written += n;
-                if (written > maxBytes) {
-                    throw new IOException("ZIP entry too large: " + entryNameForError
-                        + " (exceeded " + maxBytes + " bytes while reading, "
-                        + "possible zip bomb - declared size in central directory "
-                        + "may be falsified)");
-                }
-                out.write(buf, 0, n);
-            }
-        }
-        return written;
+        return ZipSecurity.copyBounded(is, target, maxBytes, entryNameForError);
     }
 
     // Package-private for ForgeFrameMergeTest, which pins the frames this rebuilds.
@@ -297,6 +355,17 @@ public class ForgeModTransformer {
                 .toList();
         }
 
+        // Frame computation and post-remap adapters inspect other classes in this archive.
+        // Snapshot every class before parallel workers start rewriting the extracted files.
+        Map<String, byte[]> classSnapshot = new HashMap<>();
+        for (Path classFile : classFiles) {
+            String className = dir.relativize(classFile).toString()
+                    .replace(".class", "")
+                    .replace(File.separator, "/");
+            classSnapshot.put(className, Files.readAllBytes(classFile));
+        }
+        final Map<String, byte[]> originalClasses = Map.copyOf(classSnapshot);
+
         // Classes are independent and the redirect tables are safe to read in parallel.
         final java.util.concurrent.atomic.AtomicInteger counter =
                 new java.util.concurrent.atomic.AtomicInteger();
@@ -305,24 +374,19 @@ public class ForgeModTransformer {
         // transform classpath. Without this a branch between two of the mod's own types is typed as
         // Object, and the JVM rejects the method as soon as that value is passed somewhere that
         // wants a specific type. The Fabric pass has always done this; Forge and NeoForge did not.
-        bytecodeTransformer.setJarClassBytesProvider(name -> {
-            try {
-                Path cf = dir.resolve(name + ".class");
-                return Files.exists(cf) ? Files.readAllBytes(cf) : null;
-            } catch (IOException e) {
-                return null;
-            }
-        });
+        bytecodeTransformer.setJarClassBytesProvider(originalClasses::get);
         try {
             com.retromod.core.parallel.RetromodExecutors.parallelForEach(classFiles, classFile -> {
                 try {
-                    byte[] original = Files.readAllBytes(classFile);
                     String className = dir.relativize(classFile).toString()
                         .replace(".class", "")
                         .replace(File.separator, "/");
+                    byte[] original = originalClasses.get(className);
 
-                    // Remove handlers that cannot be translated before changing their bytecode.
-                    byte[] preStripped = mixinTransformer.stripBlocklistedHandlers(original);
+                    // Mixin selectors are annotation text. Repair them before the ordinary class
+                    // remap, then apply descriptor-sensitive repairs after Mojang names exist.
+                    byte[] preMixin = mixinTransformer.transformMixinClass(original);
+                    byte[] preStripped = mixinTransformer.stripBlocklistedHandlers(preMixin);
                     // GUI migration needs the old GuiGraphics owner, before the class redirect.
                     if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
                             com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
@@ -374,7 +438,7 @@ public class ForgeModTransformer {
             for (Path refmap : files.filter(Files::isRegularFile)
                     .filter(path -> isRefmapResource(path.getFileName().toString()))
                     .toList()) {
-                String original = Files.readString(refmap);
+                String original = readJsonFile(refmap, "Mixin refmap JSON");
                 String transformed = MixinRefmapRemapper.remapForgeSelectorsWithRepairs(
                         original, mixinTransformer).json();
                 if (!original.equals(transformed)) {
@@ -396,7 +460,7 @@ public class ForgeModTransformer {
                     .toList()) {
                 MixinRefmapRemapper.RemapResult result =
                         MixinRefmapRemapper.remapForgeSelectorsWithRepairs(
-                                Files.readString(refmap), mixinTransformer);
+                                readJsonFile(refmap, "Mixin refmap JSON"), mixinTransformer);
                 repairs = repairs.merge(result.repairs());
             }
         } catch (Exception e) {
@@ -415,11 +479,15 @@ public class ForgeModTransformer {
     private static final int MAX_JIJ_DEPTH = 4;
 
     /** Patch metadata in every nested Jar-in-Jar dep. Returns the count patched. */
-    private int patchJarInJarMetadata(Path dir) {
-        return patchJarInJarMetadata(dir, 1);
+    private int patchJarInJarMetadata(Path dir) throws IOException {
+        return patchJarInJarMetadata(dir, 1,
+                RetromodTransformer.NestedArchiveBudget.defaults(),
+                dir.getFileName().toString());
     }
 
-    private int patchJarInJarMetadata(Path dir, int depth) {
+    private int patchJarInJarMetadata(Path dir, int depth,
+            RetromodTransformer.NestedArchiveBudget budget, String archiveKey)
+            throws IOException {
         Path jarjarDir = dir.resolve("META-INF/jarjar");
         if (!Files.isDirectory(jarjarDir)) {
             return 0;
@@ -427,19 +495,15 @@ public class ForgeModTransformer {
 
         int patched = 0;
         try (var entries = Files.list(jarjarDir)) {
-            var jijList = entries.filter(p -> p.toString().endsWith(".jar")).toList();
+            var jijList = entries.filter(p -> p.toString().endsWith(".jar"))
+                    .sorted()
+                    .toList();
             for (Path jijJar : jijList) {
-                try {
-                    if (patchSingleJijJar(jijJar, depth)) {
-                        patched++;
-                    }
-                } catch (Exception e) {
-                    // one bad JIJ shouldn't abort the whole transform
-                    LOGGER.warn("Could not patch JIJ {}: {}", jijJar.getFileName(), e.getMessage());
+                String nestedKey = archiveKey + "!/META-INF/jarjar/" + jijJar.getFileName();
+                if (patchSingleJijJar(jijJar, depth, budget, nestedKey)) {
+                    patched++;
                 }
             }
-        } catch (IOException e) {
-            LOGGER.warn("Could not list JIJ directory: {}", e.getMessage());
         }
         return patched;
     }
@@ -451,9 +515,22 @@ public class ForgeModTransformer {
      * for a pure library with nothing to do (#95).
      */
     private boolean patchSingleJijJar(Path jijJar, int depth) throws IOException {
+        return patchSingleJijJar(jijJar, depth,
+                RetromodTransformer.NestedArchiveBudget.defaults(),
+                jijJar.getFileName().toString());
+    }
+
+    private boolean patchSingleJijJar(Path jijJar, int depth,
+            RetromodTransformer.NestedArchiveBudget budget, String archiveKey)
+            throws IOException {
+        budget.reserve(0, archiveKey);
+        if (NestedArchivePolicy.shouldPreserve(jijJar, budget, archiveKey)) {
+            LOGGER.debug("Keeping bundled provider JAR unchanged: {}", jijJar.getFileName());
+            return false;
+        }
         Path tempDir = Files.createTempDirectory("retromod-jij-");
         try {
-            extractJar(jijJar, tempDir);
+            extractNestedJar(jijJar, tempDir, budget, archiveKey);
             com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs =
                     collectRefmapRepairs(tempDir);
             int classesTransformed = transformClasses(tempDir, refmapRepairs);
@@ -471,9 +548,12 @@ public class ForgeModTransformer {
             }
             promoteToNeoForgeToml(tempDir);
 
-            int dataMigrated = com.retromod.resources.ModDataMigrator.migrateTree(tempDir, targetMcVersion);
+            int dataMigrated = com.retromod.resources.ModDataMigrator.migrateTreeChecked(
+                    tempDir, targetMcVersion);
 
-            int nestedPatched = (depth < MAX_JIJ_DEPTH) ? patchJarInJarMetadata(tempDir, depth + 1) : 0;
+            int nestedPatched = depth < MAX_JIJ_DEPTH
+                    ? patchJarInJarMetadata(tempDir, depth + 1, budget, archiveKey)
+                    : 0;
 
             boolean changed = classesTransformed > 0 || refmapsTransformed > 0
                     || accessTransformerNormalized
@@ -508,7 +588,8 @@ public class ForgeModTransformer {
         Path mcmod = tempDir.resolve("mcmod.info");
         if (Files.exists(forgeToml) || Files.exists(neoToml) || !Files.exists(mcmod)) return;
 
-        String json = Files.readString(mcmod);
+        String json = JsonSecurity.readUtf8(mcmod, MAX_METADATA_SIZE,
+                JsonSecurity.DEFAULT_MAX_DEPTH, "mcmod.info");
 
         StringBuilder body = new StringBuilder();
         java.util.List<String> ids = new java.util.ArrayList<>();
@@ -595,6 +676,8 @@ public class ForgeModTransformer {
     private static java.util.List<com.google.gson.JsonObject> parseMcmodEntries(String json) {
         java.util.List<com.google.gson.JsonObject> out = new java.util.ArrayList<>();
         try {
+            JsonSecurity.validate(json, MAX_METADATA_SIZE,
+                    JsonSecurity.DEFAULT_MAX_DEPTH, "mcmod.info");
             com.google.gson.stream.JsonReader jr =
                     new com.google.gson.stream.JsonReader(new java.io.StringReader(json));
             jr.setLenient(true);
@@ -1061,7 +1144,7 @@ public class ForgeModTransformer {
                     .replace(File.separator, "/");
                 if (isMixinConfigFile(entryName)) {
                     try {
-                        String json = Files.readString(file);
+                        String json = readJsonFile(file, "Mixin config JSON");
                         String transformed = makeMixinConfigNonFatal(json);
                         if (!transformed.equals(json)) {
                             Files.writeString(file, transformed, java.nio.charset.StandardCharsets.UTF_8);
@@ -1082,6 +1165,8 @@ public class ForgeModTransformer {
      */
     private String makeMixinConfigNonFatal(String json) {
         try {
+            JsonSecurity.validate(json, JsonSecurity.DEFAULT_MAX_BYTES,
+                    JsonSecurity.DEFAULT_MAX_DEPTH, "Mixin config JSON");
             com.google.gson.JsonObject root = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
 
             root.addProperty("required", false);
@@ -1237,8 +1322,22 @@ public class ForgeModTransformer {
     private boolean isCacheUpToDate(Path outputJar, String expectedKey) {
         try {
             Path sidecar = cacheSidecar(outputJar);
-            if (!Files.exists(outputJar) || !Files.exists(sidecar)) return false;
-            return expectedKey.equals(Files.readString(sidecar).trim());
+            if (!Files.isRegularFile(outputJar, LinkOption.NOFOLLOW_LINKS)
+                    || !Files.isRegularFile(sidecar, LinkOption.NOFOLLOW_LINKS)
+                    || Files.size(sidecar) > 1024) {
+                return false;
+            }
+            if (!expectedKey.equals(Files.readString(sidecar).trim())) {
+                return false;
+            }
+            try (JarFile jar = new JarFile(outputJar.toFile())) {
+                Manifest manifest = readBoundedManifest(jar);
+                return manifest != null
+                        && "true".equalsIgnoreCase(manifest.getMainAttributes()
+                                .getValue(TRANSFORMED_ATTRIBUTE))
+                        && targetMcVersion.equals(manifest.getMainAttributes()
+                                .getValue("Retromod-Target-Version"));
+            }
         } catch (IOException e) {
             return false;
         }
@@ -1253,11 +1352,29 @@ public class ForgeModTransformer {
 
     /** Write the cache sidecar next to a freshly transformed output jar. */
     private void writeCacheSidecar(Path outputJar, String key) {
+        Path sidecar = cacheSidecar(outputJar);
+        Path parent = sidecar.toAbsolutePath().getParent();
+        Path staged = null;
         try {
-            Files.writeString(cacheSidecar(outputJar), key);
+            if (parent == null) {
+                throw new IOException("transform cache sidecar has no parent");
+            }
+            Files.createDirectories(parent);
+            staged = Files.createTempFile(parent,
+                    "." + sidecar.getFileName() + ".", ".tmp");
+            Files.writeString(staged, key, java.nio.charset.StandardCharsets.UTF_8);
+            moveReplacing(staged, sidecar);
         } catch (IOException e) {
             LOGGER.debug("Could not write transform cache sidecar for {}: {}",
                     outputJar.getFileName(), e.getMessage());
+        } finally {
+            if (staged != null) {
+                try {
+                    Files.deleteIfExists(staged);
+                } catch (IOException ignored) {
+                    // A missing cache sidecar only causes a safe rebuild next launch.
+                }
+            }
         }
     }
 
@@ -1265,7 +1382,14 @@ public class ForgeModTransformer {
     private static String sha256(Path file) {
         try {
             java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(Files.readAllBytes(file));
+            try (InputStream input = Files.newInputStream(file)) {
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    digest.update(buffer, 0, read);
+                }
+            }
+            byte[] hash = digest.digest();
             StringBuilder sb = new StringBuilder(hash.length * 2);
             for (byte b : hash) sb.append(String.format("%02x", b));
             return sb.toString();
@@ -1274,33 +1398,33 @@ public class ForgeModTransformer {
         }
     }
 
+    private static String readJsonFile(Path path, String description) throws IOException {
+        return JsonSecurity.readUtf8(path, JsonSecurity.DEFAULT_MAX_BYTES,
+                JsonSecurity.DEFAULT_MAX_DEPTH, description);
+    }
+
     /**
      * Add the {@code Retromod-Transformed} manifest attribute to the extracted mod before
      * repackaging, so {@link #isTransformedMod(Path)} (and pitfalls #14/#46 guards) can tell a
      * Retromod-brought mod from a native one. Creates a manifest if the source lacked one.
      */
-    private void stampTransformedManifest(Path tempDir, String originalName) {
+    private void stampTransformedManifest(Path tempDir, String originalName) throws IOException {
         Path manifestFile = tempDir.resolve("META-INF/MANIFEST.MF");
-        try {
-            Manifest manifest;
-            if (Files.exists(manifestFile)) {
-                try (InputStream is = Files.newInputStream(manifestFile)) {
-                    manifest = new Manifest(is);
-                }
-            } else {
-                manifest = new Manifest();
-                manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
-            }
-            manifest.getMainAttributes().putValue(TRANSFORMED_ATTRIBUTE, "true");
-            manifest.getMainAttributes().putValue("Retromod-Target-Version", targetMcVersion);
-            manifest.getMainAttributes().putValue("Retromod-Original-Jar", originalName);
-            Files.createDirectories(manifestFile.getParent());
-            try (OutputStream os = Files.newOutputStream(manifestFile)) {
-                manifest.write(os);
-            }
-        } catch (IOException e) {
-            LOGGER.warn("Could not stamp Retromod-Transformed manifest for {}: {}",
-                    originalName, e.getMessage());
+        Manifest manifest;
+        if (Files.exists(manifestFile)) {
+            manifest = readBoundedManifest(manifestFile);
+        } else {
+            manifest = new Manifest();
+            manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        }
+        manifest.getMainAttributes().putValue(TRANSFORMED_ATTRIBUTE, "true");
+        manifest.getMainAttributes().putValue("Retromod-Target-Version",
+                ZipSecurity.sanitizeManifestValue(targetMcVersion));
+        manifest.getMainAttributes().putValue("Retromod-Original-Jar",
+                ZipSecurity.sanitizeManifestValue(originalName));
+        Files.createDirectories(manifestFile.getParent());
+        try (OutputStream os = Files.newOutputStream(manifestFile)) {
+            manifest.write(os);
         }
     }
 
@@ -1311,13 +1435,29 @@ public class ForgeModTransformer {
      * read error or when the attribute is absent.
      */
     public static boolean isTransformedMod(Path jar) {
-        if (jar == null || !Files.exists(jar)) return false;
+        if (jar == null || !Files.isRegularFile(jar, LinkOption.NOFOLLOW_LINKS)) return false;
         try (JarFile jf = new JarFile(jar.toFile())) {
-            Manifest mf = jf.getManifest();
+            Manifest mf = readBoundedManifest(jf);
             if (mf == null) return false;
             return "true".equalsIgnoreCase(mf.getMainAttributes().getValue(TRANSFORMED_ATTRIBUTE));
         } catch (IOException e) {
             return false;
+        }
+    }
+
+    private static Manifest readBoundedManifest(JarFile jar) throws IOException {
+        JarEntry manifestEntry = jar.getJarEntry(JarFile.MANIFEST_NAME);
+        if (manifestEntry == null) return null;
+        try (InputStream input = jar.getInputStream(manifestEntry)) {
+            byte[] bytes = ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE);
+            return new Manifest(new ByteArrayInputStream(bytes));
+        }
+    }
+
+    private static Manifest readBoundedManifest(Path manifestFile) throws IOException {
+        try (InputStream input = Files.newInputStream(manifestFile)) {
+            byte[] bytes = ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE);
+            return new Manifest(new ByteArrayInputStream(bytes));
         }
     }
 
@@ -1343,7 +1483,7 @@ public class ForgeModTransformer {
                 new BufferedOutputStream(Files.newOutputStream(outputJar)))) {
 
             // ZIP directory entries: package resources (ClassLoader.getResources) and classpath
-// scanners (Reflections - YungsApi @AutoRegister) silently find nothing without them.
+            // scanners (Reflections - YungsApi @AutoRegister) silently find nothing without them.
             com.retromod.util.JarDirectoryEntries.writeAll(jos, sourceDir);
 
             // A source mod's central directory can list an entry twice (or two
@@ -1356,6 +1496,10 @@ public class ForgeModTransformer {
                     String entryName = sourceDir.relativize(file).toString()
                         .replace(File.separator, "/");
 
+                    if (JarSignatureSanitizer.isSigningArtifact(entryName)) {
+                        continue;
+                    }
+
                     if (!writtenEntries.add(entryName)) {
                         LOGGER.warn("Skipping duplicate JAR entry from source: {} (keeping first copy)",
                                 entryName);
@@ -1364,7 +1508,16 @@ public class ForgeModTransformer {
 
                     JarEntry entry = new JarEntry(entryName);
                     jos.putNextEntry(entry);
-                    Files.copy(file, jos);
+                    if (JarSignatureSanitizer.isManifest(entryName)) {
+                        byte[] manifestBytes;
+                        try (InputStream input = Files.newInputStream(file)) {
+                            manifestBytes = ZipSecurity.safeReadAllBytes(
+                                    input, MAX_METADATA_SIZE);
+                        }
+                        jos.write(JarSignatureSanitizer.sanitizeManifest(manifestBytes));
+                    } else {
+                        Files.copy(file, jos);
+                    }
                     jos.closeEntry();
                 }
             }
@@ -1378,5 +1531,9 @@ public class ForgeModTransformer {
         } catch (AtomicMoveNotSupportedException e) {
             Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
         }
+    }
+
+    static void copyArchiveReplacingAtomically(Path source, Path target) throws IOException {
+        ArchivePublication.copyReplacing(source, target);
     }
 }

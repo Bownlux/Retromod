@@ -5,7 +5,7 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -24,7 +24,7 @@ import org.slf4j.LoggerFactory;
  * <p>Authored against fabric-api-0.141.1 / 0.145.4+26.1.2; needs a 26.1 launch with a
  * custom-entity-model mod to runtime-verify.</p>
  */
-public class FabricEntityModelLayerShim implements VersionShim {
+public class FabricEntityModelLayerShim implements AuxiliaryVersionShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 

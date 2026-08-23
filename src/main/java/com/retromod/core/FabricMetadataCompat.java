@@ -8,11 +8,15 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.retromod.util.JsonSecurity;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 /** Exact metadata migrations for Fabric loader dependency identifiers. */
 public final class FabricMetadataCompat {
+
+    private static final long MAX_METADATA_BYTES = 2L * 1024 * 1024;
 
     private static final Gson GSON = new GsonBuilder()
             .setPrettyPrinting()
@@ -27,6 +31,8 @@ public final class FabricMetadataCompat {
      */
     public static byte[] migrateLegacyFabricApiDependency(byte[] jsonData) {
         try {
+            JsonSecurity.validate(jsonData, MAX_METADATA_BYTES,
+                    JsonSecurity.DEFAULT_MAX_DEPTH, "fabric.mod.json");
             JsonObject root = JsonParser.parseString(
                     new String(jsonData, StandardCharsets.UTF_8)).getAsJsonObject();
             if (!root.has("depends") || !root.get("depends").isJsonObject()) {
@@ -43,7 +49,7 @@ public final class FabricMetadataCompat {
             }
             depends.remove("fabric");
             return GSON.toJson(root).getBytes(StandardCharsets.UTF_8);
-        } catch (RuntimeException ignored) {
+        } catch (IOException | RuntimeException ignored) {
             return jsonData;
         }
     }

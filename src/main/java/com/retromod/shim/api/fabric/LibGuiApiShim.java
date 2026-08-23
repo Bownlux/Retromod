@@ -5,10 +5,10 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /** Shim for LibGui (Cotton's Fabric GUI library): widgets, panels, screen handling. */
-public class LibGuiApiShim implements VersionShim {
+public class LibGuiApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

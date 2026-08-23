@@ -4,11 +4,11 @@
  */
 package com.retromod.locator;
 
+import com.retromod.util.ArchivePublication;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -65,8 +65,8 @@ public final class RetromodLoaderPreLaunch implements PreLaunchEntrypoint {
             int moved = 0;
             for (Path jar : jars) {
                 try {
-                    Files.move(jar, mods.resolve(jar.getFileName().toString()),
-                            StandardCopyOption.REPLACE_EXISTING);
+                    ArchivePublication.moveReplacing(
+                            jar, mods.resolve(jar.getFileName().toString()));
                     moved++;
                 } catch (IOException e) {
                     LOGGER.error("Could not move {} into the mods folder: {}",

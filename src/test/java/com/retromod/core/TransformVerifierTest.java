@@ -59,6 +59,18 @@ class TransformVerifierTest {
     }
 
     @Test
+    void verificationSettingUsesTheBoundedConfigReader(@TempDir Path dir) throws Exception {
+        Path config = dir.resolve("config.json");
+        Files.writeString(config, "{\"verify_transforms\":true,\"padding\":"
+                + "[".repeat(257) + "0" + "]".repeat(257) + "}");
+
+        assertFalse(TransformVerifier.isEnabled(config));
+
+        Files.writeString(config, "{\"verify_transforms\":true}");
+        assertTrue(TransformVerifier.isEnabled(config));
+    }
+
+    @Test
     @DisplayName("#102 canResolveMethod never throws for resolvable and unresolvable owners")
     void canResolveMethodNeverThrows() {
         Class<?>[] sig = {String.class, String.class, String.class};
@@ -219,6 +231,64 @@ class TransformVerifierTest {
         assertTrue(result.passed(),
                 "a class packaged in a nested library is part of the mod classpath: "
                         + result.issues());
+    }
+
+    @Test
+    @DisplayName("verification charges outer and nested classes to one byte budget")
+    void outerAndNestedClassesShareOneByteBudget(@TempDir Path dir) throws Exception {
+        byte[] outerClass = emptyClass("test/Outer");
+        byte[] innerClass = emptyClass("test/Inner");
+        byte[] nestedJar = jarBytes("test/Inner.class", innerClass);
+        Path transformedMod = dir.resolve("shared-budget.jar");
+        writeJar(transformedMod,
+                new String[]{"test/Outer.class", "META-INF/jars/library.jar"},
+                new byte[][]{outerClass, nestedJar});
+
+        long exactBytes = outerClass.length + nestedJar.length + innerClass.length;
+        TransformVerifier.VerifyResult exact = TransformVerifier.verify(
+                transformedMod, "shared-budget.jar", "26.2", null,
+                new RetromodTransformer.NestedArchiveBudget(exactBytes, 3));
+        TransformVerifier.VerifyResult shortByOne = TransformVerifier.verify(
+                transformedMod, "shared-budget.jar", "26.2", null,
+                new RetromodTransformer.NestedArchiveBudget(exactBytes - 1, 3));
+
+        assertTrue(exact.passed(),
+                "each class must be expanded once and fit the exact shared budget");
+        assertTrue(hasIncompleteIssue(shortByOne),
+                "outer and nested expansions must not receive separate byte budgets");
+    }
+
+    @Test
+    @DisplayName("verification counts every outer and nested archive entry")
+    void completeArchiveTreeSharesOneEntryLimit(@TempDir Path dir) throws Exception {
+        byte[] nestedJar = jarBytes("assets/library.txt", new byte[]{1});
+        Path transformedMod = dir.resolve("entry-limit.jar");
+        writeJar(transformedMod,
+                new String[]{"assets/outer.txt", "META-INF/jars/library.jar"},
+                new byte[][]{new byte[]{1}, nestedJar});
+
+        TransformVerifier.VerifyResult result = TransformVerifier.verify(
+                transformedMod, "entry-limit.jar", "26.2", null,
+                new RetromodTransformer.NestedArchiveBudget(Long.MAX_VALUE, 2));
+
+        assertTrue(hasIncompleteIssue(result),
+                "the nested entry must exceed the shared two-entry limit");
+    }
+
+    @Test
+    @DisplayName("verification rejects normalized duplicate outer entries")
+    void normalizedDuplicateOuterEntryFailsClosed(@TempDir Path dir) throws Exception {
+        Path transformedMod = dir.resolve("duplicate-entry.jar");
+        writeJar(transformedMod,
+                new String[]{"assets//value.txt", "assets/value.txt"},
+                new byte[][]{new byte[]{1}, new byte[]{2}});
+
+        TransformVerifier.VerifyResult result = TransformVerifier.verify(
+                transformedMod, "duplicate-entry.jar", "26.2", null,
+                new RetromodTransformer.NestedArchiveBudget(Long.MAX_VALUE, 10));
+
+        assertTrue(hasIncompleteIssue(result),
+                "entries that normalize to one path must not produce a passing report");
     }
 
     @Test
@@ -406,6 +476,11 @@ class TransformVerifierTest {
         FuzzyMethodResolver resolver = new FuzzyMethodResolver();
         resolver.indexJar(minecraftJar);
         return new FuzzyBackedSymbolIndex(resolver, "26.2");
+    }
+
+    private static boolean hasIncompleteIssue(TransformVerifier.VerifyResult result) {
+        return result.issues().stream().anyMatch(issue ->
+                issue.type() == TransformVerifier.IssueType.VERIFICATION_INCOMPLETE);
     }
 
     private static void writeJar(Path jar, String entryName, byte[] classBytes)

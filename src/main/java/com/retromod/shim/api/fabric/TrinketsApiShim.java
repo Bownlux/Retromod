@@ -5,10 +5,10 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /** Trinkets accessory-slot API (Fabric): SlotType became SlotReference and component retrieval moved. */
-public class TrinketsApiShim implements VersionShim {
+public class TrinketsApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

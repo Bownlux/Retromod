@@ -9,13 +9,11 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.JsonSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -54,6 +52,7 @@ public final class MixinBlocklist {
 
     private static final String BUNDLED_RESOURCE = "/retromod/mixin-blocklist.json";
     private static final Path USER_FILE = Path.of("config/retromod/mixin-blocklist.json");
+    private static final long MAX_BLOCKLIST_BYTES = 2L * 1024 * 1024;
 
     /** Mixin internal name ({@code a/b/C}) to its independently gated block rules. */
     private static volatile Map<String, List<BlockRule>> blocked;
@@ -132,7 +131,9 @@ public final class MixinBlocklist {
         // bundled curated list
         try (InputStream in = MixinBlocklist.class.getResourceAsStream(BUNDLED_RESOURCE)) {
             if (in != null) {
-                parseInto(new InputStreamReader(in, StandardCharsets.UTF_8), result, "bundled");
+                parseInto(JsonSecurity.readUtf8(in, MAX_BLOCKLIST_BYTES,
+                        JsonSecurity.DEFAULT_MAX_DEPTH, "Bundled mixin blocklist"),
+                        result, "bundled");
             } else {
                 LOGGER.debug("{} not present", BUNDLED_RESOURCE);
             }
@@ -143,9 +144,9 @@ public final class MixinBlocklist {
         // user override / extension
         try {
             if (Files.isRegularFile(USER_FILE)) {
-                try (Reader r = Files.newBufferedReader(USER_FILE, StandardCharsets.UTF_8)) {
-                    parseInto(r, result, "user config");
-                }
+                parseInto(JsonSecurity.readUtf8(USER_FILE, MAX_BLOCKLIST_BYTES,
+                        JsonSecurity.DEFAULT_MAX_DEPTH, "User mixin blocklist"),
+                        result, "user config");
             }
         } catch (Exception e) {
             LOGGER.warn("Could not read user mixin blocklist {}: {}", USER_FILE, e.getMessage());
@@ -160,8 +161,11 @@ public final class MixinBlocklist {
         return result;
     }
 
-    private static void parseInto(Reader reader, Map<String, List<BlockRule>> out, String source) {
-        JsonElement parsed = JsonParser.parseReader(reader);
+    private static void parseInto(String json, Map<String, List<BlockRule>> out, String source)
+            throws java.io.IOException {
+        JsonSecurity.validate(json, MAX_BLOCKLIST_BYTES,
+                JsonSecurity.DEFAULT_MAX_DEPTH, "Mixin blocklist " + source);
+        JsonElement parsed = JsonParser.parseString(json);
         if (parsed == null || !parsed.isJsonObject()) return;
         JsonObject root = parsed.getAsJsonObject();
         if (!root.has("blocked") || !root.get("blocked").isJsonArray()) return;

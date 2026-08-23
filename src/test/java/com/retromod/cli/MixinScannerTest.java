@@ -263,6 +263,25 @@ public class MixinScannerTest {
     }
 
     @Test
+    @DisplayName("Deep mixin configs are refused before tree parsing")
+    void refusesDeepMixinConfig(@TempDir Path dir) throws Exception {
+        Path jar = dir.resolve("deep-config.jar");
+        String nested = "[".repeat(257) + "0" + "]".repeat(257);
+        String config = "{\"package\":\"com.test\",\"mixins\":[\"FooMixin\"],"
+                + "\"padding\":" + nested + "}";
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(jar))) {
+            put(output, "com/test/FooMixin.class", fooMixin());
+            put(output, "deep.mixins.json", config.getBytes(StandardCharsets.UTF_8));
+        }
+
+        MixinScanner.ScanResult result = MixinScanner.scan(List.of(jar));
+        MixinScanner.Record record = find(result, "com/test/FooMixin", "onFoo");
+
+        assertNotNull(record);
+        assertNull(record.applied, "a refused config must not mark its mixin as declared");
+    }
+
+    @Test
     @DisplayName("Recognizes SpongePowered and MixinExtras injector descriptors")
     void recognizesInjectorDescriptors() {
         assertEquals("Inject", MixinScanner.recognizeInjector(INJECT));

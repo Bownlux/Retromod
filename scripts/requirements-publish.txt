@@ -1,6 +1,6 @@
 # Exact versions keep release-token workflows from installing a moving dependency set.
 requests==2.34.2
 certifi==2026.7.22
-charset-normalizer==3.4.9
+charset-normalizer==3.5.1
 idna==3.18
 urllib3==2.7.0

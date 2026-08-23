@@ -7,10 +7,10 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /** Cloth Config API shim (v4.x through v11.x): bridges Builder/entry-builder API changes. */
-public class ClothConfigApiShim implements VersionShim {
+public class ClothConfigApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

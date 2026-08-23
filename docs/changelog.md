@@ -10,6 +10,24 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.3.0 Snapshot Line
 
+### Snapshot 9, August 23, 2026
+
+- Moves a one-target, accessor-only Mixin when an exact owner-scoped redirect and unchanged descriptor prove the new field owner.
+- Repairs legacy block random-tick setters after the field moved to `BlockBehaviour` and became final, then refreshes every cached block state after a proven setter call.
+- Updates 48 same-contract `GameRules` constants whose Fabric names otherwise expand to retired `RULE_*` spellings on 26.1 and newer.
+- Transforms explicit `aot` and `batch` inputs whose metadata omits a source Minecraft version, using only matching-loader shims available on the target host.
+- Prevents one-sided Fabric constraints such as `<26.2`, `<=26.2`, and `>26.2` from being mistaken for native target declarations.
+- Uses the detected host version for transforms started from the in-game compatibility screen.
+- Keeps parallel class analysis on an immutable copy of the input instead of files that other workers are replacing.
+- Preserves bundled MixinExtras implementations so nested-jar transforms cannot disable their bootstrap.
+- Applies matching API bridges in known-source CLI and AOT output, including explicit same-version transforms.
+- Updates staged resource and data packs through 26.2 on Fabric, Quilt, Forge, and NeoForge. Data packs run compatible 26.x content migration when needed, while legacy resource packs run item-definition and content migration only during an actual format upgrade.
+- Reads the Minecraft dependency from `quilt.mod.json` and keeps it authoritative when Fabric metadata is also present. The shared Fabric artifact uses entrypoint contracts Quilt Loader can invoke, so there is no separate Quilt jar.
+- Keeps Windows and Unix release builds on the same version, Minecraft matrix, integrity checks, artifact counts, and checksum output.
+- Updates JUnit Jupiter to 6.1.3 and the release publisher's `charset-normalizer` to 3.5.1.
+
+Retromod refuses conflicting, mixed-purpose, or ambiguous accessor moves. Automatic scans still leave unknown-version native mods alone. Malformed, newer-only, overlay-based, or conflicting packs stay staged. The changed fire-tick rule and three inverted boolean rules also stay untouched because they need value-aware adapters.
+
 ### Snapshot 8, August 17, 2026
 
 A maintenance build. Updates the bytecode library behind every transform, along with logging and build tooling. Nothing changes about which mods translate or which Minecraft versions are supported, and the same jar still runs on Java 17, 21, and 25.
@@ -85,14 +103,14 @@ Management Wanted's reported tick-event crash is fixed in the exact three-jar bu
 - Regenerated `SHA256SUMS.txt` from the current release matrix and required one checksum for every published jar.
 - Fixed self-hash verification from launcher paths containing encoded spaces, such as macOS `Application Support`.
 
-YUNG's Better Portals 0.3.9 now passes its reported missing-class failure, old SRG calls, mixin parsing, and `noDrops()` construction call on a real Forge 1.20.1 client. Its next blocker is structural: it creates blocks, fluids, and items in static initializers after modern Forge has frozen the registry. Snapshot 6 reports that limitation clearly; a full fix needs a registry lifecycle port.
+YUNG's Better Portals 0.3.9 now passes its reported missing-class failure, old SRG calls, mixin parsing, and `noDrops()` construction call on a real Forge 1.20.1 client. Its next blocker is structural: it creates blocks, fluids, and items in static initializers after modern Forge has frozen the registry. Snapshot 6 reports that limitation clearly. A full fix needs a registry lifecycle port.
 
 The automatic mixin work was checked against the exact No Chat Reports, Simple Voice Chat, Mouse Tweaks, and Dynamic FPS jars, plus a Fabric mixin compiled for 1.20.1. Signature changes that replace or remove parameters, change return values, depend on captured locals, or have more than one possible host target still require a reviewed repair. In snapshot 6, a handler that captured old parameters also remained unchanged when only its refmap, not its annotation text, related a Yarn source name to the current Mojang name. Snapshot 7 fixes that case.
 
 ### Snapshot 5, August 10, 2026
 
 - Fixed mod-owned stack-frame merges in the standalone CLI, full AOT worker pool, and recursively nested libraries. Each transform now reads the hierarchy from the jar it is actually rewriting.
-- Fixed Patchouli 1.20.1 on Fabric 1.21.11 across its recipe accessors, screen hierarchy, sound accessor, item setup, and old Gson registration. Replaced APIs for ghost buffers, resource-pack books, the animated guide-book model, and its completion predicate are disabled safely; built-in books and normal rendering remain available.
+- Fixed Patchouli 1.20.1 on Fabric 1.21.11 across its recipe accessors, screen hierarchy, sound accessor, item setup, and old Gson registration. Replaced APIs for ghost buffers, resource-pack books, the animated guide-book model, and its completion predicate are disabled safely. Built-in books and normal rendering remain available.
 - Fixed constructor transforms repeatedly spilling unmatched overloads and falsely hitting the five-pass redirect-cycle cap. The Arcanus report now transforms without any cap warnings.
 - Fixed ENGRAM 0.8 on Fabric 1.21.11 by translating its entity registration, moved player accessor, attribute holders, raw networking channels, world render event, and verifier-sensitive frames. Its optional offscreen screenshot helper still logs a soft warning for a removed render-hand field.
 - Fixed Old 2D Items crashing on Fabric 26.2 by translating its removed render-pipeline builder chain, renamed entity vertex format, and legacy custom shader interface.

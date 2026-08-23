@@ -25,6 +25,7 @@ public class ApiArchiveManager {
 
     private static final Path ARCHIVE_DIR = Path.of("config/retromod/api-archive");
     private static final long MAX_DOWNLOAD_SIZE = 256L * 1024 * 1024;
+    private static final int MAX_ARCHIVE_ENTRIES = 100_000;
 
     private static final String FABRIC_MAVEN = "https://maven.fabricmc.net/";
     private static final String NEOFORGE_MAVEN = "https://maven.neoforged.net/releases/";
@@ -260,29 +261,45 @@ public class ApiArchiveManager {
 
     static Map<String, byte[]> extractClasses(Path jarPath, long maxClassBytes,
                                                long maxTotalBytes) throws IOException {
-        if (maxClassBytes <= 0 || maxTotalBytes <= 0) {
+        return extractClasses(jarPath, maxClassBytes, maxTotalBytes, MAX_ARCHIVE_ENTRIES);
+    }
+
+    static Map<String, byte[]> extractClasses(Path jarPath, long maxClassBytes,
+                                               long maxTotalBytes, int maxEntries)
+            throws IOException {
+        if (maxClassBytes <= 0 || maxTotalBytes <= 0 || maxEntries <= 0) {
             throw new IllegalArgumentException("archive extraction limits must be positive");
         }
         ZipSecurity.validateNotSymlink(jarPath);
         Map<String, byte[]> classes = new HashMap<>();
+        Set<String> entryNames = new HashSet<>();
         long total = 0;
 
         try (JarFile jar = new JarFile(jarPath.toFile())) {
+            if (jar.size() > maxEntries) {
+                throw new IOException("API archive contains more than " + maxEntries
+                    + " entries: " + jarPath.getFileName());
+            }
             Enumeration<JarEntry> entries = jar.entries();
 
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
                 String entryName = ZipSecurity.safeEntryName(entry.getName());
+                String canonicalName = ZipSecurity.canonicalEntryName(entryName);
+                if (!entryNames.add(canonicalName)) {
+                    throw new IOException("API archive contains a duplicate normalized entry: "
+                            + entryName);
+                }
 
-                if (!entry.isDirectory() && entryName.endsWith(".class")) {
+                if (!entry.isDirectory() && canonicalName.endsWith(".class")) {
                     try (InputStream is = jar.getInputStream(entry)) {
                         byte[] classBytes = ZipSecurity.safeReadAllBytes(is, maxClassBytes);
                         if (classBytes.length > maxTotalBytes - total) {
                             throw new IOException("API archive exceeds expanded class limit of "
-                                    + maxTotalBytes + " bytes at " + entryName);
+                                    + maxTotalBytes + " bytes at " + canonicalName);
                         }
                         total += classBytes.length;
-                        String className = entryName.substring(0, entryName.length() - 6);
+                        String className = canonicalName.substring(0, canonicalName.length() - 6);
                         if (classes.putIfAbsent(className, classBytes) != null) {
                             throw new IOException("API archive contains duplicate class: " + className);
                         }
@@ -387,11 +404,21 @@ public class ApiArchiveManager {
         return total;
     }
 
-    private static void validateJar(Path jarPath) throws IOException {
+    static void validateJar(Path jarPath) throws IOException {
         try (JarFile jar = new JarFile(jarPath.toFile())) {
+            if (jar.size() > MAX_ARCHIVE_ENTRIES) {
+                throw new IOException("API archive contains more than "
+                    + MAX_ARCHIVE_ENTRIES + " entries");
+            }
+            Set<String> entryNames = new HashSet<>();
             Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
-                ZipSecurity.safeEntryName(entries.nextElement().getName());
+                String entryName = ZipSecurity.safeEntryName(entries.nextElement().getName());
+                String canonicalName = ZipSecurity.canonicalEntryName(entryName);
+                if (!entryNames.add(canonicalName)) {
+                    throw new IOException("API archive contains a duplicate normalized entry: "
+                            + entryName);
+                }
             }
         }
     }

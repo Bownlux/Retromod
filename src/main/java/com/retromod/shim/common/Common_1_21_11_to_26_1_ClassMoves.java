@@ -95,6 +95,78 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
     }
 
     /**
+     * Repairs the GameRules constant rename that occurred after the bundled 1.21.4 intermediary
+     * mapping was generated. Fabric kept the same field ids, so a current Fabric mod still carries
+     * names such as {@code field_19388}; the base map expands those ids to the old {@code RULE_*}
+     * spelling before this owner-scoped pass selects the 26.1 field. Every entry below was matched
+     * through the 1.21.11 intermediary mapping and verified on the 26.1.2 host class.
+     *
+     * <p>Retromod refuses {@code RULE_DOFIRETICK}, whose boolean contract became a radius, and the
+     * three negative-to-positive rules {@code RULE_DISABLE_ELYTRA_MOVEMENT_CHECK},
+     * {@code RULE_DISABLE_PLAYER_MOVEMENT_CHECK}, and {@code RULE_DISABLE_RAIDS}. A field rename
+     * cannot preserve those values without an inversion adapter.</p>
+     */
+    public static void registerFabricGameRuleFieldRenames(RetromodTransformer transformer) {
+        String owner = "net/minecraft/world/level/gamerules/GameRules";
+        String descriptor = "Lnet/minecraft/world/level/gamerules/GameRule;";
+        String[][] renames = {
+            {"RULE_DAYLIGHT", "ADVANCE_TIME"},
+            {"RULE_WEATHER_CYCLE", "ADVANCE_WEATHER"},
+            {"RULE_DOBLOCKDROPS", "BLOCK_DROPS"},
+            {"RULE_BLOCK_EXPLOSION_DROP_DECAY", "BLOCK_EXPLOSION_DROP_DECAY"},
+            {"RULE_COMMANDBLOCKOUTPUT", "COMMAND_BLOCK_OUTPUT"},
+            {"RULE_DROWNING_DAMAGE", "DROWNING_DAMAGE"},
+            {"RULE_ENDER_PEARLS_VANISH_ON_DEATH", "ENDER_PEARLS_VANISH_ON_DEATH"},
+            {"RULE_DOENTITYDROPS", "ENTITY_DROPS"},
+            {"RULE_FALL_DAMAGE", "FALL_DAMAGE"},
+            {"RULE_FIRE_DAMAGE", "FIRE_DAMAGE"},
+            {"RULE_FORGIVE_DEAD_PLAYERS", "FORGIVE_DEAD_PLAYERS"},
+            {"RULE_FREEZE_DAMAGE", "FREEZE_DAMAGE"},
+            {"RULE_GLOBAL_SOUND_EVENTS", "GLOBAL_SOUND_EVENTS"},
+            {"RULE_DO_IMMEDIATE_RESPAWN", "IMMEDIATE_RESPAWN"},
+            {"RULE_KEEPINVENTORY", "KEEP_INVENTORY"},
+            {"RULE_LAVA_SOURCE_CONVERSION", "LAVA_SOURCE_CONVERSION"},
+            {"RULE_LIMITED_CRAFTING", "LIMITED_CRAFTING"},
+            {"RULE_LOGADMINCOMMANDS", "LOG_ADMIN_COMMANDS"},
+            {"RULE_COMMAND_MODIFICATION_BLOCK_LIMIT", "MAX_BLOCK_MODIFICATIONS"},
+            {"RULE_MAX_COMMAND_FORK_COUNT", "MAX_COMMAND_FORKS"},
+            {"RULE_MAX_COMMAND_CHAIN_LENGTH", "MAX_COMMAND_SEQUENCE_LENGTH"},
+            {"RULE_MAX_ENTITY_CRAMMING", "MAX_ENTITY_CRAMMING"},
+            {"RULE_MINECART_MAX_SPEED", "MAX_MINECART_SPEED"},
+            {"RULE_SNOW_ACCUMULATION_HEIGHT", "MAX_SNOW_ACCUMULATION_HEIGHT"},
+            {"RULE_DOMOBLOOT", "MOB_DROPS"},
+            {"RULE_MOB_EXPLOSION_DROP_DECAY", "MOB_EXPLOSION_DROP_DECAY"},
+            {"RULE_MOBGRIEFING", "MOB_GRIEFING"},
+            {"RULE_NATURAL_REGENERATION", "NATURAL_HEALTH_REGENERATION"},
+            {"RULE_PLAYERS_NETHER_PORTAL_CREATIVE_DELAY", "PLAYERS_NETHER_PORTAL_CREATIVE_DELAY"},
+            {"RULE_PLAYERS_NETHER_PORTAL_DEFAULT_DELAY", "PLAYERS_NETHER_PORTAL_DEFAULT_DELAY"},
+            {"RULE_PLAYERS_SLEEPING_PERCENTAGE", "PLAYERS_SLEEPING_PERCENTAGE"},
+            {"RULE_PROJECTILESCANBREAKBLOCKS", "PROJECTILES_CAN_BREAK_BLOCKS"},
+            {"RULE_RANDOMTICKING", "RANDOM_TICK_SPEED"},
+            {"RULE_REDUCEDDEBUGINFO", "REDUCED_DEBUG_INFO"},
+            {"RULE_SPAWN_RADIUS", "RESPAWN_RADIUS"},
+            {"RULE_SENDCOMMANDFEEDBACK", "SEND_COMMAND_FEEDBACK"},
+            {"RULE_ANNOUNCE_ADVANCEMENTS", "SHOW_ADVANCEMENT_MESSAGES"},
+            {"RULE_SHOWDEATHMESSAGES", "SHOW_DEATH_MESSAGES"},
+            {"RULE_DOMOBSPAWNING", "SPAWN_MOBS"},
+            {"RULE_DO_PATROL_SPAWNING", "SPAWN_PATROLS"},
+            {"RULE_DOINSOMNIA", "SPAWN_PHANTOMS"},
+            {"RULE_DO_TRADER_SPAWNING", "SPAWN_WANDERING_TRADERS"},
+            {"RULE_DO_WARDEN_SPAWNING", "SPAWN_WARDENS"},
+            {"RULE_SPECTATORSGENERATECHUNKS", "SPECTATORS_GENERATE_CHUNKS"},
+            {"RULE_DO_VINES_SPREAD", "SPREAD_VINES"},
+            {"RULE_TNT_EXPLOSION_DROP_DECAY", "TNT_EXPLOSION_DROP_DECAY"},
+            {"RULE_UNIVERSAL_ANGER", "UNIVERSAL_ANGER"},
+            {"RULE_WATER_SOURCE_CONVERSION", "WATER_SOURCE_CONVERSION"}
+        };
+        for (String[] rename : renames) {
+            transformer.registerFieldRedirect(
+                    owner, rename[0], descriptor,
+                    owner, rename[1], descriptor);
+        }
+    }
+
+    /**
      * Register the official-name half of the EntityType builder descriptor bridge. Kept as a
      * focused entry point because Forge mirrors the common vanilla table rather than calling
      * {@link #register(RetromodTransformer)} wholesale.

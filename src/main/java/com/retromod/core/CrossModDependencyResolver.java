@@ -25,6 +25,12 @@ public class CrossModDependencyResolver {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Dependencies");
     private static final long MAX_METADATA_SIZE = 2L * 1024 * 1024;
+    private static final Pattern FORGE_MOD_ID = Pattern.compile(
+            "^\\s*modId\\s*=\\s*\"([^\"]+)\"");
+    private static final Pattern FORGE_DEPENDENCY_HEADER = Pattern.compile(
+            "^\\s*\\[\\[dependencies\\.([^]]+)]]\\s*(?:#.*)?$");
+    private static final Pattern TOML_TABLE_HEADER = Pattern.compile(
+            "^\\s*\\[.*]\\s*(?:#.*)?$");
 
     // modId -> dependency modIds
     private final Map<String, List<String>> dependencyGraph = new ConcurrentHashMap<>();
@@ -125,24 +131,63 @@ public class CrossModDependencyResolver {
     private void scanForgeMod(JarFile jar, ZipEntry entry) throws IOException {
         String content = readMetadata(jar, entry);
 
-        Pattern modIdPattern = Pattern.compile("modId\\s*=\\s*\"([^\"]+)\"");
-        Matcher modIdMatcher = modIdPattern.matcher(content);
+        Matcher modIdMatcher = Pattern.compile(
+                "(?m)^\\s*modId\\s*=\\s*\"([^\"]+)\"").matcher(content);
         if (!modIdMatcher.find()) return;
         String modId = modIdMatcher.group(1);
 
-        List<String> deps = new ArrayList<>();
-        Pattern depPattern = Pattern.compile("\\[\\[dependencies\\." + modId + "\\]\\].*?modId\\s*=\\s*\"([^\"]+)\"", Pattern.DOTALL);
-        Matcher depMatcher = depPattern.matcher(content);
-        while (depMatcher.find()) {
-            String dep = depMatcher.group(1);
-            if (!dep.equals("minecraft") && !dep.equals("forge") && !dep.equals("neoforge")) {
-                deps.add(dep);
-            }
-        }
+        List<String> deps = extractForgeDependencies(content, modId);
 
         if (!deps.isEmpty()) {
             dependencyGraph.put(modId, deps);
         }
+    }
+
+    /** Parses dependency tables without inserting an archive-controlled mod ID into a regex. */
+    static List<String> extractForgeDependencies(String content, String modId) {
+        if (content == null || modId == null) {
+            return List.of();
+        }
+
+        Set<String> dependencies = new LinkedHashSet<>();
+        boolean matchingTable = false;
+        for (String line : content.lines().toList()) {
+            Matcher header = FORGE_DEPENDENCY_HEADER.matcher(line);
+            if (header.matches()) {
+                String owner = stripTomlKeyQuotes(header.group(1).trim());
+                matchingTable = modId.equals(owner);
+                continue;
+            }
+            if (TOML_TABLE_HEADER.matcher(line).matches()) {
+                matchingTable = false;
+                continue;
+            }
+            if (!matchingTable) {
+                continue;
+            }
+            Matcher dependency = FORGE_MOD_ID.matcher(line);
+            if (!dependency.find()) {
+                continue;
+            }
+            String dependencyId = dependency.group(1);
+            if (!dependencyId.equals("minecraft")
+                    && !dependencyId.equals("forge")
+                    && !dependencyId.equals("neoforge")) {
+                dependencies.add(dependencyId);
+            }
+        }
+        return List.copyOf(dependencies);
+    }
+
+    private static String stripTomlKeyQuotes(String key) {
+        if (key.length() >= 2) {
+            char first = key.charAt(0);
+            char last = key.charAt(key.length() - 1);
+            if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+                return key.substring(1, key.length() - 1);
+            }
+        }
+        return key;
     }
 
     private String readMetadata(JarFile jar, ZipEntry entry) throws IOException {

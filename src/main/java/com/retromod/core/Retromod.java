@@ -9,6 +9,7 @@ import com.retromod.embedder.ApiEmbedder;
 import com.retromod.embedder.ModVersionInfo;
 import com.retromod.aot.AotCompiler;
 import com.retromod.mixin.MixinCompatibilityTransformer;
+import com.retromod.util.ArchivePublication;
 import net.fabricmc.api.ModInitializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -159,10 +160,8 @@ public class Retromod implements ModInitializer {
         }
 
         try {
-            com.retromod.resources.ResourceManager resourceManager =
-                new com.retromod.resources.ResourceManager(TARGET_MC_VERSION, gameDir);
-            resourceManager.ensureFolders();
-            resourceManager.processAll();
+            com.retromod.resources.ResourceManager.processStagedPacks(
+                    TARGET_MC_VERSION, gameDir);
         } catch (Exception e) {
             LOGGER.warn("Could not initialize resource manager", e);
         }
@@ -464,7 +463,7 @@ public class Retromod implements ModInitializer {
                 backupPath = BACKUP_FOLDER.resolve(baseName + "-" + timestamp + extension);
             }
 
-            java.nio.file.Files.copy(modFile, backupPath);
+            ArchivePublication.copyNew(modFile, backupPath);
             LOGGER.info("Backed up {} to {}", fileName, backupPath);
             return true;
 
@@ -578,7 +577,7 @@ public class Retromod implements ModInitializer {
             // points had this; the Fabric onInitialize path didn't, so e.g. the 26.2 dyed-field
             // accessors would rewrite a 1.21.11 host's live Blocks.WHITE_WOOL reads to a
             // nonexistent ColorCollection (review finding).
-            if (RetromodVersion.mcVersionExceeds(shim.getTargetVersion(), TARGET_MC_VERSION)) {
+            if (!ShimRegistry.isAvailableOnHost(shim, TARGET_MC_VERSION)) {
                 LOGGER.debug("Skipping shim {} (target {} exceeds host {})",
                         shim.getShimName(), shim.getTargetVersion(), TARGET_MC_VERSION);
                 continue;
@@ -621,8 +620,10 @@ public class Retromod implements ModInitializer {
         try {
             com.retromod.shim.api.fabric.RenderingBackendShim renderShim =
                 new com.retromod.shim.api.fabric.RenderingBackendShim();
-            renderShim.registerRedirects(transformer);
-            shimRegistry.register(renderShim);
+            if (ShimRegistry.isAvailableOnHost(renderShim, TARGET_MC_VERSION)) {
+                renderShim.registerRedirects(transformer);
+                shimRegistry.register(renderShim);
+            }
         } catch (Exception e) {
             LOGGER.warn("Could not register rendering backend shim", e);
         }

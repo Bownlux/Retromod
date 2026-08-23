@@ -4,6 +4,7 @@
  */
 package com.retromod.gui;
 
+import com.retromod.util.ArchivePublication;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -167,7 +168,7 @@ public class RetromodGui {
                 try {
                     var modrinthResult = com.retromod.core.ModrinthVersionChecker
                         .checkForNativeVersion(modFile.toPath(),
-                            com.retromod.core.Retromod.TARGET_MC_VERSION);
+                            com.retromod.core.RetromodVersion.TARGET_MC_VERSION);
                     
                     if (modrinthResult.found()) {
                         boolean skip = com.retromod.core.ModrinthVersionChecker
@@ -197,8 +198,7 @@ public class RetromodGui {
                         transformedAnyMods = true;
                     } else {
                         Path dest = modsFolder.resolve(modFile.getName());
-                        Files.copy(modFile.toPath(), dest, 
-                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        ArchivePublication.copyReplacing(modFile.toPath(), dest);
                         logMessage = "Copied " + modFile.getName() + ": no update was needed.";
                         successfulMods.add(modFile.getName());
                         transformedModPaths.add(dest);

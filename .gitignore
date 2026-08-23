@@ -85,6 +85,9 @@ config/retromod/
 retromod-input/
 retromod-backups/
 
+# Embargoed maintainer audit notes
+.security-private/
+
 # Modrinth (separate page content, not part of the GitHub repo)
 
 # Local-only Claude skills (testing/deployment helpers, not part of the project)

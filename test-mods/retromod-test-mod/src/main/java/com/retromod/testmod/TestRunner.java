@@ -35,6 +35,8 @@ import com.retromod.testmod.tests.Test13WindowHandleShim;
 import com.retromod.testmod.tests.Test14RevampedEntityBridges;
 import com.retromod.testmod.tests.Test15InheritedEntityWorld;
 import com.retromod.testmod.tests.Test16SingleFabricApiProvider;
+import com.retromod.testmod.tests.Test17BlockRandomTicksAccessor;
+import com.retromod.testmod.tests.Test18GameRulesField;
 import com.retromod.testmod.tests.TextTests;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,6 +92,8 @@ public final class TestRunner {
         all.add(new Test12ClientCommandParserAccessor());
         all.add(new Test14RevampedEntityBridges());
         all.add(new Test16SingleFabricApiProvider());
+        all.add(new Test17BlockRandomTicksAccessor());
+        all.add(new Test18GameRulesField());
         return List.copyOf(all);
     }
 

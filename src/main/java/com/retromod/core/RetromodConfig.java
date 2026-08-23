@@ -6,9 +6,11 @@ package com.retromod.core;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.retromod.util.JsonSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -25,6 +27,7 @@ public final class RetromodConfig {
     public static final Path CONFIG_DIR = Path.of("config", "retromod");
     /** {@code config/retromod/config.json}. */
     public static final Path CONFIG_PATH = CONFIG_DIR.resolve("config.json");
+    private static final long MAX_CONFIG_BYTES = 1024L * 1024;
 
     /** Written when no config exists; kept here so every loader writes the same file. */
     private static final String DEFAULT_CONFIG = """
@@ -89,19 +92,45 @@ public final class RetromodConfig {
      */
     public static JsonObject loadOrNull() {
         ensureDefaultConfig();
+        return loadExistingOrNull();
+    }
+
+    private static JsonObject loadExistingOrNull() {
+        return loadExistingOrNull(CONFIG_PATH);
+    }
+
+    private static JsonObject loadExistingOrNull(Path configPath) {
         try {
-            if (!Files.exists(CONFIG_PATH)) return null;
-            String json = Files.readString(CONFIG_PATH);
-            return JsonParser.parseString(json).getAsJsonObject();
+            if (configPath == null || !Files.exists(configPath)) return null;
+            String json = JsonSecurity.readUtf8(configPath, MAX_CONFIG_BYTES,
+                    JsonSecurity.DEFAULT_MAX_DEPTH, "Retromod config");
+            return parseConfig(json);
         } catch (Exception e) {
-            LOGGER.warn("Could not load config {}: {}", CONFIG_PATH, e.getMessage());
+            LOGGER.warn("Could not load config {}: {}", configPath, e.getMessage());
             return null;
         }
+    }
+
+    static JsonObject parseConfig(String json) throws IOException {
+        JsonSecurity.validate(json, MAX_CONFIG_BYTES,
+                JsonSecurity.DEFAULT_MAX_DEPTH, "Retromod config");
+        return JsonParser.parseString(json).getAsJsonObject();
     }
 
     /** Read one boolean setting, returning its documented default when it is absent or invalid. */
     public static boolean getBoolean(String key, boolean defaultValue) {
         return booleanValue(loadOrNull(), key, defaultValue);
+    }
+
+    /** Reads one setting without creating a missing config file. */
+    public static boolean getBooleanIfPresent(String key, boolean defaultValue) {
+        return booleanValue(loadExistingOrNull(), key, defaultValue);
+    }
+
+    /** Reads one setting from an explicit config path without creating a missing file. */
+    public static boolean getBooleanIfPresent(
+            Path configPath, String key, boolean defaultValue) {
+        return booleanValue(loadExistingOrNull(configPath), key, defaultValue);
     }
 
     static boolean booleanValue(JsonObject config, String key, boolean defaultValue) {

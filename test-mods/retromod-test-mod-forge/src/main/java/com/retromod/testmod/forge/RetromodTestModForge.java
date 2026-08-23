@@ -9,6 +9,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraftforge.fml.common.Mod;
 import org.slf4j.Logger;
@@ -99,6 +100,11 @@ public class RetromodTestModForge {
                 && net.minecraftforge.forgespi.language.IModInfo.class.getName() != null);
         n++; passed += check(n, "#207 Forge spawn egg replacement is loadable", () ->
             net.minecraftforge.common.ForgeSpawnEggItem.class.getName() != null);
+
+        // #234: the 1.20.1 source field was renamed in 26.1. A direct read proves
+        // the transformed Forge class links to the current GameRules field.
+        n++; passed += check(n, "#234 GameRules mob-griefing field", () ->
+            GameRules.RULE_MOBGRIEFING != null);
 
         LOG.info("{} SUMMARY: {}/{} passed", PREFIX, passed, n);
     }

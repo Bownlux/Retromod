@@ -15,10 +15,12 @@ import java.util.Map;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
+import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class SignatureVerifierTest {
 
@@ -77,6 +79,52 @@ class SignatureVerifierTest {
         loaderVariant.put("javax/annotation/Nullable.class", new byte[]{3});
 
         assertEquals(original, computeHash(createJar("loader-variant.jar", loaderVariant)));
+    }
+
+    @Test
+    void archiveEntryNamesAndBodiesAreLengthFramed() throws Exception {
+        Map<String, byte[]> first = new LinkedHashMap<>();
+        first.put("META-INF/services/a", new byte[] {'b'});
+        Map<String, byte[]> second = new LinkedHashMap<>();
+        second.put("META-INF/services/ab", new byte[0]);
+
+        assertNotEquals(computeHash(createJar("framed-a.jar", first)),
+                computeHash(createJar("framed-b.jar", second)));
+    }
+
+    @Test
+    void manifestReadRejectsOversizedInput() throws Exception {
+        Path jarPath = tempDir.resolve("large-manifest.jar");
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(jarPath))) {
+            output.putNextEntry(new java.util.zip.ZipEntry("META-INF/MANIFEST.MF"));
+            output.write(new byte[1024 * 1024 + 1]);
+            output.closeEntry();
+        }
+
+        try (JarFile jar = new JarFile(jarPath.toFile())) {
+            assertThrows(java.io.IOException.class,
+                    () -> SignatureVerifier.readBoundedManifest(jar));
+        }
+    }
+
+    @Test
+    void manifestReadRejectsNormalizedDuplicateEntries() throws Exception {
+        Path jarPath = tempDir.resolve("duplicate-manifest.jar");
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(jarPath))) {
+            output.putNextEntry(new java.util.zip.ZipEntry("META-INF/MANIFEST.MF"));
+            output.write("Manifest-Version: 1.0\n\n".getBytes(
+                    java.nio.charset.StandardCharsets.UTF_8));
+            output.closeEntry();
+            output.putNextEntry(new java.util.zip.ZipEntry("META-INF/./MANIFEST.MF"));
+            output.write("Manifest-Version: 1.0\n\n".getBytes(
+                    java.nio.charset.StandardCharsets.UTF_8));
+            output.closeEntry();
+        }
+
+        try (JarFile jar = new JarFile(jarPath.toFile())) {
+            assertThrows(java.io.IOException.class,
+                    () -> SignatureVerifier.readBoundedManifest(jar));
+        }
     }
 
     private String computeHash(Path path) throws Exception {

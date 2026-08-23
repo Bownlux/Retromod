@@ -25,8 +25,8 @@ These need a manual port from the mod author.
 | Create and Flywheel | Custom rendering, contraption internals, and deep loader integration |
 | OptiFine | Proprietary coremod and renderer replacement |
 | Veil and Veil-based mods | Custom rendering and post-processing pipeline |
-| Sodium, Iris, Embeddium | Version-specific renderer mixins; partial loading may still happen |
-| Chat Bubbles 1.0.1 | Replaces the deleted player renderer and injects into a removed chat listener; it can reach the menu, but bubbles need a manual renderer port |
+| Sodium, Iris, Embeddium | Version-specific renderer mixins. Partial loading may still happen |
+| Chat Bubbles 1.0.1 | Replaces the deleted player renderer and injects into a removed chat listener. It can reach the menu, but bubbles need a manual renderer port |
 | Applied Energistics 2 | Broad networking, storage, and platform integration |
 | Tinkers' Construct | Version-specific material, data, and rendering systems |
 | IndustrialCraft and older Thaumcraft | Deep integration with deleted game systems |

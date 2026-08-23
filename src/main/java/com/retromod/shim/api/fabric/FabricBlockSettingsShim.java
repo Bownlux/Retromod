@@ -5,7 +5,7 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /**
  * Bridge for Fabric's removed {@code FabricBlockSettings} builder (deprecated 1.20.5, gone by 26.1).
@@ -23,7 +23,7 @@ import com.retromod.core.VersionShim;
  * needs a constant-function adapter) and predicate-typed ones; a block calling those hits
  * {@code NoSuchMethodError}. The common property set is covered.
  */
-public class FabricBlockSettingsShim implements VersionShim {
+public class FabricBlockSettingsShim implements AuxiliaryVersionShim {
 
     private static final String FBS = "net/fabricmc/fabric/api/object/builder/v1/block/FabricBlockSettings";
     // pre-0.50 Fabric API (~1.16), before the object-builder-v1 module

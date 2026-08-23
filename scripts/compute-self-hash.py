@@ -5,6 +5,7 @@ Mirrors `SignatureVerifier.computeSelfHash` exactly. It hashes the executable
 release surface in entry-name order: classes, ServiceLoader descriptors, and
 Retromod transformation data. Loader-provided ASM, loader-variant annotation
 stubs, and the verifier class are excluded. Output is 64 uppercase hex chars.
+Entry names and bodies use fixed-width length framing.
 
 Release flow:
   1. Build the final release jar (no further source changes after this).
@@ -21,6 +22,7 @@ import sys
 import zipfile
 
 SELF_ENTRY = "com/retromod/security/SignatureVerifier.class"
+HASH_DOMAIN = b"RETROMOD-SELF-HASH\x00V2"
 
 
 def is_hashed_entry(name: str) -> bool:
@@ -56,9 +58,14 @@ def compute_self_hash(jar_path: str) -> str:
                 names.append(n)
         names.sort()
         h = hashlib.sha256()
+        h.update(HASH_DOMAIN)
         for n in names:
-            h.update(n.encode("utf-8"))
-            h.update(z.read(n))
+            name = n.encode("utf-8")
+            body = z.read(n)
+            h.update(len(name).to_bytes(4, byteorder="big", signed=False))
+            h.update(name)
+            h.update(len(body).to_bytes(8, byteorder="big", signed=False))
+            h.update(body)
     return h.hexdigest().upper()
 
 

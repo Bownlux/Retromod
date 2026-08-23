@@ -21,10 +21,12 @@ The transform is iterative because one rewrite can expose another old reference.
 
 ## Loader Entry Points
 
-- **Fabric:** `RetromodPreLaunch` processes `retromod-input/` before Fabric scans normal mods.
-- **NeoForge:** `RetromodNeoForge` transforms input and supported jars in `mods/`.
-- **Forge:** `RetromodForge` follows the Forge path and registers Forge-specific bridges.
-- **CLI:** `RetromodCli` runs the same core without a live loader.
+- Fabric: `RetromodPreLaunch` processes `retromod-input/` before Fabric scans normal mods.
+- NeoForge: `RetromodNeoForge` transforms input and supported jars in `mods/`.
+- Forge: `RetromodForge` follows the Forge path and registers Forge-specific bridges.
+- CLI: `RetromodCli` runs the same core without a live loader.
+
+Quilt mods use the Fabric bytecode family. `QuiltModTransformer` handles jars whose authoritative metadata is `quilt.mod.json`, while the shared host artifact declares Fabric-compatible entrypoint keys for Quilt Loader. The artifact carries both loader metadata files. Retromod does not publish a separate Quilt artifact.
 
 Loader entry points must not reference another loader's classes. Shared work belongs in loader-neutral helpers.
 
@@ -38,9 +40,11 @@ Loader entry points must not reference another loader's classes. Shared work bel
 | `SrgToMojangMapper` | Forge SRG names on Mojang-named hosts |
 | `MixinCompatibilityTransformer` | Mixin annotations and selected handler repairs |
 | `FabricModTransformer` | Fabric metadata, jars, and access wideners |
+| `QuiltModTransformer` | Fabric-compatible bytecode repairs and `quilt.mod.json` updates |
 | `ForgeModTransformer` | Forge and NeoForge metadata and jars |
 | `SyntheticEmbedder` | Per-mod replacement classes |
 | `AotCompiler` | Cached offline transforms |
+| `ResourceManager` | Transactional staged resource and data pack processing |
 
 ## Shims and Polyfills
 

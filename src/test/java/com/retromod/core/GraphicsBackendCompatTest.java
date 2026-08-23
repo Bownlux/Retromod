@@ -75,4 +75,16 @@ class GraphicsBackendCompatTest {
         assertEquals("preferredGraphicsBackend:\"vulkan\"", backendLine(opts),
                 "an explicit Vulkan choice must be left intact");
     }
+
+    @Test
+    void oversizedOptionsFileIsLeftUnchanged(@TempDir Path dir) throws IOException {
+        Path opts = dir.resolve("options.txt");
+        byte[] original = new byte[1024 * 1024 + 1];
+        java.util.Arrays.fill(original, (byte) 'x');
+        Files.write(opts, original);
+
+        assertThrows(IOException.class, () -> GraphicsBackendCompat.apply(opts));
+
+        assertArrayEquals(original, Files.readAllBytes(opts));
+    }
 }

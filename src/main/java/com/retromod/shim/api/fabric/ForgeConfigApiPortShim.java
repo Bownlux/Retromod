@@ -5,10 +5,10 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /** Fabric port of Forge's config system, used by many mods for cross-loader config. */
-public class ForgeConfigApiPortShim implements VersionShim {
+public class ForgeConfigApiPortShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

@@ -217,13 +217,16 @@ public class ModScorer {
     }
 
     /**
-     * Detects the mod loader from JAR metadata: fabric.mod.json, neoforge.mods.toml,
-     * mods.toml, or mcmod.info, falling back to scanning for loader-specific classes.
+     * Detects the mod loader from JAR metadata: fabric.mod.json, quilt.mod.json,
+     * neoforge.mods.toml, mods.toml, or mcmod.info, then scans loader-specific classes.
      */
     public static ModLoader detectModLoader(Path modJarPath) throws IOException {
         try (JarFile jar = new JarFile(modJarPath.toFile())) {
             validateArchive(jar);
             if (jar.getJarEntry("fabric.mod.json") != null) {
+                return ModLoader.FABRIC;
+            }
+            if (jar.getJarEntry("quilt.mod.json") != null) {
                 return ModLoader.FABRIC;
             }
             if (jar.getJarEntry("META-INF/neoforge.mods.toml") != null) {
@@ -269,7 +272,7 @@ public class ModScorer {
         ModLoader loader;
         if (modInfo != null && modInfo.modLoaderType() != null) {
             loader = switch (modInfo.modLoaderType()) {
-                case "fabric" -> ModLoader.FABRIC;
+                case "fabric", "quilt" -> ModLoader.FABRIC;
                 case "forge" -> ModLoader.FORGE;
                 case "neoforge" -> ModLoader.NEOFORGE;
                 default -> detectModLoader(modJarPath);

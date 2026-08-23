@@ -42,6 +42,7 @@ class AotRefmapRepairIndexTest {
 
     @BeforeEach
     void installExactTargetIndex() throws Exception {
+        tempDir = tempDir.toRealPath();
         resolverField = RetromodTransformer.class.getDeclaredField("fuzzyResolver");
         resolverField.setAccessible(true);
         savedResolver = resolverField.get(transformer);
@@ -125,11 +126,12 @@ class AotRefmapRepairIndexTest {
         Method method = AotCompiler.class.getDeclaredMethod(
                 "transformNestedJarAot", byte[].class, int.class,
                 MixinCompatibilityTransformer.class, boolean.class,
-                AotCompiler.ArchiveBudget.class, String.class);
+                RetromodTransformer.NestedArchiveBudget.class, String.class);
         method.setAccessible(true);
         return (byte[]) method.invoke(compiler, archive, 1,
                 new MixinCompatibilityTransformer(transformer), false,
-                new AotCompiler.ArchiveBudget(16 * 1024 * 1024, 10_000), key);
+                new RetromodTransformer.NestedArchiveBudget(
+                        16 * 1024 * 1024, 10_000), key);
     }
 
     private static String handlerDescriptor(byte[] classBytes) {

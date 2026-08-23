@@ -8,6 +8,8 @@ import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
 import com.retromod.embedder.ModVersionInfo;
 import com.retromod.shim.ShimRegistry;
+import com.retromod.shim.fabric.Fabric_1_21_11_to_26_1;
+import com.retromod.shim.fabric.embedded.LegacyBlockRandomTickBridge;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -29,6 +31,8 @@ import java.util.jar.JarOutputStream;
 import java.util.zip.ZipFile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AotLoaderNameMappingTest {
 
@@ -84,6 +88,31 @@ class AotLoaderNameMappingTest {
                 "the next Forge AOT jar must not inherit Fabric intermediary mappings");
     }
 
+    @Test
+    void offlineAotDropsFabricOnlyStateBeforeTheNextForgeInput(@TempDir Path directory)
+            throws Exception {
+        ShimRegistry registry = new ShimRegistry();
+        registry.register(new Fabric_1_21_11_to_26_1());
+        AotCompiler compiler = AotCompiler.forOfflineInputs(
+                registry, "26.1", directory.toRealPath().resolve("cache"));
+        Path fabricInput = directory.resolve("fabric.jar");
+        Path forgeInput = directory.resolve("forge.jar");
+        writeFabricMod(fabricInput, intermediaryNamedCall());
+        writeModernForgeMod(forgeInput, intermediaryNamedCall());
+        RetromodTransformer.FieldKey randomTick = new RetromodTransformer.FieldKey(
+                "net/minecraft/world/level/block/Block", "randomTicks");
+
+        compiler.compileModAot(fabricInput);
+        assertTrue(transformer.getFieldRedirects().containsKey(randomTick));
+        assertTrue(transformer.getSyntheticClasses().containsKey(
+                LegacyBlockRandomTickBridge.INTERNAL_NAME));
+
+        compiler.compileModAot(forgeInput);
+        assertFalse(transformer.getFieldRedirects().containsKey(randomTick));
+        assertFalse(transformer.getSyntheticClasses().containsKey(
+                LegacyBlockRandomTickBridge.INTERNAL_NAME));
+    }
+
     private static ModVersionInfo info(String loader) {
         return new ModVersionInfo("testmod", "1.0", "1.16", loader, null,
                 Set.of("test/"), Set.of(), false);
@@ -130,6 +159,51 @@ class AotLoaderNameMappingTest {
             jar.write(classBytes);
             jar.closeEntry();
             jar.putNextEntry(new JarEntry("META-INF/mods.toml"));
+            jar.write(metadata.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            jar.closeEntry();
+        }
+    }
+
+    private static void writeFabricMod(Path input, byte[] classBytes) throws Exception {
+        String metadata = """
+                {
+                  "schemaVersion": 1,
+                  "id": "aot_fabric_scope_test",
+                  "version": "1.0.0",
+                  "depends": {
+                    "fabricloader": ">=0.16.0",
+                    "minecraft": "1.21.11"
+                  }
+                }
+                """;
+        writeMod(input, "fabric.mod.json", metadata, classBytes);
+    }
+
+    private static void writeModernForgeMod(Path input, byte[] classBytes) throws Exception {
+        String metadata = """
+                modLoader="javafml"
+                loaderVersion="[1,)"
+                license="MIT"
+                [[mods]]
+                modId="aot_forge_scope_test"
+                version="1.0.0"
+                [[dependencies.aot_forge_scope_test]]
+                modId="minecraft"
+                mandatory=true
+                versionRange="[1.21.11]"
+                ordering="NONE"
+                side="BOTH"
+                """;
+        writeMod(input, "META-INF/mods.toml", metadata, classBytes);
+    }
+
+    private static void writeMod(Path input, String metadataPath, String metadata,
+                                 byte[] classBytes) throws Exception {
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(input))) {
+            jar.putNextEntry(new JarEntry("test/Fixture.class"));
+            jar.write(classBytes);
+            jar.closeEntry();
+            jar.putNextEntry(new JarEntry(metadataPath));
             jar.write(metadata.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             jar.closeEntry();
         }

@@ -66,6 +66,18 @@ Public entries are short and declarative. One or two sentences per bullet.
 - Make errors actionable. Say what failed, which input was involved, and what the user can do next. Do not blame the user or expose irrelevant internals.
 - Tests should read as examples of behavior. Keep setup helpers reusable, test names direct, and assertion messages useful when a failure occurs.
 
+### Contained Editing
+
+- Trace the request to the first useful failure and owning layer before editing. Do not change adjacent code on suspicion.
+- Make the smallest complete change. Cover sibling runtime, CLI, AOT, nested-jar, and loader paths only when the same invariant applies.
+- Keep one purpose in the diff. Avoid unrelated cleanup, renames, reformatting, dependency changes, documentation rewrites, and speculative features.
+- Reuse existing extension points. Add a shared helper only when it prevents repeated policy or cross-path drift.
+- Preserve public APIs, version gates, service registrations, old shims, unrelated behavior, and user changes. Avoid permissive fallbacks, broad exception handling, and guessed compatibility.
+- Add the narrow regression test, then test the affected integration path. Reported issues still require the full per-issue process below.
+- Review the final diff line by line. Remove scaffolding and incidental churn.
+
+Contained does not mean partial. If a rule belongs in one shared layer, fix it there instead of duplicating small patches.
+
 ## Security Embargo
 
 - Keep suspected and confirmed vulnerability details private until disclosure is approved.
@@ -150,7 +162,7 @@ The excluded loader-variant classes are the only covered-surface differences bet
 
 After embedding and rebuilding, run `bash build-all.sh --skip-build --require-self-hash`. A complete release has 23 Fabric, 23 Forge, 22 NeoForge, and 1 CLI artifact. That is 68 loader jars plus the CLI, or 69 artifacts total. Verify all rows in `dist/SHA256SUMS.txt` before publishing.
 
-**`build-all.sh` does not clean `dist/`.** It writes over same-named files, so the previous version's 69 artifacts survive a version bump and sit alongside the new ones. `validate_release_artifacts` then rejects the tree for unexpected jars, and a stale jar can reach a publisher. `rm -rf dist` before a version-bumped release build. It also does not regenerate `dist/MODRINTH_CHANGELOG.md`, which is hand-written per release and carries the self-hash, so recreate it after clearing `dist/`. Confirm the tree with `PYTHONPATH=. python3 -c "from scripts.release_artifacts import validate_release_artifacts as v; v('<version>')"` and check the self-hash is one value across a Fabric, Forge, NeoForge, and the CLI jar. Modrinth and CurseForge receive only the 68 loader jars; the CLI and checksum manifest ship on GitHub Releases.
+**`build-all.sh` removes generated `retromod-*.jar` files only after its build and integrity preflight passes.** It preserves other files under `dist/`, including `dist/MODRINTH_CHANGELOG.md`. Clear `dist/` before a version-bumped release build, then recreate that hand-written release note with the final self-hash. Confirm the tree with `PYTHONPATH=. python3 -c "from scripts.release_artifacts import validate_release_artifacts as v; v('<version>')"` and check the self-hash is one value across a Fabric, Forge, NeoForge, and the CLI jar. Modrinth and CurseForge receive only the 68 loader jars; the CLI and checksum manifest ship on GitHub Releases.
 
 ## Deploy to Minecraft
 
@@ -172,7 +184,7 @@ Game directory (macOS): `~/Library/Application Support/minecraft/`
 | `core/FabricModTransformer.java` | Patches fabric.mod.json version constraints |
 | `core/ForgeModTransformer.java` | Patches mods.toml/neoforge.mods.toml version constraints |
 | `core/ModVersionDetector.java` | Reads mod MC version from loader-specific metadata |
-| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,981 classes, 54,479 fields, and 57,520 methods at snapshot.8) |
+| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,981 classes, 54,479 fields, and 57,520 methods at snapshot.9) |
 | `mapping/MappingComposer.java` | Generates mapping files from TinyV2 + ProGuard sources |
 | `shim/ShimRegistry.java` | BFS chain finder with version aliases |
 | `cli/RetromodCli.java` | CLI tool (`TARGET_MC_VERSION = "26.1"`) |
@@ -198,8 +210,8 @@ Game directory (macOS): `~/Library/Application Support/minecraft/`
 ## ServiceLoader Registration
 
 Shims and polyfills are discovered via ServiceLoader:
-- `src/main/resources/META-INF/services/com.retromod.core.VersionShim` (120 registered providers at snapshot.8)
-- `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider` (36 registered providers at snapshot.8)
+- `src/main/resources/META-INF/services/com.retromod.core.VersionShim` (120 registered providers at snapshot.9)
+- `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider` (36 registered providers at snapshot.9)
 
 When adding a new shim or polyfill, ALWAYS register it in the corresponding services file.
 
@@ -284,7 +296,7 @@ Caveat: these surface CANDIDATES, not confirmations. A predicted break is a hypo
 | ASM | 9.10.1 | Bytecode manipulation (9.8+ required for Java 25) |
 | Gson | 2.10.1 | JSON parsing |
 | SLF4J | 2.0.18 | Logging |
-| JUnit 5 | 5.10.1 | Testing |
+| JUnit Jupiter | 6.1.3 | Testing |
 | Mixin | 0.8.5 | Mixin API (provided) |
 | Fabric Loader | 0.16.10 | Fabric API (provided), pinned deliberately |
 
@@ -312,4 +324,4 @@ Development skills are in `.agents/skills/`:
 
 ## Other
 
-If you are Codex reading this, any updates you do to this that is not about codex, add to Claude.md (Claude)
+If you are Codex reading this, add non-Codex updates to `CLAUDE.md` too.

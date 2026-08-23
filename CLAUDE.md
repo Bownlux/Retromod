@@ -66,6 +66,18 @@ Public entries are short and declarative. One or two sentences per bullet.
 - Make errors actionable. Say what failed, which input was involved, and what the user can do next. Do not blame the user or expose irrelevant internals.
 - Tests should read as examples of behavior. Keep setup helpers reusable, test names direct, and assertion messages useful when a failure occurs.
 
+### Contained Editing
+
+- Trace the request to the first useful failure and owning layer before editing. Do not change adjacent code on suspicion.
+- Make the smallest complete change. Cover sibling runtime, CLI, AOT, nested-jar, and loader paths only when the same invariant applies.
+- Keep one purpose in the diff. Avoid unrelated cleanup, renames, reformatting, dependency changes, documentation rewrites, and speculative features.
+- Reuse existing extension points. Add a shared helper only when it prevents repeated policy or cross-path drift.
+- Preserve public APIs, version gates, service registrations, old shims, unrelated behavior, and user changes. Avoid permissive fallbacks, broad exception handling, and guessed compatibility.
+- Add the narrow regression test, then test the affected integration path. Reported issues still require the full per-issue process below.
+- Review the final diff line by line. Remove scaffolding and incidental churn.
+
+Contained does not mean partial. If a rule belongs in one shared layer, fix it there instead of duplicating small patches.
+
 ## Security Embargo
 
 - Keep suspected and confirmed vulnerability details private until disclosure is approved.
@@ -150,7 +162,7 @@ The excluded loader-variant classes are the only covered-surface differences bet
 
 After embedding and rebuilding, run `bash build-all.sh --skip-build --require-self-hash`. A complete release has 23 Fabric, 23 Forge, 22 NeoForge, and 1 CLI artifact. That is 68 loader jars plus the CLI, or 69 artifacts total. Verify all rows in `dist/SHA256SUMS.txt` before publishing.
 
-**`build-all.sh` does not clean `dist/`.** It writes over same-named files, so the previous version's 69 artifacts survive a version bump and sit alongside the new ones. `validate_release_artifacts` then rejects the tree for unexpected jars, and a stale jar can reach a publisher. `rm -rf dist` before a version-bumped release build. It also does not regenerate `dist/MODRINTH_CHANGELOG.md`, which is hand-written per release and carries the self-hash, so recreate it after clearing `dist/`. Confirm the tree with `PYTHONPATH=. python3 -c "from scripts.release_artifacts import validate_release_artifacts as v; v('<version>')"` and check the self-hash is one value across a Fabric, Forge, NeoForge, and the CLI jar. Modrinth and CurseForge receive only the 68 loader jars; the CLI and checksum manifest ship on GitHub Releases.
+**`build-all.sh` removes generated `retromod-*.jar` files only after its build and integrity preflight passes.** It preserves other files under `dist/`, including `dist/MODRINTH_CHANGELOG.md`. Clear `dist/` before a version-bumped release build, then recreate that hand-written release note with the final self-hash. Confirm the tree with `PYTHONPATH=. python3 -c "from scripts.release_artifacts import validate_release_artifacts as v; v('<version>')"` and check the self-hash is one value across a Fabric, Forge, NeoForge, and the CLI jar. Modrinth and CurseForge receive only the 68 loader jars; the CLI and checksum manifest ship on GitHub Releases.
 
 ## Deploy to Minecraft
 
@@ -172,7 +184,7 @@ Game directory (macOS): `~/Library/Application Support/minecraft/`
 | `core/FabricModTransformer.java` | Patches fabric.mod.json version constraints |
 | `core/ForgeModTransformer.java` | Patches mods.toml/neoforge.mods.toml version constraints |
 | `core/ModVersionDetector.java` | Reads mod MC version from loader-specific metadata |
-| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,981 classes, 54,479 fields, and 57,520 methods at snapshot.8) |
+| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,981 classes, 54,479 fields, and 57,520 methods at snapshot.9) |
 | `mapping/MappingComposer.java` | Generates mapping files from TinyV2 + ProGuard sources |
 | `shim/ShimRegistry.java` | BFS chain finder with version aliases |
 | `cli/RetromodCli.java` | CLI tool (`TARGET_MC_VERSION = "26.1"`) |
@@ -198,8 +210,8 @@ Game directory (macOS): `~/Library/Application Support/minecraft/`
 ## ServiceLoader Registration
 
 Shims and polyfills are discovered via ServiceLoader:
-- `src/main/resources/META-INF/services/com.retromod.core.VersionShim` (120 registered providers at snapshot.8)
-- `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider` (36 registered providers at snapshot.8)
+- `src/main/resources/META-INF/services/com.retromod.core.VersionShim` (120 registered providers at snapshot.9)
+- `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider` (36 registered providers at snapshot.9)
 
 When adding a new shim or polyfill, ALWAYS register it in the corresponding services file.
 
@@ -262,7 +274,9 @@ When you fix a user-reported issue, add a regression case for it to the **Retrom
 
 18. **26.1 parses datapack JSON with STRICT gson: lenient JSON (comments / trailing commas) now fails, and ONE fatal mod cascades.** Old worldgen JSON has shipped `//` and `/* */` comments and trailing commas for years (Minecraft used to parse leniently; mod authors literally wrote *"Yes, worldgen json files can have comments"* in their `template_pool`s). On 26.1 each such file throws `MalformedJsonException: Use JsonReader.setStrictness(Strictness.LENIENT)` and the registry entry stays **unbound**. The trap: an unbound `worldgen/template_pool`/`processor_list` is **FATAL** (`FatalStartupException`, "Couldn't find Minecraft server thread") and aborts the **shared** worldgen `RegistryDataLoader` pass, so *co-loaded* structure mods then surface as "Unknown registry key in worldgen/feature" / "Unbound values" for **their** custom types even though their registration ran fine. So a multi-mod "custom worldgen types don't register" report is usually really *one* mod's strict-JSON crash taking the others down with it (verified: Philips Ruins fatal-crashed; YUNG's Extras looked broken beside it but loaded perfectly *alone*, and both load together once PR's comments are stripped). Fix lives in `ModDataMigrator.normalizeLenientJson` (string-aware strip of comments + trailing commas, so a `//` inside a URL value survives), applied to ALL datapack JSON. Diagnose with a **headless dedicated server** (`./run.sh nogui`): the client swallows these; the server prints the per-element `MalformedJsonException` and the fatal cascade. Also in this class: `minecraft:potion` (the thrown-potion **entity**) was split into `minecraft:splash_potion` + `minecraft:lingering_potion` (vanilla `ThrownPotionSplitFix`), so an `entity_type` tag listing `minecraft:potion` fails to load (the potion **item** is unchanged, so scope the rename to `tags/entity_type/` only).
 
-19. **Every Fabric mixin config naming form must enter runtime discovery.** The runtime repairs only classes listed by `findMixinClasses`. Missing either `modid.mixin.json` or `mixin.modid.json` leaves annotation selectors in intermediary form even though ordinary bytecode is remapped. Keep `isMixinConfigFile`, discovery tests, nested-jar handling, and the test mod aligned whenever another accepted form is added.
+19. **A mixin repair is namespace-sensitive, so it MUST run after the remap, and every class-transform path has to invoke it.** This bug class was found three times in one snapshot.4 pass. Two rules. **(a) Order.** A repair that matches a member by its Mojang descriptor (`MixinLegacyMemberBridge`, `MixinShadowFieldDemotion`) sees **intermediary** names if it runs inside `transformMixinClass`, because Fabric mods are still intermediary there: `transformMixinAnnotation` remaps the `@Mixin` *target* but nothing remaps the member *descriptors* until `RetromodTransformer.transformClass`. So those repairs silently matched nothing on the Fabric runtime path while working offline (the CLI happens to call `stripBlocklistedHandlers` *after* `transformClass`). They now live in `MixinCompatibilityTransformer.applyLegacyMemberBridges`, called post-remap from `FabricModTransformer`, `ForgeModTransformer`, and `RetromodCli`. Selector-driven repairs (`MixinHandlerResignature`) are different and correctly stay pre-remap: they key off the *selector*, which `transformMethodAnnotations` remaps in place, and the Mojang param types they insert pass through the later remap untouched. **(b) Coverage.** A mixin selector is annotation **text**, so `transformClass` alone never fixes it: `@ModifyReturnValue(method = "method_55665...")` survives a full remap intact and the mixin then fails to apply. Both AOT compilers stopped at `transformClass`, so **every** mixin in a precompiled mod was dead (verified on revampedphantoms: 8 stale selectors across 4 mixin classes). `AotCompiler` and `FullAotCompiler` now call `AotMixinRepair.apply` (strip blocklist → member bridges → ValueIO), and the AOT jar's 53 selectors are byte-identical to the `transform` jar's (`AotMixinRepairTest`, which fails loudly if the wiring is removed). **(c) Resources, not just classes.** AOT also skipped three resource passes the JIT and CLI paths run: the refmap remap, the access widener / classTweaker remap, and `ModDataMigrator`. On a 26.x host (official namespace) an intermediary access widener is rejected by Fabric's classTweaker reader *before any mod code runs*, so there is no crash report at all, and an intermediary refmap leaves every mixin unresolvable even when its annotations are correct. Now mirrored in `AotCompiler`'s resource loop, verified byte-identical to the `transform` output on a real refmap mod. When comparing two transform paths, diff the **resource** handling as well as the class loop. Coverage also depends on *recognising* a mixin: the Fabric runtime path learns which classes are mixins from the mod's configs via `findMixinClasses`. Every accepted config naming form must reach this discovery path. Missing `modid.mixin.json` or `mixin.modid.json` left listed classes with stale annotation selectors (fixed and covered by `FabricMixinConfigDiscoveryTest`; the test mod uses the latter form). **(d) Jar-in-jar counts as a transform path.** All three nested-jar loops (`FabricModTransformer.processNestedJiJJar`, `AotCompiler.transformNestedJarAot`, `RetromodCli.transformNestedJar`) remapped nested classes but skipped the mixin pipeline, so a bundled library's mixins kept stale selectors; the AOT one also lacked the refmap / access widener / data passes. All fixed. No corpus jar bundles a mixin-bearing nested jar (the two available, codecextras and opensesame, ship zero mixin configs), so the regression test **synthesises** one: it adds a one-class library with an intermediary `@Inject` selector to a real mod and asserts the prepared jar remapped it. Build the fixture when the corpus lacks one, rather than shipping the change unverified. When adding any new class-transform loop, ask three questions: does it run after the remap, does it run the mixin pipeline, and does it handle the same *resources* as its sibling paths?
+
+20. **A mixin-owned bridge may only call a private target member if the mixin is a CLASS.** `MixinLegacyMemberBridge` repairs a stale member by turning the mod's `@Shadow`/`@Invoker` into a concrete `@Unique` method. That works because a **class** mixin is *merged into the target*, so a call to the target's private constructor or private static `register` is an in-class access. An **accessor interface** (`@Mixin(Foo.class) public interface FooAccessor { @Invoker ... }`, the standard Fabric idiom for reaching private statics, and what Species 2.3 uses for `TreeDecoratorType.register`) is NOT merged: its methods stay in the interface. Two things then break at once. (a) Mixin widens the private target member **only because of the `@Invoker`** the bridge removes, so a direct call becomes `IllegalAccessError` at runtime, turning a mixin-apply failure into a *worse* crash. (b) The mod's **refmap** still names the member with its OLD descriptor (verified in Species: `register` maps to `register(Ljava/lang/String;Lcom/mojang/serialization/Codec;)L…TreeDecoratorType;` even after Retromod's refmap remap), so simply retyping the invoker to the modern descriptor stops it resolving. Any real fix has to move the annotation and the refmap entry together. Guarded by `mixinLegacyMemberBridge.mergesIntoTarget` (interfaces are skipped, `leavesAccessorInterfaceAlone` covers it). **Caught only by transforming the real reported mod**: the synthetic test mod used a class mixin, so it passed while the actual mod would have crashed. When a bridge emits a call to a private member, check the mixin's `ACC_INTERFACE` flag and download the mod from the issue.
 
 ## Mixin discovery (finding mixins to translate)
 
@@ -282,7 +296,7 @@ Caveat: these surface CANDIDATES, not confirmations. A predicted break is a hypo
 | ASM | 9.10.1 | Bytecode manipulation (9.8+ required for Java 25) |
 | Gson | 2.10.1 | JSON parsing |
 | SLF4J | 2.0.18 | Logging |
-| JUnit 5 | 5.10.1 | Testing |
+| JUnit Jupiter | 6.1.3 | Testing |
 | Mixin | 0.8.5 | Mixin API (provided) |
 | Fabric Loader | 0.16.10 | Fabric API (provided), pinned deliberately |
 
@@ -310,4 +324,4 @@ Development skills are in `.agents/skills/`:
 
 ## Other
 
-If you are Claude reading this, any updates you do to this that is not about Claude, add to Agents.md (codex)
+If you are Claude reading this, add non-Claude updates to `AGENTS.md` too.

@@ -29,6 +29,9 @@ public final class MixinCompatibilityTransformer {
     private static final String OVERWRITE_DESC = "Lorg/spongepowered/asm/mixin/Overwrite;";
     private static final String ACCESSOR_DESC = "Lorg/spongepowered/asm/mixin/gen/Accessor;";
     private static final String INVOKER_DESC = "Lorg/spongepowered/asm/mixin/gen/Invoker;";
+    private static final String MUTABLE_DESC = "Lorg/spongepowered/asm/mixin/Mutable;";
+    private static final Pattern ACCESSOR_NAME_PATTERN = Pattern.compile(
+            "^(get|is|set)(([A-Z])(.*?))(_\\$md.*)?$");
     private static final String AMBIGUOUS_RENAME = "\0AMBIGUOUS";
     /** MixinExtras keeps injector annotations under this package. */
     private static final String MIXINEXTRAS_INJECTOR_PREFIX = "Lcom/llamalad7/mixinextras/injector/";
@@ -867,15 +870,8 @@ public final class MixinCompatibilityTransformer {
             if (isInvoker && methodName.startsWith("invoke")) {
                 // invokeFindSlot -> findSlot
                 target = Character.toLowerCase(methodName.charAt(6)) + methodName.substring(7);
-            } else if (methodName.startsWith("get")) {
-                // getBoundKey -> boundKey
-                target = Character.toLowerCase(methodName.charAt(3)) + methodName.substring(4);
-            } else if (methodName.startsWith("set")) {
-                // setBoundKey -> boundKey
-                target = Character.toLowerCase(methodName.charAt(3)) + methodName.substring(4);
-            } else if (methodName.startsWith("is")) {
-                // boolean getter: keep as-is, try both forms
-                target = methodName;
+            } else if (!isInvoker) {
+                target = inferredAccessorFieldName(method);
             }
 
             if (target != null) {
@@ -912,46 +908,132 @@ public final class MixinCompatibilityTransformer {
 
     /** Moves a single-target accessor mixin when its registered field moved to another owner. */
     private boolean transformAccessorOwnerMove(ClassNode classNode) {
+        if ((classNode.access & Opcodes.ACC_INTERFACE) == 0
+                || !classNode.fields.isEmpty()
+                || !classNode.interfaces.isEmpty()
+                || classNode.methods.isEmpty()) {
+            return false;
+        }
+
         AnnotationNode mixin = findMixinAnnotation(classNode);
         String owner = singleMixinTarget(mixin);
         if (owner == null) return false;
 
         List<AnnotationNode> accessors = new ArrayList<>();
+        List<MethodNode> accessorMethods = new ArrayList<>();
         RetromodTransformer.FieldTarget move = null;
         for (MethodNode method : classNode.methods) {
-            for (List<AnnotationNode> annotations : List.of(
-                    method.visibleAnnotations != null ? method.visibleAnnotations : List.<AnnotationNode>of(),
-                    method.invisibleAnnotations != null ? method.invisibleAnnotations : List.<AnnotationNode>of())) {
-                for (AnnotationNode annotation : annotations) {
-                    if (!ACCESSOR_DESC.equals(annotation.desc)) continue;
-                    String fieldName = annotationString(annotation, "value");
-                    if (fieldName == null) continue;
-                    RetromodTransformer.FieldTarget candidate = transformer.getFieldRedirects().entrySet().stream()
-                            .filter(e -> e.getKey().owner().equals(owner)
-                                    && e.getKey().name().equals(fieldName)
-                                    && !e.getValue().owner().equals(owner))
-                            .map(Map.Entry::getValue)
-                            .findFirst().orElse(null);
-                    if (candidate == null) continue;
-                    if (move != null && (!move.owner().equals(candidate.owner())
-                            || !move.name().equals(candidate.name()))) {
-                        return false;
-                    }
-                    move = candidate;
-                    accessors.add(annotation);
-                }
+            AnnotationNode accessor = singleMethodAnnotation(method, ACCESSOR_DESC);
+            if (accessor == null || hasUnsafeMixinMethodAnnotation(method)) return false;
+
+            String fieldName = annotationString(accessor, "value");
+            if (fieldName == null || fieldName.isEmpty()) {
+                fieldName = inferredAccessorFieldName(method);
             }
+            String fieldDesc = accessorFieldDescriptor(method);
+            if (fieldName == null || fieldDesc == null) return false;
+
+            RetromodTransformer.FieldTarget candidate = transformer.getFieldRedirects().get(
+                    new RetromodTransformer.FieldKey(owner, fieldName));
+            if (candidate == null
+                    || candidate.owner().equals(owner)
+                    || !fieldDesc.equals(candidate.oldDesc())
+                    || !fieldDesc.equals(candidate.newDesc())) {
+                return false;
+            }
+            if (move != null && !move.equals(candidate)) return false;
+
+            move = candidate;
+            accessors.add(accessor);
+            accessorMethods.add(method);
         }
         if (move == null) return false;
 
         replaceMixinTarget(mixin, move.owner());
-        for (AnnotationNode accessor : accessors) {
+        for (int i = 0; i < accessors.size(); i++) {
+            AnnotationNode accessor = accessors.get(i);
             setAnnotationValue(accessor, "value", move.name());
             setAnnotationValue(accessor, "remap", false);
+            MethodNode method = accessorMethods.get(i);
+            if (isAccessorSetter(method)
+                    && transformer.isMutableAccessorDestination(
+                        move.owner(), move.name(), move.newDesc())) {
+                addVisibleAnnotation(method, MUTABLE_DESC);
+            }
         }
         LOGGER.info("Moved accessor mixin {} target {} -> {} for field {}",
                 classNode.name, owner, move.owner(), move.name());
         return true;
+    }
+
+    private static AnnotationNode singleMethodAnnotation(MethodNode method, String descriptor) {
+        AnnotationNode found = null;
+        for (List<AnnotationNode> annotations : List.of(
+                method.visibleAnnotations != null ? method.visibleAnnotations : List.<AnnotationNode>of(),
+                method.invisibleAnnotations != null ? method.invisibleAnnotations : List.<AnnotationNode>of())) {
+            for (AnnotationNode annotation : annotations) {
+                if (!descriptor.equals(annotation.desc)) continue;
+                if (found != null) return null;
+                found = annotation;
+            }
+        }
+        return found;
+    }
+
+    private static boolean hasUnsafeMixinMethodAnnotation(MethodNode method) {
+        for (List<AnnotationNode> annotations : List.of(
+                method.visibleAnnotations != null ? method.visibleAnnotations : List.<AnnotationNode>of(),
+                method.invisibleAnnotations != null ? method.invisibleAnnotations : List.<AnnotationNode>of())) {
+            for (AnnotationNode annotation : annotations) {
+                if ((annotation.desc.startsWith("Lorg/spongepowered/asm/mixin/")
+                        && !ACCESSOR_DESC.equals(annotation.desc)
+                        && !MUTABLE_DESC.equals(annotation.desc))
+                        || annotation.desc.startsWith(MIXINEXTRAS_INJECTOR_PREFIX)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static String inferredAccessorFieldName(MethodNode method) {
+        Matcher matcher = ACCESSOR_NAME_PATTERN.matcher(method.name);
+        if (!matcher.matches()) return null;
+
+        String prefix = matcher.group(1);
+        if (isAccessorSetter(method) ? !"set".equals(prefix)
+                : accessorFieldDescriptor(method) == null || "set".equals(prefix)) {
+            return null;
+        }
+
+        String namePart = matcher.group(2);
+        String firstCharacter = matcher.group(3);
+        String remainder = matcher.group(4);
+        boolean allUpperCase = namePart.toUpperCase(Locale.ROOT).equals(namePart);
+        return (allUpperCase ? firstCharacter : firstCharacter.toLowerCase(Locale.ROOT))
+                + remainder;
+    }
+
+    private static boolean isAccessorSetter(MethodNode method) {
+        return org.objectweb.asm.Type.getArgumentTypes(method.desc).length == 1
+                && org.objectweb.asm.Type.getReturnType(method.desc).getSort()
+                    == org.objectweb.asm.Type.VOID;
+    }
+
+    private static void addVisibleAnnotation(MethodNode method, String descriptor) {
+        for (List<AnnotationNode> annotations : List.of(
+                method.visibleAnnotations != null
+                        ? method.visibleAnnotations : List.<AnnotationNode>of(),
+                method.invisibleAnnotations != null
+                        ? method.invisibleAnnotations : List.<AnnotationNode>of())) {
+            if (annotations.stream().anyMatch(a -> descriptor.equals(a.desc))) {
+                return;
+            }
+        }
+        if (method.visibleAnnotations == null) {
+            method.visibleAnnotations = new ArrayList<>();
+        }
+        method.visibleAnnotations.add(new AnnotationNode(descriptor));
     }
 
     private static AnnotationNode findMixinAnnotation(ClassNode classNode) {
@@ -967,18 +1049,29 @@ public final class MixinCompatibilityTransformer {
 
     private static String singleMixinTarget(AnnotationNode mixin) {
         if (mixin == null || mixin.values == null) return null;
+        List<String> declaredTargets = new ArrayList<>();
         for (int i = 0; i < mixin.values.size(); i += 2) {
+            Object key = mixin.values.get(i);
+            if (!"value".equals(key) && !"targets".equals(key)) continue;
             Object value = mixin.values.get(i + 1);
-            if (!(value instanceof List<?> targets) || targets.size() != 1) continue;
-            Object target = targets.get(0);
-            if (target instanceof org.objectweb.asm.Type type) return type.getInternalName();
-            if (target instanceof String name) return name.replace('.', '/');
+            if (!(value instanceof List<?> targets)) return null;
+            for (Object target : targets) {
+                if (target instanceof org.objectweb.asm.Type type) {
+                    declaredTargets.add(type.getInternalName());
+                } else if (target instanceof String name) {
+                    declaredTargets.add(name.replace('.', '/'));
+                } else {
+                    return null;
+                }
+            }
         }
-        return null;
+        return declaredTargets.size() == 1 ? declaredTargets.get(0) : null;
     }
 
     private static void replaceMixinTarget(AnnotationNode mixin, String newOwner) {
         for (int i = 0; i < mixin.values.size(); i += 2) {
+            Object key = mixin.values.get(i);
+            if (!"value".equals(key) && !"targets".equals(key)) continue;
             Object value = mixin.values.get(i + 1);
             if (!(value instanceof List<?> targets) || targets.size() != 1) continue;
             Object old = targets.get(0);

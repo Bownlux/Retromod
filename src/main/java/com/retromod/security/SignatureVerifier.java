@@ -4,12 +4,16 @@
  */
 package com.retromod.security;
 
+import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URL;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,6 +48,11 @@ public final class SignatureVerifier {
     private static final String SELF_ENTRY = "com/retromod/security/SignatureVerifier.class";
 
     private static final String EXPECTED_IMPL_TITLE = "Retromod";
+    private static final int MAX_JAR_ENTRIES = 100_000;
+    private static final long MAX_MANIFEST_BYTES = 1024L * 1024;
+
+    private static final byte[] HASH_DOMAIN =
+            "RETROMOD-SELF-HASH\u0000V2".getBytes(StandardCharsets.UTF_8);
 
     private static volatile VerificationResult cachedResult;
 
@@ -76,7 +85,7 @@ public final class SignatureVerifier {
 
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             // manifest must identify this as Retromod
-            Manifest manifest = jar.getManifest();
+            Manifest manifest = readBoundedManifest(jar);
             String implTitle = (manifest != null)
                     ? manifest.getMainAttributes().getValue("Implementation-Title")
                     : null;
@@ -112,9 +121,43 @@ public final class SignatureVerifier {
         }
     }
 
+    static Manifest readBoundedManifest(JarFile jar) throws IOException {
+        JarEntry manifestEntry = null;
+        Set<String> canonicalNames = new HashSet<>();
+        int entryCount = 0;
+        Enumeration<JarEntry> entries = jar.entries();
+        while (entries.hasMoreElements()) {
+            JarEntry entry = entries.nextElement();
+            if (++entryCount > MAX_JAR_ENTRIES) {
+                throw new IOException("JAR has too many entries for integrity verification");
+            }
+            String canonicalName = ZipSecurity.canonicalEntryName(entry.getName());
+            if (!canonicalNames.add(canonicalName)) {
+                throw new IOException("JAR contains a duplicate normalized entry: "
+                        + entry.getName());
+            }
+            if ("META-INF/MANIFEST.MF".equalsIgnoreCase(canonicalName)) {
+                if (manifestEntry != null) {
+                    throw new IOException("JAR contains multiple manifest entries");
+                }
+                manifestEntry = entry;
+            }
+        }
+        if (manifestEntry == null) return null;
+        long declaredSize = manifestEntry.getSize();
+        if (declaredSize > MAX_MANIFEST_BYTES) {
+            throw new IOException("JAR manifest exceeds the verification size limit");
+        }
+        try (InputStream input = jar.getInputStream(manifestEntry)) {
+            byte[] bytes = ZipSecurity.safeReadAllBytes(input, MAX_MANIFEST_BYTES);
+            return new Manifest(new ByteArrayInputStream(bytes));
+        }
+    }
+
     /**
-     * SHA-256 over the executable release surface, sorted by name, hashing each entry's name
-     * (UTF-8) then its bytes. Uppercase hex, or {@code null} if no covered entry exists.
+     * SHA-256 over the executable release surface, sorted by name. Each name and entry body is
+     * length-framed so different archive structures cannot produce the same byte stream.
+     * Uppercase hex, or {@code null} if no covered entry exists.
      * Package-private so release tooling and tests can compute the same value.
      */
     static String computeSelfHash(JarFile jar) throws Exception {
@@ -134,12 +177,28 @@ public final class SignatureVerifier {
         hashedEntries.sort(Comparator.comparing(JarEntry::getName));
 
         MessageDigest md = MessageDigest.getInstance("SHA-256");
+        md.update(HASH_DOMAIN);
         byte[] buf = new byte[8192];
         for (JarEntry je : hashedEntries) {
-            md.update(je.getName().getBytes(StandardCharsets.UTF_8));
+            byte[] name = je.getName().getBytes(StandardCharsets.UTF_8);
+            md.update(ByteBuffer.allocate(Integer.BYTES).putInt(name.length).array());
+            md.update(name);
+            long expectedSize = je.getSize();
+            if (expectedSize < 0) {
+                throw new SecurityException("JAR entry has no declared size: " + je.getName());
+            }
+            md.update(ByteBuffer.allocate(Long.BYTES).putLong(expectedSize).array());
+            long actualSize = 0;
             try (InputStream is = jar.getInputStream(je)) {
                 int r;
-                while ((r = is.read(buf)) != -1) md.update(buf, 0, r);
+                while ((r = is.read(buf)) != -1) {
+                    actualSize += r;
+                    md.update(buf, 0, r);
+                }
+            }
+            if (actualSize != expectedSize) {
+                throw new SecurityException("JAR entry size changed while hashing: "
+                        + je.getName());
             }
         }
         byte[] digest = md.digest();

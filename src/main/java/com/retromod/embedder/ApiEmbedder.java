@@ -5,6 +5,7 @@
 package com.retromod.embedder;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.JarSignatureSanitizer;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.*;
 import org.slf4j.Logger;
@@ -228,6 +229,7 @@ public class ApiEmbedder {
                 ".retromod-api-embed-", ".jar.tmp");
         try {
             writeEmbeddedJar(sourcePath, stagedJar, classesToEmbed);
+            JarSignatureSanitizer.sanitizeJar(stagedJar);
             try (JarFile ignored = new JarFile(stagedJar.toFile())) {
                 // Opening the completed jar verifies its central directory before replacement.
             }

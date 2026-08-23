@@ -4,13 +4,16 @@
  */
 package com.retromod.aot;
 
+import com.retromod.shim.ShimRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.opentest4j.TestAbortedException;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -25,8 +28,16 @@ class AotCacheStampTest {
     @TempDir
     Path tmp;
 
+    private Path tempRoot() {
+        try {
+            return tmp.toRealPath();
+        } catch (IOException e) {
+            throw new AssertionError("temporary directory is unavailable", e);
+        }
+    }
+
     private Path cacheDir() {
-        return tmp.resolve("aot-cache");
+        return tempRoot().resolve("aot-cache");
     }
 
     private void seedStaleEntries() throws IOException {
@@ -95,5 +106,113 @@ class AotCacheStampTest {
         assertTrue(Files.exists(cacheDir().resolve(".cache-stamp")));
         assertDoesNotThrow(() -> AotCacheStamp.ensureCurrent(cacheDir()),
                 "second call with the same build must be a no-op");
+    }
+
+    @Test
+    @DisplayName("an oversized stamp is cleared without trusting the stale cache")
+    void oversizedStampIsCleared() throws IOException {
+        seedStaleEntries();
+        Files.write(cacheDir().resolve(".cache-stamp"), new byte[1025]);
+
+        assertTrue(AotCacheStamp.ensureCurrent(cacheDir(), "1.2.0-snapshot.7|newhash"));
+        assertFalse(Files.exists(cacheDir().resolve("somemod-aot.jar")));
+        assertEquals("1.2.0-snapshot.7|newhash",
+                Files.readString(cacheDir().resolve(".cache-stamp")).trim());
+    }
+
+    @Test
+    @DisplayName("a symbolic-link cache root is refused without touching its target")
+    void symlinkedCacheRootIsRefused() throws IOException {
+        Path external = Files.createDirectory(tempRoot().resolve("external"));
+        Path sentinel = Files.writeString(external.resolve("sentinel.txt"), "keep");
+        try {
+            Files.createSymbolicLink(cacheDir(), external);
+        } catch (UnsupportedOperationException | IOException e) {
+            throw new TestAbortedException("symbolic links are unavailable", e);
+        }
+
+        assertFalse(AotCacheStamp.ensureCurrent(cacheDir(), "1.2.0-snapshot.7|abc"));
+        assertEquals("keep", Files.readString(sentinel));
+        assertFalse(Files.exists(external.resolve(".cache-stamp")));
+    }
+
+    @Test
+    @DisplayName("a symbolic-link parent component is refused without creating a cache")
+    void symlinkedParentComponentIsRefused() throws IOException {
+        Path external = Files.createDirectory(tempRoot().resolve("external-parent"));
+        Path sentinel = Files.writeString(external.resolve("sentinel.txt"), "keep");
+        Path linkedParent = tempRoot().resolve("linked-config");
+        try {
+            Files.createSymbolicLink(linkedParent, external);
+        } catch (UnsupportedOperationException | IOException e) {
+            throw new TestAbortedException("symbolic links are unavailable", e);
+        }
+
+        Path nestedCache = linkedParent.resolve("aot-cache");
+        assertFalse(AotCacheStamp.ensureCurrent(nestedCache, "1.2.0-snapshot.7|abc"));
+        assertEquals("keep", Files.readString(sentinel));
+        assertFalse(Files.exists(external.resolve("aot-cache")));
+    }
+
+    @Test
+    @DisplayName("clearing a cache deletes directory links without following them")
+    void staleCacheDoesNotFollowDirectoryLinks() throws IOException {
+        seedStaleEntries();
+        Path external = Files.createDirectory(tempRoot().resolve("external-directory"));
+        Path sentinel = Files.writeString(external.resolve("sentinel.txt"), "keep");
+        try {
+            Files.createSymbolicLink(cacheDir().resolve("linked-directory"), external);
+        } catch (UnsupportedOperationException | IOException e) {
+            throw new TestAbortedException("symbolic links are unavailable", e);
+        }
+
+        assertTrue(AotCacheStamp.ensureCurrent(cacheDir(), "1.2.0-snapshot.7|abc"));
+        assertEquals("keep", Files.readString(sentinel));
+        assertFalse(Files.exists(cacheDir().resolve("linked-directory"),
+                java.nio.file.LinkOption.NOFOLLOW_LINKS));
+    }
+
+    @Test
+    @DisplayName("a symbolic-link stamp is replaced without changing its target")
+    void symlinkedStampIsReplaced() throws IOException {
+        seedStaleEntries();
+        Path external = Files.writeString(tempRoot().resolve("external-stamp"), "keep\n");
+        Path stamp = cacheDir().resolve(".cache-stamp");
+        try {
+            Files.createSymbolicLink(stamp, external);
+        } catch (UnsupportedOperationException | IOException e) {
+            throw new TestAbortedException("symbolic links are unavailable", e);
+        }
+
+        assertTrue(AotCacheStamp.ensureCurrent(cacheDir(), "1.2.0-snapshot.7|abc"));
+        assertEquals("keep", Files.readString(external).trim());
+        assertFalse(Files.isSymbolicLink(stamp));
+        assertFalse(Files.exists(cacheDir().resolve("somemod-aot.jar")));
+    }
+
+    @Test
+    @DisplayName("stamp staging leaves no predictable or partial files")
+    void stampWriteLeavesNoStagingFiles() throws IOException {
+        assertTrue(AotCacheStamp.ensureCurrent(cacheDir(), "1.2.0-snapshot.7|abc"));
+        try (var entries = Files.list(cacheDir())) {
+            assertEquals(List.of(".cache-stamp"), entries
+                    .map(path -> path.getFileName().toString()).sorted().toList());
+        }
+    }
+
+    @Test
+    @DisplayName("clearing through AOT restores the stamp for the next compiler")
+    void compilerClearLeavesReusableStampedCache() throws IOException {
+        Path cache = cacheDir();
+        AotCompiler first = new AotCompiler(new ShimRegistry(), "26.1", cache);
+        Files.writeString(cache.resolve("old-aot.jar"), "old");
+
+        first.clearCache();
+        assertFalse(Files.exists(cache.resolve("old-aot.jar")));
+        assertTrue(Files.isRegularFile(cache.resolve(".cache-stamp")));
+        Path compiled = Files.writeString(cache.resolve("new-aot.jar"), "new");
+
+        new AotCompiler(new ShimRegistry(), "26.1", cache);
+        assertEquals("new", Files.readString(compiled));
     }
 }

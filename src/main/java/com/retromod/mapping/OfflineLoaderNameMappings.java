@@ -26,7 +26,7 @@ public final class OfflineLoaderNameMappings {
         transformer.clearIntermediaryNameMappings();
         transformer.clearSrgNameMappings();
 
-        if ("fabric".equalsIgnoreCase(loader)) {
+        if ("fabric".equalsIgnoreCase(loader) || "quilt".equalsIgnoreCase(loader)) {
             if (!RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) {
                 return new Result(0, 0);
             }

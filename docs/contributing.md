@@ -40,14 +40,14 @@ mvn test -Dexec.skip=true
 mvn test -Dexec.skip=true -Dtest=SomeTest
 ```
 
-Bug fixes need a focused unit test. For user-reported issues, also test the affected loader's test mod and the original failing mod when possible. A passing initialization summary is not enough; wait until the title screen or server is stable and check for a new crash report.
+Bug fixes need a focused unit test. For user-reported issues, also test the affected loader's test mod and the original failing mod when possible. A passing initialization summary is not enough. Wait until the title screen or server is stable and check for a new crash report.
 
 Use a loader-specific jar from `build-all.sh` for in-game testing. The raw `-all.jar` can conflict with Fabric's bundled libraries.
 
 The published standalone CLI is executable because it keeps the bundled dependencies:
 
 ```bash
-java -jar dist/CLI/retromod-9-cli.jar --help
+java -jar dist/CLI/retromod-1.3.0-snapshot.9-cli.jar --help
 ```
 
 From a source checkout, `mvn exec:java` remains the fallback while developing.

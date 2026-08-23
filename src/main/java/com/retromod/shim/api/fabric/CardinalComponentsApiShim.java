@@ -5,12 +5,12 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /**
  * Cardinal Components API shim. The package and registration layout changed across v2 to v6.
  */
-public class CardinalComponentsApiShim implements VersionShim {
+public class CardinalComponentsApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

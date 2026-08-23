@@ -11,10 +11,10 @@ This is an integrity check, not a cryptographic signature. There is no secret ke
 
 ## Statuses
 
-- **VERIFIED:** the covered executable surface matches the embedded release hash.
-- **MODIFIED:** covered code, providers, or transformation data differ. This is normal for local builds, forks, and repacks.
-- **IMPOSTOR:** the manifest does not identify the jar as Retromod.
-- **UNKNOWN:** no usable hash is available, which is common in development.
+- `VERIFIED`: the covered executable surface matches the embedded release hash.
+- `MODIFIED`: covered code, providers, or transformation data differ. This is normal for local builds, forks, and repacks.
+- `IMPOSTOR`: the manifest does not identify the jar as Retromod.
+- `UNKNOWN`: no usable hash is available, which is common in development.
 
 No status disables features.
 

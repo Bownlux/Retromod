@@ -2,7 +2,7 @@
 title: Home
 layout: default
 nav_order: 1
-description: "Run older Minecraft mods on current Fabric, NeoForge, and Forge."
+description: "Run older Minecraft mods on current Fabric, Quilt, NeoForge, and Forge."
 permalink: /
 ---
 
@@ -17,7 +17,7 @@ Retromod translates older Minecraft mods while the game loads. It updates byteco
   <a class="retromod-btn retromod-btn-ghost" href="https://github.com/Bownlux/Retromod">Source</a>
 </div>
 
-Published host jars cover Fabric and Forge on Minecraft 1.20 through 26.2, plus NeoForge on 1.20.1 through 26.2. Source support reaches back to 1.12.2 on Forge, 1.14.4 on Fabric, and 1.20.1 on NeoForge. GitHub releases also include an executable standalone CLI jar for offline transforms.
+Published host jars cover Fabric, Quilt, and Forge on Minecraft 1.20 through 26.2, plus NeoForge on 1.20.1 through 26.2. Quilt uses the shared Fabric artifact, not a separate loader artifact. Source support reaches back to 1.12.2 on Forge, 1.14.4 on Fabric, and 1.20.1 on NeoForge. GitHub releases also include an executable standalone CLI jar for offline transforms.
 
 ## Start Here
 

@@ -5,13 +5,13 @@
 package com.retromod.shim.api.forge;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.MinecraftVersionedApiShim;
 import com.retromod.util.McReflect;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** Maps Forge's capability system onto NeoForge's rewrite: LazyOptional, ICapabilityProvider, CapabilityManager, the ForgeCapabilities fields, and the item/fluid/energy handlers. */
-public class ForgeCapabilitiesShim implements VersionShim {
+public class ForgeCapabilitiesShim implements MinecraftVersionedApiShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-ForgeCapabilitiesShim");
 

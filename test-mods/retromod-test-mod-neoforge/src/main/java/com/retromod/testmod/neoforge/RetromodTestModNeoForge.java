@@ -17,6 +17,7 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -194,6 +195,11 @@ public class RetromodTestModNeoForge {
         n++; passed += check(n, "#87 mixin synthetic-args dummy stripped from jar", () ->
             getClass().getClassLoader()
                 .getResource("org/spongepowered/asm/synthetic/args/Dummy.class") == null);
+
+        // #234: the 1.21.1 source field was renamed in 26.1. A direct read proves
+        // the transformed NeoForge class links to the current GameRules field.
+        n++; passed += check(n, "#234 GameRules mob-griefing field", () ->
+            GameRules.RULE_MOBGRIEFING != null);
 
         LOG.info("{} SUMMARY: {}/{} passed", PREFIX, passed, n);
     }

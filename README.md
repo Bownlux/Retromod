@@ -9,19 +9,19 @@ Run older Minecraft mods on newer game versions.
 [![Modrinth](https://img.shields.io/badge/Download-Modrinth-00AF5C.svg)](https://modrinth.com/mod/retromod)
 [![CurseForge](https://img.shields.io/badge/Download-CurseForge-F16436.svg)](https://www.curseforge.com/minecraft/mc-mods/retromod)
 
-**[Download on Modrinth](https://modrinth.com/mod/retromod)** · [CurseForge](https://www.curseforge.com/minecraft/mc-mods/retromod) · [Docs](https://bownlux.github.io/Retromod/) · [Compatibility database](https://bownlux.github.io/Retromod/compatdb/)
+[Download on Modrinth](https://modrinth.com/mod/retromod) · [CurseForge](https://www.curseforge.com/minecraft/mc-mods/retromod) · [Docs](https://bownlux.github.io/Retromod/) · [Compatibility database](https://bownlux.github.io/Retromod/compatdb/)
 
 ## What This Does
 
 Retromod gives older Minecraft mods a better chance of running on current versions of the game. It updates bytecode, mappings, mixins, and loader metadata while keeping a backup of the original mod.
 
-Its Mixin repair pass combines the mod's refmap with the exact methods in the target Minecraft jar. This lets it repair selected parameter-capturing handlers even when the annotation keeps a Yarn source name. It also keeps complete target-argument captures on supported MixinExtras value modifiers. Ambiguous or unsafe changes remain unchanged for a reviewed port.
+Its Mixin repair pass combines the mod's refmap with the exact members in the target Minecraft jar. This lets it repair selected parameter-capturing handlers even when the annotation keeps a Yarn source name. It can also move a one-target, accessor-only Mixin when every accessor proves the same destination field. It refuses mixed-purpose Mixins, ambiguous owners, descriptor changes, and unsafe captures.
 
 Fabric runtime transforms recurse through four bundled jar levels. Classes, mixins, refmaps, access wideners, and per-archive compatibility helpers follow the nested path. On official-name targets, nested metadata and data files are updated too.
 
-Other compatibility layers move a mod between loaders. Retromod moves a mod **between game versions**, so a mod built for 1.20.1 can run on a current release without waiting for the author to port it.
+Retromod primarily translates mods between game versions. A compatible 1.20.1 mod may then run on a current release without an upstream port. Selected Forge-to-NeoForge bridges cover common paths, but Retromod does not provide general cross-loader compatibility.
 
-It works with Fabric, NeoForge, and Forge. Published host jars cover Fabric and Forge on Minecraft 1.20 through 26.2, plus NeoForge on 1.20.1 through 26.2. The code is built with JDK 25 but targets Java 17 bytecode; use the Java version required by the host Minecraft release.
+It works with Fabric, Quilt, NeoForge, and Forge. Quilt uses the shared Fabric artifact, which carries metadata for both loaders. Published host jars cover Fabric, Quilt, and Forge on Minecraft 1.20 through 26.2, plus NeoForge on 1.20.1 through 26.2. The code is built with JDK 25 but targets Java 17 bytecode. Use the Java version required by the host Minecraft release.
 
 Simple content mods, libraries, and quality-of-life mods are the best fit. Mods that replace large parts of Minecraft's renderer or loader may still need a proper port. Back up important worlds before testing save-affecting mods. Retromod preserves original mod jars, not world saves.
 

@@ -5,7 +5,7 @@
 package com.retromod.shim.api.forge;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.MinecraftVersionedApiShim;
 import com.retromod.util.McReflect;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,7 +13,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Forge -> NeoForge config API migration (ForgeConfigSpec, ModConfig, config events).
  */
-public class ForgeConfigApiShim implements VersionShim {
+public class ForgeConfigApiShim implements MinecraftVersionedApiShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-ForgeConfigApiShim");
 

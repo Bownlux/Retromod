@@ -5,7 +5,7 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -19,7 +19,7 @@ import org.slf4j.LoggerFactory;
  * {@code com/retromod/generated/legacyrenderer/*} and redirect the old paths to them so references
  * resolve at load time; the stub methods leave custom rendering dark but the client launches.
  */
-public class FabricRendererMaterialBridge implements VersionShim {
+public class FabricRendererMaterialBridge implements AuxiliaryVersionShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 

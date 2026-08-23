@@ -10,10 +10,14 @@ import net.fabricmc.api.EnvType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.retromod.shim.ShimRegistry;
+import com.retromod.util.ArchivePublication;
+import com.retromod.util.JsonSecurity;
 import com.retromod.util.ZipSecurity;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
@@ -217,12 +221,9 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                         skippedOtherLoader++;
                         continue;
                     }
-                    // Only register shims whose target version is <= the host MC. A shim
-                    // X→Y rewrites references to Y-version names; if Y is newer than the
-                    // host those names don't exist at runtime and the shim breaks the mod.
-                    // Fabric API names match between mod and runtime, so unlike the
-                    // intermediary remap this bites on Fabric too (#31/#32/#35).
-                    if (mcVersionExceeds(shim.getTargetVersion(), hostVersion)) {
+                    // Minecraft-versioned providers must not target a newer host. Library API
+                    // providers use their own version domain and remain independent of this gate.
+                    if (!ShimRegistry.isAvailableOnHost(shim, hostVersion)) {
                         skippedNewer++;
                         continue;
                     }
@@ -534,7 +535,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
             try (var stream = Files.list(inputFolder)) {
                 modsToTransform = stream
                     .filter(p -> p.toString().toLowerCase().endsWith(".jar"))
-                    .filter(p -> Files.isRegularFile(p))
+                    .filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
                     .toList();
             }
 
@@ -550,6 +551,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
             ZipSecurity.validateNotSymlink(outputFolder);
 
             FabricModTransformer transformer = null;
+            QuiltModTransformer quiltTransformer = null;
 
             for (Path modJar : modsToTransform) {
                 try {
@@ -572,10 +574,6 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
 
                     String modVersion = extractModMinecraftVersion(modJar);
 
-                    if (transformer == null) {
-                        transformer = new FabricModTransformer(targetVersion);
-                    }
-
                     LOGGER.info("Checking {} (source {}, target {})",
                         fileName, modVersion != null ? modVersion : "unknown", targetVersion);
 
@@ -592,15 +590,36 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                     }
 
                     boolean needsTransform = !isExactVersionMatch(modVersion, targetVersion);
+                    boolean quiltMod = QuiltModTransformer.isQuiltMod(modJar);
                     boolean completed = false;
 
-                    if (!needsTransform) {
+                    if (quiltMod) {
+                        if (quiltTransformer == null) {
+                            quiltTransformer = new QuiltModTransformer(targetVersion);
+                        }
+                        boolean optedOut = com.retromod.util.OptOutCheck.isOptedOut(modJar);
+                        Path transformed = quiltTransformer.transformMod(modJar, outputFolder);
+                        if (transformed != null) {
+                            if (!needsTransform) {
+                                LOGGER.info("{} already targets Minecraft {}; copying it unchanged",
+                                    fileName, targetVersion);
+                            } else if (!optedOut) {
+                                LOGGER.info("Updated {} as {}", fileName,
+                                    transformed.getFileName());
+                                transformedMods.add(fileName);
+                            }
+                            completed = true;
+                        }
+                    } else if (!needsTransform) {
                         LOGGER.info("{} already targets Minecraft {}; copying it unchanged",
                             fileName, targetVersion);
-                        Files.copy(modJar, outputFolder.resolve(fileName),
-                            StandardCopyOption.REPLACE_EXISTING);
+                        FabricModTransformer.copyArchiveReplacingAtomically(
+                            modJar, outputFolder.resolve(fileName));
                         completed = true;
                     } else {
+                        if (transformer == null) {
+                            transformer = new FabricModTransformer(targetVersion);
+                        }
                         Path transformed = transformer.transformMod(modJar, outputFolder);
                         if (transformed != null) {
                             LOGGER.info("Updated {} as {}", fileName, transformed.getFileName());
@@ -648,20 +667,23 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
 
     /** True when the top-level staged jar identifies itself as Fabric API. */
     static boolean isFabricApiJar(Path jarPath) {
-        try (JarFile jar = new JarFile(jarPath.toFile())) {
-            ZipEntry entry = jar.getEntry("fabric.mod.json");
-            if (entry == null) {
-                return false;
-            }
-            String content;
-            try (InputStream input = jar.getInputStream(entry)) {
-                content = new String(ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE),
-                        StandardCharsets.UTF_8);
-            }
-            com.google.gson.JsonObject metadata = com.google.gson.JsonParser.parseString(content)
-                    .getAsJsonObject();
-            if (metadata.has("id") && isFabricApiId(metadata.get("id").getAsString())) {
-                return true;
+        try {
+            validateArchiveInput(jarPath);
+            try (JarFile jar = new JarFile(jarPath.toFile())) {
+                ZipEntry entry = jar.getEntry("fabric.mod.json");
+                if (entry == null) {
+                    return false;
+                }
+                String content;
+                try (InputStream input = jar.getInputStream(entry)) {
+                    content = JsonSecurity.readUtf8(input, MAX_METADATA_SIZE,
+                            JsonSecurity.DEFAULT_MAX_DEPTH, "fabric.mod.json");
+                }
+                com.google.gson.JsonObject metadata = com.google.gson.JsonParser.parseString(content)
+                        .getAsJsonObject();
+                if (metadata.has("id") && isFabricApiId(metadata.get("id").getAsString())) {
+                    return true;
+                }
             }
         } catch (Exception e) {
             LOGGER.debug("Could not identify staged mod {}: {}", jarPath.getFileName(), e.getMessage());
@@ -704,7 +726,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
         try (var stream = Files.list(folder)) {
             jars = stream
                 .filter(p -> p.toString().toLowerCase().endsWith(".jar"))
-                .filter(Files::isRegularFile)
+                .filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
                 .sorted()
                 .toList();
         } catch (Exception e) {
@@ -724,7 +746,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
         for (Path jar : jars) {
             String name = jar.getFileName().toString();
             try {
-                Files.move(jar, modsFolder.resolve(name), StandardCopyOption.REPLACE_EXISTING);
+                ArchivePublication.moveReplacing(jar, modsFolder.resolve(name));
                 transformedMods.add(name);
                 moved++;
                 LOGGER.info("  moved {} → mods/", name);
@@ -789,44 +811,38 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
             """);
     }
 
-    /** True only when the mod version matches the target exactly. */
+    /** True only when the declaration starts on the target version. */
     private boolean isExactVersionMatch(String modVersion, String targetVersion) {
         if (modVersion == null) return false;
-
-        String clean = modVersion
-            .replace(">=", "")
-            .replace("<=", "")
-            .replace(">", "")
-            .replace("<", "")
-            .replace("~", "")
-            .replace("^", "")
-            .trim();
-
-        return clean.equals(targetVersion);
+        String declared = modVersion.trim();
+        if (declared.equals(targetVersion) || declared.equals("=" + targetVersion)) {
+            return true;
+        }
+        for (String prefix : new String[]{">=", "~", "^"}) {
+            if (declared.startsWith(prefix)
+                    && declared.substring(prefix.length()).trim().equals(targetVersion)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Read the mod's declared Minecraft version from its metadata. */
-    private String extractModMinecraftVersion(Path jarPath) {
+    private String extractModMinecraftVersion(Path jarPath) throws java.io.IOException {
+        validateArchiveInput(jarPath);
         try (JarFile jar = new JarFile(jarPath.toFile())) {
+            // Quilt metadata owns the loader route when both descriptors are present.
+            ZipEntry quiltJson = jar.getEntry("quilt.mod.json");
+            if (quiltJson != null) {
+                try (InputStream input = jar.getInputStream(quiltJson)) {
+                    return QuiltMetadataCompat.readMinecraftVersion(input);
+                }
+            }
+
             // Fabric
             ZipEntry fabricJson = jar.getEntry("fabric.mod.json");
             if (fabricJson != null) {
-                String content;
-                try (InputStream in = jar.getInputStream(fabricJson)) {
-                    content = new String(in.readAllBytes());
-                }
-                Pattern p = Pattern.compile("\"minecraft\"\\s*:\\s*\"([^\"]+)\"");
-                Matcher m = p.matcher(content);
-                if (m.find()) return m.group(1);
-            }
-
-            // Quilt
-            ZipEntry quiltJson = jar.getEntry("quilt.mod.json");
-            if (quiltJson != null) {
-                String content;
-                try (InputStream in = jar.getInputStream(quiltJson)) {
-                    content = new String(in.readAllBytes());
-                }
+                String content = readUtf8Metadata(jar, fabricJson);
                 Pattern p = Pattern.compile("\"minecraft\"\\s*:\\s*\"([^\"]+)\"");
                 Matcher m = p.matcher(content);
                 if (m.find()) return m.group(1);
@@ -836,19 +852,28 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
             ZipEntry modsToml = jar.getEntry("META-INF/mods.toml");
             if (modsToml == null) modsToml = jar.getEntry("META-INF/neoforge.mods.toml");
             if (modsToml != null) {
-                String content;
-                try (InputStream in = jar.getInputStream(modsToml)) {
-                    content = new String(in.readAllBytes());
-                }
+                String content = readUtf8Metadata(jar, modsToml);
                 Pattern p = Pattern.compile("versionRange\\s*=\\s*\"\\[([0-9.]+)");
                 Matcher m = p.matcher(content);
                 if (m.find()) return m.group(1);
             }
             
-        } catch (Exception e) {
-            // Ignore
         }
         return null;
+    }
+
+    private static String readUtf8Metadata(JarFile jar, ZipEntry entry)
+            throws java.io.IOException {
+        try (InputStream input = jar.getInputStream(entry)) {
+            return new String(ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE),
+                    StandardCharsets.UTF_8);
+        }
+    }
+
+    private static void validateArchiveInput(Path jarPath) throws java.io.IOException {
+        if (!Files.isRegularFile(jarPath, LinkOption.NOFOLLOW_LINKS)) {
+            throw new java.io.IOException("Mod input is not a regular file: " + jarPath);
+        }
     }
     
     /** Logs the same restart request shown later in game. */

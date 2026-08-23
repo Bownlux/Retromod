@@ -5,10 +5,10 @@
 package com.retromod.shim.api.common;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.MinecraftVersionedApiShim;
 
 /** Botania (Fabric and Forge/NeoForge): mana, flower, corporea, brew, and wand API renames. */
-public class BotaniaApiShim implements VersionShim {
+public class BotaniaApiShim implements MinecraftVersionedApiShim {
     
     @Override
     public String getShimName() {

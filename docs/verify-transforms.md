@@ -7,7 +7,7 @@ nav_order: 6
 
 After transforming a jar, Retromod can check whether its Minecraft classes, methods, and fields exist on the host.
 
-Runtime verification is enabled by the generated config. Toggle it in the GUI or set `"verify_transforms": false` in `config/retromod/config.json`. For a standalone CLI run, pass `--verify`; the CLI also honors an enabled setting in the current working directory. Pair it with `--mc-jar <target.jar>` so Minecraft classes and members are checked against that exact target rather than only the standalone process classpath. A batch checks each generated output separately.
+Runtime verification is enabled by the generated config. Toggle it in the GUI or set `"verify_transforms": false` in `config/retromod/config.json`. For a standalone CLI run, pass `--verify`. The CLI also honors an enabled setting in the current working directory. Pair it with `--mc-jar <target.jar>` so Minecraft classes and members are checked against that exact target rather than only the standalone process classpath. A batch checks each generated output separately.
 
 ## Reports
 

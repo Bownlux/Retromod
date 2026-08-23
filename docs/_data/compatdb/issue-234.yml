@@ -1,14 +1,14 @@
 name: "Liberty's Villagers Revived"
-badge: borked
+badge: copper
 mod_version: "1.21.11"
+source_mc: "1.21.11"
 host_mc: "26.1.2"
 loader: "fabric"
-retromod: "1.3.0-snapshot.7"
+retromod: "1.3.0-snapshot.9"
 links:
   curseforge: "https://www.curseforge.com/minecraft/mc-mods/libertys-villagers-revived"
-summary: "Game and world loads, crashes when a villager attempts to accomplish anything"
-details: "java.lang.NoSuchFieldError: Class net.minecraft.world.level.gamerules.GameRules  does not have member field 'net.minecraft.world.level.gamerules.GameRule RULE_MOBGRIEFING' 	at net.minecraft.world.entity.ai.behavior.HarvestFarmland.handler$dfl000$libertyvillagers$replaceShouldRun(HarvestFarmland.java:570) 	at net.minecraft.world.entity.ai.behavior.HarvestFarmland.checkExtraStartConditions(HarvestFarmland.java:29) 	at net.minecraft.world.entity.ai.behavior.Behavior.tryStart(Behavior.java:49) 	at net.minecraft.world.entity.ai.Brain.startEachNonRunningBehavior(Brain.java:1663) 	at net.minecraft.world.entity.ai.Brain.tick(Brain.java:438) 	at net.minecraft.world.entity.npc.villager.Villager.customServerAiStep(Villager.java:257) [main/WARN]: Missing translation key for rename: gamerule.mobGriefing [main/WARN]: Missing translation key for rename: gamerule.keepInventory [main/WARN]: Missing translation key for rename: gamerule.doMobSpawning"
+summary: "Starts on 26.1.2 with the reported mob-griefing field link repaired"
+details: "The reported JAR reaches resource and sound loading. A live regression reads the current mob-griefing rule. One legacy item model still fails to parse, and villager behavior still needs a longer gameplay test."
 reporter: "ethanael-n"
 date: "2026-08-17"
 issue: 234
-

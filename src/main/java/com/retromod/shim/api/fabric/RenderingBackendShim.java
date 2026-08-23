@@ -6,7 +6,7 @@ package com.retromod.shim.api.fabric;
 
 import com.retromod.core.EnvironmentDetector;
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.MinecraftVersionedApiShim;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory;
  * Mods on the high-level API (DrawContext, VertexConsumer) are unaffected; only those reaching
  * into GlStateManager or direct LWJGL calls need redirects.
  */
-public class RenderingBackendShim implements VersionShim {
+public class RenderingBackendShim implements MinecraftVersionedApiShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-RenderBackend");
 

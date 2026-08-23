@@ -15,20 +15,20 @@ name: Release latest main build
 # the Actions tab on every CI failure, which can look alarming. That's the
 # trade - quality > tidy logs.
 #
-# Why Fabric only?
-# ----------------
-# Maven's shaded JAR (target/retromod-<ver>.jar) is a multi-loader fat JAR
-# that contains fabric.mod.json AND META-INF/mods.toml AND
-# META-INF/neoforge.mods.toml all at once. Loaders are partly tolerant of
-# the extra metadata files, but distributing this fat JAR is the wrong
-# default - under some loader/MC combinations it gets rejected for
+# Why the Fabric and Quilt artifact?
+# ----------------------------------
+# Maven's shaded JAR is a multi-loader fat JAR that contains Fabric, Quilt,
+# Forge, and NeoForge metadata at once. Loaders are partly tolerant of the
+# extra loader-family metadata, but distributing this fat JAR is the wrong
+# default. Under some loader/MC combinations it gets rejected for
 # "looks like a different loader's mod" reasons.
 #
 # build-all.sh is the ground-truth distribution flow: it extracts the
-# shaded JAR, strips the OTHER loaders' metadata, rewrites the kept
-# metadata for a specific MC version, and emits one clean per-loader JAR
-# into dist/<Loader>/<MC>/. We run that here and pick the Fabric output
-# because Fabric is Retromod's primary, best-tested loader (see the
+# shaded JAR, strips other loader families, rewrites the kept metadata for
+# a specific MC version, and emits one clean per-loader-family JAR into
+# dist/<Loader>/<MC>/. Fabric output intentionally keeps both
+# fabric.mod.json and quilt.mod.json. We run that flow and pick the shared output
+# because Fabric is Retromod's primary, best-tested loader family (see the
 # README's loader matrix). Forge and NeoForge users currently get their
 # JARs from milestone releases or by running build-all.sh themselves;
 # rolling auto-publish for those is a future improvement.
@@ -38,6 +38,12 @@ on:
     workflows: ["CI"]
     branches: [main]
     types: [completed]
+
+# Asset replacement deletes the previous file before uploading the new one. Never overlap or
+# cancel this workflow between those operations, or the rolling release can lose its jar.
+concurrency:
+  group: rolling-github-release
+  cancel-in-progress: false
 
 permissions: {}
 
@@ -88,16 +94,16 @@ jobs:
           check-latest: true
 
       - name: Build the shaded base JAR
-        # build-all.sh expects target/retromod-<ver>.jar to already exist
+        # build-all.sh expects target/retromod-<ver>-all.jar to already exist
         # because we pass --skip-build. Doing the Maven step ourselves (with
         # the cached deps) is cheaper than letting the script invoke another
         # mvn run inside it.
         run: mvn package -q -DskipTests -Dexec.skip=true
 
       - name: Produce per-loader, per-MC JARs via build-all.sh
-        # build-all.sh strips fabric.mod.json/mods.toml/neoforge.mods.toml
-        # down to one per output JAR. The Fabric/26.2 directory is the
-        # one we publish.
+        # Forge and NeoForge outputs keep one matching descriptor. Fabric output
+        # keeps fabric.mod.json plus quilt.mod.json for the shared Fabric/Quilt artifact.
+        # The Fabric/26.2 directory is the one this rolling workflow publishes.
         run: bash build-all.sh --skip-build --require-self-hash
 
       - name: Resolve version metadata and stage Fabric artifact
@@ -148,14 +154,30 @@ jobs:
           SHA256=$(sha256sum "${{ steps.ver.outputs.artifact_name }}" | awk '{print $1}')
           echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
 
+      - name: Confirm this is still the current main commit
+        id: freshness
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          MAIN_SHA=$(git rev-parse refs/remotes/origin/main)
+          if [ "$HEAD_SHA" != "$MAIN_SHA" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping stale release candidate $HEAD_SHA. Current main is $MAIN_SHA."
+            exit 0
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
       - name: Publish rolling release
+        id: rolling_release
+        if: steps.freshness.outputs.publish == 'true'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: latest
-          # The action force-updates this tag to the current SHA on each run.
+          # The action updates release metadata. The verified step below advances the tag.
           target_commitish: ${{ github.event.workflow_run.head_sha }}
 
-          name: "Latest main build · Fabric · ${{ steps.ver.outputs.pom_version }} for MC ${{ steps.ver.outputs.mc_version }}"
+          name: "Latest main build · Fabric and Quilt · ${{ steps.ver.outputs.pom_version }} for MC ${{ steps.ver.outputs.mc_version }}"
 
           # `prerelease: true` keeps this from being shown as the headline
           # "Latest release" on the repo home page - that slot is reserved
@@ -164,21 +186,22 @@ jobs:
           prerelease: true
           make_latest: false
 
-          # Replace the previous build's asset rather than appending.
+          overwrite_files: true
+          fail_on_unmatched_files: true
           files: ${{ steps.ver.outputs.artifact_name }}
 
           body: |
-            **Rolling pre-release · Fabric build for MC ${{ steps.ver.outputs.mc_version }}** - auto-published on every successful CI run against `main`. Always points at the most recent green build. Versioned milestones (v1.0.0-beta.6, future v1.0.0…) are cut separately.
+            Rolling pre-release for Fabric and Quilt on MC ${{ steps.ver.outputs.mc_version }}. It is published after every successful CI run against `main` and always points at the newest passing build. Versioned milestones are cut separately.
 
-            ### What this is
-            This is the **Fabric variant** of Retromod, built for **MC ${{ steps.ver.outputs.mc_version }}**. Fabric is Retromod's primary loader - see the [README](https://github.com/${{ github.repository }}#retromod) for why. The fat shaded JAR that contains all three loaders' metadata is intentionally not published here; loaders disagree about whether a multi-loader JAR is acceptable, and shipping a single-loader JAR avoids the ambiguity entirely.
+            ### What This Is
+            This is the Fabric and Quilt variant of Retromod for MC ${{ steps.ver.outputs.mc_version }}. It carries `fabric.mod.json` and `quilt.mod.json`. There is no separate Quilt jar. The fat shaded jar with Forge and NeoForge metadata is not published here because other loader families can reject it.
 
-            **Forge and NeoForge users:** the rolling channel doesn't auto-publish your variants yet. For now, grab the per-loader JARs from a tagged milestone release, or build them yourself: clone the repo and run `bash build-all.sh` - that produces `dist/Forge/<MC>/` and `dist/NeoForge/<MC>/` artifacts the same way this workflow produces the Fabric one.
+            The rolling channel does not publish Forge or NeoForge variants. Use a tagged milestone release, or run `bash build-all.sh` to produce `dist/Forge/<MC>/` and `dist/NeoForge/<MC>/` artifacts.
 
-            ### Build info
+            ### Build Info
             | Field | Value |
             |---|---|
-            | Loader | Fabric |
+            | Loader | Fabric and Quilt |
             | Target Minecraft | ${{ steps.ver.outputs.mc_version }} |
             | Source commit | [`${{ steps.ver.outputs.short_sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.event.workflow_run.head_sha }}) |
             | Built at | `${{ steps.ver.outputs.built_at }}` |
@@ -186,16 +209,65 @@ jobs:
             | Java | 25 (Temurin) |
 
             ### Install
-            1. Download **`${{ steps.ver.outputs.artifact_name }}`** below.
-            2. Drop it into your Fabric instance's `mods/` folder.
+            1. Download `${{ steps.ver.outputs.artifact_name }}` below.
+            2. Drop it into your Fabric or Quilt instance's `mods/` folder.
             3. Launch once. Retromod creates `retromod-input/` next to `mods/`. Drop old mods there for transformation, then restart when prompted.
 
             See the [installation docs](https://bownlux.github.io/Retromod/installation) for the full per-loader walkthrough.
 
-            ### Verify the download
+            ### Verify the Download
             ```
             SHA-256: ${{ steps.hash.outputs.sha256 }}
             ```
 
-            ### Heads up
-            This is a **beta** rolling build. It passes the test suite but otherwise has had less manual exercise than the milestone releases. If something breaks, please attach `latest.log` and the failing mod JAR to a [GitHub issue](https://github.com/${{ github.repository }}/issues).
+            ### Heads Up
+            This beta rolling build has had less manual exercise than milestone releases. If something breaks, please attach `latest.log` and the failing mod jar to a [GitHub issue](https://github.com/${{ github.repository }}/issues).
+
+      - name: Verify rolling release asset and advance tag
+        if: steps.freshness.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.rolling_release.outputs.id }}
+          RELEASE_ASSETS: ${{ steps.rolling_release.outputs.assets }}
+          EXPECTED_ASSET: ${{ steps.ver.outputs.artifact_name }}
+          EXPECTED_SHA256: ${{ steps.hash.outputs.sha256 }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          ASSET_ROW=$(jq -er --arg name "$EXPECTED_ASSET" '
+            [.[] | select(.name == $name or .label == $name)]
+            | if length == 1 then .[0] else error("expected one uploaded asset") end
+            | [.state, (.size | tostring), (.digest // ""), .browser_download_url]
+            | @tsv
+          ' <<< "$RELEASE_ASSETS")
+          IFS=$'\t' read -r ASSET_STATE ASSET_SIZE ASSET_DIGEST ASSET_URL <<< "$ASSET_ROW"
+
+          EXPECTED_SIZE=$(stat -c '%s' "$EXPECTED_ASSET")
+          if [ "$ASSET_STATE" != "uploaded" ] || [ "$ASSET_SIZE" != "$EXPECTED_SIZE" ]; then
+            echo "ERROR: GitHub did not retain the expected uploaded asset."
+            exit 1
+          fi
+          if [ "$ASSET_DIGEST" != "sha256:$EXPECTED_SHA256" ]; then
+            echo "ERROR: GitHub's asset digest does not match the staged jar."
+            exit 1
+          fi
+
+          VERIFIED_ASSET="$RUNNER_TEMP/$EXPECTED_ASSET"
+          curl --fail --location --silent --show-error \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/octet-stream" \
+            "$ASSET_URL" --output "$VERIFIED_ASSET"
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$VERIFIED_ASSET" | sha256sum --check
+
+          RELEASE_TARGET=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.target_commitish')
+          if [ "$RELEASE_TARGET" != "$HEAD_SHA" ]; then
+            echo "ERROR: rolling release metadata points to $RELEASE_TARGET instead of $HEAD_SHA."
+            exit 1
+          fi
+
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/latest" \
+            -f sha="$HEAD_SHA" -F force=true >/dev/null
+          TAG_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/latest" --jq '.object.sha')
+          if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
+            echo "ERROR: latest points to $TAG_SHA instead of $HEAD_SHA."
+            exit 1
+          fi

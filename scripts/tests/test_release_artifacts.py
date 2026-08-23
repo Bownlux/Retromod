@@ -1,15 +1,19 @@
 import hashlib
+import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 
 from scripts.release_artifacts import (
     EXPECTED_ARTIFACT_COUNT,
     ReleaseArtifactError,
     _expected_artifacts,
+    generate_release_checksum_manifest,
     validate_release_artifacts,
 )
 
@@ -122,6 +126,27 @@ class ReleaseArtifactValidationTest(unittest.TestCase):
                 "checksum mismatch for NeoForge/26.2/"):
             self._validate()
 
+    def test_checksum_generation_is_atomic_on_validation_failure(self):
+        manifest = self.dist / "SHA256SUMS.txt"
+        previous = b"previous manifest\n"
+        manifest.write_bytes(previous)
+        missing = self.dist / f"Fabric/1.20/retromod-{VERSION}+1.20.jar"
+        missing.unlink()
+
+        with self.assertRaises(ReleaseArtifactError):
+            generate_release_checksum_manifest(VERSION, self.dist, self.pom)
+
+        self.assertEqual(previous, manifest.read_bytes())
+        self.assertEqual([], list(self.dist.glob(".SHA256SUMS.*")))
+
+    def test_checksum_generation_replaces_manifest_with_validated_matrix(self):
+        (self.dist / "SHA256SUMS.txt").write_text("stale\n", encoding="utf-8")
+
+        count = generate_release_checksum_manifest(VERSION, self.dist, self.pom)
+
+        self.assertEqual(EXPECTED_ARTIFACT_COUNT, count)
+        self.assertEqual(EXPECTED_ARTIFACT_COUNT, len(self._validate()))
+
     def test_publishers_validate_before_reading_tokens_or_calling_apis(self):
         fake_modules = self.root / "fake-modules"
         fake_modules.mkdir()
@@ -163,6 +188,239 @@ class ReleaseArtifactValidationTest(unittest.TestCase):
                 self.assertNotEqual(0, result.returncode)
                 self.assertIn("does not match pom.xml version", result.stderr)
                 self.assertNotIn("publisher called the network", result.stderr)
+
+    def test_release_builders_fail_closed_and_validate_loader_jars(self):
+        unix_builder = (REPOSITORY_ROOT / "build-all.sh").read_text(encoding="utf-8")
+        windows_builder = (REPOSITORY_ROOT / "build-all.bat").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'if ! find dist -name "retromod-*.jar" -type f -delete; then',
+            unix_builder,
+        )
+        self.assertIn('if ! cp -- "$SHADED_JAR" "$CLI_OUTPUT"; then', unix_builder)
+        self.assertIn('RELEASE_TREE_LINK=$(find dist -type l -print -quit)',
+                      unix_builder)
+        self.assertIn("scripts/generate-release-checksums.py", unix_builder)
+        self.assertIn("*[!0-9]*", unix_builder)
+        self.assertIn('"$CHECKSUM_COUNT" -ne "$EXPECTED_TOTAL"', unix_builder)
+        self.assertIn('source.stat().st_size != output.stat().st_size', unix_builder)
+        self.assertIn('corrupt = jar.testzip()', unix_builder)
+        self.assertIn('if [ -e "$OUTPUT_PATH" ] || [ -L "$OUTPUT_PATH" ]; then',
+                      unix_builder)
+        self.assertIn("validate_loader_jar", unix_builder)
+        self.assertIn('name.startswith("org/objectweb/asm/")', unix_builder)
+        self.assertIn(
+            'present_metadata == expected_metadata_by_loader[loader]',
+            unix_builder,
+        )
+        self.assertIn('set_dependency("java", java_requirement)', unix_builder)
+        self.assertIn('"$TEMP_DIR/quilt.mod.json"', unix_builder)
+
+        self.assertIn('set "STALE_DELETE_FAILED=1"', windows_builder)
+        self.assertIn("getattr(q.lstat(),'st_reparse_tag',0)", windows_builder)
+        self.assertIn('set "CLI_OUTPUT=dist\\CLI\\retromod-%VERSION%-cli.jar"',
+                      windows_builder)
+        self.assertIn("bad=z.testzip()", windows_builder)
+        self.assertIn("scripts\\generate-release-checksums.py", windows_builder)
+        self.assertIn("crc=z.testzip()", windows_builder)
+        self.assertIn('if exist "!OUTPUT_PATH!" del /q "!OUTPUT_PATH!"', windows_builder)
+        self.assertIn("call :validate_loader_jar", windows_builder)
+        self.assertIn("x.startswith('org/objectweb/asm/')", windows_builder)
+        self.assertIn("n.intersection(lm)==expected[l]", windows_builder)
+        self.assertIn("'fabric':{'fabric.mod.json','quilt.mod.json'}", windows_builder)
+        self.assertIn('"quilt.mod.json" "%MC_VERSION%"', windows_builder)
+
+    def test_rolling_release_serializes_and_verifies_the_uploaded_asset(self):
+        workflow = (
+            REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("group: rolling-github-release", workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
+        self.assertIn("id: freshness", workflow)
+        self.assertIn('echo "publish=false" >> "$GITHUB_OUTPUT"', workflow)
+        self.assertIn("if: steps.freshness.outputs.publish == 'true'", workflow)
+        self.assertIn("id: rolling_release", workflow)
+        self.assertIn("overwrite_files: true", workflow)
+        self.assertIn("fail_on_unmatched_files: true", workflow)
+        self.assertIn("steps.rolling_release.outputs.assets", workflow)
+        self.assertIn("GitHub's asset digest does not match the staged jar", workflow)
+        self.assertIn("sha256sum --check", workflow)
+        self.assertIn("git/refs/tags/latest", workflow)
+
+    def test_embedded_loader_jar_validators_reject_bad_archive_contents(self):
+        unix_builder = (REPOSITORY_ROOT / "build-all.sh").read_text(encoding="utf-8")
+        windows_builder = (REPOSITORY_ROOT / "build-all.bat").read_text(encoding="utf-8")
+        unix_match = re.search(
+            r"validate_loader_jar\(\) \{\n\s+python3 .*?<<'PY'\n(.*?)\nPY\n\}",
+            unix_builder,
+            re.DOTALL,
+        )
+        windows_match = re.search(
+            r'(?m)^!PYTHON_CMD! -c "(.*)" "%~1" "%~2" "%~3" "%~4" "%~5"$',
+            windows_builder,
+        )
+        self.assertIsNotNone(unix_match)
+        self.assertIsNotNone(windows_match)
+        validators = (unix_match.group(1), windows_match.group(1))
+
+        fixture = self.root / "loader.jar"
+
+        def manifest(loader):
+            return (
+                "Manifest-Version: 1.0\n"
+                f"Implementation-Version: {VERSION}\n"
+                "Retromod-Target-MC: 26.2\n"
+                f"Retromod-Loader: {loader}\n\n"
+            )
+
+        def toml_metadata(loader):
+            return (
+            'modLoader = "javafml"\n'
+            '[[mods]]\n'
+            'modId = "retromod"\n'
+            f'version = "{VERSION}"\n'
+            '[[dependencies.retromod]]\n'
+            f'modId = "{loader}"\n'
+            '[[dependencies.retromod]]\n'
+            'modId = "minecraft"\n'
+            'versionRange = "[26.2]"\n'
+            )
+
+        def write_toml_fixture(loader, *, bundled_asm=False, quilt_metadata=False,
+                               corrupt_entry=False):
+            metadata_path = (
+                "META-INF/mods.toml" if loader == "forge"
+                else "META-INF/neoforge.mods.toml"
+            )
+            with zipfile.ZipFile(fixture, "w") as jar:
+                jar.writestr("META-INF/MANIFEST.MF", manifest(loader))
+                jar.writestr(metadata_path, toml_metadata(loader))
+                jar.writestr("com/retromod/Fixture.class", b"crc-payload")
+                if bundled_asm:
+                    jar.writestr("org/objectweb/asm/ClassReader.class", b"not asm")
+                if quilt_metadata:
+                    jar.writestr("quilt.mod.json", "{}")
+            if corrupt_entry:
+                archive = bytearray(fixture.read_bytes())
+                payload_offset = archive.index(b"crc-payload")
+                archive[payload_offset] ^= 0x01
+                fixture.write_bytes(archive)
+
+        expected_quilt_entrypoints = {
+            "main": "com.retromod.core.Retromod",
+            "client": "com.retromod.core.RetromodClient",
+            "server": "com.retromod.core.RetromodServer",
+            "preLaunch": "com.retromod.core.RetromodPreLaunch",
+        }
+
+        def write_fabric_fixture(*, include_quilt=True, quilt_version=VERSION,
+                                 quilt_minecraft="=26.2", quilt_java=">=25",
+                                 quilt_entrypoints=expected_quilt_entrypoints):
+            fabric_metadata = json.dumps({
+                "schemaVersion": 1,
+                "id": "retromod",
+                "version": VERSION,
+                "depends": {
+                    "minecraft": "26.2",
+                    "java": ">=25",
+                },
+            })
+            quilt_loader = {
+                "id": "retromod",
+                "version": quilt_version,
+                "depends": [
+                    {"id": "quilt_loader", "versions": ">=0.20.0"},
+                    {"id": "minecraft", "versions": quilt_minecraft},
+                    {"id": "java", "versions": quilt_java},
+                ],
+            }
+            if quilt_entrypoints is not None:
+                quilt_loader["entrypoints"] = quilt_entrypoints
+            quilt_metadata = json.dumps({
+                "schema_version": 1,
+                "quilt_loader": quilt_loader,
+            })
+            with zipfile.ZipFile(fixture, "w") as jar:
+                jar.writestr("META-INF/MANIFEST.MF", manifest("fabric"))
+                jar.writestr("fabric.mod.json", fabric_metadata)
+                if include_quilt:
+                    jar.writestr("quilt.mod.json", quilt_metadata)
+                jar.writestr("com/retromod/Fixture.class", b"crc-payload")
+
+        def run_validator(code, loader):
+            return subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    code,
+                    os.fspath(fixture),
+                    loader,
+                    "26.2",
+                    VERSION,
+                    ">=25",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        for validator in validators:
+            with self.subTest(validator="valid Forge"):
+                write_toml_fixture("forge")
+                self.assertEqual(0, run_validator(validator, "forge").returncode)
+            with self.subTest(validator="bundled ASM"):
+                write_toml_fixture("forge", bundled_asm=True)
+                self.assertNotEqual(0, run_validator(validator, "forge").returncode)
+            with self.subTest(validator="Forge rejects Quilt metadata"):
+                write_toml_fixture("forge", quilt_metadata=True)
+                self.assertNotEqual(0, run_validator(validator, "forge").returncode)
+            with self.subTest(validator="NeoForge rejects Quilt metadata"):
+                write_toml_fixture("neoforge", quilt_metadata=True)
+                self.assertNotEqual(0, run_validator(validator, "neoforge").returncode)
+            with self.subTest(validator="corrupt class entry"):
+                write_toml_fixture("forge", corrupt_entry=True)
+                self.assertNotEqual(0, run_validator(validator, "forge").returncode)
+            with self.subTest(validator="valid Fabric and Quilt metadata"):
+                write_fabric_fixture()
+                self.assertEqual(0, run_validator(validator, "fabric").returncode)
+            with self.subTest(validator="Fabric requires Quilt metadata"):
+                write_fabric_fixture(include_quilt=False)
+                self.assertNotEqual(0, run_validator(validator, "fabric").returncode)
+            with self.subTest(validator="Quilt requires entrypoints"):
+                write_fabric_fixture(quilt_entrypoints=None)
+                self.assertNotEqual(0, run_validator(validator, "fabric").returncode)
+            for entrypoint in expected_quilt_entrypoints:
+                missing_entrypoint = dict(expected_quilt_entrypoints)
+                missing_entrypoint.pop(entrypoint)
+                with self.subTest(validator=f"Quilt missing {entrypoint} entrypoint"):
+                    write_fabric_fixture(quilt_entrypoints=missing_entrypoint)
+                    self.assertNotEqual(
+                        0, run_validator(validator, "fabric").returncode)
+
+                wrong_entrypoint = dict(expected_quilt_entrypoints)
+                wrong_entrypoint[entrypoint] = "com.retromod.core.WrongEntrypoint"
+                with self.subTest(validator=f"Quilt wrong {entrypoint} entrypoint"):
+                    write_fabric_fixture(quilt_entrypoints=wrong_entrypoint)
+                    self.assertNotEqual(
+                        0, run_validator(validator, "fabric").returncode)
+            with self.subTest(validator="Quilt-native entrypoints are rejected"):
+                quilt_native_entrypoints = dict(expected_quilt_entrypoints)
+                quilt_native_entrypoints.update({
+                    "init": "com.retromod.core.Retromod",
+                    "client_init": "com.retromod.core.RetromodClient",
+                    "server_init": "com.retromod.core.RetromodServer",
+                    "pre_launch": "com.retromod.core.RetromodPreLaunch",
+                })
+                write_fabric_fixture(quilt_entrypoints=quilt_native_entrypoints)
+                self.assertNotEqual(0, run_validator(validator, "fabric").returncode)
+            for field, arguments in (
+                    ("version", {"quilt_version": "wrong"}),
+                    ("Minecraft", {"quilt_minecraft": "=26.1"}),
+                    ("Java", {"quilt_java": ">=17"})):
+                with self.subTest(validator=f"Quilt {field} mismatch"):
+                    write_fabric_fixture(**arguments)
+                    self.assertNotEqual(0, run_validator(validator, "fabric").returncode)
 
 
 if __name__ == "__main__":

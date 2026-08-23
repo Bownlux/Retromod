@@ -1,5 +1,5 @@
 ---
-title: Config reference
+title: Config Reference
 nav_order: 4
 ---
 
@@ -20,7 +20,7 @@ Settings live in `config/retromod/config.json`. Retromod creates the file on fir
 
 Leave these defaults in place unless you are diagnosing a specific transform.
 
-`check_for_native_versions` is the only setting here that enables routine outbound HTTP. It checks Modrinth metadata and does not download a mod jar. You can also opt in for one run with `-Dretromod.checkForNativeVersions=true`. The in-game settings screen does not expose this key or `restart_prompt`; set them by editing the JSON file.
+`check_for_native_versions` is the only setting here that enables routine outbound HTTP. It checks Modrinth metadata and does not download a mod jar. You can also opt in for one run with `-Dretromod.checkForNativeVersions=true`. The in-game settings screen does not expose this key or `restart_prompt`. Set them by editing the JSON file.
 
 ## Reserved Settings
 
@@ -32,10 +32,10 @@ The generated file also contains settings that are reserved for later runtime wi
 | `instruction_level_granularity` | `true` | Reserved transform-granularity toggle |
 | `transform_mixins` | `true` | Read by the Fabric initializer, but not yet used to gate the mixin passes |
 | `transform_refmaps` | `true` | Reserved refmap-pass toggle |
-| `remap_reflection` | `true` | Reserved JSON toggle; the current transformer uses the `retromod.remapReflection` system property |
+| `remap_reflection` | `true` | Reserved JSON toggle. The current transformer uses the `retromod.remapReflection` system property |
 | `log_level` | `"INFO"` | Reserved log-level setting |
 | `log_transformations` | `false` | Reserved per-redirect logging toggle |
-| `target_mc_version` | `"auto"` | Reserved override; loader detection and the CLI `--target` option select the target |
+| `target_mc_version` | `"auto"` | Reserved override. Loader detection and the CLI `--target` option select the target |
 | `debug` | `false` | Reserved debug toggle |
 | `dump_bytecode` | `false` | Reserved bytecode-dump toggle |
 
@@ -47,4 +47,4 @@ The file is plain JSON and cannot contain JSON comments. The `_comment` field is
 
 Set `check_for_native_versions`, `restart_prompt`, and reserved keys by editing the file. The settings screen does not display them, but it preserves them when saving its four toggles.
 
-Verification reports are written to `config/retromod/verify-reports/`. The normal AOT cache lives in `config/retromod/aot-cache/`; full AOT state lives in `retromod-cache/full-aot/`.
+Verification reports are written to `config/retromod/verify-reports/`. The normal AOT cache lives in `config/retromod/aot-cache/`. Full AOT state lives in `retromod-cache/full-aot/`.

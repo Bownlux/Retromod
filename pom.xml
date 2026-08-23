@@ -42,6 +42,7 @@
         <gson.version>2.10.1</gson.version>
         <slf4j.version>2.0.18</slf4j.version>
         <toml4j.version>0.7.2</toml4j.version>
+        <retromod.shade.classifier>all</retromod.shade.classifier>
     </properties>
 
     <repositories>
@@ -161,7 +162,7 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
-            <version>5.10.1</version>
+            <version>6.1.3</version>
             <scope>test</scope>
         </dependency>
         <!-- Test-only: the 1.12.2 FML event stand-ins expose getModLog() typed
@@ -220,10 +221,10 @@
                                 <requireJavaVersion>
                                     <!--
                                         Build floor is 17 (matches the bytecode target). Maven
-                                        needs Java 25 to run the compiler with the release=17 flag
-                                        plus the ASM 9.8 features we use; CI uses Java 25, local
-                                        builds work on Java 17+ if you don't need to read 26.1
-                                        class files.
+                                        release builds use Java 25 so generation and verification
+                                        paths can read Minecraft 26.x through ASM 9.10.1. Local
+                                        builds work on Java 17+ when they do not read those class
+                                        files.
                                     -->
                                     <version>[17,)</version>
                                     <message>Retromod requires Java 17 or later to build. You have ${java.version}. Install from https://adoptium.net/</message>
@@ -382,7 +383,7 @@
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                             <shadedArtifactAttached>true</shadedArtifactAttached>
-                            <shadedClassifierName>all</shadedClassifierName>
+                            <shadedClassifierName>${retromod.shade.classifier}</shadedClassifierName>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>com.retromod.cli.RetromodCli</mainClass>
@@ -600,16 +601,25 @@
         </profile>
 
         <!-- Lite build profile: 1.20+ only, no legacy shims, no third-party polyfills -->
-        <!-- Build with: mvn package -P lite -DskipTests -->
+        <!-- Build with: mvn package -P lite -DskipTests -Dexec.skip=true -->
         <profile>
             <id>lite</id>
+            <properties>
+                <retromod.shade.classifier>lite-all</retromod.shade.classifier>
+            </properties>
             <build>
+                <!--
+                    Keep the filtered JAR as the project's main artifact so the
+                    shade goal can consume it. The profile-specific final name
+                    distinguishes lite outputs without attaching the base JAR
+                    under a classifier.
+                -->
+                <finalName>retromod-${project.version}-lite</finalName>
                 <plugins>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-jar-plugin</artifactId>
                         <configuration>
-                            <classifier>lite</classifier>
                             <excludes>
                                 <!-- Legacy version shims (pre-1.20) -->
                                 <exclude>com/retromod/shim/fabric/Fabric_1_14*</exclude>
@@ -639,13 +649,6 @@
                                 <!-- Forge-specific polyfills -->
                                 <exclude>com/retromod/polyfill/forge/**</exclude>
                             </excludes>
-                        </configuration>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-shade-plugin</artifactId>
-                        <configuration>
-                            <shadedClassifierName>lite-all</shadedClassifierName>
                         </configuration>
                     </plugin>
                 </plugins>

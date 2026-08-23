@@ -5,7 +5,7 @@
 package com.retromod.shim.api.common;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /**
  * Redirects {@code FabricLoader.getModContainer(String)} to
@@ -13,7 +13,7 @@ import com.retromod.core.VersionShim;
  * spoofed version from {@code /retromod/version-spoofs.json} instead of the installed one. The
  * spoof rules live in that JSON resource.
  */
-public final class VersionSpoofShim implements VersionShim {
+public final class VersionSpoofShim implements AuxiliaryVersionShim {
 
     @Override
     public String getShimName() {

@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.JarSignatureSanitizer;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
@@ -246,6 +247,7 @@ public final class SyntheticEmbedder {
                 }
                 out.put(generatedName, remap(synthetics.get(n), remapper));
             }
+            JarSignatureSanitizer.sanitizeEntries(out);
 
             // write to a sibling temp + move: rewriting in place with a truncating stream
             // destroys the jar if anything throws mid-write (review finding)
@@ -321,6 +323,7 @@ public final class SyntheticEmbedder {
         }
 
         java.util.LinkedHashMap<String, byte[]> entries = new java.util.LinkedHashMap<>();
+        Set<String> canonicalNames = new HashSet<>();
         long total = 0;
         try (var input = new java.util.zip.ZipInputStream(
                 new java.io.ByteArrayInputStream(jarData))) {
@@ -330,6 +333,12 @@ public final class SyntheticEmbedder {
                     throw new IOException("nested JAR has too many entries during synthetic embed");
                 }
                 String name = validateEntryName(entry.getName(), entry.isDirectory());
+                String canonicalName = ZipSecurity.canonicalEntryName(name);
+                if (!canonicalNames.add(canonicalName)) {
+                    throw new IOException(
+                            "nested JAR contains duplicate normalized entry during synthetic embed: "
+                                    + name);
+                }
                 byte[] data = entry.isDirectory() ? new byte[0]
                         : ZipSecurity.safeReadAllBytes(input);
                 total += data.length;
@@ -373,6 +382,7 @@ public final class SyntheticEmbedder {
             }
             outputEntries.put(generatedName, remap(synthetics.get(internalName), remapper));
         }
+        JarSignatureSanitizer.sanitizeEntries(outputEntries);
 
         BoundedMemoryOutput encoded = new BoundedMemoryOutput(maxOutputBytes, jarData.length);
         try (var output = new java.util.zip.ZipOutputStream(encoded)) {

@@ -5,10 +5,10 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /** Redirects for Fabric API changes across the common modules. */
-public class FabricApiShim implements VersionShim {
+public class FabricApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

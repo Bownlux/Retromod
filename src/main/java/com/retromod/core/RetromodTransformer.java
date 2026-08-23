@@ -48,6 +48,7 @@ public class RetromodTransformer implements ClassFileTransformer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Transformer");
     private static final RetromodTransformer INSTANCE = new RetromodTransformer();
+    static final long MAX_HIERARCHY_CLASS_BYTES = ZipSecurity.DEFAULT_MAX_ENTRY_SIZE;
 
     // Redirect maps below are populated by version shims and polyfill providers and read
     // during transformation. ConcurrentHashMap because shims register while classes load.
@@ -120,9 +121,18 @@ public class RetromodTransformer implements ClassFileTransformer {
     // rewrites class refs everywhere (descriptors, signatures, annotations).
     private final Map<String, String> classRedirects = new ConcurrentHashMap<>(64);
 
+    // A bundled compatibility provider must keep its own implementation links intact. Redirects
+    // into these packages still apply to mod callers, but references between classes inside the
+    // same registered package are preserved.
+    private final Set<String> redirectProviderPackages = ConcurrentHashMap.newKeySet();
+
     // oldOwner.oldName -> newOwner.newName. When newDesc starts with "(" this is a
     // field-to-method redirect (the field was removed and replaced with a method).
     private final Map<FieldKey, FieldTarget> fieldRedirects = new ConcurrentHashMap<>(64);
+
+    // A moved accessor setter may target a field that is final on the host. Shims opt exact
+    // destinations into Mixin's @Mutable handling instead of weakening every moved setter.
+    private final Set<FieldDestination> mutableAccessorDestinations = ConcurrentHashMap.newKeySet();
 
     // method_XXXX/field_XXXX -> Mojang names. 26.1 removed obfuscation, so Fabric mods
     // using intermediary names must be remapped. Applied via the ClassRemapper overrides.
@@ -301,7 +311,8 @@ public class RetromodTransformer implements ClassFileTransformer {
             java.util.zip.ZipEntry entry;
             while ((entry = jar.getNextEntry()) != null) {
                 String entryName = ZipSecurity.safeEntryName(entry.getName());
-                if (!entryNames.add(entryName)) {
+                String canonicalName = ZipSecurity.canonicalEntryName(entryName);
+                if (!entryNames.add(canonicalName)) {
                     throw new IOException("duplicate nested JAR entry: " + entryName);
                 }
                 if (entry.isDirectory()) {
@@ -912,6 +923,92 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
+     * Preserve internal links inside a bundled API provider while retaining its redirects for
+     * callers outside the provider package.
+     *
+     * <p>The prefix uses JVM package form, such as {@code com/example/provider/}. A missing
+     * trailing slash is added. Register the package before transforming provider classes.
+     */
+    public void registerRedirectProviderPackage(String packagePrefix) {
+        Objects.requireNonNull(packagePrefix, "packagePrefix");
+        if (packagePrefix.isBlank()) {
+            throw new IllegalArgumentException("Redirect provider package must not be blank");
+        }
+        String normalized = packagePrefix.replace('.', '/');
+        if (!normalized.endsWith("/")) {
+            normalized += "/";
+        }
+        redirectProviderPackages.add(normalized);
+        LOGGER.debug("Registered redirect provider package: {}", normalized);
+    }
+
+    private boolean preservesProviderReference(String className, String referencedOwner) {
+        if (className == null || referencedOwner == null || redirectProviderPackages.isEmpty()) {
+            return false;
+        }
+        for (String packagePrefix : redirectProviderPackages) {
+            if (className.startsWith(packagePrefix) && referencedOwner.startsWith(packagePrefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean preservesProviderInvokeDynamicName(String className, String descriptor) {
+        if (className == null || descriptor == null || redirectProviderPackages.isEmpty()) {
+            return false;
+        }
+        Type returnType = Type.getReturnType(descriptor);
+        return returnType.getSort() == Type.OBJECT
+                && preservesProviderReference(className, returnType.getInternalName());
+    }
+
+    /** Apply the cached global mappings through the package boundary of one provider class. */
+    private Remapper providerPreservingRemapper(Remapper delegate, String className) {
+        if (delegate == null || redirectProviderPackages.isEmpty()) {
+            return delegate;
+        }
+        boolean providerClass = redirectProviderPackages.stream()
+                .anyMatch(className::startsWith);
+        if (!providerClass) {
+            return delegate;
+        }
+        return new Remapper() {
+            @Override
+            public String map(String internalName) {
+                if (preservesProviderReference(className, internalName)) {
+                    return internalName;
+                }
+                return delegate.map(internalName);
+            }
+
+            @Override
+            public String mapMethodName(String owner, String name, String descriptor) {
+                if (preservesProviderReference(className, owner)) {
+                    return name;
+                }
+                return delegate.mapMethodName(owner, name, descriptor);
+            }
+
+            @Override
+            public String mapInvokeDynamicMethodName(String name, String descriptor) {
+                if (preservesProviderInvokeDynamicName(className, descriptor)) {
+                    return name;
+                }
+                return delegate.mapInvokeDynamicMethodName(name, descriptor);
+            }
+
+            @Override
+            public String mapFieldName(String owner, String name, String descriptor) {
+                if (preservesProviderReference(className, owner)) {
+                    return name;
+                }
+                return delegate.mapFieldName(owner, name, descriptor);
+            }
+        };
+    }
+
+    /**
      * Register a constructor-to-factory redirect.
      * Converts `new className(constructorDesc)` → `factoryClass.factoryMethod(factoryDesc)`.
      * The factory method must be static and return the class type.
@@ -1203,6 +1300,16 @@ public class RetromodTransformer implements ClassFileTransformer {
         LOGGER.debug("Registered field redirect: {}.{} {} -> {}.{} {}",
                 oldOwner, oldName, oldDesc, newOwner, newName, newDesc);
     }
+
+    /** Mark one exact moved field as requiring {@code @Mutable} on generated accessor setters. */
+    public void registerMutableAccessorDestination(String owner, String name, String descriptor) {
+        mutableAccessorDestinations.add(new FieldDestination(owner, name, descriptor));
+    }
+
+    /** Whether a moved accessor setter must clear the host field's final modifier. */
+    public boolean isMutableAccessorDestination(String owner, String name, String descriptor) {
+        return mutableAccessorDestinations.contains(new FieldDestination(owner, name, descriptor));
+    }
     
     /**
      * Register a field accessor redirect: GETFIELD becomes INVOKEVIRTUAL getter,
@@ -1441,13 +1548,20 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
-     * Test-only: wipe all registered redirect state so a test can assert on the absence of
-     * registrations (e.g. that a host-gated shim registers nothing on a pre-26.1 host). The
-     * singleton accumulates state across the JVM otherwise. Also clears the intermediary and
-     * SRG member-name maps that drive the remap gate, since they leak between tests too.
-     * Pattern heuristics are left untouched. Never call this from production code.
+     * Starts a standalone offline input with no registrations from the previous input.
+     * Call this only at an offline transform boundary, before registering that input's complete
+     * shim, polyfill, and mapping set. Runtime loader entry points keep one host-wide set instead.
      */
+    public void resetOfflineRegistrations() {
+        clearRegisteredState();
+    }
+
+    /** Test-only alias for clearing the singleton between independent cases. */
     public void clearRedirectsForTesting() {
+        clearRegisteredState();
+    }
+
+    private synchronized void clearRegisteredState() {
         methodRedirects.clear();
         inheritedMethodRedirects.clear();
         interfaceSyntheticTargets.clear();
@@ -1473,7 +1587,9 @@ public class RetromodTransformer implements ClassFileTransformer {
         targetSrgMethodNames.clear();
         targetSrgFieldNames.clear();
         classRedirects.clear();
+        redirectProviderPackages.clear();
         fieldRedirects.clear();
+        mutableAccessorDestinations.clear();
         superclassRedirects.clear();
         constructorRedirects.clear();
         constructorRedirectOwners.clear();
@@ -1491,6 +1607,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         indyTypedOwners.clear();
         classRedirectsVersion.incrementAndGet();
         cachedRemapper = null;
+        reflectionRemapper = null;
         // A fresh redirect set must be re-validated for phantom targets on the next transform
         // (the sweep is otherwise once per transformer lifetime).
         targetsValidated.set(false);
@@ -1812,6 +1929,11 @@ public class RetromodTransformer implements ClassFileTransformer {
      */
     private byte[] postProcess(byte[] stableBytes, String className) {
         byte[] repaired = normalizeEmbeddedShimCalls(stableBytes);
+        if (syntheticClasses.containsKey(
+                com.retromod.shim.fabric.embedded.LegacyBlockRandomTickBridge.INTERNAL_NAME)) {
+            repaired = com.retromod.shim.fabric.LegacyBlockRandomTickCallAdapter.apply(
+                    repaired, currentJarClassBytesProvider());
+        }
         repaired = com.retromod.shim.common.LegacyInputEventCallAdapter.apply(repaired);
         // GUI override repair matches Mojang descriptors and proven post-remap base classes.
         repaired = com.retromod.shim.common.LegacyGuiOverrideAdapter.apply(repaired);
@@ -2080,6 +2202,10 @@ public class RetromodTransformer implements ClassFileTransformer {
             }
         }
 
+        // The global remapper remains cacheable. A small per-class wrapper suppresses only
+        // references that stay within a registered provider package.
+        classRemapper = providerPreservingRemapper(classRemapper, reader.getClassName());
+
         // When using ClassRemapper, don't pass the ClassReader to ClassWriter: ClassWriter(reader,
         // flags) copies the reader's constant pool, so the remapper's name changes wouldn't reach
         // the output. A standalone ClassWriter forces ASM to build a fresh constant pool.
@@ -2123,7 +2249,8 @@ public class RetromodTransformer implements ClassFileTransformer {
         // Constructor->factory rewriting runs OUTERMOST (upstream of the remapper) so it
         // sees pre-remap owner names; see CtorRedirectPrePass for why that matters.
         if (hasApplicableConstructorRedirect) {
-            visitor = new CtorRedirectPrePass(Opcodes.ASM9, visitor, classRemapper);
+            visitor = new CtorRedirectPrePass(
+                    Opcodes.ASM9, visitor, classRemapper, reader.getClassName());
         }
 
         try {
@@ -2157,7 +2284,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                 }
                 if (hasApplicableConstructorRedirect) {
                     fallbackVisitor = new CtorRedirectPrePass(Opcodes.ASM9, fallbackVisitor,
-                            classRemapper);
+                            classRemapper, reader.getClassName());
                 }
                 // Don't skip frames; preserve existing StackMapTable entries
                 frameInvalidatingRewrite.set(Boolean.FALSE);
@@ -2208,6 +2335,7 @@ public class RetromodTransformer implements ClassFileTransformer {
     private boolean hasMatchingConstructorRedirect(ClassReader reader, Remapper remapper) {
         if (constructorRedirects.isEmpty()) return false;
         boolean[] found = {false};
+        String caller = reader.getClassName();
         reader.accept(new ClassVisitor(Opcodes.ASM9) {
             @Override
             public MethodVisitor visitMethod(int access, String name, String descriptor,
@@ -2218,6 +2346,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                             String methodDesc, boolean isInterface) {
                         if (found[0] || opcode != Opcodes.INVOKESPECIAL
                                 || !"<init>".equals(methodName)) return;
+                        if (preservesProviderReference(caller, owner)) return;
                         String resolvedOwner = remapper == null ? owner : remapper.mapType(owner);
                         String resolvedDesc = remapper == null
                                 ? methodDesc : remapper.mapMethodDesc(methodDesc);
@@ -2248,7 +2377,8 @@ public class RetromodTransformer implements ClassFileTransformer {
                 visitor = new ClassRemapper(visitor, classRemapper);
             }
             if (applyConstructorRedirects && !constructorRedirects.isEmpty()) {
-                visitor = new CtorRedirectPrePass(Opcodes.ASM9, visitor, classRemapper);
+                visitor = new CtorRedirectPrePass(
+                        Opcodes.ASM9, visitor, classRemapper, reader.getClassName());
             }
 
             frameInvalidatingRewrite.set(Boolean.FALSE);
@@ -2748,17 +2878,32 @@ public class RetromodTransformer implements ClassFileTransformer {
         }
     }
 
-    private static byte[] readClassBytes(String name, Function<String, byte[]> provider) {
+    static byte[] readClassBytes(String name, Function<String, byte[]> provider) {
+        return readClassBytes(name, provider, resourceName ->
+                RetromodTransformer.class.getClassLoader().getResourceAsStream(resourceName));
+    }
+
+    static byte[] readClassBytes(String name, Function<String, byte[]> provider,
+            Function<String, InputStream> resourceProvider) {
+        return readClassBytes(
+                name, provider, resourceProvider, MAX_HIERARCHY_CLASS_BYTES);
+    }
+
+    static byte[] readClassBytes(String name, Function<String, byte[]> provider,
+            Function<String, InputStream> resourceProvider, long maxBytes) {
         if (provider != null) {
             byte[] bytes = provider.apply(name);
             if (bytes != null) {
                 return bytes;
             }
         }
-        try (InputStream in = RetromodTransformer.class.getClassLoader()
-                .getResourceAsStream(name + ".class")) {
-            return in == null ? null : in.readAllBytes();
-        } catch (IOException ignored) {
+        if (name == null || resourceProvider == null) {
+            return null;
+        }
+        try (InputStream in = resourceProvider.apply(name + ".class")) {
+            return in == null ? null
+                    : ZipSecurity.safeReadAllBytes(in, maxBytes);
+        } catch (IOException | RuntimeException ignored) {
             return null;
         }
     }
@@ -3169,11 +3314,13 @@ public class RetromodTransformer implements ClassFileTransformer {
 
         /** Resolves pre-remap names to what the downstream remapper will emit; nullable. */
         private final org.objectweb.asm.commons.Remapper resolver;
+        private final String className;
 
         CtorRedirectPrePass(int api, ClassVisitor cv,
-                org.objectweb.asm.commons.Remapper resolver) {
+                org.objectweb.asm.commons.Remapper resolver, String className) {
             super(api, cv);
             this.resolver = resolver;
+            this.className = className;
         }
 
         private String resolveType(String type) {
@@ -3213,6 +3360,10 @@ public class RetromodTransformer implements ClassFileTransformer {
 
             @Override
             public void visitTypeInsn(int opcode, String type) {
+                if (opcode == Opcodes.NEW && preservesProviderReference(className, type)) {
+                    super.visitTypeInsn(opcode, type);
+                    return;
+                }
                 if (opcode == Opcodes.NEW
                         && (constructorRedirectOwners.contains(type)
                             || constructorRedirectOwners.contains(resolveType(type)))) {
@@ -3631,6 +3782,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                 for (int i = 0; i < bootstrapMethodArguments.length; i++) {
                     if (!(bootstrapMethodArguments[i] instanceof org.objectweb.asm.Handle h)) continue;
                     if (h.getTag() != Opcodes.H_NEWINVOKESPECIAL || !"<init>".equals(h.getName())) continue;
+                    if (preservesProviderReference(classOwnName, h.getOwner())) continue;
                     String resolvedOwner = classRedirects.getOrDefault(h.getOwner(), h.getOwner());
                     String resolvedDesc = resolveDescriptor(h.getDesc());
                     FactoryTarget factory = constructorRedirects.get(new ConstructorKey(resolvedOwner, resolvedDesc));
@@ -3654,6 +3806,7 @@ public class RetromodTransformer implements ClassFileTransformer {
             if (!convertingRedirects.isEmpty() && bootstrapMethodArguments != null) {
                 for (int i = 0; i < bootstrapMethodArguments.length; i++) {
                     if (!(bootstrapMethodArguments[i] instanceof org.objectweb.asm.Handle h)) continue;
+                    if (preservesProviderReference(classOwnName, h.getOwner())) continue;
                     String resolvedOwner = classRedirects.getOrDefault(h.getOwner(), h.getOwner());
                     String resolvedDesc = resolveDescriptor(h.getDesc());
                     ConvertingTarget conv = convertingRedirects.get(
@@ -3722,6 +3875,11 @@ public class RetromodTransformer implements ClassFileTransformer {
             // with the reified event type appended as a Class constant.
             final String indyConsumerType = pendingIndyConsumerType;
             pendingIndyConsumerType = null;
+
+            if (preservesProviderReference(classOwnName, owner)) {
+                super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
+                return;
+            }
 
             if (indyConsumerType != null && !indyTypedRewrites.isEmpty()
                     && indyTypedOwners.contains(owner)) {
@@ -4114,6 +4272,10 @@ public class RetromodTransformer implements ClassFileTransformer {
         @Override
         public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
             pendingIndyConsumerType = null;
+            if (preservesProviderReference(classOwnName, owner)) {
+                super.visitFieldInsn(opcode, owner, name, descriptor);
+                return;
+            }
             // Don't flush; field accesses can be constructor arguments
             FieldKey key = new FieldKey(owner, name);
 
@@ -4340,6 +4502,7 @@ public class RetromodTransformer implements ClassFileTransformer {
     public record FieldKey(String owner, String name) {}
     /** Target of a field redirect. If newDesc starts with "(", this is a field-to-method redirect. */
     public record FieldTarget(String owner, String name, String oldDesc, String newDesc) {}
+    private record FieldDestination(String owner, String name, String descriptor) {}
     /** Target of a field accessor redirect: field access becomes getter/setter method call. */
     public record FieldAccessorTarget(
         String getterOwner, String getterName, String getterDesc,

@@ -5,12 +5,12 @@
 package com.retromod.shim.api.forge;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /**
  * Mekanism API shim: gas/chemical reorg, TileEntity to BlockEntity renames, recipe and energy moves.
  */
-public class MekanismApiShim implements VersionShim {
+public class MekanismApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

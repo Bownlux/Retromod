@@ -6,7 +6,7 @@ package com.retromod.shim.api.fabric;
 
 import com.retromod.core.EnvironmentDetector;
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,7 +20,7 @@ import org.slf4j.LoggerFactory;
  * {@code NoClassDefFoundError} for the whole class. Gated on v2 being present (probed without
  * initializing, #14), since redirecting onto a missing class is worse than leaving v1 alone.
  */
-public class FabricConventionTagsShim implements VersionShim {
+public class FabricConventionTagsShim implements AuxiliaryVersionShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 

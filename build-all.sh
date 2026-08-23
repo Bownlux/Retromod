@@ -68,14 +68,10 @@ if ! command -v zip &> /dev/null; then
     exit 1
 fi
 
-# Release artifacts need a fresh external checksum manifest. Linux commonly
-# provides sha256sum, while macOS provides shasum.
-if command -v sha256sum &> /dev/null; then
-    SHA256_TOOL="sha256sum"
-elif command -v shasum &> /dev/null; then
-    SHA256_TOOL="shasum"
-else
-    echo "ERROR: Neither sha256sum nor shasum is installed."
+# Python generates metadata and verifies the executable self-hash. Release
+# output must not fall back to a partial or stale metadata rewrite.
+if ! command -v python3 &> /dev/null; then
+    echo "ERROR: Python 3 is required for metadata and self-hash checks."
     exit 1
 fi
 
@@ -95,7 +91,10 @@ if [ "$SKIP_BUILD" = false ]; then
     echo "[Step 1/4] Building base JAR with Maven..."
     # The exec plugin calls this script with --skip-build to create dist/. Skipping it here avoids
     # running the entire 69-jar distribution phase once inside Maven and then again below.
-    mvn clean package -DskipTests -Dexec.skip=true
+    if ! mvn clean package -DskipTests -Dexec.skip=true; then
+        echo "ERROR: Maven failed while building the base JAR."
+        exit 1
+    fi
 else
     echo "[Step 1/4] Skipping Maven build (--skip-build flag)"
 fi
@@ -149,11 +148,39 @@ else
     echo "  Self-hash: $EMBEDDED_SELF_HASH (verified)"
 fi
 
+# The checksum validator rejects linked release trees. Refuse them before cleanup or packaging so
+# an existing dist link cannot redirect release writes outside the repository.
+if [ -L dist ] || { [ -e dist ] && [ ! -d dist ]; }; then
+    echo "ERROR: dist must be a real directory, not a link or file."
+    exit 1
+fi
+if [ -d dist ]; then
+    if ! RELEASE_TREE_LINK=$(find dist -type l -print -quit); then
+        echo "ERROR: Could not inspect the existing dist tree."
+        exit 1
+    fi
+    if [ -n "$RELEASE_TREE_LINK" ]; then
+        echo "ERROR: dist contains a linked path: $RELEASE_TREE_LINK"
+        exit 1
+    fi
+fi
+
 # Remove stale Retromod jars only after every build and integrity preflight has
 # passed. A bad version or self-hash must not erase the last usable dist tree.
 # User-added notes and other files under dist/ are left alone.
 if [ -d dist ]; then
-    find dist -name "retromod-*.jar" -type f -delete 2>/dev/null
+    if ! find dist -name "retromod-*.jar" -type f -delete; then
+        echo "ERROR: Could not remove stale Retromod JARs from dist/."
+        exit 1
+    fi
+    if ! REMAINING_STALE_JAR=$(find dist -name "retromod-*.jar" -type f -print -quit); then
+        echo "ERROR: Could not verify stale Retromod JAR cleanup under dist/."
+        exit 1
+    fi
+    if [ -n "$REMAINING_STALE_JAR" ]; then
+        echo "ERROR: A stale Retromod JAR remains under dist/."
+        exit 1
+    fi
 fi
 
 mkdir -p dist/Fabric
@@ -165,8 +192,48 @@ echo ""
 echo "[Step 2/4] Creating CLI tool..."
 
 # CLI is the shaded JAR directly
-cp "$SHADED_JAR" "dist/CLI/retromod-${VERSION}-cli.jar"
-echo "  dist/CLI/retromod-${VERSION}-cli.jar"
+CLI_OUTPUT="dist/CLI/retromod-${VERSION}-cli.jar"
+if [ -e "$CLI_OUTPUT" ] || [ -L "$CLI_OUTPUT" ]; then
+    if ! rm -f -- "$CLI_OUTPUT"; then
+        echo "ERROR: Could not remove the stale CLI artifact."
+        exit 1
+    fi
+fi
+if ! cp -- "$SHADED_JAR" "$CLI_OUTPUT"; then
+    rm -f -- "$CLI_OUTPUT"
+    echo "ERROR: Could not create the CLI artifact."
+    exit 1
+fi
+if ! python3 - "$SHADED_JAR" "$CLI_OUTPUT" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+import zipfile
+
+source, output = map(Path, sys.argv[1:])
+
+
+def digest(path):
+    value = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            value.update(chunk)
+    return value.digest()
+
+
+if source.stat().st_size != output.stat().st_size or digest(source) != digest(output):
+    raise SystemExit("CLI artifact differs from the shaded JAR")
+with zipfile.ZipFile(output) as jar:
+    corrupt = jar.testzip()
+    if corrupt is not None:
+        raise SystemExit(f"CLI artifact has a corrupt entry: {corrupt}")
+PY
+then
+    rm -f -- "$CLI_OUTPUT"
+    echo "ERROR: CLI artifact validation failed."
+    exit 1
+fi
+echo "  $CLI_OUTPUT"
 
 echo ""
 echo "[Step 3/4] Creating loader-specific JARs..."
@@ -231,6 +298,141 @@ loader_supports_version() {
     esac
 }
 
+# Inspect the packaged archive, not only the staging tree. A failed strip, metadata write, or
+# stale-output cleanup must never produce an artifact that still passes count and checksum gates.
+validate_loader_jar() {
+    python3 - "$1" "$2" "$3" "$4" "$5" <<'PY'
+import json
+import re
+import sys
+import zipfile
+
+jar_path, loader, minecraft_version, retromod_version, java_requirement = sys.argv[1:]
+
+
+def require(condition, message):
+    if not condition:
+        raise SystemExit(message)
+
+
+primary_metadata_by_loader = {
+    "fabric": "fabric.mod.json",
+    "forge": "META-INF/mods.toml",
+    "neoforge": "META-INF/neoforge.mods.toml",
+}
+expected_metadata_by_loader = {
+    "fabric": {"fabric.mod.json", "quilt.mod.json"},
+    "forge": {"META-INF/mods.toml"},
+    "neoforge": {"META-INF/neoforge.mods.toml"},
+}
+
+with zipfile.ZipFile(jar_path) as jar:
+    corrupt = jar.testzip()
+    require(
+        corrupt is None,
+        f"corrupt entry in {jar_path}: {corrupt}",
+    )
+    names = set(jar.namelist())
+    expected_metadata = primary_metadata_by_loader[loader]
+    loader_metadata = set(primary_metadata_by_loader.values()) | {"quilt.mod.json"}
+    present_metadata = names & loader_metadata
+    require(
+        present_metadata == expected_metadata_by_loader[loader],
+        f"wrong loader metadata in {jar_path}: {sorted(present_metadata)}",
+    )
+    require(
+        not any(name.startswith("org/objectweb/asm/") for name in names),
+        f"bundled ASM remains in {jar_path}",
+    )
+    if loader != "fabric":
+        require(
+            not any(name.startswith("javax/annotation/") for name in names),
+            f"bundled javax.annotation remains in {jar_path}",
+        )
+
+    require("META-INF/MANIFEST.MF" in names, f"manifest is missing from {jar_path}")
+    manifest = jar.read("META-INF/MANIFEST.MF").decode("utf-8", errors="strict")
+    require(
+        re.search(r"(?m)^Implementation-Version: "
+                  + re.escape(retromod_version) + r"\r?$", manifest) is not None,
+        f"manifest version mismatch in {jar_path}",
+    )
+    require(
+        re.search(r"(?m)^Retromod-Target-MC: "
+                  + re.escape(minecraft_version) + r"\r?$", manifest) is not None,
+        f"manifest Minecraft target mismatch in {jar_path}",
+    )
+    require(
+        re.search(r"(?m)^Retromod-Loader: "
+                  + re.escape(loader) + r"\r?$", manifest) is not None,
+        f"manifest loader mismatch in {jar_path}",
+    )
+
+    metadata = jar.read(expected_metadata).decode("utf-8", errors="strict")
+    if loader == "fabric":
+        parsed = json.loads(metadata)
+        depends = parsed.get("depends")
+        require(parsed.get("version") == retromod_version,
+                f"Fabric version mismatch in {jar_path}")
+        require(isinstance(depends, dict), f"Fabric depends object is missing in {jar_path}")
+        require(depends.get("minecraft") == minecraft_version,
+                f"Fabric Minecraft target mismatch in {jar_path}")
+        require(depends.get("java") == java_requirement,
+                f"Fabric Java requirement mismatch in {jar_path}")
+
+        quilt = json.loads(jar.read("quilt.mod.json").decode("utf-8", errors="strict"))
+        quilt_loader = quilt.get("quilt_loader")
+        require(isinstance(quilt_loader, dict),
+                f"Quilt loader object is missing in {jar_path}")
+        quilt_depends = quilt_loader.get("depends")
+        require(isinstance(quilt_depends, list),
+                f"Quilt depends list is missing in {jar_path}")
+        quilt_dependencies = {
+            dependency.get("id"): dependency.get("versions")
+            for dependency in quilt_depends
+            if isinstance(dependency, dict)
+        }
+        expected_quilt_entrypoints = {
+            "main": "com.retromod.core.Retromod",
+            "client": "com.retromod.core.RetromodClient",
+            "server": "com.retromod.core.RetromodServer",
+            "preLaunch": "com.retromod.core.RetromodPreLaunch",
+        }
+        require(quilt_loader.get("version") == retromod_version,
+                f"Quilt version mismatch in {jar_path}")
+        require(quilt_dependencies.get("minecraft") == "=" + minecraft_version,
+                f"Quilt Minecraft target mismatch in {jar_path}")
+        require(quilt_dependencies.get("java") == java_requirement,
+                f"Quilt Java requirement mismatch in {jar_path}")
+        require(quilt_loader.get("entrypoints") == expected_quilt_entrypoints,
+                f"Quilt entrypoints mismatch in {jar_path}")
+    else:
+        require(
+            re.search(r'(?m)^version\s*=\s*"'
+                      + re.escape(retromod_version) + r'"\s*$', metadata) is not None,
+            f"mod version mismatch in {jar_path}",
+        )
+        require(
+            re.search(r'(?m)^versionRange\s*=\s*"\['
+                      + re.escape(minecraft_version) + r'\]"\s*$', metadata) is not None,
+            f"Minecraft dependency mismatch in {jar_path}",
+        )
+        require(
+            re.search(r'(?m)^modId\s*=\s*"' + re.escape(loader) + r'"\s*$', metadata)
+            is not None,
+            f"loader dependency mismatch in {jar_path}",
+        )
+PY
+}
+
+remove_staged_path() {
+    local path=$1
+    if [ -e "$path" ] || [ -L "$path" ]; then
+        rm -rf -- "$path" || return 1
+    fi
+    [ ! -e "$path" ] && [ ! -L "$path" ]
+}
+
 # Function to create a mod JAR for specific loader and version
 create_mod_jar() {
     local LOADER=$1
@@ -262,10 +464,17 @@ create_mod_jar() {
     local OUTPUT_PATH="${ORIG_DIR}/dist/${LOADER_DIR}/${MC_VERSION}/${OUTPUT_NAME}"
 
     # Create version subdirectory
-    mkdir -p "${ORIG_DIR}/dist/${LOADER_DIR}/${MC_VERSION}"
+    if ! mkdir -p "${ORIG_DIR}/dist/${LOADER_DIR}/${MC_VERSION}"; then
+        echo "ERROR: Could not create the output directory for ${LOADER} ${MC_VERSION}."
+        return 1
+    fi
 
     # Create temp directory
-    local TEMP_DIR=$(mktemp -d)
+    local TEMP_DIR
+    if ! TEMP_DIR=$(mktemp -d); then
+        echo "ERROR: Could not create a temporary build directory."
+        return 1
+    fi
 
     # Extract shaded JAR (includes all dependencies like ASM, Gson, TOML4J)
     unzip -q "$SHADED_JAR" -d "$TEMP_DIR" 2>/dev/null || {
@@ -296,7 +505,11 @@ create_mod_jar() {
     # The CLI keeps its bundled ASM because it runs standalone with no loader
     # to provide one - and the CLI is a direct copy of the shaded jar, it
     # never goes through this extraction/strip path.
-    rm -rf "$TEMP_DIR/org/objectweb/asm" 2>/dev/null
+    if ! remove_staged_path "$TEMP_DIR/org/objectweb/asm"; then
+        echo "ERROR: Could not strip bundled ASM for ${LOADER} ${MC_VERSION}."
+        rm -rf "$TEMP_DIR"
+        return 1
+    fi
 
     # Strip our javax.annotation polyfill stubs on Forge/NeoForge ONLY.
     #
@@ -324,7 +537,11 @@ create_mod_jar() {
     # modern MC, so they don't collide - and stripping them would break the
     # polyfill for the rare user actually translating one of those old mods.
     if [ "$LOADER" = "forge" ] || [ "$LOADER" = "neoforge" ]; then
-        rm -rf "$TEMP_DIR/javax/annotation" 2>/dev/null
+        if ! remove_staged_path "$TEMP_DIR/javax/annotation"; then
+            echo "ERROR: Could not strip javax.annotation for ${LOADER} ${MC_VERSION}."
+            rm -rf "$TEMP_DIR"
+            return 1
+        fi
     fi
 
     # NOTE (#90, was #78): the NeoForge mod-file locator SERVICE entry
@@ -414,40 +631,86 @@ create_mod_jar() {
     # Remove other loaders' files
     case $LOADER in
         fabric)
-            rm -f "$TEMP_DIR/META-INF/neoforge.mods.toml" 2>/dev/null
-            rm -f "$TEMP_DIR/META-INF/mods.toml" 2>/dev/null
-            rm -f "$TEMP_DIR/pack.mcmeta" 2>/dev/null
-            # Update fabric.mod.json with correct MC version + Java requirement
-            if [ -f "$TEMP_DIR/fabric.mod.json" ]; then
-                if command -v python3 &> /dev/null; then
-                    python3 -c "
-import json
-try:
-    with open('$TEMP_DIR/fabric.mod.json', 'r') as f:
-        data = json.load(f)
-    data['depends']['minecraft'] = '${MC_VERSION}'
-    data['depends']['java'] = '${JAVA_REQ}'
-    data['version'] = '${VERSION}'
-    with open('$TEMP_DIR/fabric.mod.json', 'w') as f:
-        json.dump(data, f, indent=2)
-except Exception as e:
-    print(f'Warning: Could not update fabric.mod.json: {e}')
-"
-                else
-                    # Fallback: use sed (less reliable but works without Python)
-                    sed -i.bak "s/\"minecraft\": \"[^\"]*\"/\"minecraft\": \"${MC_VERSION}\"/" "$TEMP_DIR/fabric.mod.json" 2>/dev/null || true
-                    sed -i.bak "s/\"java\": \"[^\"]*\"/\"java\": \"${JAVA_REQ}\"/" "$TEMP_DIR/fabric.mod.json" 2>/dev/null || true
-                    rm -f "$TEMP_DIR/fabric.mod.json.bak" 2>/dev/null
+            for stale_path in \
+                    "$TEMP_DIR/META-INF/neoforge.mods.toml" \
+                    "$TEMP_DIR/META-INF/mods.toml" \
+                    "$TEMP_DIR/pack.mcmeta"; do
+                if ! remove_staged_path "$stale_path"; then
+                    echo "ERROR: Could not remove non-Fabric metadata for ${MC_VERSION}."
+                    rm -rf "$TEMP_DIR"
+                    return 1
                 fi
+            done
+            # Keep the shared Fabric/Quilt artifact exact for both loaders.
+            if [ ! -f "$TEMP_DIR/fabric.mod.json" ] || [ ! -f "$TEMP_DIR/quilt.mod.json" ]; then
+                echo "ERROR: Fabric or Quilt metadata is missing from the shaded JAR."
+                rm -rf "$TEMP_DIR"
+                return 1
+            fi
+            if ! python3 - "$TEMP_DIR/fabric.mod.json" "$TEMP_DIR/quilt.mod.json" \
+                    "$MC_VERSION" "$JAVA_REQ" "$VERSION" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+fabric_path, quilt_path = map(Path, sys.argv[1:3])
+minecraft_version, java_requirement, retromod_version = sys.argv[3:]
+
+data = json.loads(fabric_path.read_text(encoding="utf-8"))
+depends = data.get("depends")
+if not isinstance(depends, dict):
+    raise ValueError("fabric.mod.json has no depends object")
+depends["minecraft"] = minecraft_version
+depends["java"] = java_requirement
+data["version"] = retromod_version
+fabric_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+quilt = json.loads(quilt_path.read_text(encoding="utf-8"))
+quilt_loader = quilt.get("quilt_loader")
+if not isinstance(quilt_loader, dict):
+    raise ValueError("quilt.mod.json has no quilt_loader object")
+quilt_depends = quilt_loader.get("depends")
+if not isinstance(quilt_depends, list):
+    raise ValueError("quilt.mod.json has no depends list")
+
+
+def set_dependency(identifier, version):
+    for dependency in quilt_depends:
+        if isinstance(dependency, dict) and dependency.get("id") == identifier:
+            dependency["versions"] = version
+            return
+    quilt_depends.append({"id": identifier, "versions": version})
+
+
+set_dependency("minecraft", "=" + minecraft_version)
+set_dependency("java", java_requirement)
+quilt_loader["version"] = retromod_version
+quilt_path.write_text(json.dumps(quilt, indent=2), encoding="utf-8")
+PY
+            then
+                echo "ERROR: Could not update Fabric and Quilt metadata for ${MC_VERSION}."
+                rm -rf "$TEMP_DIR"
+                return 1
             fi
             ;;
         forge)
-            rm -f "$TEMP_DIR/fabric.mod.json" 2>/dev/null
-            rm -f "$TEMP_DIR/quilt.mod.json" 2>/dev/null
-            rm -f "$TEMP_DIR/META-INF/neoforge.mods.toml" 2>/dev/null
+            for stale_path in \
+                    "$TEMP_DIR/fabric.mod.json" \
+                    "$TEMP_DIR/quilt.mod.json" \
+                    "$TEMP_DIR/META-INF/neoforge.mods.toml"; do
+                if ! remove_staged_path "$stale_path"; then
+                    echo "ERROR: Could not remove non-Forge metadata for ${MC_VERSION}."
+                    rm -rf "$TEMP_DIR"
+                    return 1
+                fi
+            done
             # Create Forge mods.toml
-            mkdir -p "$TEMP_DIR/META-INF"
-            cat > "$TEMP_DIR/META-INF/mods.toml" << TOML
+            if ! mkdir -p "$TEMP_DIR/META-INF"; then
+                echo "ERROR: Could not prepare Forge metadata for ${MC_VERSION}."
+                rm -rf "$TEMP_DIR"
+                return 1
+            fi
+            if ! cat > "$TEMP_DIR/META-INF/mods.toml" << TOML
 modLoader = "javafml"
 loaderVersion = "[${FORGE_LV},)"
 license = "MIT"
@@ -478,18 +741,34 @@ versionRange = "[${MC_VERSION}]"
 ordering = "NONE"
 side = "BOTH"
 TOML
+            then
+                echo "ERROR: Could not write Forge metadata for ${MC_VERSION}."
+                rm -rf "$TEMP_DIR"
+                return 1
+            fi
             ;;
         neoforge)
-            rm -f "$TEMP_DIR/fabric.mod.json" 2>/dev/null
-            rm -f "$TEMP_DIR/quilt.mod.json" 2>/dev/null
-            rm -f "$TEMP_DIR/META-INF/mods.toml" 2>/dev/null
+            for stale_path in \
+                    "$TEMP_DIR/fabric.mod.json" \
+                    "$TEMP_DIR/quilt.mod.json" \
+                    "$TEMP_DIR/META-INF/mods.toml"; do
+                if ! remove_staged_path "$stale_path"; then
+                    echo "ERROR: Could not remove non-NeoForge metadata for ${MC_VERSION}."
+                    rm -rf "$TEMP_DIR"
+                    return 1
+                fi
+            done
             # Create NeoForge mods.toml
-            mkdir -p "$TEMP_DIR/META-INF"
+            if ! mkdir -p "$TEMP_DIR/META-INF"; then
+                echo "ERROR: Could not prepare NeoForge metadata for ${MC_VERSION}."
+                rm -rf "$TEMP_DIR"
+                return 1
+            fi
             # loaderVersion tracks FancyModLoader, not NeoForge or Minecraft.
             # Their version numbers do not move together, so keep this range
             # permissive and enforce the real requirement in the neoforge
             # dependency below.
-            cat > "$TEMP_DIR/META-INF/neoforge.mods.toml" << TOML
+            if ! cat > "$TEMP_DIR/META-INF/neoforge.mods.toml" << TOML
 modLoader = "javafml"
 loaderVersion = "[1,)"
 license = "MIT"
@@ -520,12 +799,21 @@ versionRange = "[${MC_VERSION}]"
 ordering = "NONE"
 side = "BOTH"
 TOML
+            then
+                echo "ERROR: Could not write NeoForge metadata for ${MC_VERSION}."
+                rm -rf "$TEMP_DIR"
+                return 1
+            fi
             ;;
     esac
 
     # Update manifest with version info
-    mkdir -p "$TEMP_DIR/META-INF"
-    cat > "$TEMP_DIR/META-INF/MANIFEST.MF" << MANIFEST
+    if ! mkdir -p "$TEMP_DIR/META-INF"; then
+        echo "ERROR: Could not prepare the manifest for ${LOADER} ${MC_VERSION}."
+        rm -rf "$TEMP_DIR"
+        return 1
+    fi
+    if ! cat > "$TEMP_DIR/META-INF/MANIFEST.MF" << MANIFEST
 Manifest-Version: 1.0
 Implementation-Title: Retromod
 Implementation-Version: ${VERSION}
@@ -534,19 +822,50 @@ Retromod-Loader: ${LOADER}
 Automatic-Module-Name: retromod
 
 MANIFEST
+    then
+        echo "ERROR: Could not write the manifest for ${LOADER} ${MC_VERSION}."
+        rm -rf "$TEMP_DIR"
+        return 1
+    fi
 
-    # Repackage JAR using zip (more compatible than jar command)
-    cd "$TEMP_DIR"
-    zip -qr "$OUTPUT_PATH" . 2>/dev/null || {
-        # Fallback to jar command
-        jar cfm "$OUTPUT_PATH" META-INF/MANIFEST.MF . 2>/dev/null || {
-            echo "ERROR: Failed to create JAR"
-            cd "$ORIG_DIR"
+    # zip updates an existing archive instead of truncating it. Remove and verify the exact output
+    # first so a failed stale-tree cleanup cannot retain entries removed from this release.
+    if [ -e "$OUTPUT_PATH" ] || [ -L "$OUTPUT_PATH" ]; then
+        if ! rm -f -- "$OUTPUT_PATH"; then
+            echo "ERROR: Could not remove stale output ${OUTPUT_PATH}."
             rm -rf "$TEMP_DIR"
             return 1
-        }
-    }
-    cd "$ORIG_DIR"
+        fi
+    fi
+    if [ -e "$OUTPUT_PATH" ] || [ -L "$OUTPUT_PATH" ]; then
+        echo "ERROR: Stale output still exists: ${OUTPUT_PATH}."
+        rm -rf "$TEMP_DIR"
+        return 1
+    fi
+
+    # Repackage JAR using zip (more compatible than jar command).
+    if ! (cd "$TEMP_DIR" && zip -qr "$OUTPUT_PATH" .); then
+        # A failed zip may leave a partial archive. The fallback must also start fresh.
+        if ! rm -f -- "$OUTPUT_PATH"; then
+            echo "ERROR: Could not remove partial output ${OUTPUT_PATH}."
+            rm -rf "$TEMP_DIR"
+            return 1
+        fi
+        if ! (cd "$TEMP_DIR" && jar cfm "$OUTPUT_PATH" META-INF/MANIFEST.MF .); then
+            echo "ERROR: Failed to create JAR for ${LOADER} ${MC_VERSION}."
+            rm -f -- "$OUTPUT_PATH"
+            rm -rf "$TEMP_DIR"
+            return 1
+        fi
+    fi
+
+    if ! validate_loader_jar \
+            "$OUTPUT_PATH" "$LOADER" "$MC_VERSION" "$VERSION" "$JAVA_REQ"; then
+        echo "ERROR: Packaged JAR validation failed for ${LOADER} ${MC_VERSION}."
+        rm -f -- "$OUTPUT_PATH"
+        rm -rf "$TEMP_DIR"
+        return 1
+    fi
 
     # Cleanup
     rm -rf "$TEMP_DIR"
@@ -636,28 +955,25 @@ if [ "$TOTAL_COUNT" -ne "$EXPECTED_TOTAL" ]; then
 fi
 
 if [ "$RELEASE_OK" -eq 1 ] && [ "$FAILED" -eq 0 ]; then
-    if [ "$SHA256_TOOL" = "sha256sum" ]; then
-        (
-            cd dist || exit 1
-            find Fabric Forge NeoForge CLI -type f -name "*.jar" -print0 \
-                | xargs -0 sha256sum \
-                | LC_ALL=C sort -k2
-        ) > dist/SHA256SUMS.txt
+    if CHECKSUM_COUNT=$(python3 scripts/generate-release-checksums.py \
+            --version "$VERSION" --dist dist); then
+        case $CHECKSUM_COUNT in
+            ''|*[!0-9]*)
+                echo "  The checksum generator returned an invalid entry count."
+                RELEASE_OK=0
+                ;;
+            *)
+                if [ "$CHECKSUM_COUNT" -ne "$EXPECTED_TOTAL" ]; then
+                    echo "  The checksum manifest has ${CHECKSUM_COUNT} entries, but ${EXPECTED_TOTAL} were expected."
+                    RELEASE_OK=0
+                else
+                    echo "  SHA-256 manifest: dist/SHA256SUMS.txt (${CHECKSUM_COUNT} entries)"
+                fi
+                ;;
+        esac
     else
-        (
-            cd dist || exit 1
-            find Fabric Forge NeoForge CLI -type f -name "*.jar" -print0 \
-                | xargs -0 shasum -a 256 \
-                | LC_ALL=C sort -k2
-        ) > dist/SHA256SUMS.txt
-    fi
-
-    CHECKSUM_COUNT=$(wc -l < dist/SHA256SUMS.txt | tr -d ' ')
-    if [ "$CHECKSUM_COUNT" -ne "$EXPECTED_TOTAL" ]; then
-        echo "  The checksum manifest has ${CHECKSUM_COUNT} entries, but ${EXPECTED_TOTAL} were expected."
+        echo "  The checksum manifest could not be generated safely."
         RELEASE_OK=0
-    else
-        echo "  SHA-256 manifest: dist/SHA256SUMS.txt (${CHECKSUM_COUNT} entries)"
     fi
 fi
 

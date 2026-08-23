@@ -137,11 +137,12 @@ class AotNestedSyntheticEmbeddingTest {
         Method method = AotCompiler.class.getDeclaredMethod(
                 "transformNestedJarAot", byte[].class, int.class,
                 MixinCompatibilityTransformer.class, boolean.class,
-                AotCompiler.ArchiveBudget.class, String.class);
+                RetromodTransformer.NestedArchiveBudget.class, String.class);
         method.setAccessible(true);
         return (byte[]) method.invoke(compiler, jarBytes, 1,
                 new MixinCompatibilityTransformer(transformer), false,
-                new AotCompiler.ArchiveBudget(16 * 1024 * 1024, 10_000), syntheticKey);
+                new RetromodTransformer.NestedArchiveBudget(
+                        16 * 1024 * 1024, 10_000), syntheticKey);
     }
 
     private static LinkedHashMap<String, byte[]> retainedFixtureEntries() {

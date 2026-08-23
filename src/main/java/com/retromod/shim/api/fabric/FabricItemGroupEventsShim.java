@@ -5,7 +5,7 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Not yet runtime-verified: needs a 26.1 launch adding an item to a creative tab via a v1 mod.
  */
-public class FabricItemGroupEventsShim implements VersionShim {
+public class FabricItemGroupEventsShim implements AuxiliaryVersionShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 
