@@ -380,7 +380,7 @@ public class ResourcePackTransformer {
         TEXTURE_RENAMES_BLOCKS.put("stone_diorite", "diorite");
         TEXTURE_RENAMES_BLOCKS.put("stone_diorite_smooth", "polished_diorite");
         TEXTURE_RENAMES_BLOCKS.put("stone_granite", "granite");
-        TEXTURE_RENAMES_BLOCKS.put("stone_granite_smooth", "granite_smooth");
+        TEXTURE_RENAMES_BLOCKS.put("stone_granite_smooth", "polished_granite");
         TEXTURE_RENAMES_BLOCKS.put("stonebrick", "stone_bricks");
         TEXTURE_RENAMES_BLOCKS.put("stonebrick_carved", "chiseled_stone_bricks");
         TEXTURE_RENAMES_BLOCKS.put("stonebrick_cracked", "cracked_stone_bricks");
