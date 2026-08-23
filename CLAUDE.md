@@ -184,7 +184,7 @@ Game directory (macOS): `~/Library/Application Support/minecraft/`
 | `core/FabricModTransformer.java` | Patches fabric.mod.json version constraints |
 | `core/ForgeModTransformer.java` | Patches mods.toml/neoforge.mods.toml version constraints |
 | `core/ModVersionDetector.java` | Reads mod MC version from loader-specific metadata |
-| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,981 classes, 54,479 fields, and 57,520 methods at snapshot.9) |
+| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,981 classes, 54,479 fields, and 57,520 methods at snapshot.10) |
 | `mapping/MappingComposer.java` | Generates mapping files from TinyV2 + ProGuard sources |
 | `shim/ShimRegistry.java` | BFS chain finder with version aliases |
 | `cli/RetromodCli.java` | CLI tool (`TARGET_MC_VERSION = "26.1"`) |
@@ -210,8 +210,8 @@ Game directory (macOS): `~/Library/Application Support/minecraft/`
 ## ServiceLoader Registration
 
 Shims and polyfills are discovered via ServiceLoader:
-- `src/main/resources/META-INF/services/com.retromod.core.VersionShim` (120 registered providers at snapshot.9)
-- `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider` (36 registered providers at snapshot.9)
+- `src/main/resources/META-INF/services/com.retromod.core.VersionShim` (120 registered providers at snapshot.10)
+- `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider` (36 registered providers at snapshot.10)
 
 When adding a new shim or polyfill, ALWAYS register it in the corresponding services file.
 
