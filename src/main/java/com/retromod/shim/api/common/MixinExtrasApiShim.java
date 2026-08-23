@@ -5,13 +5,13 @@
 package com.retromod.shim.api.common;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /**
  * Maps old bundled MixinExtras (0.0.x - 0.1.x) package paths and annotation names onto the
  * version bundled with modern Fabric Loader / NeoForge / Forge.
  */
-public class MixinExtrasApiShim implements VersionShim {
+public class MixinExtrasApiShim implements AuxiliaryVersionShim {
 
     @Override
     public String getShimName() {
@@ -35,6 +35,10 @@ public class MixinExtrasApiShim implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // JiJ copies of MixinExtras are providers, not legacy API consumers. Their bootstrap and
+        // service calls must stay inside MixinExtras while mod-owned callers still use the shim.
+        transformer.registerRedirectProviderPackage("com/llamalad7/mixinextras/");
+
         // Modern loaders init MixinExtras themselves, so a mod's own init() call becomes a no-op.
         transformer.registerMethodRedirect(
             "com/llamalad7/mixinextras/MixinExtrasBootstrap",

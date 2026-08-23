@@ -5,7 +5,7 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -23,7 +23,7 @@ import org.slf4j.LoggerFactory;
  * The {@code put*} calls become no-ops: a block needing CUTOUT/TRANSLUCENT renders solid, but
  * the mod loads.
  */
-public class FabricBlockRenderLayerBridge implements VersionShim {
+public class FabricBlockRenderLayerBridge implements AuxiliaryVersionShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 

@@ -5,7 +5,7 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
 import org.slf4j.Logger;
@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory;
  * <p>Contracts checked against {@code minecraft-26.1.2-client} + {@code fabric-api-0.145.4+26.1.2};
  * the bridge fails soft on any reflective miss. See {@code docs-dev/cpn-v1-bridge-design.md}.
  */
-public class FabricClientNetworkingV1Shim implements VersionShim {
+public class FabricClientNetworkingV1Shim implements AuxiliaryVersionShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 

@@ -4,7 +4,10 @@
  */
 package com.retromod.shim;
 
+import com.retromod.core.AuxiliaryVersionShim;
+import com.retromod.core.MinecraftVersionedApiShim;
 import com.retromod.core.VersionShim;
+import com.retromod.core.RetromodVersion;
 
 import java.util.*;
 import java.util.logging.Logger;
@@ -115,7 +118,8 @@ public class ShimRegistry {
     }
 
     public List<VersionShim> getShimsForLoaderAndVersion(String modLoader, String sourceVersion) {
-        Map<String, List<VersionShim>> byVersion = shimsByLoaderAndVersion.get(modLoader);
+        Map<String, List<VersionShim>> byVersion = shimsByLoaderAndVersion.get(
+                canonicalLoader(modLoader));
         if (byVersion == null) return Collections.emptyList();
         return byVersion.getOrDefault(sourceVersion, Collections.emptyList());
     }
@@ -166,7 +170,8 @@ public class ShimRegistry {
         queue.add(new ShimPath(resolvedSource, new ArrayList<>()));
         visited.add(resolvedSource);
 
-        Map<String, List<VersionShim>> byVersion = shimsByLoaderAndVersion.get(modLoader);
+        Map<String, List<VersionShim>> byVersion = shimsByLoaderAndVersion.get(
+                canonicalLoader(modLoader));
 
         while (!queue.isEmpty()) {
             ShimPath current = queue.poll();
@@ -179,6 +184,11 @@ public class ShimRegistry {
                     ? Collections.<VersionShim>emptyList()
                     : byVersion.getOrDefault(current.version, Collections.emptyList());
             for (VersionShim shim : shimsHere) {
+                // API-version numbers are not Minecraft versions. Keeping API shims out of the
+                // graph prevents an accidental numeric collision from bypassing an MC transition.
+                if (isAuxiliaryShim(shim)) {
+                    continue;
+                }
                 String nextVersion = shim.getTargetVersion();
 
                 if (visited.add(nextVersion)) {
@@ -200,7 +210,8 @@ public class ShimRegistry {
      */
     private static String resolveVersionForLoader(String modLoader, String version) {
         String resolved = resolveVersion(version);
-        if ("forge".equalsIgnoreCase(modLoader) && resolved.matches("1\\.20\\.[1-6]")) {
+        if ("forge".equalsIgnoreCase(canonicalLoader(modLoader))
+                && resolved.matches("1\\.20\\.[1-6]")) {
             return "1.20";
         }
         return resolved;
@@ -210,9 +221,90 @@ public class ShimRegistry {
         return Collections.unmodifiableList(allShims);
     }
 
+    /**
+     * Returns API shims that can apply to the requested loader.
+     *
+     * <p>API shims sit outside the Minecraft version graph. Offline transforms apply this list
+     * alongside the proven version chain, which includes {@code common} providers without also
+     * registering unrelated version transitions.
+     */
+    public List<VersionShim> findApiShimsForLoader(
+            String modLoader, String targetMcVersion) {
+        return allShims.stream()
+                .filter(ShimRegistry::isAuxiliaryShim)
+                .filter(shim -> loaderMatches(modLoader, shim.getModLoaderType()))
+                .filter(shim -> isAvailableOnHost(shim, targetMcVersion))
+                .toList();
+    }
+
+    /**
+     * Compatibility overload for callers that use the detected runtime target.
+     * Offline transforms should pass their requested target explicitly.
+     */
+    public List<VersionShim> findApiShimsForLoader(String modLoader) {
+        return findApiShimsForLoader(modLoader, RetromodVersion.TARGET_MC_VERSION);
+    }
+
+    /**
+     * Returns the loader-compatible shims whose target is available on the requested host.
+     *
+     * <p>This is the conservative fallback for an explicitly staged or requested transform whose
+     * source Minecraft version is absent. Automatic scans should keep using
+     * {@code needsTransformation}, since an unknown version can also belong to a native mod.
+     */
+    public List<VersionShim> findShimsForUnknownSource(String modLoader, String targetVersion) {
+        List<VersionShim> applicable = new ArrayList<>();
+        for (VersionShim shim : allShims) {
+            if (!loaderMatches(modLoader, shim.getModLoaderType())
+                    || !isAvailableOnHost(shim, targetVersion)) {
+                continue;
+            }
+            applicable.add(shim);
+        }
+        return List.copyOf(applicable);
+    }
+
+    /** Returns whether a provider can safely register against the requested Minecraft host. */
+    public static boolean isAvailableOnHost(VersionShim shim, String targetMcVersion) {
+        if (shim == null || targetMcVersion == null || targetMcVersion.isBlank()) {
+            return false;
+        }
+        if (shim instanceof AuxiliaryVersionShim
+                && !(shim instanceof MinecraftVersionedApiShim)) {
+            return true;
+        }
+        return !RetromodVersion.mcVersionExceeds(shim.getTargetVersion(), targetMcVersion);
+    }
+
+    private static boolean isAuxiliaryShim(VersionShim shim) {
+        return shim instanceof AuxiliaryVersionShim;
+    }
+
+    private static boolean loaderMatches(String modLoader, String shimLoader) {
+        if (shimLoader == null
+                || "any".equalsIgnoreCase(shimLoader)
+                || "common".equalsIgnoreCase(shimLoader)) {
+            return true;
+        }
+        if (modLoader == null) {
+            return false;
+        }
+        String canonicalModLoader = canonicalLoader(modLoader);
+        String canonicalShimLoader = canonicalLoader(shimLoader);
+        return canonicalShimLoader.equalsIgnoreCase(canonicalModLoader)
+                || ("neoforge".equalsIgnoreCase(canonicalModLoader)
+                        && "forge".equalsIgnoreCase(canonicalShimLoader));
+    }
+
+    /** Quilt uses Fabric bytecode, mappings, Mixins, and version transitions. */
+    private static String canonicalLoader(String loader) {
+        return loader != null && "quilt".equalsIgnoreCase(loader) ? "fabric" : loader;
+    }
+
     /** Source versions with at least one shim for the given loader. */
     public Set<String> getSupportedVersions(String modLoader) {
-        Map<String, List<VersionShim>> byVersion = shimsByLoaderAndVersion.get(modLoader);
+        Map<String, List<VersionShim>> byVersion = shimsByLoaderAndVersion.get(
+                canonicalLoader(modLoader));
         if (byVersion == null) return Collections.emptySet();
         return Collections.unmodifiableSet(byVersion.keySet());
     }

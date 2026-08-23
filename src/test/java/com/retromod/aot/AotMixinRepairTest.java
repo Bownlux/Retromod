@@ -129,6 +129,37 @@ class AotMixinRepairTest {
         }
     }
 
+    @Test
+    @DisplayName("AOT moves an accessor owner before converting its target namespace")
+    void aotRunsAccessorOwnerProofBeforeTheClassRemap(@TempDir Path tmp) throws Exception {
+        tmp = tmp.toRealPath();
+        savedVersion = RetromodVersion.TARGET_MC_VERSION;
+        RetromodVersion.TARGET_MC_VERSION = "26.1";
+        RetromodTransformer.getInstance().clearRedirectsForTesting();
+        Path input = tmp.resolve("accessor-owner.jar");
+        writeAccessorFixture(input);
+
+        ShimRegistry registry = new ShimRegistry();
+        registry.register(new com.retromod.shim.fabric.Fabric_1_21_10_to_1_21_11());
+        registry.register(new com.retromod.shim.fabric.Fabric_1_21_11_to_26_1());
+
+        Path prepared = new AotCompiler(
+            registry, "26.1", tmp.resolve("cache")).compileModAot(input);
+        ClassNode accessor = new ClassNode();
+        new ClassReader(readBytes(prepared, "example/PlayerAccessor.class"))
+            .accept(accessor, 0);
+
+        String expectedOwner = com.retromod.mapping.IntermediaryToMojangMapper
+            .getInstance().mapClass("net/minecraft/class_11890");
+        assertEquals(expectedOwner, mixinTarget(accessor));
+        MethodNode method = accessor.methods.stream()
+            .filter(candidate -> candidate.name.equals("getPlayerModelParts"))
+            .findFirst().orElseThrow();
+        AnnotationNode annotation = annotation(method, "Lorg/spongepowered/asm/mixin/gen/Accessor;");
+        assertEquals("DATA_PLAYER_MODE_CUSTOMISATION", annotationValue(annotation, "value"));
+        assertEquals(false, annotationValue(annotation, "remap"));
+    }
+
     /**
      * Builds the AOT jar for {@code fixture}. An unpackaged build stamps the cache by version
      * alone, so a previous run of the same version is dropped first rather than reused.
@@ -174,6 +205,49 @@ class AotMixinRepairTest {
         return bytes.toByteArray();
     }
 
+    private static void writeAccessorFixture(Path path) throws IOException {
+        String metadata = "{\"schemaVersion\":1,\"id\":\"accessor_owner\","
+            + "\"version\":\"1.0.0\",\"depends\":{\"minecraft\":\"1.21.10\"}}";
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(path))) {
+            jar.putNextEntry(new ZipEntry("fabric.mod.json"));
+            jar.write(metadata.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            jar.closeEntry();
+            jar.putNextEntry(new ZipEntry("example/PlayerAccessor.class"));
+            jar.write(accessorMixin());
+            jar.closeEntry();
+        }
+    }
+
+    private static byte[] accessorMixin() {
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V17,
+            Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT | Opcodes.ACC_INTERFACE,
+            "example/PlayerAccessor", null, "java/lang/Object", null);
+        var mixin = writer.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        var targets = mixin.visitArray("value");
+        targets.visit(null, Type.getObjectType("net/minecraft/class_1657"));
+        targets.visitEnd();
+        mixin.visitEnd();
+
+        MethodVisitor method = writer.visitMethod(
+            Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+            "getPlayerModelParts", "()Lnet/minecraft/class_2940;", null, null);
+        var accessor = method.visitAnnotation(
+            "Lorg/spongepowered/asm/mixin/gen/Accessor;", true);
+        accessor.visit("value", "PLAYER_MODEL_PARTS");
+        accessor.visitEnd();
+        method.visitCode();
+        method.visitTypeInsn(Opcodes.NEW, "java/lang/AssertionError");
+        method.visitInsn(Opcodes.DUP);
+        method.visitMethodInsn(Opcodes.INVOKESPECIAL,
+            "java/lang/AssertionError", "<init>", "()V", false);
+        method.visitInsn(Opcodes.ATHROW);
+        method.visitMaxs(2, 0);
+        method.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
     /** Copies {@code source} to {@code target} with one extra entry added. */
     private static void addNestedLibrary(Path source, Path target, String entryName, byte[] entry)
             throws IOException {
@@ -208,6 +282,43 @@ class AotMixinRepairTest {
             }
         }
         throw new IOException("no " + entryName + " in the bundled library");
+    }
+
+    private static String mixinTarget(ClassNode classNode) {
+        for (List<AnnotationNode> annotations : List.of(
+                classNode.visibleAnnotations != null
+                    ? classNode.visibleAnnotations : List.<AnnotationNode>of(),
+                classNode.invisibleAnnotations != null
+                    ? classNode.invisibleAnnotations : List.<AnnotationNode>of())) {
+            for (AnnotationNode annotation : annotations) {
+                if (!"Lorg/spongepowered/asm/mixin/Mixin;".equals(annotation.desc)) continue;
+                List<?> targets = (List<?>) annotationValue(annotation, "value");
+                return ((Type) targets.get(0)).getInternalName();
+            }
+        }
+        throw new AssertionError("Mixin annotation is missing");
+    }
+
+    private static AnnotationNode annotation(MethodNode method, String descriptor) {
+        for (List<AnnotationNode> annotations : List.of(
+                method.visibleAnnotations != null
+                    ? method.visibleAnnotations : List.<AnnotationNode>of(),
+                method.invisibleAnnotations != null
+                    ? method.invisibleAnnotations : List.<AnnotationNode>of())) {
+            for (AnnotationNode annotation : annotations) {
+                if (descriptor.equals(annotation.desc)) return annotation;
+            }
+        }
+        throw new AssertionError("annotation is missing: " + descriptor);
+    }
+
+    private static Object annotationValue(AnnotationNode annotation, String key) {
+        for (int index = 0; index < annotation.values.size(); index += 2) {
+            if (key.equals(annotation.values.get(index))) {
+                return annotation.values.get(index + 1);
+            }
+        }
+        return null;
     }
 
     /** Every selector string in the class's injector annotations. */

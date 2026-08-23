@@ -5,7 +5,7 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /**
  * Redirects {@code fabric-renderer-api-v1} types that Fabric API 0.110 moved from
@@ -15,7 +15,7 @@ import com.retromod.core.VersionShim;
  * {@code MaterialFinder}) was removed rather than moved, so it needs API bridging
  * and is left for follow-up.
  */
-public class FabricRendererApiShim implements VersionShim {
+public class FabricRendererApiShim implements AuxiliaryVersionShim {
 
     private static final String OLD = "net/fabricmc/fabric/api/renderer/v1/";
     private static final String NEW = "net/fabricmc/fabric/api/client/renderer/v1/";

@@ -41,4 +41,15 @@ class ConfigScreenFactoryTest {
         assertFalse(root.get("verify_transforms").getAsBoolean());
         assertTrue(root.get("polyfills_enabled").getAsBoolean());
     }
+
+    @Test
+    void guiSaveRefusesDeepExistingConfigBeforeParsing() {
+        String existing = "[".repeat(257) + "0" + "]".repeat(257);
+        Map<String, Boolean> toggles = Map.of("verify_transforms", false);
+
+        var root = JsonParser.parseString(
+                ConfigScreenFactory.mergeConfigJson(existing, toggles)).getAsJsonObject();
+
+        assertFalse(root.get("verify_transforms").getAsBoolean());
+    }
 }

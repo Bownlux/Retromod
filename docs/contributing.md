@@ -40,14 +40,14 @@ mvn test -Dexec.skip=true
 mvn test -Dexec.skip=true -Dtest=SomeTest
 ```
 
-Bug fixes need a focused unit test. For user-reported issues, also test the affected loader's test mod and the original failing mod when possible. A passing initialization summary is not enough; wait until the title screen or server is stable and check for a new crash report.
+Bug fixes need a focused unit test. For user-reported issues, also test the affected loader's test mod and the original failing mod when possible. A passing initialization summary is not enough. Wait until the title screen or server is stable and check for a new crash report.
 
 Use a loader-specific jar from `build-all.sh` for in-game testing. The raw `-all.jar` can conflict with Fabric's bundled libraries.
 
 The published standalone CLI is executable because it keeps the bundled dependencies:
 
 ```bash
-java -jar dist/CLI/retromod-1.3.0-snapshot.8-cli.jar --help
+java -jar dist/CLI/retromod-1.3.0-snapshot.9-cli.jar --help
 ```
 
 From a source checkout, `mvn exec:java` remains the fallback while developing.
@@ -58,7 +58,7 @@ Keep `SignatureVerifier.EXPECTED_SELF_HASH` empty during development. Finish the
 
 ```bash
 mvn clean package -Dexec.skip=true
-python3 scripts/compute-self-hash.py target/retromod-1.3.0-snapshot.8-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.3.0-snapshot.9-all.jar
 # Update EXPECTED_SELF_HASH programmatically, then rebuild.
 mvn clean package -Dexec.skip=true
 bash build-all.sh --skip-build --require-self-hash
@@ -76,7 +76,7 @@ sha256sum --check SHA256SUMS.txt
 shasum -a 256 --check SHA256SUMS.txt
 ```
 
-Upload only the 68 loader jars to loader-specific Modrinth or CurseForge versions. Publish `dist/CLI/retromod-1.3.0-snapshot.8-cli.jar` and `dist/SHA256SUMS.txt` with the GitHub release.
+Upload only the 68 loader jars to loader-specific Modrinth or CurseForge versions. Publish `dist/CLI/retromod-1.3.0-snapshot.9-cli.jar` and `dist/SHA256SUMS.txt` with the GitHub release.
 
 ## Style
 

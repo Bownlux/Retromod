@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.testutil.SignedJarTestSupport;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.objectweb.asm.Opcodes.*;
 
@@ -198,6 +199,37 @@ class SyntheticEmbedderTest {
                     "embedding must use a unique temporary file");
         } finally {
             t.clearRedirectsForTesting();
+        }
+    }
+
+    @Test
+    @DisplayName("jar and nested synthetic embedding remove stale signing records")
+    void signedJarEmbeddingSanitizesBothArchiveVariants(@TempDir Path dir) throws Exception {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        try {
+            transformer.registerSyntheticClass(SYNTH, simpleClass(SYNTH));
+            Path direct = SignedJarTestSupport.createSignedJar(dir, "direct-signed.jar",
+                    SignedJarTestSupport.entries(
+                            "mod/Uses.class", classReferencing("mod/Uses")));
+
+            assertEquals(1, SyntheticEmbedder.embedIntoJar(
+                    direct, "direct-signed.jar", transformer));
+            SignedJarTestSupport.verifyEveryEntry(direct);
+            assertFalse(SignedJarTestSupport.hasSigningMetadata(direct));
+
+            Path nested = SignedJarTestSupport.createSignedJar(dir, "nested-signed.jar",
+                    SignedJarTestSupport.entries(
+                            "mod/Uses.class", classReferencing("mod/Uses")));
+            SyntheticEmbedder.ByteEmbeddingResult result = SyntheticEmbedder.embedIntoJarBytes(
+                    Files.readAllBytes(nested), "nested-signed.jar", transformer);
+            assertTrue(result.succeeded());
+            assertEquals(1, result.embeddedCount());
+            Path nestedOutput = Files.write(dir.resolve("nested-output.jar"), result.jarBytes());
+            SignedJarTestSupport.verifyEveryEntry(nestedOutput);
+            assertFalse(SignedJarTestSupport.hasSigningMetadata(nestedOutput));
+        } finally {
+            transformer.clearRedirectsForTesting();
         }
     }
 

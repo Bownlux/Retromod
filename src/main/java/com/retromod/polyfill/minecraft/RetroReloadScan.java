@@ -24,6 +24,11 @@ package com.retromod.polyfill.minecraft;
  */
 public final class RetroReloadScan {
 
+    private static final int MAX_RESOURCES = 10_000;
+    private static final long MAX_JSON_CHARS = 2L * 1024 * 1024;
+    private static final long MAX_TOTAL_JSON_CHARS = 32L * 1024 * 1024;
+    private static final int MAX_JSON_DEPTH = 128;
+
     private RetroReloadScan() {}
 
     /**
@@ -35,6 +40,7 @@ public final class RetroReloadScan {
      */
     public static Object scan(Object gson, String directory, Object resourceManager) {
         java.util.HashMap<Object, Object> out = new java.util.HashMap<>();
+        if (directory == null || directory.length() > 1024) return out;
         try {
             Class<?> converterCls = Class.forName("net.minecraft.resources.FileToIdConverter");
             Class<?> rmCls = Class.forName("net.minecraft.server.packs.resources.ResourceManager");
@@ -47,6 +53,8 @@ public final class RetroReloadScan {
             java.lang.reflect.Method fileToId = converterCls.getMethod("fileToId", idCls);
             java.util.Map<?, ?> resources = (java.util.Map<?, ?>) converterCls
                     .getMethod("listMatchingResources", rmCls).invoke(conv, resourceManager);
+            if (resources == null || resources.size() > MAX_RESOURCES) return out;
+            long[] remainingChars = {MAX_TOTAL_JSON_CHARS};
             for (java.util.Map.Entry<?, ?> e : resources.entrySet()) {
                 try {
                     Object id = fileToId.invoke(conv, e.getKey());
@@ -54,7 +62,10 @@ public final class RetroReloadScan {
                     java.io.Reader reader = (java.io.Reader) resource.getClass()
                             .getMethod("openAsReader").invoke(resource);
                     try {
-                        Object json = fromJson.invoke(null, gson, reader, jsonElementCls);
+                        String content = readBoundedJson(
+                                reader, MAX_JSON_CHARS, MAX_JSON_DEPTH, remainingChars);
+                        Object json = fromJson.invoke(null, gson,
+                                new java.io.StringReader(content), jsonElementCls);
                         if (json != null) {
                             out.put(id, json);
                         }
@@ -70,4 +81,58 @@ public final class RetroReloadScan {
         }
         return out;
     }
+
+    static String readBoundedJson(java.io.Reader reader, long maxChars, int maxDepth,
+            long[] remainingChars) throws java.io.IOException {
+        if (reader == null) throw new java.io.IOException("JSON reader is missing");
+        if (maxChars <= 0 || maxDepth <= 0 || remainingChars == null
+                || remainingChars.length != 1 || remainingChars[0] < 0) {
+            throw new java.io.IOException("JSON scan limits are invalid");
+        }
+        StringBuilder content = new StringBuilder();
+        char[] buffer = new char[4096];
+        long total = 0;
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        int count;
+        while ((count = reader.read(buffer)) != -1) {
+            if (count == 0) continue;
+            total += count;
+            if (total > maxChars) {
+                throw new java.io.IOException("JSON resource exceeds its character limit");
+            }
+            if (count > remainingChars[0]) {
+                throw new java.io.IOException("JSON resources exceed their aggregate limit");
+            }
+            remainingChars[0] -= count;
+            for (int index = 0; index < count; index++) {
+                char character = buffer[index];
+                if (inString) {
+                    if (escaped) {
+                        escaped = false;
+                    } else if (character == '\\') {
+                        escaped = true;
+                    } else if (character == '"') {
+                        inString = false;
+                    }
+                    continue;
+                }
+                if (character == '"') {
+                    inString = true;
+                } else if (character == '{' || character == '[') {
+                    if (++depth > maxDepth) {
+                        throw new java.io.IOException("JSON resource exceeds its nesting limit");
+                    }
+                } else if (character == '}' || character == ']') {
+                    if (--depth < 0) {
+                        throw new java.io.IOException("JSON resource has invalid nesting");
+                    }
+                }
+            }
+            content.append(buffer, 0, count);
+        }
+        return content.toString();
+    }
+
 }

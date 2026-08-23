@@ -4,14 +4,17 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.ArchivePublication;
 import com.retromod.util.ZipSecurity;
+import com.retromod.util.JarSignatureSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.nio.file.*;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.jar.*;
-import java.util.regex.*;
 
 /**
  * Transforms Quilt mods for newer Minecraft versions. Quilt shares Fabric's bytecode and Mixin
@@ -20,6 +23,7 @@ import java.util.regex.*;
 public class QuiltModTransformer {
     
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Quilt");
+    private static final int MAX_ENTRY_COUNT = 100_000;
     
     private final String targetMcVersion;
     private final FabricModTransformer fabricTransformer;
@@ -30,6 +34,9 @@ public class QuiltModTransformer {
     }
     
     public static boolean isQuiltMod(Path jarPath) {
+        if (jarPath == null || !Files.isRegularFile(jarPath, LinkOption.NOFOLLOW_LINKS)) {
+            return false;
+        }
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             return jar.getEntry("quilt.mod.json") != null;
         } catch (Exception e) {
@@ -39,114 +46,159 @@ public class QuiltModTransformer {
     
     /** Runs the Fabric bytecode transform, then patches quilt.mod.json. */
     public Path transformMod(Path sourceJar, Path outputDir) throws IOException {
+        validateArchiveInput(sourceJar);
         String originalName = sourceJar.getFileName().toString();
 
         LOGGER.info("Transforming Quilt mod: {}", originalName);
 
+        if (com.retromod.util.OptOutCheck.isOptedOut(sourceJar)) {
+            com.retromod.util.OptOutCheck.logSkipped(sourceJar);
+            Path passthrough = outputDir.resolve(originalName);
+            copyReplacingAtomically(sourceJar, passthrough);
+            return passthrough;
+        }
+
         String modMcVersion = extractMinecraftVersion(sourceJar);
-        if (isNativeVersion(modMcVersion)) {
+        if (fabricTransformer.isNativeVersionMod(modMcVersion)) {
             LOGGER.info("  {} is already for {} - passing through", originalName, targetMcVersion);
             Path directCopy = outputDir.resolve(originalName);
-            Files.copy(sourceJar, directCopy, StandardCopyOption.REPLACE_EXISTING);
+            copyReplacingAtomically(sourceJar, directCopy);
             return directCopy;
         }
 
-        Path transformed = fabricTransformer.transformMod(sourceJar, outputDir);
+        Path stagingDirectory = createOutputStagingDirectory(outputDir);
+        try {
+            Path transformed = fabricTransformer.transformModWithAuthoritativeMinecraftVersion(
+                sourceJar, stagingDirectory, modMcVersion);
+            if (transformed == null || !Files.isRegularFile(
+                    transformed, LinkOption.NOFOLLOW_LINKS)) {
+                return transformed;
+            }
 
-        if (transformed != null && Files.exists(transformed)) {
             updateQuiltModJson(transformed);
+            Path published = outputDir.toAbsolutePath().resolve(transformed.getFileName());
+            moveReplacingAtomically(transformed, published);
+            ModHealthChecker.relocateTransformedPath(transformed, published);
+            return published;
+        } finally {
+            ModHealthChecker.forgetTransformedPathsUnder(stagingDirectory);
+            deleteDirectory(stagingDirectory);
         }
-
-        return transformed;
     }
     
-    private void updateQuiltModJson(Path jarPath) throws IOException {
+    protected void updateQuiltModJson(Path jarPath) throws IOException {
         Path tempDir = Files.createTempDirectory("retromod-quilt-");
 
         try {
-                // Bounded extraction: a mod JAR is user content, and an entry can lie about its
-                // declared size, so count actual decompressed bytes to catch a zip bomb.
-                long quiltTotalSize = 0;
-                try (JarFile jar = new JarFile(jarPath.toFile())) {
-                    var entries = jar.entries();
-                    while (entries.hasMoreElements()) {
-                        JarEntry entry = entries.nextElement();
-                        Path outPath = ZipSecurity.safeResolve(tempDir, entry.getName());
-                        if (entry.isDirectory()) {
-                            Files.createDirectories(outPath);
-                        } else {
-                            Files.createDirectories(outPath.getParent());
-                            long writtenBytes;
-                            try (InputStream is = jar.getInputStream(entry)) {
-                                writtenBytes = ZipSecurity.copyBounded(
-                                    is, outPath, ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, entry.getName());
-                            }
-                            quiltTotalSize += writtenBytes;
-                            if (quiltTotalSize > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
-                                throw new IOException("Quilt mod total extracted size exceeds limit ("
-                                    + ZipSecurity.DEFAULT_MAX_TOTAL_SIZE + " bytes) - possible zip bomb "
-                                    + "(decompressed " + quiltTotalSize + " bytes so far)");
-                            }
+            // A mod entry can misreport its size, so count bytes actually decompressed.
+            long quiltTotalSize = 0;
+            try (JarFile jar = new JarFile(jarPath.toFile())) {
+                validateArchiveEntries(jar);
+                var entries = jar.entries();
+                while (entries.hasMoreElements()) {
+                    JarEntry entry = entries.nextElement();
+                    String entryName = canonicalEntryName(entry.getName());
+                    Path outPath = ZipSecurity.safeResolve(tempDir, entryName);
+                    if (entry.isDirectory()) {
+                        Files.createDirectories(outPath);
+                    } else {
+                        Files.createDirectories(outPath.getParent());
+                        long writtenBytes;
+                        try (InputStream is = jar.getInputStream(entry)) {
+                            long entryLimit = entryName.equals("quilt.mod.json")
+                                ? QuiltMetadataCompat.MAX_METADATA_BYTES
+                                : ZipSecurity.DEFAULT_MAX_ENTRY_SIZE;
+                            writtenBytes = ZipSecurity.copyBounded(
+                                is, outPath, entryLimit, entryName);
+                        }
+                        quiltTotalSize += writtenBytes;
+                        if (quiltTotalSize > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
+                            throw new IOException("Quilt mod total extracted size exceeds limit ("
+                                + ZipSecurity.DEFAULT_MAX_TOTAL_SIZE + " bytes) - possible zip bomb "
+                                + "(decompressed " + quiltTotalSize + " bytes so far)");
                         }
                     }
                 }
+            }
 
-                Path quiltJson = tempDir.resolve("quilt.mod.json");
-                if (Files.exists(quiltJson)) {
-                    String content = Files.readString(quiltJson);
-                    content = updateVersionInQuiltJson(content);
-                    Files.writeString(quiltJson, content);
+            Path quiltJson = tempDir.resolve("quilt.mod.json");
+            if (Files.isRegularFile(quiltJson, LinkOption.NOFOLLOW_LINKS)) {
+                String content;
+                try (InputStream input = Files.newInputStream(quiltJson)) {
+                    content = new String(ZipSecurity.safeReadAllBytes(
+                        input, QuiltMetadataCompat.MAX_METADATA_BYTES),
+                        java.nio.charset.StandardCharsets.UTF_8);
                 }
+                content = updateVersionInQuiltJson(content);
+                Files.writeString(quiltJson, content,
+                    java.nio.charset.StandardCharsets.UTF_8);
+            }
 
-                repackJar(tempDir, jarPath);
+            repackJar(tempDir, jarPath);
         } finally {
             deleteDirectory(tempDir);
         }
     }
     
-    private String updateVersionInQuiltJson(String content) {
-        // Matches "minecraft": "1.20.1" or "minecraft": ">=1.20.1".
-        Pattern p = Pattern.compile("(\"minecraft\"\\s*:\\s*\")([^\"]+)(\")");
-        Matcher m = p.matcher(content);
-        
-        if (m.find()) {
-            String oldVersion = m.group(2);
-            String newVersion = ">=" + targetMcVersion;
-            content = m.replaceFirst("$1" + newVersion + "$3");
-            LOGGER.debug("Updated quilt.mod.json: {} → {}", oldVersion, newVersion);
+    String updateVersionInQuiltJson(String content) throws IOException {
+        String updated = QuiltMetadataCompat.updateMinecraftVersion(content, targetMcVersion);
+        if (!updated.equals(content)) {
+            LOGGER.debug("Updated quilt.mod.json for Minecraft {}", targetMcVersion);
         }
-        
-        return content;
+        return updated;
     }
     
-    private String extractMinecraftVersion(Path jarPath) {
+    private String extractMinecraftVersion(Path jarPath) throws IOException {
+        validateArchiveInput(jarPath);
         try (JarFile jar = new JarFile(jarPath.toFile())) {
+            validateArchiveEntries(jar);
             var entry = jar.getEntry("quilt.mod.json");
             if (entry != null) {
-                String content;
                 try (InputStream is = jar.getInputStream(entry)) {
-                    content = new String(ZipSecurity.safeReadAllBytes(is),
-                            java.nio.charset.StandardCharsets.UTF_8);
-                }
-                Pattern p = Pattern.compile("\"minecraft\"\\s*:\\s*\"([^\"]+)\"");
-                Matcher m = p.matcher(content);
-                if (m.find()) {
-                    return m.group(1);
+                    return QuiltMetadataCompat.readMinecraftVersion(is);
                 }
             }
-        } catch (Exception e) {
-            // ignore
         }
         return null;
     }
 
-    /** True when the mod already targets the host version, so no transform is needed. */
-    private boolean isNativeVersion(String version) {
-        if (version == null) return false;
-        String clean = version.replace(">=", "").replace("~", "").replace("^", "").trim();
-        return clean.equals(targetMcVersion) || version.contains(targetMcVersion);
+    private static void validateArchiveEntries(JarFile jar) throws IOException {
+        if (jar.size() > MAX_ENTRY_COUNT) {
+            throw new IOException("Quilt mod contains more than "
+                + MAX_ENTRY_COUNT + " entries");
+        }
+        Set<String> entryNames = new HashSet<>();
+        var entries = jar.entries();
+        while (entries.hasMoreElements()) {
+            String canonical = canonicalEntryName(entries.nextElement().getName());
+            if (!entryNames.add(canonical)) {
+                throw new IOException("Quilt mod contains a duplicate normalized entry: "
+                    + canonical);
+            }
+        }
     }
-    
+
+    private static String canonicalEntryName(String entryName) throws IOException {
+        ZipSecurity.safeEntryName(entryName);
+        String normalizedSlashes = entryName.replace('\\', '/');
+        StringBuilder canonical = new StringBuilder();
+        for (String part : normalizedSlashes.split("/")) {
+            if (part.isEmpty() || part.equals(".")) continue;
+            if (canonical.length() > 0) canonical.append('/');
+            canonical.append(part);
+        }
+        if (canonical.length() == 0) {
+            throw new IOException("Quilt mod contains an empty normalized entry name");
+        }
+        return canonical.toString();
+    }
+
+    private static void validateArchiveInput(Path jarPath) throws IOException {
+        if (jarPath == null || !Files.isRegularFile(jarPath, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Quilt mod input is not a regular file: " + jarPath);
+        }
+    }
+
     private void repackJar(Path sourceDir, Path targetJar) throws IOException {
         Path parent = targetJar.toAbsolutePath().getParent();
         if (parent == null) throw new IOException("Quilt jar has no parent: " + targetJar);
@@ -159,10 +211,24 @@ public class QuiltModTransformer {
                 com.retromod.util.JarDirectoryEntries.writeAll(jos, sourceDir);
 
                 try (var stream = Files.walk(sourceDir)) {
-                    for (Path path : stream.filter(p -> !Files.isDirectory(p)).toList()) {
+                    for (Path path : stream
+                            .filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
+                            .toList()) {
                         String entryName = sourceDir.relativize(path).toString().replace("\\", "/");
+                        if (JarSignatureSanitizer.isSigningArtifact(entryName)) {
+                            continue;
+                        }
                         jos.putNextEntry(new JarEntry(ZipSecurity.safeEntryName(entryName)));
-                        Files.copy(path, jos);
+                        if (JarSignatureSanitizer.isManifest(entryName)) {
+                            byte[] manifestBytes;
+                            try (InputStream input = Files.newInputStream(path)) {
+                                manifestBytes = ZipSecurity.safeReadAllBytes(
+                                        input, QuiltMetadataCompat.MAX_METADATA_BYTES);
+                            }
+                            jos.write(JarSignatureSanitizer.sanitizeManifest(manifestBytes));
+                        } else {
+                            Files.copy(path, jos);
+                        }
                         jos.closeEntry();
                     }
                 }
@@ -179,6 +245,24 @@ public class QuiltModTransformer {
         } finally {
             Files.deleteIfExists(staged);
         }
+    }
+
+    private static void copyReplacingAtomically(Path source, Path target) throws IOException {
+        ArchivePublication.copyReplacing(source, target);
+    }
+
+    private static Path createOutputStagingDirectory(Path outputDir) throws IOException {
+        Path normalizedOutput = outputDir.toAbsolutePath().normalize();
+        Files.createDirectories(normalizedOutput);
+        Path parent = normalizedOutput.getParent();
+        if (parent == null) {
+            throw new IOException("Quilt mod output directory has no parent: " + outputDir);
+        }
+        return Files.createTempDirectory(parent, ".retromod-quilt-output-");
+    }
+
+    private static void moveReplacingAtomically(Path source, Path target) throws IOException {
+        ArchivePublication.moveReplacing(source, target);
     }
 
     private void deleteDirectory(Path dir) {

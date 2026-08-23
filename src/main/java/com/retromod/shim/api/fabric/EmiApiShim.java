@@ -5,10 +5,10 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /** Fabric shim for the EMI recipe-viewer API. */
-public class EmiApiShim implements VersionShim {
+public class EmiApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

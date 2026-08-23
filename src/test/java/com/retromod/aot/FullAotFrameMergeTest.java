@@ -49,6 +49,7 @@ class FullAotFrameMergeTest {
 
     @Test
     void fullAotWorkersUseTheModsHierarchy(@TempDir Path dir) throws Exception {
+        dir = dir.toRealPath();
         resetCompilerSingleton();
         RetromodVersion.TARGET_MC_VERSION = "26.2";
         RetromodTransformer transformer = RetromodTransformer.getInstance();

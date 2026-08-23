@@ -5,12 +5,12 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /**
  * Sodium 0.4-0.6 renamed packages and reworked the renderer; Iris 1.6-1.7 changed the shader pipeline.
  */
-public class SodiumIrisApiShim implements VersionShim {
+public class SodiumIrisApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

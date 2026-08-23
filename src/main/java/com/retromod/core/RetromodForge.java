@@ -6,6 +6,8 @@ package com.retromod.core;
 
 import com.retromod.gui.RetromodGui;
 import com.retromod.gui.TitleScreenButtonInjector;
+import com.retromod.shim.ShimRegistry;
+import com.retromod.util.ArchivePublication;
 import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,6 +44,14 @@ public class RetromodForge {
         publishForgeEnvironment();
         boolean isServer = EnvironmentDetector.isDedicatedServer();
         LOGGER.info("Running on a {}", isServer ? "dedicated server" : "client");
+
+        try {
+            com.retromod.resources.ResourceManager.processStagedPacks(
+                    RetromodVersion.TARGET_MC_VERSION,
+                    Paths.get(".").toAbsolutePath().normalize());
+        } catch (Exception e) {
+            LOGGER.warn("Could not initialize resource manager", e);
+        }
 
         RetromodTransformer transformer = RetromodTransformer.getInstance();
 
@@ -316,8 +326,8 @@ public class RetromodForge {
                     // Only register shims whose target MC is <= the host. The
                     // 1.21.11→26.1 shim renames classes to 26.1 names that don't
                     // exist on a 1.21.x host, which would crash at load (#38).
-                    if (RetromodVersion.mcVersionExceeds(
-                            shim.getTargetVersion(), RetromodVersion.TARGET_MC_VERSION)) {
+                    if (!ShimRegistry.isAvailableOnHost(
+                            shim, RetromodVersion.TARGET_MC_VERSION)) {
                         continue;
                     }
                     shim.registerRedirects(transformer);
@@ -344,7 +354,7 @@ public class RetromodForge {
             ZipSecurity.validateNotSymlink(modsDir);
 
             Files.createDirectories(inputDir);
-            Files.createDirectories(processedDir);
+            prepareProcessedDirectory(processedDir);
 
             if (!Files.isDirectory(inputDir)) return 0;
 
@@ -365,8 +375,8 @@ public class RetromodForge {
 
                     Path transformed = transformer.transformMod(modJar, modsDir);
                     if (transformed != null) {
-                        Files.move(modJar, processedDir.resolve(fileName),
-                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        ArchivePublication.moveReplacing(
+                                modJar, processedDir.resolve(fileName));
                         count++;
                     }
                 } catch (Exception e) {
@@ -381,6 +391,11 @@ public class RetromodForge {
             LOGGER.error("Error scanning retromod-input/: {}", e.getMessage());
         }
         return count;
+    }
+
+    static void prepareProcessedDirectory(Path processedDir) throws java.io.IOException {
+        Files.createDirectories(processedDir);
+        ZipSecurity.validateNotSymlink(processedDir);
     }
 
     /** Scan mods/ for incompatible mods and transform them in place. */
@@ -416,14 +431,14 @@ public class RetromodForge {
                         LOGGER.info("Found incompatible mod in mods/: {} ({})", fileName, info.targetMcVersion());
 
                         Files.createDirectories(backupDir);
-                        Files.copy(modJar, backupDir.resolve(fileName),
-                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        ArchivePublication.copyReplacing(
+                                modJar, backupDir.resolve(fileName));
 
                         Path tempDir = Files.createTempDirectory("retromod-inplace-");
                         try {
                             Path transformed = transformer.transformMod(modJar, tempDir);
                             if (transformed != null) {
-                                Files.move(transformed, modJar, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                                ArchivePublication.moveReplacing(transformed, modJar);
                                 LOGGER.info("Transformed in place: {}", fileName);
                                 count++;
                             }

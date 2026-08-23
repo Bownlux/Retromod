@@ -5,14 +5,14 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /**
  * Bridges REI (Roughly Enough Items) v3 plugin/entry APIs up to v12: EntryStack
  * creation moved to EntryStacks, REIPlugin split into client/server, and the
  * display/registration packages were renamed.
  */
-public class ReiApiShim implements VersionShim {
+public class ReiApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

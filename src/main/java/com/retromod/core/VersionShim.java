@@ -8,6 +8,8 @@ package com.retromod.core;
  * A version-specific compatibility shim. Each implementation handles one version
  * transition (1.21.9 to 1.21.10) and is discovered via ServiceLoader, so external
  * shim packs can be added.
+ * Library-versioned API providers implement {@link AuxiliaryVersionShim}. API providers whose
+ * availability is tied to the Minecraft host implement {@link MinecraftVersionedApiShim}.
  *
  * <p><b>Public Addon API.</b> Stable extension point for third-party addons (see
  * {@code docs/addons.md}). Across the 1.x line new methods are added only as

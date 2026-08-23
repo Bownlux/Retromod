@@ -4,19 +4,22 @@
  */
 package com.retromod.gui;
 
-import com.retromod.core.ModVersionDetector;
-import com.retromod.core.RetromodTransformer;
 import com.retromod.core.FabricModTransformer;
+import com.retromod.core.ModVersionDetector;
+import com.retromod.core.QuiltModTransformer;
+import com.retromod.core.RetromodVersion;
+import com.retromod.core.VersionShim;
 import com.retromod.aot.AotCompiler;
 import com.retromod.shim.ShimRegistry;
 import com.retromod.embedder.ModVersionInfo;
+import com.retromod.util.ArchivePublication;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.*;
-import java.util.*;
+import java.util.ServiceConfigurationError;
+import java.util.ServiceLoader;
 
 /**
  * Mod compatibility checker, used internally by the GUI.
@@ -28,11 +31,11 @@ import java.util.*;
 public class ModCompatibilityChecker {
     
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
-    private static final String TARGET_VERSION = "26.1";
-    
     private final Path modsFolder;
     private final Path backupsFolder;
     private final ModVersionDetector detector;
+    private final String targetVersion;
+    private final ShimRegistry shimRegistry;
     
     public record IncompatibleMod(
         Path jarPath,
@@ -46,6 +49,8 @@ public class ModCompatibilityChecker {
         this.modsFolder = gameDir.resolve("mods");
         this.backupsFolder = modsFolder.resolve("retromod-backups");
         this.detector = new ModVersionDetector();
+        this.targetVersion = RetromodVersion.TARGET_MC_VERSION;
+        this.shimRegistry = loadShimRegistry();
     }
     
     /**
@@ -54,13 +59,19 @@ public class ModCompatibilityChecker {
     public IncompatibleMod analyzeJar(Path jarPath) {
         try {
             ModVersionInfo info = detector.detectVersion(jarPath);
-            if (info != null && info.needsTransformation(TARGET_VERSION)) {
+            boolean sourceVersionUnknown = info != null
+                    && isUnknownSourceVersion(info.targetMcVersion());
+            if (info != null
+                    && (info.needsTransformation(targetVersion)
+                            || sourceVersionUnknown)) {
                 String sourceVersion = info.targetMcVersion();
                 String loader = info.modLoaderType();
                 
                 String reason;
-                if (sourceVersion != null && !sourceVersion.startsWith("1.21")) {
-                    reason = "Version: " + sourceVersion + " → " + TARGET_VERSION;
+                if (sourceVersionUnknown) {
+                    reason = "Source Minecraft version is not declared";
+                } else if (!sourceVersion.startsWith("1.21")) {
+                    reason = "Version: " + sourceVersion + " to " + targetVersion;
                 } else if ("forge".equals(loader)) {
                     reason = "Forge → NeoForge migration needed";
                 } else {
@@ -80,12 +91,19 @@ public class ModCompatibilityChecker {
         }
         return null;
     }
+
+    private static boolean isUnknownSourceVersion(String sourceVersion) {
+        return sourceVersion == null || sourceVersion.isBlank()
+                || sourceVersion.contains("$")
+                || !sourceVersion.matches(".*\\d+\\.\\d+.*");
+    }
     
     /**
      * Transform a mod JAR and copy to mods folder.
      * 
      * Uses the appropriate transformer based on mod loader:
      * - Fabric: FabricModTransformer (updates fabric.mod.json directly)
+     * - Quilt: QuiltModTransformer (uses Fabric bytecode repairs and updates quilt.mod.json)
      * - Forge/NeoForge: AotCompiler (bytecode transformation)
      * 
      * @param sourceJar The original mod JAR (from user's selection)
@@ -101,6 +119,18 @@ public class ModCompatibilityChecker {
         // Detect mod type
         ModVersionInfo info = detector.detectVersion(sourceJar);
         String loaderType = info != null ? info.modLoaderType() : "unknown";
+
+        if (info != null) {
+            for (VersionShim shim : shimRegistry.findApiShimsForLoader(
+                    loaderType, targetVersion)) {
+                try {
+                    shim.registerRedirects(com.retromod.core.RetromodTransformer.getInstance());
+                } catch (RuntimeException error) {
+                    LOGGER.debug("Could not register optional API shim {}: {}",
+                            shim.getShimName(), error.getMessage());
+                }
+            }
+        }
         
         Path transformed;
         
@@ -108,26 +138,44 @@ public class ModCompatibilityChecker {
             // Use FabricModTransformer, which updates fabric.mod.json in the JAR
             // so no fabric_loader_dependencies.json is needed!
             LOGGER.info("Using Fabric transformer (will update fabric.mod.json)");
-            FabricModTransformer fabricTransformer = new FabricModTransformer(TARGET_VERSION);
+            FabricModTransformer fabricTransformer = new FabricModTransformer(targetVersion);
             transformed = fabricTransformer.transformMod(sourceJar, modsFolder);
+        } else if ("quilt".equals(loaderType)) {
+            LOGGER.info("Using Quilt transformer (will update quilt.mod.json)");
+            QuiltModTransformer quiltTransformer = new QuiltModTransformer(targetVersion);
+            transformed = quiltTransformer.transformMod(sourceJar, modsFolder);
         } else {
             // Use AotCompiler for Forge/NeoForge
             LOGGER.info("Using AOT compiler for {}", loaderType);
-            ShimRegistry shimRegistry = new ShimRegistry();
-            AotCompiler compiler = new AotCompiler(shimRegistry, TARGET_VERSION);
+            AotCompiler compiler = new AotCompiler(shimRegistry, targetVersion);
             
-            Path tempTransformed = compiler.compileModAot(sourceJar);
+            Path tempTransformed = compiler.compileModAot(sourceJar, true);
             
             // Copy to mods folder with -retromod suffix
             String originalName = sourceJar.getFileName().toString();
             String newName = originalName.replace(".jar", "-retromod.jar");
             transformed = modsFolder.resolve(newName);
             
-            Files.copy(tempTransformed, transformed, StandardCopyOption.REPLACE_EXISTING);
+            ArchivePublication.copyReplacing(tempTransformed, transformed);
         }
         
         LOGGER.info("Installed transformed mod: {}", transformed.getFileName());
         return transformed;
+    }
+
+    /** Loads packaged providers while allowing lite builds to omit optional implementations. */
+    static ShimRegistry loadShimRegistry() {
+        ShimRegistry registry = new ShimRegistry();
+        var providers = ServiceLoader.load(VersionShim.class).iterator();
+        while (true) {
+            try {
+                if (!providers.hasNext()) break;
+                registry.register(providers.next());
+            } catch (ServiceConfigurationError error) {
+                LOGGER.debug("Could not load an optional version shim: {}", error.getMessage());
+            }
+        }
+        return registry;
     }
     
     /**

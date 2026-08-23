@@ -5,13 +5,13 @@
 package com.retromod.shim.api.common;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /**
  * Create mod API shim for the addons that depend on its kinetics/processing API.
  * Covers the 0.3.x package restructure, 0.4.x kinetic API, and 0.5.x 1.20+ moves.
  */
-public class CreateModApiShim implements VersionShim {
+public class CreateModApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

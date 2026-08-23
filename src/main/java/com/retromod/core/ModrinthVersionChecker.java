@@ -96,17 +96,7 @@ public class ModrinthVersionChecker {
         if (Boolean.getBoolean("retromod.checkForNativeVersions")) {
             return true;
         }
-        // Read the config directly to avoid a circular dependency on Retromod.java.
-        try {
-            Path cfg = Path.of("config/retromod/config.json");
-            if (!java.nio.file.Files.exists(cfg)) return false;
-            String json = java.nio.file.Files.readString(cfg);
-            var obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
-            return obj.has("check_for_native_versions")
-                && obj.get("check_for_native_versions").getAsBoolean();
-        } catch (Exception e) {
-            return false;
-        }
+        return RetromodConfig.getBooleanIfPresent("check_for_native_versions", false);
     }
 
     private static ModInfo extractModInfo(Path jarPath) {

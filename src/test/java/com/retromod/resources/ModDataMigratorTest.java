@@ -233,6 +233,33 @@ class ModDataMigratorTest {
     }
 
     @Test
+    void unterminatedBlockCommentIsPreservedAndRejected(@TempDir Path root) throws Exception {
+        Path json = root.resolve("data/m/worldgen/template_pool/x.json");
+        Files.createDirectories(json.getParent());
+        byte[] original = "{} /* unterminated".getBytes(StandardCharsets.UTF_8);
+        Files.write(json, original);
+
+        ModDataMigrator.migrateTreeChecked(root, "26.1");
+
+        assertArrayEquals(original, Files.readAllBytes(json));
+        assertThrows(java.io.IOException.class,
+                () -> ModDataMigrator.validateStrictDataJsonTree(root));
+    }
+
+    @Test
+    void blockCommentRemovalKeepsAdjacentTokensInvalid(@TempDir Path root) throws Exception {
+        Path json = root.resolve("data/m/worldgen/template_pool/x.json");
+        Files.createDirectories(json.getParent());
+        Files.writeString(json, "{\"value\":1/* separator */2}");
+
+        ModDataMigrator.migrateTreeChecked(root, "26.1");
+
+        assertTrue(Files.readString(json).contains("1 2"));
+        assertThrows(java.io.IOException.class,
+                () -> ModDataMigrator.validateStrictDataJsonTree(root));
+    }
+
+    @Test
     void doesNotCorruptDoubleSlashInsideStringValue() {
         // a // inside a string value (e.g. a URL) must survive the reserialize intact
         String in = "{\"url\":\"https://example.com/x\", \"trailing\":1,}";
@@ -246,6 +273,18 @@ class ModDataMigratorTest {
         // a file with no comments / trailing commas must not be reserialized (byte-identical)
         String in = "{\"processors\":[{\"processor_type\":\"minecraft:rule\",\"rules\":[]}]}";
         assertEquals(in, mig("data/m/worldgen/processor_list/x.json", in, "26.1"));
+    }
+
+    @Test
+    void malformedUtf8IsNeverRewrittenIntoAcceptedJson() {
+        byte[] input = "{\"bad\":\"~\",\"name\":\"minecraft:chain\"}"
+                .getBytes(StandardCharsets.UTF_8);
+        input[8] = (byte) 0x80;
+
+        byte[] output = ModDataMigrator.migrate(
+                "data/m/loot_table/x.json", input, "26.1");
+
+        assertSame(input, output);
     }
 
     @Test
@@ -306,6 +345,25 @@ class ModDataMigratorTest {
         assertEquals(in, mig("data/m/enchantment/x.json", in, "26.2"), "26.x-shaped predicate passes through");
     }
 
+    @Test
+    void deeplyNestedPredicateJsonIsLeftUntouched() {
+        int depth = 10_000;
+        String nested = "[".repeat(depth)
+                + "{\"condition\":\"minecraft:entity_properties\","
+                + "\"predicate\":{\"type\":\"minecraft:pig\"}}"
+                + "]".repeat(depth);
+        byte[] input = nested.getBytes(StandardCharsets.UTF_8);
+
+        assertSame(input, ModDataMigrator.migrateEntityPredicates(input));
+    }
+
+    @Test
+    void oversizedPredicateJsonIsLeftUntouched() {
+        byte[] input = new byte[16 * 1024 * 1024 + 1];
+
+        assertSame(input, ModDataMigrator.migrateEntityPredicates(input));
+    }
+
     // --- 1.21.4+ client item definitions (items/*.json) ---
 
     @Test
@@ -331,6 +389,19 @@ class ModDataMigratorTest {
         var names = java.util.Set.of("assets/m/models/item/thing.json");
         assertTrue(ModDataMigrator.synthesizeItemDefinitionEntries(names, "1.21.1").isEmpty(),
                 "pre-26.x targets are untouched");
+    }
+
+    @Test
+    void itemDefinitionsRejectInvalidNamespaces() {
+        var names = java.util.Set.of(
+                "assets/bad\"namespace/models/item/thing.json",
+                "assets/UPPER/models/item/thing.json",
+                "assets/valid_namespace/models/item/thing.json");
+
+        var definitions = ModDataMigrator.synthesizeItemDefinitionEntries(names, "26.2");
+
+        assertEquals(java.util.Set.of("assets/valid_namespace/items/thing.json"),
+                definitions.keySet());
     }
 
     @Test

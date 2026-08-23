@@ -86,6 +86,16 @@ class RetromodFabricApiInputTest {
         assertFalse(RetromodPreLaunch.isFabricApiJar(misleadingName));
     }
 
+    @Test
+    @DisplayName("Fabric API detection refuses deeply nested metadata")
+    void refusesDeepApiMetadata(@TempDir Path dir) throws Exception {
+        String nested = "[".repeat(257) + "0" + "]".repeat(257);
+        Path deepMetadata = writeFabricJar(dir.resolve("deep-api.jar"),
+                "{\"id\":\"fabric-api\",\"padding\":" + nested + "}");
+
+        assertFalse(RetromodPreLaunch.isFabricApiJar(deepMetadata));
+    }
+
     private static Path writeFabricJar(Path jar, String metadata) throws Exception {
         Files.createDirectories(jar.getParent());
         try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jar))) {

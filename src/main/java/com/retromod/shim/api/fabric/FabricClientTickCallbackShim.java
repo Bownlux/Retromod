@@ -5,7 +5,7 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -29,7 +29,7 @@ import org.slf4j.LoggerFactory;
  * remapped mod on an unobfuscated host. On pre-26.1 hosts {@code ClientTickCallback} falls under the
  * broader legacy-Fabric limitation (#55).
  */
-public class FabricClientTickCallbackShim implements VersionShim {
+public class FabricClientTickCallbackShim implements AuxiliaryVersionShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 

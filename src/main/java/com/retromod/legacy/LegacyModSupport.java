@@ -5,6 +5,7 @@ package com.retromod.legacy;
 
 import com.retromod.core.*;
 import com.retromod.aot.*;
+import com.retromod.util.JarSignatureSanitizer;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.*;
 import org.objectweb.asm.tree.*;
@@ -237,6 +238,7 @@ public class LegacyModSupport {
                 }
             }
 
+            JarSignatureSanitizer.sanitizeJar(stagedJar);
             try (JarFile ignored = new JarFile(stagedJar.toFile())) {
                 // Opening the completed jar verifies its central directory before replacement.
             }

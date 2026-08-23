@@ -1,9 +1,9 @@
 ---
-title: In-game UI
+title: In-Game UI
 nav_order: 3
 ---
 
-# In-game UI
+# In-Game UI
 
 Retromod adds a mod button and a settings button to the title screen.
 
@@ -19,7 +19,7 @@ Fabric always needs this restart because it scans `mods/` before Retromod can pr
 
 The gear button opens settings backed by `config/retromod/config.json`. Changes save immediately. See the [config reference]({{ '/config' | relative_url }}) for each option.
 
-The screen also shows whether the running jar matches an official build. Modified builds still run; the label is informational. See [Authenticity]({{ '/authenticity' | relative_url }}).
+The screen also shows whether the running jar matches an official build. Modified builds still run. The label is informational. See [Authenticity]({{ '/authenticity' | relative_url }}).
 
 Use **Reset** to restore defaults.
 

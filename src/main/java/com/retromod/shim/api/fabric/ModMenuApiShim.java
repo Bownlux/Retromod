@@ -5,10 +5,10 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /** Bridges Mod Menu API changes (interface/factory/badge) across v1 through v7. */
-public class ModMenuApiShim implements VersionShim {
+public class ModMenuApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

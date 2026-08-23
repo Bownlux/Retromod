@@ -5,7 +5,7 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -21,7 +21,7 @@ import org.slf4j.LoggerFactory;
  * old references to them. Send/register methods no-op and the getters return null, so V0 multiplayer
  * features stay dark but the mod loads.
  */
-public class FabricNetworkingV0Bridge implements VersionShim {
+public class FabricNetworkingV0Bridge implements AuxiliaryVersionShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 

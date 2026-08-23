@@ -5,13 +5,13 @@
 package com.retromod.shim.api.forge;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /**
  * Curios API shim (accessory slots on Forge/NeoForge). Bridges the v1 to v5 breaks:
  * ICurio signatures, slot context, registration, capabilities.
  */
-public class CuriosApiShim implements VersionShim {
+public class CuriosApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

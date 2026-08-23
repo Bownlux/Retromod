@@ -6,6 +6,7 @@ import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import re
+import tempfile
 import xml.etree.ElementTree as ET
 
 
@@ -191,6 +192,86 @@ def _read_manifest(manifest_path, expected_paths, errors):
             f"expected {EXPECTED_ARTIFACT_COUNT}"
         )
     return checksums
+
+
+def generate_release_checksum_manifest(version, dist_dir="dist", pom_path="pom.xml"):
+    """Atomically write the checksum manifest for the exact release matrix."""
+    project_version = _read_project_version(pom_path)
+    if version != project_version:
+        raise ReleaseArtifactError(
+            f"requested version '{version}' does not match pom.xml version "
+            f"'{project_version}'; rebuild or pass --version {project_version}"
+        )
+
+    dist = Path(dist_dir)
+    if dist.is_symlink():
+        raise ReleaseArtifactError(f"distribution directory must not be a symlink: {dist}")
+    if not dist.is_dir():
+        raise ReleaseArtifactError(f"distribution directory was not found: {dist}")
+
+    expected = _expected_artifacts(version, dist)
+    expected_paths = {artifact.relative_path.as_posix() for artifact in expected}
+    errors = []
+    for entry in _release_tree_entries(dist):
+        relative = entry.relative_to(dist).as_posix()
+        if entry.is_symlink():
+            errors.append(f"release tree contains a symlink: {relative}")
+        if entry.is_file() and entry.suffix.lower() == ".jar" \
+                and relative not in expected_paths:
+            errors.append(f"unexpected JAR in release tree: {relative}")
+
+    digests = {}
+    for artifact in expected:
+        relative = artifact.relative_path.as_posix()
+        if artifact.path.is_symlink():
+            errors.append(f"release artifact must not be a symlink: {artifact.relative_path}")
+        elif not artifact.path.is_file():
+            errors.append(f"release artifact is missing: {artifact.relative_path}")
+        else:
+            digests[relative] = _sha256(artifact.path)
+
+    if errors:
+        details = "\n".join(f"  - {error}" for error in dict.fromkeys(errors))
+        raise ReleaseArtifactError(
+            "release checksums were not generated:\n" + details
+        )
+
+    manifest_path = dist / "SHA256SUMS.txt"
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="\n",
+                prefix=".SHA256SUMS.",
+                dir=dist,
+                delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+            for relative in sorted(digests):
+                temporary.write(f"{digests[relative]}  {relative}\n")
+            temporary.flush()
+            os.fsync(temporary.fileno())
+
+        staged_errors = []
+        staged = _read_manifest(temporary_path, expected_paths, staged_errors)
+        for relative, digest in digests.items():
+            if staged.get(relative) != digest:
+                staged_errors.append(f"staged checksum mismatch for {relative}")
+        if staged_errors:
+            details = "\n".join(
+                f"  - {error}" for error in dict.fromkeys(staged_errors)
+            )
+            raise ReleaseArtifactError(
+                "release checksum staging failed:\n" + details
+            )
+
+        os.replace(temporary_path, manifest_path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+    return len(digests)
 
 
 def validate_release_artifacts(version, dist_dir="dist", pom_path="pom.xml"):

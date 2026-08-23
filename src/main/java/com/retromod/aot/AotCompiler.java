@@ -8,6 +8,9 @@ import com.retromod.core.*;
 import com.retromod.embedder.*;
 import com.retromod.mixin.MixinCompatibilityTransformer;
 import com.retromod.shim.ShimRegistry;
+import com.retromod.util.ArchivePublication;
+import com.retromod.util.JarSignatureSanitizer;
+import com.retromod.util.JsonSecurity;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.*;
 import org.slf4j.Logger;
@@ -32,8 +35,10 @@ public class AotCompiler {
     private static final Path AOT_CACHE_DIR = Path.of("config/retromod/aot-cache");
 
     private static final String AOT_MANIFEST_KEY = "Retromod-AOT-Version";
+    private static final String AOT_CONTEXT_KEY = "Retromod-AOT-Context";
 
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
+    private static final long MAX_MANIFEST_BYTES = 2L * 1024 * 1024;
     private static final long MAX_EXPANDED_BYTES = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
     private static final long MAX_NESTED_OUTPUT_BYTES = ZipSecurity.DEFAULT_MAX_ENTRY_SIZE;
 
@@ -50,62 +55,126 @@ public class AotCompiler {
     private final ModVersionDetector versionDetector;
     private final ApiEmbedder apiEmbedder;
     private final String targetMcVersion;
+    private final Path cacheDir;
+    private final boolean isolateOfflineInputs;
+    private volatile boolean cacheReady;
 
     private int classesTransformed = 0;
     private int classesSkipped = 0;
     private int classesObfuscated = 0;
     
     public AotCompiler(ShimRegistry shimRegistry, String targetMcVersion) {
+        this(shimRegistry, targetMcVersion, AOT_CACHE_DIR, false);
+    }
+
+    AotCompiler(ShimRegistry shimRegistry, String targetMcVersion, Path cacheDir) {
+        this(shimRegistry, targetMcVersion, cacheDir, false);
+    }
+
+    private AotCompiler(ShimRegistry shimRegistry, String targetMcVersion, Path cacheDir,
+                        boolean isolateOfflineInputs) {
         this.shimRegistry = shimRegistry;
         this.transformer = RetromodTransformer.getInstance();
         this.versionDetector = new ModVersionDetector();
         this.apiEmbedder = new ApiEmbedder();
         this.targetMcVersion = targetMcVersion;
+        this.cacheDir = Objects.requireNonNull(cacheDir, "cacheDir");
+        this.isolateOfflineInputs = isolateOfflineInputs;
 
         // Never reuse transforms produced by a different Retromod build.
-        AotCacheStamp.ensureCurrent(AOT_CACHE_DIR);
+        this.cacheReady = AotCacheStamp.ensureCurrent(cacheDir);
+    }
+
+    /** Creates a compiler whose inputs may target different loaders in one CLI process. */
+    public static AotCompiler forOfflineInputs(
+            ShimRegistry shimRegistry, String targetMcVersion) {
+        return new AotCompiler(shimRegistry, targetMcVersion, AOT_CACHE_DIR, true);
+    }
+
+    static AotCompiler forOfflineInputs(
+            ShimRegistry shimRegistry, String targetMcVersion, Path cacheDir) {
+        return new AotCompiler(shimRegistry, targetMcVersion, cacheDir, true);
     }
     
     /** Returns the AOT-compiled JAR for {@code modJar} (possibly a cached copy), or the original if no transform applies. */
     public Path compileModAot(Path modJar) throws IOException {
-        LOGGER.info("AOT compiling: {}", modJar.getFileName());
+        return compileModAot(modJar, false);
+    }
 
-        Path cachedJar = getCachedJar(modJar);
-        if (cachedJar != null && isValidCache(cachedJar, modJar)) {
-            LOGGER.info("Using cached AOT compilation for: {}", modJar.getFileName());
-            return cachedJar;
-        }
+    /**
+     * Returns the AOT-compiled JAR, optionally honoring an explicit transform request.
+     *
+     * <p>The default remains conservative for automatic scans. Explicit transforms may repair an
+     * unknown-source or same-Minecraft-version mod through an auxiliary API provider.
+     */
+    public Path compileModAot(Path modJar, boolean explicitTransform) throws IOException {
+        requireCacheReady();
+        Path validatedModJar = ZipSecurity.requireRegularFileNoFollow(modJar, "AOT mod input");
+        LOGGER.info("AOT compiling: {}", validatedModJar.getFileName());
 
-        ModVersionInfo modInfo = versionDetector.detectVersion(modJar);
+        ModVersionInfo modInfo = versionDetector.detectVersion(validatedModJar);
         if (modInfo == null) {
-            LOGGER.warn("Could not analyze mod: {}", modJar.getFileName());
+            LOGGER.warn("Could not analyze mod: {}", validatedModJar.getFileName());
             return modJar;
         }
 
-        if (!modInfo.needsTransformation(targetMcVersion)) {
+        boolean sourceVersionUnknown = isUnknownSourceVersion(modInfo.targetMcVersion());
+        List<VersionShim> apiShims = shimRegistry.findApiShimsForLoader(
+                modInfo.modLoaderType(), targetMcVersion);
+        boolean explicitApiTransform = explicitTransform && !apiShims.isEmpty();
+        if (!modInfo.needsTransformation(targetMcVersion)
+                && !(explicitTransform && sourceVersionUnknown)
+                && !explicitApiTransform) {
             LOGGER.info("Mod {} is already compatible, skipping AOT", modInfo.modId());
             return modJar;
         }
 
-        backupOriginalMod(modJar);
+        Path outputJar = resolveCachePath(validatedModJar);
+        Path cachedJar = getCachedJar(validatedModJar);
+        if (cachedJar != null
+                && isValidCache(cachedJar, validatedModJar, explicitTransform)) {
+            LOGGER.info("Using cached AOT compilation for: {}", validatedModJar.getFileName());
+            return cachedJar;
+        }
+
+        backupOriginalMod(validatedModJar);
+
+        if (isolateOfflineInputs) {
+            transformer.resetOfflineRegistrations();
+            new com.retromod.polyfill.PolyfillRegistry().loadAndRegister(transformer);
+            if (RetromodVersion.isUnobfuscatedTarget(targetMcVersion)
+                    && ("forge".equalsIgnoreCase(modInfo.modLoaderType())
+                        || "neoforge".equalsIgnoreCase(modInfo.modLoaderType()))) {
+                com.retromod.shim.forge.ForgeNeoForgeSynthetics.registerAll(transformer);
+            }
+        }
 
         configureLoaderMappingsFor(modInfo);
 
-        List<VersionShim> shimChain = shimRegistry.findShimChain(
-            modInfo.modLoaderType(),
-            modInfo.targetMcVersion(),
-            targetMcVersion
-        );
+        List<VersionShim> shimChain;
+        if (sourceVersionUnknown) {
+            shimChain = shimRegistry.findShimsForUnknownSource(
+                    modInfo.modLoaderType(), targetMcVersion);
+            LOGGER.info("Source Minecraft version is unknown for {}; applying {} "
+                    + "loader-compatible shim(s) through {}",
+                    modInfo.modId(), shimChain.size(), targetMcVersion);
+        } else {
+            shimChain = shimRegistry.findShimChain(
+                    modInfo.modLoaderType(), modInfo.targetMcVersion(), targetMcVersion);
+        }
 
         // For 26.x targets the vanilla class-move table below is needed even when the chain is empty,
         // so only bail on an empty chain for non-26.x targets.
-        if (shimChain.isEmpty() && !RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) {
+        if (shimChain.isEmpty() && apiShims.isEmpty()
+                && !RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) {
             LOGGER.warn("No shim chain available for {} ({} -> {})",
                 modInfo.modId(), modInfo.targetMcVersion(), targetMcVersion);
             return modJar;
         }
 
-        for (VersionShim shim : shimChain) {
+        List<VersionShim> shimsToApply = withApiShims(
+                modInfo.modLoaderType(), targetMcVersion, shimChain);
+        for (VersionShim shim : shimsToApply) {
             LOGGER.debug("Applying shim: {}", shim.getShimName());
             shim.registerRedirects(transformer);
         }
@@ -146,16 +215,25 @@ public class AotCompiler {
             }
         }
         
-        Path outputJar = AOT_CACHE_DIR.resolve(
-            modJar.getFileName().toString().replace(".jar", "-aot.jar")
-        );
-
-        compileJar(modJar, outputJar, modInfo);
+        compileJar(validatedModJar, outputJar, modInfo, explicitTransform);
         
         LOGGER.info("AOT compilation complete: {} classes transformed, {} skipped, {} obfuscated (JIT fallback)",
             classesTransformed, classesSkipped, classesObfuscated);
         
         return outputJar;
+    }
+
+    private static boolean isUnknownSourceVersion(String sourceVersion) {
+        return sourceVersion == null || sourceVersion.isBlank()
+                || sourceVersion.contains("$")
+                || !sourceVersion.matches(".*\\d+\\.\\d+.*");
+    }
+
+    private List<VersionShim> withApiShims(
+            String modLoader, String targetVersion, List<VersionShim> versionShims) {
+        LinkedHashSet<VersionShim> combined = new LinkedHashSet<>(versionShims);
+        combined.addAll(shimRegistry.findApiShimsForLoader(modLoader, targetVersion));
+        return List.copyOf(combined);
     }
 
     /** Selects the member namespace for this mod before an offline AOT transform. */
@@ -170,19 +248,29 @@ public class AotCompiler {
     }
     
     /** Backs up the original mod JAR to mods/retromod-backups/ before transformation. */
-    private void backupOriginalMod(Path modJar) {
-        try {
-            Path backupFolder = modJar.getParent().resolve("retromod-backups");
-            Files.createDirectories(backupFolder);
-
-            String fileName = modJar.getFileName().toString();
-            Path backupPath = backupFolder.resolve(fileName);
-
-            Files.copy(modJar, backupPath, StandardCopyOption.REPLACE_EXISTING);
-            LOGGER.info("Created backup: {}", backupPath);
-        } catch (Exception e) {
-            LOGGER.warn("Could not create backup for: {}", modJar.getFileName(), e);
+    private void backupOriginalMod(Path modJar) throws IOException {
+        Path inputParent = modJar.toAbsolutePath().normalize().getParent();
+        if (inputParent == null) {
+            throw new IOException("AOT mod input has no parent directory: " + modJar);
         }
+
+        Path backupFolder = resolveDirectChild(
+                inputParent, "retromod-backups", "AOT backup directory");
+        if (Files.exists(backupFolder, LinkOption.NOFOLLOW_LINKS)) {
+            requireRegularDirectory(backupFolder, "AOT backup directory");
+        } else {
+            Files.createDirectory(backupFolder);
+            requireRegularDirectory(backupFolder, "AOT backup directory");
+        }
+
+        Path backupPath = resolveDirectChild(
+                backupFolder, modJar.getFileName().toString(), "AOT backup file");
+        refuseSymlinkOrNonRegularTarget(backupPath, "AOT backup file");
+        ArchivePublication.copyReplacing(modJar, backupPath);
+        if (!Files.isRegularFile(backupPath, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("AOT backup is not a regular file: " + backupPath);
+        }
+        LOGGER.info("Created backup: {}", backupPath);
     }
     
     /** Compiles all mods in a folder in the background, returning immediately. */
@@ -273,6 +361,28 @@ public class AotCompiler {
     }
     
     private void compileJar(Path inputJar, Path outputJar, ModVersionInfo modInfo) throws IOException {
+        compileJar(inputJar, outputJar, modInfo, false);
+    }
+
+    private void compileJar(Path inputJar, Path outputJar, ModVersionInfo modInfo,
+                            boolean explicitTransform) throws IOException {
+        compileJar(inputJar, outputJar, modInfo,
+                new ArchiveBudget(MAX_EXPANDED_BYTES, MAX_ARCHIVE_ENTRIES),
+                explicitTransform);
+    }
+
+    void compileJar(Path inputJar, Path outputJar, ModVersionInfo modInfo,
+                    ArchiveBudget outputBudget) throws IOException {
+        compileJar(inputJar, outputJar, modInfo, outputBudget, false);
+    }
+
+    private synchronized void compileJar(Path inputJar, Path outputJar, ModVersionInfo modInfo,
+                                         ArchiveBudget outputBudget, boolean explicitTransform)
+            throws IOException {
+        Objects.requireNonNull(outputBudget, "outputBudget");
+        classesTransformed = 0;
+        classesSkipped = 0;
+        classesObfuscated = 0;
         Map<String, byte[]> transformedClasses = new LinkedHashMap<>();
         Map<String, byte[]> originalResources = new LinkedHashMap<>();
         Set<String> obfuscatedClasses = new HashSet<>();
@@ -292,7 +402,7 @@ public class AotCompiler {
             // of the mod's own types from being typed as Object, which the JVM rejects as soon as
             // that value is passed somewhere that wants a specific type. A precompiled result is
             // cached, so a bad frame here would survive restarts.
-            transformer.setJarClassBytesProvider(name -> {
+            java.util.function.Function<String, byte[]> hierarchyProvider = name -> {
                 try {
                     JarEntry e = jar.getJarEntry(name + ".class");
                     if (e == null) return null;
@@ -302,76 +412,90 @@ public class AotCompiler {
                 } catch (IOException io) {
                     return null;
                 }
-            });
-            Enumeration<JarEntry> entries = jar.entries();
+            };
+            try (var hierarchyScope = transformer
+                    .pushJarClassBytesProvider(hierarchyProvider)) {
+                Enumeration<JarEntry> entries = jar.entries();
 
-            while (entries.hasMoreElements()) {
-                JarEntry entry = entries.nextElement();
+                while (entries.hasMoreElements()) {
+                    JarEntry entry = entries.nextElement();
 
-                String entryName = ZipSecurity.safeEntryName(entry.getName());
-                if (!inputEntryNames.add(entryName)) {
-                    throw new IOException("duplicate JAR entry: " + entryName);
-                }
-                if (entry.isDirectory()) {
-                    inputBudget.reserve(0, entryName);
-                    continue;
-                }
-                
-                try (InputStream is = jar.getInputStream(entry)) {
-                    byte[] data = ZipSecurity.safeReadAllBytes(is);
-                    inputBudget.reserve(data.length, entryName);
+                    String entryName = ZipSecurity.safeEntryName(entry.getName());
+                    String canonicalName = ZipSecurity.canonicalEntryName(entryName);
+                    if (!inputEntryNames.add(canonicalName)) {
+                        throw new IOException("duplicate JAR entry: " + entryName);
+                    }
+                    if (entry.isDirectory()) {
+                        inputBudget.reserve(0, entryName);
+                        continue;
+                    }
 
-                    if (entryName.endsWith(".class")) {
-                        String className = entryName.replace(".class", "");
+                    try (InputStream is = jar.getInputStream(entry)) {
+                        byte[] data = ZipSecurity.safeReadAllBytes(is);
+                        inputBudget.reserve(data.length, entryName);
 
-                        byte[] out = data;
-                        if (shouldTransformClass(className, modInfo)) {
-                            if (isObfuscated(data)) {
-                                obfuscatedClasses.add(className);
-                                classesObfuscated++;
+                        if (entryName.endsWith(".class")) {
+                            String className = entryName.substring(
+                                    0, entryName.length() - ".class".length());
+
+                            byte[] preparedMixin = AotMixinRepair.applyPreRemap(
+                                    mixinTransformer, data, className);
+                            byte[] out = preparedMixin;
+                            if (shouldTransformClass(className, modInfo)) {
+                                if (isObfuscated(data)) {
+                                    obfuscatedClasses.add(className);
+                                    classesObfuscated++;
+                                } else {
+                                    out = transformClassAot(preparedMixin, className);
+                                    classesTransformed++;
+                                }
                             } else {
-                                out = transformClassAot(data, className);
-                                classesTransformed++;
+                                classesSkipped++;
                             }
+                            // A class whose own bytecode was left alone can still hold a Mixin.
+                            byte[] repaired = AotMixinRepair.apply(
+                                    mixinTransformer, out, className, refmapPlan.repairs());
+                            retainEntry(retainedBudget, repaired, entryName);
+                            transformedClasses.put(entryName, repaired);
                         } else {
-                            classesSkipped++;
+                            if (JarSignatureSanitizer.isSigningArtifact(entryName)) {
+                                continue;
+                            }
+                            retainEntry(retainedBudget, data, entryName);
+                            originalResources.put(entryName, data);
                         }
-                        // A class whose own bytecode was left alone can still hold a Mixin.
-                        byte[] repaired = AotMixinRepair.apply(
-                                mixinTransformer, out, className, refmapPlan.repairs());
-                        retainEntry(retainedBudget, repaired, entryName);
-                        transformedClasses.put(entryName, repaired);
-                    } else {
-                        retainEntry(retainedBudget, data, entryName);
-                        originalResources.put(entryName, data);
                     }
                 }
             }
-        } finally {
-            // The provider reads through the jar handle above, so it has to go when that closes.
-            transformer.clearJarClassBytesProvider();
         }
 
         Map<String, byte[]> embeddedShims = collectEmbeddedShims(modInfo);
-        ArchiveBudget nestedArchiveBudget =
-                new ArchiveBudget(MAX_EXPANDED_BYTES, MAX_ARCHIVE_ENTRIES);
+        RetromodTransformer.NestedArchiveBudget nestedArchiveBudget =
+                RetromodTransformer.NestedArchiveBudget.defaults();
 
         Path absoluteOutput = outputJar.toAbsolutePath().normalize();
         Path outputParent = absoluteOutput.getParent();
         if (outputParent == null) {
             throw new IOException("AOT output has no parent directory: " + outputJar);
         }
-        Files.createDirectories(outputParent);
+        requireRegularDirectory(outputParent, "AOT output directory");
+        refuseSymlinkOrNonRegularTarget(absoluteOutput, "AOT output file");
         Path stagedOutput = Files.createTempFile(outputParent, ".retromod-aot-", ".tmp");
         try {
             try (JarOutputStream jos = new JarOutputStream(
                     new BufferedOutputStream(Files.newOutputStream(stagedOutput)))) {
+            Set<String> outputEntryNames = new HashSet<>();
 
             Manifest manifest = new Manifest();
             manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
             manifest.getMainAttributes().putValue(AOT_MANIFEST_KEY, AOT_VERSION);
-            manifest.getMainAttributes().putValue("Retromod-Source-Version", modInfo.targetMcVersion());
-            manifest.getMainAttributes().putValue("Retromod-Target-Version", targetMcVersion);
+            manifest.getMainAttributes().putValue(AOT_CONTEXT_KEY,
+                    cacheContext(explicitTransform));
+            manifest.getMainAttributes().putValue("Retromod-Source-Version",
+                    ZipSecurity.sanitizeManifestValue(
+                            sourceVersionOrUnknown(modInfo.targetMcVersion())));
+            manifest.getMainAttributes().putValue("Retromod-Target-Version",
+                    ZipSecurity.sanitizeManifestValue(targetMcVersion));
             manifest.getMainAttributes().putValue("Retromod-Compiled-Time", String.valueOf(System.currentTimeMillis()));
             manifest.getMainAttributes().putValue("Retromod-Source-Hash", computeHash(inputJar));
             String selfHash = currentSelfHash();
@@ -380,27 +504,36 @@ public class AotCompiler {
             }
 
             if (!obfuscatedClasses.isEmpty()) {
-                manifest.getMainAttributes().putValue("Retromod-JIT-Classes", 
-                    String.join(",", obfuscatedClasses));
+                manifest.getMainAttributes().putValue("Retromod-JIT-Classes",
+                        ZipSecurity.sanitizeManifestValue(
+                                String.join(",", obfuscatedClasses)));
             }
-            
-            jos.putNextEntry(new JarEntry("META-INF/MANIFEST.MF"));
-            manifest.write(jos);
-            jos.closeEntry();
+
+            ByteArrayOutputStream manifestBytes = new ByteArrayOutputStream();
+            manifest.write(manifestBytes);
+            writeOutputEntry(jos, outputBudget, outputEntryNames,
+                    "META-INF/MANIFEST.MF", manifestBytes.toByteArray());
 
             // ZIP directory entries: package resources (ClassLoader.getResources) and classpath
             // scanners (Reflections, YungsApi @AutoRegister) silently find nothing without them.
             java.util.List<String> allNames = new java.util.ArrayList<>(transformedClasses.keySet());
             allNames.addAll(originalResources.keySet());
-            com.retromod.util.JarDirectoryEntries.writeAllForNames(jos, allNames);
+            for (String shimName : embeddedShims.keySet()) {
+                allNames.add("retromod_embedded/" + shimName + ".class");
+            }
+            allNames.add("META-INF/MANIFEST.MF");
+            allNames.add("retromod_aot.properties");
+            for (String directoryName : outputDirectoryEntries(allNames)) {
+                writeOutputEntry(jos, outputBudget, outputEntryNames,
+                        directoryName, new byte[0]);
+            }
 
             // safeEntryName guards against zip-slip: entry names come from the input JAR, so a
             // malicious mod could ship one that traverses out of the archive ("../../etc/foo.class").
             // Downstream tooling that extracts the output JAR would inherit it.
             for (Map.Entry<String, byte[]> entry : transformedClasses.entrySet()) {
-                jos.putNextEntry(new JarEntry(ZipSecurity.safeEntryName(entry.getKey())));
-                jos.write(entry.getValue());
-                jos.closeEntry();
+                writeOutputEntry(jos, outputBudget, outputEntryNames,
+                        entry.getKey(), entry.getValue());
             }
             
             for (Map.Entry<String, byte[]> entry : originalResources.entrySet()) {
@@ -410,6 +543,8 @@ public class AotCompiler {
 
                 if (entry.getKey().endsWith(".mixins.json") || entry.getKey().endsWith("mixin.json")) {
                     try {
+                        JsonSecurity.validate(data, JsonSecurity.DEFAULT_MAX_BYTES,
+                                JsonSecurity.DEFAULT_MAX_DEPTH, "Mixin config JSON");
                         String json = new String(data, java.nio.charset.StandardCharsets.UTF_8);
                         String transformed = mixinTransformer.transformMixinConfig(json, transformedClasses);
                         if (!transformed.equals(json)) {
@@ -454,9 +589,13 @@ public class AotCompiler {
 
                 // Relax version constraints in mod metadata for 26.1+
                 if (targetMcVersion != null && targetMcVersion.startsWith("26.")) {
-                    if (entry.getKey().equals("fabric.mod.json") || entry.getKey().equals("quilt.mod.json")) {
+                    if (entry.getKey().equals("fabric.mod.json")) {
                         data = relaxFabricModDependencies(data);
                         LOGGER.info("Patched Fabric metadata: {}", entry.getKey());
+                    } else if (entry.getKey().equals("quilt.mod.json")) {
+                        data = com.retromod.core.QuiltMetadataCompat.updateMinecraftVersion(
+                                data, targetMcVersion);
+                        LOGGER.info("Patched Quilt metadata: {}", entry.getKey());
                     } else if (entry.getKey().equals("META-INF/mods.toml") ||
                                entry.getKey().equals("META-INF/neoforge.mods.toml")) {
                         data = relaxNeoForgeDependencies(data);
@@ -464,33 +603,32 @@ public class AotCompiler {
                     }
                 }
 
-                // Recurse the transform into bundled Jar-in-Jar libs so an AOT-prepped mod's JiJ'd libs get
-                // the same treatment as the JIT path (#95): a lib referencing a relocated class otherwise
-                // loads broken or is reported missing. Soft-fails per nested jar.
+                // Recurse the transform into bundled Jar-in-Jar libs so an AOT-prepped mod's JiJ'd
+                // libs get the same treatment as the JIT path (#95). An unsafe child aborts the
+                // staged outer rewrite, so it cannot be published unchanged.
                 if ((entry.getKey().startsWith("META-INF/jars/")
                         || entry.getKey().startsWith("META-INF/jarjar/"))
                         && entry.getKey().endsWith(".jar")) {
                     String nestedKey = inputJar.getFileName() + "!/" + entry.getKey();
-                    data = transformNestedJarAotSafely(
+                    data = transformNestedJarAot(
                             data, 1, mixinTransformer, forgeRefmaps,
                             nestedArchiveBudget, nestedKey);
                 }
 
-                jos.putNextEntry(new JarEntry(ZipSecurity.safeEntryName(entry.getKey())));
-                jos.write(data);
-                jos.closeEntry();
+                writeOutputEntry(jos, outputBudget, outputEntryNames,
+                        entry.getKey(), data);
             }
 
             // Keys come from Retromod's own shim collection, not user input, but safeEntryName guards
             // against a future refactor letting an attacker-controlled string land here.
             for (Map.Entry<String, byte[]> entry : embeddedShims.entrySet()) {
-                jos.putNextEntry(new JarEntry(
-                    ZipSecurity.safeEntryName("retromod_embedded/" + entry.getKey() + ".class")));
-                jos.write(entry.getValue());
-                jos.closeEntry();
+                writeOutputEntry(jos, outputBudget, outputEntryNames,
+                        "retromod_embedded/" + entry.getKey() + ".class", entry.getValue());
             }
 
-                writeAotMetadata(jos, modInfo, obfuscatedClasses);
+                writeOutputEntry(jos, outputBudget, outputEntryNames,
+                        "retromod_aot.properties",
+                        createAotMetadata(modInfo, obfuscatedClasses));
             }
 
             try (JarFile ignored = new JarFile(stagedOutput.toFile())) {
@@ -500,6 +638,35 @@ public class AotCompiler {
         } finally {
             Files.deleteIfExists(stagedOutput);
         }
+    }
+
+    private static List<String> outputDirectoryEntries(Collection<String> fileNames)
+            throws IOException {
+        TreeSet<String> directories = new TreeSet<>();
+        for (String rawName : fileNames) {
+            String name = ZipSecurity.safeEntryName(rawName);
+            for (int slash = name.indexOf('/'); slash >= 0;
+                    slash = name.indexOf('/', slash + 1)) {
+                directories.add(name.substring(0, slash + 1));
+            }
+        }
+        return List.copyOf(directories);
+    }
+
+    private static void writeOutputEntry(JarOutputStream output,
+                                         ArchiveBudget budget,
+                                         Set<String> outputEntryNames,
+                                         String rawName,
+                                         byte[] data) throws IOException {
+        String entryName = ZipSecurity.safeEntryName(rawName);
+        String canonicalName = ZipSecurity.canonicalEntryName(entryName);
+        if (!outputEntryNames.add(canonicalName)) {
+            throw new IOException("duplicate generated JAR entry: " + entryName);
+        }
+        retainEntry(budget, data, entryName);
+        output.putNextEntry(new JarEntry(entryName));
+        output.write(data);
+        output.closeEntry();
     }
 
     private static void retainEntry(ArchiveBudget budget, byte[] data, String entryName)
@@ -538,12 +705,17 @@ public class AotCompiler {
             boolean official) throws IOException {
         var repairs = com.retromod.mixin.MixinRefmapRepairIndex.empty();
         Map<String, byte[]> resources = new LinkedHashMap<>();
+        Set<String> entryNames = new HashSet<>();
         long totalBytes = 0;
         int files = 0;
         var entries = jar.entries();
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
             String name = ZipSecurity.safeEntryName(entry.getName());
+            String canonicalName = ZipSecurity.canonicalEntryName(name);
+            if (!entryNames.add(canonicalName)) {
+                throw new IOException("duplicate mod JAR entry: " + name);
+            }
             if (entry.isDirectory() || !isRefmapEntry(name)) continue;
             if (++files > MAX_REFMAP_FILES) {
                 throw new IOException("mod JAR contains more than " + MAX_REFMAP_FILES
@@ -569,21 +741,31 @@ public class AotCompiler {
 
     private static ArchiveRefmapPlan prepareRefmapPlan(byte[] jarData,
             MixinCompatibilityTransformer mixins, boolean forgeRefmaps,
-            boolean official) throws IOException {
+            boolean official, RetromodTransformer.NestedArchiveBudget budget,
+            String archiveKey) throws IOException {
         var repairs = com.retromod.mixin.MixinRefmapRepairIndex.empty();
         Map<String, byte[]> resources = new LinkedHashMap<>();
+        Set<String> entryNames = new HashSet<>();
         long totalBytes = 0;
         int files = 0;
         try (var input = new ZipInputStream(new ByteArrayInputStream(jarData))) {
             ZipEntry entry;
             while ((entry = input.getNextEntry()) != null) {
                 String name = ZipSecurity.safeEntryName(entry.getName());
+                String canonicalName = ZipSecurity.canonicalEntryName(name);
+                if (!entryNames.add(canonicalName)) {
+                    throw new IOException("duplicate nested JAR entry: " + name);
+                }
                 if (entry.isDirectory() || !isRefmapEntry(name)) continue;
                 if (++files > MAX_REFMAP_FILES) {
                     throw new IOException("nested JAR contains more than " + MAX_REFMAP_FILES
                             + " refmap resources");
                 }
-                byte[] data = ZipSecurity.safeReadAllBytes(input);
+                String qualifiedName = archiveKey + "!/" + name;
+                long allowance = budget.beginRead(
+                        ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, qualifiedName);
+                byte[] data = ZipSecurity.safeReadAllBytes(input, allowance);
+                budget.completeRead(allowance, data.length);
                 totalBytes += data.length;
                 if (totalBytes > MAX_REFMAP_SCAN_BYTES) {
                     throw new IOException("nested JAR refmaps exceed " + MAX_REFMAP_SCAN_BYTES
@@ -601,7 +783,9 @@ public class AotCompiler {
 
     private static RemappedRefmap remapRefmap(byte[] data,
             MixinCompatibilityTransformer mixins, boolean forgeRefmaps,
-            boolean official) {
+            boolean official) throws IOException {
+        JsonSecurity.validate(data, JsonSecurity.DEFAULT_MAX_BYTES,
+                JsonSecurity.DEFAULT_MAX_DEPTH, "Mixin refmap JSON");
         String json = new String(data, java.nio.charset.StandardCharsets.UTF_8);
         var repairs = com.retromod.mixin.MixinRefmapRepairIndex.empty();
         if (forgeRefmaps) {
@@ -626,77 +810,83 @@ public class AotCompiler {
     private static final int MAX_JIJ_DEPTH_AOT = 4;
 
     /**
-     * Rewrites a bundled Jar-in-Jar library's bytecode and metadata with the outer mod's transformer and
-     * recurses into its own bundled jars. Mirrors {@code RetromodCli.transformNestedJar} (kept self-contained
-     * so aot doesn't depend on cli). Soft-fails to the original bytes on any error.
+     * Rewrites a bundled Jar-in-Jar library's bytecode and metadata with the outer mod's
+     * transformer and recurses into its own bundled jars. Mirrors
+     * {@code RetromodCli.transformNestedJar} without making AOT depend on the CLI package.
      */
     private byte[] transformNestedJarAot(byte[] jarData, int depth,
-            MixinCompatibilityTransformer mixinTransformer) {
+            MixinCompatibilityTransformer mixinTransformer) throws IOException {
         return transformNestedJarAot(jarData, depth, mixinTransformer, false);
     }
 
     private byte[] transformNestedJarAot(byte[] jarData, int depth,
-            MixinCompatibilityTransformer mixinTransformer, boolean forgeRefmaps) {
-        return transformNestedJarAotSafely(jarData, depth, mixinTransformer, forgeRefmaps,
-                new ArchiveBudget(MAX_EXPANDED_BYTES, MAX_ARCHIVE_ENTRIES));
-    }
-
-    private byte[] transformNestedJarAotSafely(byte[] jarData, int depth,
-            MixinCompatibilityTransformer mixinTransformer, boolean forgeRefmaps,
-            ArchiveBudget nestedBudget) {
-        return transformNestedJarAotSafely(jarData, depth, mixinTransformer,
-                forgeRefmaps, nestedBudget, "nested-depth-" + depth + ".jar");
-    }
-
-    private byte[] transformNestedJarAotSafely(byte[] jarData, int depth,
-            MixinCompatibilityTransformer mixinTransformer, boolean forgeRefmaps,
-            ArchiveBudget nestedBudget, String syntheticKey) {
-        try {
-            return transformNestedJarAot(
-                    jarData, depth, mixinTransformer, forgeRefmaps,
-                    nestedBudget, syntheticKey);
-        } catch (IOException e) {
-            LOGGER.warn("Keeping a bundled JAR unchanged because it exceeds safe archive limits: {}",
-                    e.getMessage());
-            return jarData;
-        }
+            MixinCompatibilityTransformer mixinTransformer, boolean forgeRefmaps)
+            throws IOException {
+        return transformNestedJarAot(jarData, depth, mixinTransformer, forgeRefmaps,
+                RetromodTransformer.NestedArchiveBudget.defaults());
     }
 
     private byte[] transformNestedJarAot(byte[] jarData, int depth,
             MixinCompatibilityTransformer mixinTransformer, boolean forgeRefmaps,
-            ArchiveBudget nestedBudget) throws IOException {
+            RetromodTransformer.NestedArchiveBudget nestedBudget) throws IOException {
         return transformNestedJarAot(jarData, depth, mixinTransformer,
                 forgeRefmaps, nestedBudget, "nested-depth-" + depth + ".jar");
     }
 
     private byte[] transformNestedJarAot(byte[] jarData, int depth,
             MixinCompatibilityTransformer mixinTransformer, boolean forgeRefmaps,
-            ArchiveBudget nestedBudget, String syntheticKey) throws IOException {
+            RetromodTransformer.NestedArchiveBudget nestedBudget,
+            String syntheticKey) throws IOException {
+        Objects.requireNonNull(jarData, "jarData");
+        Objects.requireNonNull(mixinTransformer, "mixinTransformer");
+        Objects.requireNonNull(nestedBudget, "nestedBudget");
+        Objects.requireNonNull(syntheticKey, "syntheticKey");
+
+        nestedBudget.reserve(0, syntheticKey);
+        if (NestedArchivePolicy.shouldPreserve(jarData, nestedBudget, syntheticKey)) {
+            return jarData;
+        }
         try {
             var bais = new java.io.ByteArrayInputStream(jarData);
             var boundedOutput = new BoundedArchiveOutput(
                     MAX_NESTED_OUTPUT_BYTES, jarData.length);
             boolean modified = false;
-            Map<String, byte[]> classBytes = RetromodTransformer.readJarClassBytes(jarData);
+            Map<String, byte[]> classBytes =
+                    RetromodTransformer.readJarClassBytes(jarData, nestedBudget);
             boolean official = RetromodVersion.isUnobfuscatedTarget(targetMcVersion);
             ArchiveRefmapPlan refmapPlan = prepareRefmapPlan(
-                    jarData, mixinTransformer, forgeRefmaps, official);
+                    jarData, mixinTransformer, forgeRefmaps, official,
+                    nestedBudget, syntheticKey);
+            Set<String> entryNames = new HashSet<>();
             try (var hierarchyScope = transformer.pushJarClassBytesProvider(classBytes::get);
                  var jis = new java.util.zip.ZipInputStream(bais);
                  var jos = new JarOutputStream(boundedOutput)) {
                 java.util.zip.ZipEntry e;
                 while ((e = jis.getNextEntry()) != null) {
                     String name = ZipSecurity.safeEntryName(e.getName());
+                    String qualifiedName = syntheticKey + "!/" + name;
+                    String canonicalName = ZipSecurity.canonicalEntryName(name);
+                    if (!entryNames.add(canonicalName)) {
+                        throw new IOException("duplicate nested JAR entry: " + qualifiedName);
+                    }
                     if (e.isDirectory()) {
-                        nestedBudget.reserve(0, name);
+                        nestedBudget.reserve(0, qualifiedName);
                     }
                     jos.putNextEntry(new JarEntry(name));
                     if (!e.isDirectory()) {
-                        byte[] d = ZipSecurity.safeReadAllBytes(jis);
-                        nestedBudget.reserve(d.length, name);
-                        String lower = name.toLowerCase();
+                        long allowance = nestedBudget.beginRead(
+                                ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, qualifiedName);
+                        byte[] d = ZipSecurity.safeReadAllBytes(jis, allowance);
+                        nestedBudget.completeRead(allowance, d.length);
+                        String lower = name.toLowerCase(Locale.ROOT);
                         if (name.endsWith(".class")) {
                             String cn = name.substring(0, name.length() - ".class".length());
+                            byte[] preparedMixin = AotMixinRepair.applyPreRemap(
+                                    mixinTransformer, d, cn);
+                            if (preparedMixin != d) {
+                                d = preparedMixin;
+                                modified = true;
+                            }
                             try {
                                 byte[] t = transformer.transformClass(d, cn);
                                 if (t != null && t != d) { d = t; modified = true; }
@@ -707,8 +897,15 @@ public class AotCompiler {
                             byte[] repaired = AotMixinRepair.apply(
                                     mixinTransformer, d, cn, refmapPlan.repairs());
                             if (repaired != d) { d = repaired; modified = true; }
-                        } else if (name.equals("fabric.mod.json") || name.equals("quilt.mod.json")) {
+                        } else if (name.equals("fabric.mod.json")) {
                             d = relaxFabricModDependencies(d); modified = true;
+                        } else if (name.equals("quilt.mod.json")) {
+                            byte[] updated = com.retromod.core.QuiltMetadataCompat
+                                    .updateMinecraftVersion(d, targetMcVersion);
+                            if (!java.util.Arrays.equals(updated, d)) {
+                                d = updated;
+                                modified = true;
+                            }
                         } else if (name.equals("META-INF/mods.toml") || name.equals("META-INF/neoforge.mods.toml")) {
                             d = relaxNeoForgeDependencies(d); modified = true;
                         } else if (official && (lower.endsWith(".accesswidener")
@@ -753,11 +950,15 @@ public class AotCompiler {
             if (!embedding.succeeded()) {
                 return jarData;
             }
-            return embedding.jarBytes();
-        } catch (ArchiveLimitException ex) {
+            boolean changed = modified || embedding.embeddedCount() > 0;
+            return changed
+                    ? JarSignatureSanitizer.sanitizeJarBytes(
+                            embedding.jarBytes(), MAX_NESTED_OUTPUT_BYTES)
+                    : embedding.jarBytes();
+        } catch (IOException ex) {
             throw ex;
         } catch (Exception ex) {
-            return jarData;
+            throw new IOException("could not rewrite nested JAR: " + syntheticKey, ex);
         }
     }
 
@@ -957,13 +1158,14 @@ public class AotCompiler {
     private Map<String, byte[]> collectEmbeddedShims(ModVersionInfo modInfo) throws IOException {
         Map<String, byte[]> shims = new HashMap<>();
 
-        List<VersionShim> shimChain = shimRegistry.findShimChain(
-            modInfo.modLoaderType(),
-            modInfo.targetMcVersion(),
-            targetMcVersion
-        );
+        List<VersionShim> shimChain = isUnknownSourceVersion(modInfo.targetMcVersion())
+                ? shimRegistry.findShimsForUnknownSource(
+                        modInfo.modLoaderType(), targetMcVersion)
+                : shimRegistry.findShimChain(
+                        modInfo.modLoaderType(), modInfo.targetMcVersion(), targetMcVersion);
 
-        for (VersionShim shim : shimChain) {
+        for (VersionShim shim : withApiShims(
+                modInfo.modLoaderType(), targetMcVersion, shimChain)) {
             for (String shimClass : shim.getShimClasses()) {
                 try {
                     String resourcePath = shimClass.replace('.', '/') + ".class";
@@ -985,14 +1187,15 @@ public class AotCompiler {
         return shims;
     }
 
-    private void writeAotMetadata(JarOutputStream jos, ModVersionInfo modInfo,
-            Set<String> obfuscatedClasses) throws IOException {
+    private byte[] createAotMetadata(ModVersionInfo modInfo,
+            Set<String> obfuscatedClasses) {
 
         StringBuilder sb = new StringBuilder();
         sb.append("# Retromod AOT Compilation Metadata\n");
         sb.append("aot_version=").append(AOT_VERSION).append("\n");
         sb.append("retromod_self_hash=").append(currentSelfHash()).append("\n");
-        sb.append("source_mc_version=").append(modInfo.targetMcVersion()).append("\n");
+        sb.append("source_mc_version=")
+                .append(sourceVersionOrUnknown(modInfo.targetMcVersion())).append("\n");
         sb.append("target_mc_version=").append(targetMcVersion).append("\n");
         sb.append("mod_id=").append(modInfo.modId()).append("\n");
         sb.append("mod_loader=").append(modInfo.modLoaderType()).append("\n");
@@ -1007,25 +1210,87 @@ public class AotCompiler {
             }
         }
         
-        jos.putNextEntry(new JarEntry("retromod_aot.properties"));
-        jos.write(sb.toString().getBytes());
-        jos.closeEntry();
+        return sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private static String sourceVersionOrUnknown(String sourceVersion) {
+        return isUnknownSourceVersion(sourceVersion) ? "unknown" : sourceVersion;
     }
     
-    private Path getCachedJar(Path originalJar) {
-        Path cached = AOT_CACHE_DIR.resolve(
-            originalJar.getFileName().toString().replace(".jar", "-aot.jar")
-        );
-        return Files.exists(cached) ? cached : null;
+    private Path getCachedJar(Path originalJar) throws IOException {
+        Path cached = resolveCachePath(originalJar);
+        if (!Files.exists(cached, LinkOption.NOFOLLOW_LINKS)) return null;
+        refuseSymlinkOrNonRegularTarget(cached, "AOT cache file");
+        return cached;
+    }
+
+    private Path resolveCachePath(Path originalJar) throws IOException {
+        Path normalizedCache = cacheDir.toAbsolutePath().normalize();
+        requireRegularDirectory(normalizedCache, "AOT cache directory");
+
+        String inputName = originalJar.getFileName().toString();
+        if (!inputName.endsWith(".jar")) {
+            throw new IOException("AOT mod input must have a .jar file name: " + originalJar);
+        }
+        String outputName = inputName.substring(0, inputName.length() - 4) + "-aot.jar";
+        Path cached = resolveDirectChild(normalizedCache, outputName, "AOT cache file");
+        refuseSymlinkOrNonRegularTarget(cached, "AOT cache file");
+        return cached;
+    }
+
+    private static Path resolveDirectChild(
+            Path root, String childName, String description) throws IOException {
+        Path normalizedRoot = root.toAbsolutePath().normalize();
+        Path resolved = normalizedRoot.resolve(childName).normalize();
+        if (!normalizedRoot.equals(resolved.getParent())) {
+            throw new IOException(description + " escapes its intended directory: " + resolved);
+        }
+        return resolved;
+    }
+
+    private static void requireRegularDirectory(Path directory, String description)
+            throws IOException {
+        if (Files.isSymbolicLink(directory)
+                || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException(description + " is not a regular non-symlink directory: "
+                    + directory);
+        }
+    }
+
+    private static void refuseSymlinkOrNonRegularTarget(Path path, String description)
+            throws IOException {
+        if (Files.isSymbolicLink(path)) {
+            throw new IOException(description + " is a symbolic link: " + path);
+        }
+        if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)
+                && !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException(description + " is not a regular file: " + path);
+        }
     }
 
     private boolean isValidCache(Path cachedJar, Path originalJar) {
+        return isValidCache(cachedJar, originalJar, false);
+    }
+
+    private boolean isValidCache(Path cachedJar, Path originalJar,
+                                 boolean explicitTransform) {
+        if (!Files.isRegularFile(cachedJar, LinkOption.NOFOLLOW_LINKS)
+                || Files.isSymbolicLink(cachedJar)) {
+            return false;
+        }
         try (JarFile jar = new JarFile(cachedJar.toFile())) {
-            Manifest manifest = jar.getManifest();
+            Manifest manifest = readBoundedManifest(jar);
             if (manifest == null) return false;
 
             String aotVersion = manifest.getMainAttributes().getValue(AOT_MANIFEST_KEY);
             if (!AOT_VERSION.equals(aotVersion)) return false;
+
+            String cachedTarget = manifest.getMainAttributes()
+                    .getValue("Retromod-Target-Version");
+            if (!targetMcVersion.equals(cachedTarget)) return false;
+
+            String cachedContext = manifest.getMainAttributes().getValue(AOT_CONTEXT_KEY);
+            if (!cacheContext(explicitTransform).equals(cachedContext)) return false;
 
             // Any change to Retromod's own classes shifts the self-hash, making the cached transforms stale.
             // Caches written before this field existed (no header) also invalidate, which is correct.
@@ -1038,18 +1303,36 @@ public class AotCompiler {
             String cachedHash = manifest.getMainAttributes().getValue("Retromod-Source-Hash");
             String currentHash = computeHash(originalJar);
 
-            return cachedHash != null && cachedHash.equals(currentHash);
+            return isSha256Hash(cachedHash)
+                    && isSha256Hash(currentHash)
+                    && cachedHash.equals(currentHash);
 
         } catch (Exception e) {
             return false;
         }
     }
 
-    static String computeHash(Path file) {
+    private String cacheContext(boolean explicitTransform) {
+        String registrationMode = isolateOfflineInputs ? "offline" : "runtime";
+        String requestMode = explicitTransform ? "explicit" : "automatic";
+        return registrationMode + ":" + requestMode;
+    }
+
+    private static Manifest readBoundedManifest(JarFile jar) throws IOException {
+        JarEntry manifestEntry = jar.getJarEntry(JarFile.MANIFEST_NAME);
+        if (manifestEntry == null) return null;
+        try (InputStream input = jar.getInputStream(manifestEntry)) {
+            byte[] bytes = ZipSecurity.safeReadAllBytes(input, MAX_MANIFEST_BYTES);
+            return new Manifest(new ByteArrayInputStream(bytes));
+        }
+    }
+
+    static String computeHash(Path file) throws IOException {
+        Path source = ZipSecurity.requireRegularFileNoFollow(file, "AOT source hash input");
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] buffer = new byte[8192];
-            try (InputStream input = new BufferedInputStream(Files.newInputStream(file))) {
+            try (InputStream input = new BufferedInputStream(Files.newInputStream(source))) {
                 int read;
                 while ((read = input.read(buffer)) != -1) {
                     digest.update(buffer, 0, read);
@@ -1063,9 +1346,23 @@ public class AotCompiler {
             }
             return sb.toString();
 
-        } catch (Exception e) {
-            return "";
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IOException("SHA-256 is unavailable", e);
         }
+    }
+
+    private static boolean isSha256Hash(String hash) {
+        if (hash == null || hash.length() != 64) {
+            return false;
+        }
+        for (int i = 0; i < hash.length(); i++) {
+            char character = hash.charAt(i);
+            if (!((character >= '0' && character <= '9')
+                    || (character >= 'a' && character <= 'f'))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void moveReplacing(Path source, Path target) throws IOException {
@@ -1170,19 +1467,17 @@ public class AotCompiler {
     }
 
     public void clearCache() throws IOException {
-        if (Files.exists(AOT_CACHE_DIR)) {
-            try (var paths = Files.walk(AOT_CACHE_DIR)) {
-                paths.sorted(Comparator.reverseOrder())
-                    .forEach(path -> {
-                        try {
-                            Files.delete(path);
-                        } catch (IOException e) {
-                            LOGGER.warn("Could not delete: {}", path);
-                        }
-                    });
-            }
+        requireCacheReady();
+        cacheReady = AotCacheStamp.clearCurrent(cacheDir);
+        if (!cacheReady) {
+            throw new IOException("AOT cache could not be cleared and restamped: " + cacheDir);
         }
-        Files.createDirectories(AOT_CACHE_DIR);
+    }
+
+    private void requireCacheReady() throws IOException {
+        if (!cacheReady) {
+            throw new IOException("AOT cache could not be validated: " + cacheDir);
+        }
     }
 
     @FunctionalInterface

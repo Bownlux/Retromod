@@ -4,6 +4,7 @@
   "package": "com.retromod.testmod.mixin",
   "compatibilityLevel": "JAVA_17",
   "mixins": [
+    "LegacyBlockRandomTicksAccessor",
     "LegacyChatOptionsSuperclassMixin",
     "LegacyClientCommandParserAccessor",
     "LegacyIntegratedServerPublishMixin",

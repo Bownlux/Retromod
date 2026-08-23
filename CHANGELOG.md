@@ -2,6 +2,36 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
+## [1.3.0-snapshot.9] - 2026-08-23
+
+Ninth snapshot of the 1.3.0 line.
+
+### Added
+
+- Moves a legacy accessor-only Mixin when one target, an exact owner-scoped field redirect, and an unchanged descriptor prove the new owner. It follows Mixin's implicit-name rules and adds `@Mutable` only when the shim marks that destination as mutable.
+
+### Fixed
+
+- Repairs legacy block random-tick accessors after the field moved from `Block` to `BlockBehaviour` and became final. Calls through a proven setter now refresh every cached block state, so the new value reaches random-tick scheduling.
+- Updates 48 same-contract `GameRules` constants after Fabric intermediary names expand to retired `RULE_*` spellings on 26.1 and newer. Retromod leaves the changed fire-tick rule and three inverted boolean rules untouched because a field rename cannot preserve their values.
+- Transforms explicitly selected `aot` and `batch` inputs when their metadata omits the source Minecraft version. Retromod applies only matching-loader shims available on the selected host, while automatic scans still leave unknown-version native mods alone.
+- Prevents `<target`, `<=target`, and `>target` Fabric constraints from being mistaken for native target declarations. Exact target predicates and matching wildcards still pass through unchanged.
+- Uses the detected Minecraft host version for transforms started from the in-game compatibility screen. A 26.2 client no longer prepares those mods as 26.1 output.
+- Takes an immutable snapshot of a mod's classes before parallel Fabric, Forge, or NeoForge transforms begin. Frame rebuilding and post-remap adapters no longer risk reading a class while another worker replaces it.
+- Preserves the implementation namespace of bundled MixinExtras libraries while still translating legacy calls from mod code. Nested-jar transforms no longer disable MixinExtras initialization and break unrelated Fabric API mixins that use `@Local` parameters.
+- Applies matching common API bridges during known-source CLI and AOT transforms. API release numbers stay outside Minecraft version-chain searches.
+- Selects library API repairs outside the Minecraft graph while still gating host-versioned API repairs. Explicit same-version CLI and AOT transforms can apply those providers.
+- Updates staged resource and data packs through Minecraft 26.2, including current minor pack formats. Data packs run compatible 26.x content migration when needed, while legacy resource packs run item-definition and content migration only during an actual format upgrade.
+- Processes staged resource and data packs on Fabric, Quilt, Forge, and NeoForge instead of limiting pack work to Fabric startup.
+- Reads the Minecraft dependency from `quilt.mod.json` and keeps it authoritative when a jar also contains Fabric metadata. The shared Fabric artifact carries both metadata files and uses entrypoint contracts Quilt Loader can invoke, so Retromod does not publish a separate Quilt artifact.
+- Keeps the Windows and Unix release builders on the same version, Minecraft matrix, integrity checks, artifact counts, and checksum output. `build.sh` and `build.bat` now delegate to the canonical builders.
+
+### Changed
+
+- Updates JUnit Jupiter from 5.10.1 to 6.1.3 and the release publisher's `charset-normalizer` from 3.4.9 to 3.5.1.
+
+Accessor owner moves still refuse multiple Mixin targets, mixed-purpose interfaces, unmatched companion accessors, conflicting destination fields, method-shaped redirects, and descriptor changes. Unknown-source fallback has no exact starting version, so a precise metadata version remains safer. Pack migration refuses unknown targets, malformed metadata, newer-only input, overlays, and conflicting paths. Those sources remain staged. The removed fire-tick boolean and inverted game rules need value-aware adapters.
+
 ## [1.3.0-snapshot.8] - 2026-08-17
 
 **Eighth snapshot of the 1.3.0 line.** A maintenance build: dependency and toolchain updates with no change to transform behavior.

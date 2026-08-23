@@ -5,6 +5,7 @@
 package com.retromod.gui;
 
 import com.retromod.core.*;
+import com.retromod.util.ArchivePublication;
 import com.retromod.util.McReflect;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -127,7 +128,7 @@ public class RetromodScreen {
                         "Updated as " + transformed.getFileName()));
                     LOGGER.info("Updated {} as {}", name, transformed.getFileName());
                 } else {
-                    Files.copy(modPath, modsFolder.resolve(name), StandardCopyOption.REPLACE_EXISTING);
+                    ArchivePublication.copyReplacing(modPath, modsFolder.resolve(name));
                     results.add(new ModResult(name, ModResult.Status.UNCHANGED,
                         "No changes needed"));
                 }
@@ -208,14 +209,8 @@ public class RetromodScreen {
 
     /** Reads the opt-in setting for high-risk mods. */
     private boolean isForceTranslateEnabled(Path gameDir) {
-        try {
-            Path configPath = gameDir.resolve("config/retromod/config.json");
-            if (Files.exists(configPath)) {
-                String json = Files.readString(configPath);
-                return json.contains("\"force_translate_complex\": true") ||
-                       json.contains("\"force_translate_complex\":true");
-            }
-        } catch (Exception ignored) {}
-        return false;
+        Path configPath = gameDir.resolve("config/retromod/config.json");
+        return RetromodConfig.getBooleanIfPresent(
+                configPath, "force_translate_complex", false);
     }
 }

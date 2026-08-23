@@ -4,10 +4,15 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -36,6 +41,7 @@ public final class GraphicsBackendCompat {
     public static final String OPT_OUT_PROPERTY = "retromod.graphics.noPreference";
 
     private static final String OPTIONS_FILE = "options.txt";
+    private static final long MAX_OPTIONS_BYTES = 1024L * 1024;
 
     // The persisted options.txt key (verified against 26.2 version 4903). `graphicsApi`
     // is only the in-game label's translation key, not the stored one. Value is a
@@ -100,7 +106,7 @@ public final class GraphicsBackendCompat {
             return Result.SET_OPENGL;
         }
 
-        List<String> lines = Files.readAllLines(optionsTxt, StandardCharsets.UTF_8);
+        List<String> lines = readOptions(optionsTxt);
         int idx = -1;
         String currentValue = null;
         for (int i = 0; i < lines.size(); i++) {
@@ -133,6 +139,26 @@ public final class GraphicsBackendCompat {
         Files.write(optionsTxt, lines, StandardCharsets.UTF_8);
         logSet(false);
         return Result.SET_OPENGL;
+    }
+
+    private static List<String> readOptions(Path optionsTxt) throws IOException {
+        if (Files.size(optionsTxt) > MAX_OPTIONS_BYTES) {
+            throw new IOException("options.txt exceeds " + MAX_OPTIONS_BYTES + " bytes");
+        }
+        byte[] bytes;
+        try (InputStream input = Files.newInputStream(optionsTxt)) {
+            bytes = ZipSecurity.safeReadAllBytes(input, MAX_OPTIONS_BYTES);
+        }
+        try {
+            String content = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes))
+                    .toString();
+            return new ArrayList<>(content.lines().toList());
+        } catch (CharacterCodingException invalidUtf8) {
+            throw new IOException("options.txt is not valid UTF-8", invalidUtf8);
+        }
     }
 
     /** Strip one surrounding pair of double-quotes if present. */

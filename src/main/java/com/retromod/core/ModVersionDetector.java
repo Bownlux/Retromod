@@ -5,6 +5,7 @@
 package com.retromod.core;
 
 import com.retromod.embedder.ModVersionInfo;
+import com.retromod.util.JsonSecurity;
 import com.retromod.util.ZipSecurity;
 import com.google.gson.*;
 
@@ -26,15 +27,27 @@ public class ModVersionDetector {
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     private static final long MAX_METADATA_SIZE = 2L * 1024 * 1024;
     private static final long MAX_CLASS_SCAN_SIZE = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
+    private static final int MAX_JSON_DEPTH = 256;
 
     public ModVersionInfo detectVersion(Path modJarPath) throws IOException {
         try (JarFile jar = new JarFile(modJarPath.toFile())) {
             if (jar.size() > MAX_ARCHIVE_ENTRIES) {
                 throw new IOException("Mod archive has too many entries: " + jar.size());
             }
+            validateArchiveEntries(jar);
+            JarEntry quiltEntry = jar.getJarEntry("quilt.mod.json");
+            if (quiltEntry != null) {
+                return parseQuiltMod(jar, quiltEntry);
+            }
+
             JarEntry fabricEntry = jar.getJarEntry("fabric.mod.json");
             if (fabricEntry != null) {
                 return parseFabricMod(jar, fabricEntry);
+            }
+
+            JarEntry neoEntry = jar.getJarEntry("META-INF/neoforge.mods.toml");
+            if (neoEntry != null) {
+                return parseNeoForgeMod(jar, neoEntry);
             }
 
             JarEntry forgeEntry = jar.getJarEntry("META-INF/mods.toml");
@@ -47,18 +60,13 @@ public class ModVersionDetector {
                 return parseLegacyForgeMod(jar, legacyForgeEntry);
             }
 
-            JarEntry neoEntry = jar.getJarEntry("META-INF/neoforge.mods.toml");
-            if (neoEntry != null) {
-                return parseNeoForgeMod(jar, neoEntry);
-            }
-
             return null;
         }
     }
 
     private ModVersionInfo parseFabricMod(JarFile jar, JarEntry entry) throws IOException {
-        String metadata = readMetadata(jar, entry);
-        JsonObject json = GSON.fromJson(metadata, JsonObject.class);
+        String metadata = readJsonMetadata(jar, entry, "fabric.mod.json");
+        JsonObject json = parseJsonObject(metadata, "fabric.mod.json");
 
         String modId = json.has("id") ? json.get("id").getAsString() : "unknown";
         String modVersion = json.has("version") ? json.get("version").getAsString() : "unknown";
@@ -79,6 +87,62 @@ public class ModVersionDetector {
             apiDeps,
             usesRemoved
         );
+    }
+
+    private ModVersionInfo parseQuiltMod(JarFile jar, JarEntry entry) throws IOException {
+        String metadata = readJsonMetadata(jar, entry, "quilt.mod.json");
+        String declaredMcVersion = QuiltMetadataCompat.readMinecraftVersion(
+                metadata.getBytes(StandardCharsets.UTF_8));
+
+        JsonObject root = parseJsonObject(metadata, "quilt.mod.json");
+        if (root == null || !root.has("quilt_loader")
+                || !root.get("quilt_loader").isJsonObject()) {
+            throw new IOException("quilt.mod.json has no quilt_loader object");
+        }
+
+        JsonObject loader = root.getAsJsonObject("quilt_loader");
+        String modId = primitiveString(loader.get("id"), "unknown");
+        String modVersion = primitiveString(loader.get("version"), "unknown");
+        String loaderVersion = quiltDependencyVersion(loader.get("depends"), "quilt_loader");
+        String targetMcVersion = declaredMcVersion != null
+                ? parseFabricVersionRange(declaredMcVersion) : null;
+
+        Set<String> packages = scanModPackages(jar, modId);
+        Set<String> apiDeps = scanApiDependencies(jar);
+        return new ModVersionInfo(
+            modId,
+            modVersion,
+            targetMcVersion,
+            "quilt",
+            loaderVersion,
+            packages,
+            apiDeps,
+            checkForRemovedApis(apiDeps)
+        );
+    }
+
+    private static String primitiveString(JsonElement value, String fallback) {
+        return value != null && value.isJsonPrimitive()
+                ? value.getAsString() : fallback;
+    }
+
+    private static String quiltDependencyVersion(JsonElement dependencies, String dependencyId) {
+        if (dependencies == null || !dependencies.isJsonArray()) return null;
+        for (JsonElement element : dependencies.getAsJsonArray()) {
+            if (element.isJsonArray()) {
+                String nested = quiltDependencyVersion(element, dependencyId);
+                if (nested != null) return nested;
+                continue;
+            }
+            if (!element.isJsonObject()) continue;
+            JsonObject dependency = element.getAsJsonObject();
+            if (!dependencyId.equals(primitiveString(dependency.get("id"), null))) continue;
+            JsonElement versions = dependency.get("versions");
+            if (versions != null && versions.isJsonPrimitive()) {
+                return versions.getAsString();
+            }
+        }
+        return null;
     }
     
     private String extractFabricMcVersion(JsonObject json) {
@@ -169,7 +233,8 @@ public class ModVersionDetector {
     }
     
     private ModVersionInfo parseLegacyForgeMod(JarFile jar, JarEntry entry) throws IOException {
-        JsonArray array = GSON.fromJson(readMetadata(jar, entry), JsonArray.class);
+        JsonArray array = parseJsonArray(
+                readJsonMetadata(jar, entry, "mcmod.info"), "mcmod.info");
         if (array.isEmpty()) return null;
 
         JsonObject first = array.get(0).getAsJsonObject();
@@ -228,6 +293,77 @@ public class ModVersionDetector {
         try (InputStream input = jar.getInputStream(entry)) {
             return new String(ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE),
                     StandardCharsets.UTF_8);
+        }
+    }
+
+    private String readJsonMetadata(JarFile jar, JarEntry entry, String name)
+            throws IOException {
+        try (InputStream input = jar.getInputStream(entry)) {
+            return JsonSecurity.readUtf8(input, MAX_METADATA_SIZE,
+                    MAX_JSON_DEPTH, name);
+        }
+    }
+
+    private static void validateArchiveEntries(JarFile jar) throws IOException {
+        Set<String> names = new HashSet<>();
+        Enumeration<JarEntry> entries = jar.entries();
+        while (entries.hasMoreElements()) {
+            String name = ZipSecurity.canonicalEntryName(entries.nextElement().getName());
+            if (!names.add(name)) {
+                throw new IOException("Mod archive contains a duplicate normalized entry: "
+                        + name);
+            }
+        }
+    }
+
+    private static JsonObject parseJsonObject(String content, String name) throws IOException {
+        validateJsonDepth(content, name);
+        try {
+            JsonObject parsed = GSON.fromJson(content, JsonObject.class);
+            if (parsed == null) throw new IOException(name + " root is missing");
+            return parsed;
+        } catch (JsonParseException | IllegalStateException e) {
+            throw new IOException("Could not parse " + name + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static JsonArray parseJsonArray(String content, String name) throws IOException {
+        validateJsonDepth(content, name);
+        try {
+            JsonArray parsed = GSON.fromJson(content, JsonArray.class);
+            if (parsed == null) throw new IOException(name + " root is missing");
+            return parsed;
+        } catch (JsonParseException | IllegalStateException e) {
+            throw new IOException("Could not parse " + name + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static void validateJsonDepth(String content, String name) throws IOException {
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int index = 0; index < content.length(); index++) {
+            char value = content.charAt(index);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (value == '\\') {
+                    escaped = true;
+                } else if (value == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (value == '"') {
+                inString = true;
+            } else if (value == '{' || value == '[') {
+                if (++depth > MAX_JSON_DEPTH) {
+                    throw new IOException(name + " nesting exceeds "
+                            + MAX_JSON_DEPTH + " levels");
+                }
+            } else if ((value == '}' || value == ']') && depth > 0) {
+                depth--;
+            }
         }
     }
 

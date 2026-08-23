@@ -85,4 +85,15 @@ class FabricMetadataCompatTest {
         String wrongShape = "{\"depends\": \"not-an-object\"}";
         assertArrayEquals(wrongShape.getBytes(StandardCharsets.UTF_8), migrate(wrongShape));
     }
+
+    @Test
+    @DisplayName("Deep metadata is passed through before tree parsing")
+    void deeplyNestedMetadataIsLeftUntouched() {
+        String nested = "[".repeat(257) + "0" + "]".repeat(257);
+        String metadata = "{\"depends\":{\"fabric\":\"*\"},\"padding\":"
+                + nested + "}";
+        byte[] original = metadata.getBytes(StandardCharsets.UTF_8);
+
+        assertSame(original, FabricMetadataCompat.migrateLegacyFabricApiDependency(original));
+    }
 }

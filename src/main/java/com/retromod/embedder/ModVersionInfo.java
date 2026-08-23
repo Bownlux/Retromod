@@ -13,7 +13,7 @@ public record ModVersionInfo(
     String modId,
     String modVersion,
     String targetMcVersion,
-    String modLoaderType,      // "fabric", "forge", "neoforge"
+    String modLoaderType,      // "fabric", "quilt", "forge", "neoforge"
     String modLoaderVersion,
     Set<String> modPackages,   // Java packages containing mod code
     Set<String> apiDependencies,

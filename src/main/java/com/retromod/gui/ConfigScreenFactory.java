@@ -7,6 +7,7 @@ package com.retromod.gui;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.retromod.util.JsonSecurity;
 import com.retromod.util.McI18n;
 import com.retromod.util.McReflect;
 import org.slf4j.Logger;
@@ -36,6 +37,7 @@ public final class ConfigScreenFactory {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
     private static final Path CONFIG_PATH = Path.of("config/retromod/config.json");
+    private static final long MAX_CONFIG_BYTES = 1024L * 1024;
 
     // Cached MC classes
     private static Class<?> screenClass;
@@ -274,7 +276,8 @@ public final class ConfigScreenFactory {
 
         try {
             if (Files.exists(CONFIG_PATH)) {
-                String json = Files.readString(CONFIG_PATH);
+                String json = JsonSecurity.readUtf8(CONFIG_PATH, MAX_CONFIG_BYTES,
+                        JsonSecurity.DEFAULT_MAX_DEPTH, "Retromod config");
                 for (String key : config.keySet()) {
                     if (json.contains("\"" + key + "\": true") ||
                         json.contains("\"" + key + "\":true")) {
@@ -294,7 +297,10 @@ public final class ConfigScreenFactory {
     static void saveConfig(Map<String, Boolean> config) {
         try {
             Files.createDirectories(CONFIG_PATH.getParent());
-            String existing = Files.exists(CONFIG_PATH) ? Files.readString(CONFIG_PATH) : "";
+            String existing = Files.exists(CONFIG_PATH)
+                    ? JsonSecurity.readUtf8(CONFIG_PATH, MAX_CONFIG_BYTES,
+                            JsonSecurity.DEFAULT_MAX_DEPTH, "Retromod config")
+                    : "";
             String merged = mergeConfigJson(existing, config);
             Path temp = Files.createTempFile(CONFIG_PATH.getParent(), ".config.json.", ".tmp");
             try {
@@ -317,6 +323,8 @@ public final class ConfigScreenFactory {
         JsonObject root = new JsonObject();
         if (existing != null && !existing.isBlank()) {
             try {
+                JsonSecurity.validate(existing, MAX_CONFIG_BYTES,
+                        JsonSecurity.DEFAULT_MAX_DEPTH, "Retromod config");
                 var parsed = JsonParser.parseString(existing);
                 if (parsed.isJsonObject()) root = parsed.getAsJsonObject();
             } catch (Exception ignored) {

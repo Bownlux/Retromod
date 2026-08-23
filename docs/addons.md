@@ -30,6 +30,10 @@ public final class ExampleShim implements VersionShim {
 
 Keep redirects owner- and descriptor-specific when working with methods.
 
+Implement `com.retromod.core.AuxiliaryVersionShim` when `getSourceVersion()` and `getTargetVersion()` describe library API releases. Retromod selects that provider by loader. It does not compare those values with Minecraft or use the provider as a graph edge.
+
+Implement `com.retromod.core.MinecraftVersionedApiShim` when those values describe Minecraft host versions for an API repair. Retromod keeps that provider outside the transition graph, but it registers the provider only when the selected host reaches `getTargetVersion()`. Explicit same-version transforms can apply both provider types.
+
 ## Polyfills
 
 Implement `com.retromod.polyfill.PolyfillProvider` when an API was removed and needs a small replacement. Redirect the old name to a class in your addon's own package. Do not add classes to loader-owned packages.

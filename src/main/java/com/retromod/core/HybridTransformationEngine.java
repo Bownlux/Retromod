@@ -4,13 +4,15 @@
  */
 package com.retromod.core;
 
-import com.retromod.aot.AotCompiler;
-import com.retromod.shim.ShimRegistry;
+import com.retromod.mixin.MixinCompatibilityTransformer;
+import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.*;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -28,14 +30,20 @@ public final class HybridTransformationEngine {
 
     private static volatile HybridTransformationEngine instance;
 
-    private static final Path AOT_CACHE_DIR = Path.of("config/retromod/aot-cache");
+    private static final int MAX_ARCHIVE_ENTRIES = 100_000;
+    private static final int MAX_CACHED_CLASSES = 100_000;
+    private static final long MAX_EXPANDED_BYTES = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
+    private static final int MAX_BACKGROUND_WORKERS = 2;
 
-    private final ShimRegistry shimRegistry;
     private final RetromodTransformer jitTransformer;
+    private final MixinCompatibilityTransformer mixinTransformer;
     private final ModVersionDetector versionDetector;
     private final MemorySafetyMonitor performanceMonitor;
 
-    private final Map<String, byte[]> aotCache = new ConcurrentHashMap<>();
+    private final Map<String, CachedClass> aotCache = new ConcurrentHashMap<>();
+    private final Object aotCacheLock = new Object();
+    private long cachedTransformBytes;
+    private final AtomicBoolean cacheLimitLogged = new AtomicBoolean(false);
     private final Map<String, String> classToModMap = new ConcurrentHashMap<>();
     private final Map<String, ModTransformInfo> modsToTransform = new ConcurrentHashMap<>();
 
@@ -55,17 +63,14 @@ public final class HybridTransformationEngine {
     ) {}
     
     private HybridTransformationEngine() {
-        this.shimRegistry = new ShimRegistry();
         this.jitTransformer = RetromodTransformer.getInstance();
+        this.mixinTransformer = new MixinCompatibilityTransformer(jitTransformer);
         this.versionDetector = new ModVersionDetector();
         this.performanceMonitor = MemorySafetyMonitor.getInstance();
 
-        // The preload trusts each cached class, so a different Retromod build must clear the
-        // directory before anything is read.
-        com.retromod.aot.AotCacheStamp.ensureCurrent(AOT_CACHE_DIR);
-
         this.backgroundExecutor = Executors.newFixedThreadPool(
-            Math.max(1, Runtime.getRuntime().availableProcessors() - 1),
+            Math.max(1, Math.min(MAX_BACKGROUND_WORKERS,
+                Runtime.getRuntime().availableProcessors() - 1)),
             r -> {
                 Thread t = new Thread(r, "Retromod-AOT-Background");
                 t.setDaemon(true);
@@ -86,7 +91,6 @@ public final class HybridTransformationEngine {
     public void initialize(Path modsFolder, String targetVersion) {
         LOGGER.info("Preparing the background transformation cache");
 
-        loadAotCache();
         scanModsFolder(modsFolder, targetVersion);
 
         // Crash reports use the same ownership map as the transformer.
@@ -138,8 +142,8 @@ public final class HybridTransformationEngine {
         byte[] result = null;
 
         try {
-            if (aotCache.containsKey(className)) {
-                result = aotCache.get(className);
+            result = cachedTransform(className, originalBytes);
+            if (result != null) {
                 aotHits.incrementAndGet();
                 LOGGER.trace("AOT cache hit: {}", className);
                 return result;
@@ -149,20 +153,23 @@ public final class HybridTransformationEngine {
             if (pendingAotClasses.contains(className)) {
                 try {
                     Thread.sleep(50);
-                    if (aotCache.containsKey(className)) {
-                        result = aotCache.get(className);
+                    result = cachedTransform(className, originalBytes);
+                    if (result != null) {
                         aotHits.incrementAndGet();
                         return result;
                     }
-                } catch (InterruptedException ignored) {}
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
             }
 
             jitFallbacks.incrementAndGet();
             LOGGER.trace("JIT fallback: {}", className);
-            result = jitTransformer.transformClass(originalBytes, className);
+            result = transformWithMixinRepairs(
+                    jitTransformer, mixinTransformer, originalBytes, className);
 
             if (result != null) {
-                aotCache.put(className, result);
+                cacheTransform(className, originalBytes, result);
             }
 
             return result != null ? result : originalBytes;
@@ -177,39 +184,58 @@ public final class HybridTransformationEngine {
         }
     }
 
-    private void loadAotCache() {
-        try {
-            if (!Files.exists(AOT_CACHE_DIR)) return;
+    private byte[] cachedTransform(String className, byte[] originalBytes) {
+        synchronized (aotCacheLock) {
+            CachedClass cached = aotCache.get(className);
+            if (cached == null) return null;
+            if (cached.matches(originalBytes)) return cached.transformedBytes().clone();
 
-            try (var stream = Files.walk(AOT_CACHE_DIR)) {
-                stream.filter(p -> p.toString().endsWith(".class"))
-                    .forEach(p -> {
-                        try {
-                            String className = AOT_CACHE_DIR.relativize(p).toString()
-                                .replace(".class", "")
-                                .replace(p.getFileSystem().getSeparator(), "/");
-                            byte[] bytes = Files.readAllBytes(p);
-                            aotCache.put(className, bytes);
-                        } catch (IOException e) {
-                            LOGGER.debug("Could not load cached class: {}", p);
-                        }
-                    });
+            // Different mods can own the same class name. Never substitute bytes prepared from a
+            // different source class, even within the same launch.
+            if (aotCache.remove(className, cached)) {
+                cachedTransformBytes -= cached.transformedBytes().length;
             }
-            
-            LOGGER.info("Loaded {} classes from AOT cache", aotCache.size());
-            
-        } catch (IOException e) {
-            LOGGER.warn("Could not load AOT cache: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private boolean cacheTransform(String className, byte[] sourceBytes, byte[] transformedBytes) {
+        if (transformedBytes.length > ZipSecurity.DEFAULT_MAX_ENTRY_SIZE) {
+            return false;
+        }
+        CachedClass replacement = CachedClass.from(sourceBytes, transformedBytes);
+        synchronized (aotCacheLock) {
+            CachedClass previous = aotCache.get(className);
+            if (previous == null && aotCache.size() >= MAX_CACHED_CLASSES) {
+                if (cacheLimitLogged.compareAndSet(false, true)) {
+                    LOGGER.warn("Background transformation cache reached its class limit. "
+                            + "Remaining classes will use launch-time transformation.");
+                }
+                return false;
+            }
+            long previousBytes = previous == null ? 0 : previous.transformedBytes().length;
+            long nextTotal = cachedTransformBytes - previousBytes + transformedBytes.length;
+            if (nextTotal > MAX_EXPANDED_BYTES) {
+                if (cacheLimitLogged.compareAndSet(false, true)) {
+                    LOGGER.warn("Background transformation cache reached its memory limit. "
+                            + "Remaining classes will use launch-time transformation.");
+                }
+                return false;
+            }
+            aotCache.put(className, replacement);
+            cachedTransformBytes = nextTotal;
+            return true;
         }
     }
 
     private void scanModsFolder(Path modsFolder, String targetVersion) {
-        if (!Files.exists(modsFolder)) return;
+        if (!Files.isDirectory(modsFolder, LinkOption.NOFOLLOW_LINKS)) return;
 
         try (var stream = Files.list(modsFolder)) {
             stream
-                .filter(p -> p.toString().endsWith(".jar"))
+                .filter(p -> p.toString().toLowerCase(Locale.ROOT).endsWith(".jar"))
                 .filter(p -> !p.getFileName().toString().contains("-retromod"))
+                .filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
                 .forEach(jarPath -> {
                     try {
                         var info = versionDetector.detectVersion(jarPath);
@@ -242,24 +268,17 @@ public final class HybridTransformationEngine {
         }
     }
 
-    private Set<String> extractPackages(Path jarPath) {
+    private Set<String> extractPackages(Path jarPath) throws IOException {
         Set<String> packages = new HashSet<>();
-
         try (JarFile jar = new JarFile(jarPath.toFile())) {
-            jar.stream()
-                .map(JarEntry::getName)
-                .filter(name -> name.endsWith(".class"))
-                .filter(name -> !name.startsWith("META-INF/"))
-                .forEach(name -> {
-                    int lastSlash = name.lastIndexOf('/');
-                    if (lastSlash > 0) {
-                        packages.add(name.substring(0, lastSlash + 1));
-                    }
-                });
-        } catch (IOException e) {
-            LOGGER.debug("Could not read class packages from {}", jarPath);
+            for (String rawName : collectClassEntryNames(jar, MAX_ARCHIVE_ENTRIES)) {
+                String name = canonicalArchiveEntryName(rawName);
+                int lastSlash = name.lastIndexOf('/');
+                if (lastSlash > 0) {
+                    packages.add(name.substring(0, lastSlash + 1));
+                }
+            }
         }
-
         return packages;
     }
 
@@ -267,61 +286,84 @@ public final class HybridTransformationEngine {
         LOGGER.info("Preparing {} {} in the background",
                 modsToTransform.size(), modsToTransform.size() == 1 ? "mod" : "mods");
 
+        SharedByteBudget expandedInputBudget = new SharedByteBudget(MAX_EXPANDED_BYTES);
+        List<CompletableFuture<Void>> compilationTasks = new ArrayList<>();
         for (ModTransformInfo mod : modsToTransform.values()) {
-            backgroundExecutor.submit(() -> {
+            compilationTasks.add(CompletableFuture.runAsync(() -> {
                 try {
-                    compileModAot(mod, targetVersion);
+                    compileModAot(mod, targetVersion, expandedInputBudget);
                 } catch (Exception e) {
                     LOGGER.warn("Could not prepare {} in the background: {}",
                             mod.modId(), e.getMessage());
                 }
-            });
+            }, backgroundExecutor));
         }
 
-        backgroundExecutor.submit(() -> {
+        afterAllBackgroundTasks(compilationTasks, () -> {
             aotCompletedFlag.set(true);
             LOGGER.info("Background precompilation finished: {} cache hits, {} launch-time fallbacks",
                 aotHits.get(), jitFallbacks.get());
         });
     }
 
-    private void compileModAot(ModTransformInfo mod, String targetVersion) throws IOException {
+    static CompletableFuture<Void> afterAllBackgroundTasks(
+            List<CompletableFuture<Void>> tasks, Runnable completion) {
+        return CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new))
+                .whenComplete((ignored, failure) -> completion.run());
+    }
+
+    private void compileModAot(ModTransformInfo mod, String targetVersion,
+                               SharedByteBudget expandedInputBudget) throws IOException {
         LOGGER.info("AOT compiling: {} ({})", mod.modId(), mod.jarPath().getFileName());
 
+        if (!Files.isRegularFile(mod.jarPath(), LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Mod input is not a regular file: " + mod.jarPath());
+        }
         try (JarFile jar = new JarFile(mod.jarPath().toFile())) {
-            List<JarEntry> classEntries = jar.stream()
-                .filter(e -> e.getName().endsWith(".class"))
-                .filter(e -> !e.getName().startsWith("META-INF/"))
-                .toList();
+            List<String> classEntries = collectClassEntryNames(jar, MAX_ARCHIVE_ENTRIES);
+            Map<String, byte[]> originalClasses = new LinkedHashMap<>();
+            for (String rawEntryName : classEntries) {
+                String entryName = canonicalArchiveEntryName(rawEntryName);
+                JarEntry entry = jar.getJarEntry(rawEntryName);
+                if (entry == null) {
+                    throw new IOException("Mod archive entry disappeared: " + rawEntryName);
+                }
+                byte[] original;
+                try (var in = jar.getInputStream(entry)) {
+                    original = ZipSecurity.safeReadAllBytes(
+                            in, ZipSecurity.DEFAULT_MAX_ENTRY_SIZE);
+                }
+                expandedInputBudget.reserve(original.length, entryName);
+                String className = entryName.substring(0, entryName.length() - 6);
+                originalClasses.put(className, original);
+            }
 
             int compiled = 0;
-            for (JarEntry entry : classEntries) {
-                String className = entry.getName().replace(".class", "");
+            for (Map.Entry<String, byte[]> classEntry : originalClasses.entrySet()) {
+                String className = classEntry.getKey();
 
                 // An entry name is untrusted. One that climbs out of the cache directory would
                 // have Retromod write the mod's bytes to a path of the mod's choosing.
                 if (!isCacheableClassName(className)) {
                     LOGGER.warn("Skipped a class with an unusable name in {}: {}",
-                            mod.jarPath().getFileName(), entry.getName());
-                    continue;
-                }
-
-                if (aotCache.containsKey(className)) {
+                            mod.jarPath().getFileName(), className);
                     continue;
                 }
 
                 pendingAotClasses.add(className);
 
                 try {
-                    byte[] original;
-                    try (var in = jar.getInputStream(entry)) {
-                        original = in.readAllBytes();
+                    byte[] original = classEntry.getValue();
+
+                    if (cachedTransform(className, original) != null) {
+                        continue;
                     }
-                    byte[] transformed = jitTransformer.transformClass(original, className);
+                    byte[] transformed = transformWithMixinRepairs(
+                            jitTransformer, mixinTransformer, original, className,
+                            originalClasses::get);
 
                     if (transformed != null) {
-                        aotCache.put(className, transformed);
-                        saveToCache(className, transformed);
+                        cacheTransform(className, original, transformed);
                         classToModMap.put(className, mod.modId());
                         compiled++;
                     }
@@ -333,6 +375,82 @@ public final class HybridTransformationEngine {
             }
 
             LOGGER.info("AOT compiled {} classes for {}", compiled, mod.modId());
+        }
+    }
+
+    static List<String> collectClassEntryNames(JarFile jar, int maxEntries) throws IOException {
+        if (maxEntries < 0) throw new IllegalArgumentException("archive entry limit is negative");
+        List<String> classEntries = new ArrayList<>();
+        Set<String> normalizedNames = new HashSet<>();
+        int entryCount = 0;
+        var entries = jar.entries();
+        while (entries.hasMoreElements()) {
+            JarEntry entry = entries.nextElement();
+            if (++entryCount > maxEntries) {
+                throw new IOException("Mod archive contains more than " + maxEntries + " entries");
+            }
+            String normalized = canonicalArchiveEntryName(entry.getName());
+            if (!normalizedNames.add(normalized)) {
+                throw new IOException("Mod archive contains a duplicate entry: " + normalized);
+            }
+            if (!entry.isDirectory() && normalized.endsWith(".class")
+                    && !normalized.startsWith("META-INF/")) {
+                classEntries.add(entry.getName());
+            }
+        }
+        return List.copyOf(classEntries);
+    }
+
+    /** Applies the same pre-remap and post-remap Mixin passes as archive transforms. */
+    static byte[] transformWithMixinRepairs(
+            RetromodTransformer transformer,
+            MixinCompatibilityTransformer mixins,
+            byte[] originalBytes,
+            String className) {
+        byte[] preRemap = mixins.transformMixinClass(originalBytes);
+        byte[] transformed = transformer.transformClass(
+                preRemap != null ? preRemap : originalBytes, className);
+        byte[] current = transformed != null ? transformed : preRemap;
+        return mixins.applyPostRemapRepairs(
+                current != null ? current : originalBytes);
+    }
+
+    static byte[] transformWithMixinRepairs(
+            RetromodTransformer transformer,
+            MixinCompatibilityTransformer mixins,
+            byte[] originalBytes,
+            String className,
+            java.util.function.Function<String, byte[]> jarClassBytes) {
+        try (var hierarchyScope = transformer.pushJarClassBytesProvider(jarClassBytes)) {
+            return transformWithMixinRepairs(
+                    transformer, mixins, originalBytes, className);
+        }
+    }
+
+    private static String canonicalArchiveEntryName(String entryName) throws IOException {
+        return ZipSecurity.canonicalEntryName(entryName);
+    }
+
+    static final class SharedByteBudget {
+        private final long limit;
+        private long used;
+
+        SharedByteBudget(long limit) {
+            if (limit < 0) throw new IllegalArgumentException("byte limit is negative");
+            this.limit = limit;
+        }
+
+        synchronized void reserve(long bytes, String entryName) throws IOException {
+            if (bytes < 0) throw new IllegalArgumentException("byte count is negative");
+            if (bytes > limit - used) {
+                throw new IOException("Background transformation input exceeds " + limit
+                        + " expanded bytes at " + entryName);
+            }
+            used += bytes;
+        }
+
+        synchronized long usedBytes() {
+            return used;
         }
     }
 
@@ -353,15 +471,25 @@ public final class HybridTransformationEngine {
         return true;
     }
 
-    private void saveToCache(String className, byte[] bytes) {
+    static byte[] hashClassSource(byte[] sourceBytes) {
         try {
-            // Checked again at the write, so a new caller cannot reintroduce the escape.
-            Path cachePath = com.retromod.util.ZipSecurity.safeResolve(
-                    AOT_CACHE_DIR, className + ".class");
-            Files.createDirectories(cachePath.getParent());
-            Files.write(cachePath, bytes);
-        } catch (IOException e) {
-            LOGGER.debug("Could not cache class: {}", className);
+            return MessageDigest.getInstance("SHA-256").digest(sourceBytes);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
+    }
+
+    static boolean matchesClassSource(byte[] expectedHash, byte[] sourceBytes) {
+        return MessageDigest.isEqual(expectedHash, hashClassSource(sourceBytes));
+    }
+
+    private record CachedClass(byte[] sourceHash, byte[] transformedBytes) {
+        static CachedClass from(byte[] sourceBytes, byte[] transformedBytes) {
+            return new CachedClass(hashClassSource(sourceBytes), transformedBytes.clone());
+        }
+
+        boolean matches(byte[] sourceBytes) {
+            return matchesClassSource(sourceHash, sourceBytes);
         }
     }
 

@@ -5,7 +5,7 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,7 +16,7 @@ import org.slf4j.LoggerFactory;
  * SAM name and delegating to the new one. Gated 26.1+ (#9): the old interfaces exist on pre-26.1
  * hosts, and the synthetics' Mojang-name descriptors only resolve on 26.1.
  */
-public class FabricRenamedSamBridgesShim implements VersionShim {
+public class FabricRenamedSamBridgesShim implements AuxiliaryVersionShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 

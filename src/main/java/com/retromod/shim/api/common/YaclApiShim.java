@@ -5,10 +5,10 @@
 package com.retromod.shim.api.common;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /** YACL (Yet Another Config Lib) v2 -> v3 API restructure. Loader-agnostic. */
-public class YaclApiShim implements VersionShim {
+public class YaclApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

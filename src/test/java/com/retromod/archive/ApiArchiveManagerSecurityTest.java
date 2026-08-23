@@ -82,6 +82,17 @@ class ApiArchiveManagerSecurityTest {
     }
 
     @Test
+    @DisplayName("archive class extraction caps the full central-directory entry count")
+    void extractionEntryCountIsEnforced(@TempDir Path dir) throws Exception {
+        Path jar = dir.resolve("many-entries.jar");
+        writeJar(jar, new String[]{"one/A.class", "metadata.txt"},
+                new byte[][]{new byte[]{1}, new byte[]{2}});
+
+        assertThrows(IOException.class,
+                () -> ApiArchiveManager.extractClasses(jar, 10, 10, 1));
+    }
+
+    @Test
     @DisplayName("unsafe archive entry names are rejected before classes enter the cache")
     void extractionRejectsUnsafeEntryNames(@TempDir Path dir) throws Exception {
         Path jar = dir.resolve("unsafe.jar");
@@ -89,6 +100,19 @@ class ApiArchiveManagerSecurityTest {
 
         assertThrows(IOException.class,
                 () -> ApiArchiveManager.extractClasses(jar, 10, 10));
+    }
+
+    @Test
+    @DisplayName("archive loading and download validation refuse normalized duplicate entries")
+    void normalizedDuplicateEntriesAreRejected(@TempDir Path dir) throws Exception {
+        Path jar = dir.resolve("duplicate.jar");
+        writeJar(jar,
+                new String[]{"api/example//Value.class", "api/example/Value.class"},
+                new byte[][]{new byte[]{1}, new byte[]{2}});
+
+        assertThrows(IOException.class,
+                () -> ApiArchiveManager.extractClasses(jar, 10, 20));
+        assertThrows(IOException.class, () -> ApiArchiveManager.validateJar(jar));
     }
 
     @Test

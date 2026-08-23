@@ -5,12 +5,12 @@
 package com.retromod.shim.api.common;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /**
  * Bridges GeckoLib's v3 -> v4 API rewrite. Common to Fabric and Forge/NeoForge.
  */
-public class GeckoLibApiShim implements VersionShim {
+public class GeckoLibApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

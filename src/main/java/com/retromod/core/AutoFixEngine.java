@@ -7,10 +7,14 @@ package com.retromod.core;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
+import com.retromod.util.JsonSecurity;
+import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.lang.reflect.Type;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,6 +43,10 @@ public class AutoFixEngine {
     private static final Path FIXES_FILE = Path.of("config/retromod/auto-fixes.json");
 
     private static final int MAX_FIXES_PER_RUN = 50;
+    private static final long MAX_FIXES_FILE_BYTES = 2L * 1024 * 1024;
+    private static final long MAX_LOG_FILE_BYTES = 64L * 1024 * 1024;
+    private static final int MAX_LOG_LINE_CHARS = 256 * 1024;
+    private static final int MAX_LOG_LINES = 1_000_000;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
@@ -83,7 +91,7 @@ public class AutoFixEngine {
 
         List<String> logLines;
         try {
-            logLines = Files.readAllLines(logFile);
+            logLines = readLogLines(logFile);
         } catch (IOException e) {
             LOGGER.error("[AutoFix] Could not read log file: {}", e.getMessage());
             return Collections.emptyList();
@@ -154,7 +162,7 @@ public class AutoFixEngine {
 
         List<String> logLines;
         try {
-            logLines = Files.readAllLines(logFile);
+            logLines = readLogLines(logFile);
         } catch (IOException e) {
             LOGGER.error("[AutoFix] Could not read log file: {}", e.getMessage());
             return Collections.emptyList();
@@ -186,6 +194,63 @@ public class AutoFixEngine {
         return suggestions;
     }
 
+    static List<String> readLogLines(Path logFile) throws IOException {
+        return readLogLines(logFile, MAX_LOG_FILE_BYTES,
+                MAX_LOG_LINE_CHARS, MAX_LOG_LINES);
+    }
+
+    static List<String> readLogLines(Path logFile, long maxBytes,
+            int maxLineChars, int maxLines) throws IOException {
+        if (maxBytes <= 0 || maxLineChars <= 0 || maxLines <= 0) {
+            throw new IllegalArgumentException("Log limits must be positive");
+        }
+        Path inputPath = ZipSecurity.requireRegularFileNoFollow(
+                logFile, "AutoFix log input");
+        if (Files.size(inputPath) > maxBytes) {
+            throw new IOException("AutoFix log exceeds " + maxBytes + " bytes: " + inputPath);
+        }
+        byte[] bytes;
+        try (InputStream input = Files.newInputStream(inputPath)) {
+            bytes = ZipSecurity.safeReadAllBytes(input, maxBytes);
+        }
+        return splitLogLines(new String(bytes, StandardCharsets.UTF_8),
+                maxLineChars, maxLines);
+    }
+
+    private static List<String> splitLogLines(
+            String content, int maxLineChars, int maxLines) throws IOException {
+        List<String> lines = new ArrayList<>();
+        int lineStart = 0;
+        for (int index = 0; index < content.length(); index++) {
+            char value = content.charAt(index);
+            if (value != '\n' && value != '\r') {
+                if (index - lineStart + 1 > maxLineChars) {
+                    throw new IOException("AutoFix log line exceeds "
+                            + maxLineChars + " characters");
+                }
+                continue;
+            }
+            addLogLine(lines, content.substring(lineStart, index), maxLines);
+            if (value == '\r' && index + 1 < content.length()
+                    && content.charAt(index + 1) == '\n') {
+                index++;
+            }
+            lineStart = index + 1;
+        }
+        if (lineStart < content.length()) {
+            addLogLine(lines, content.substring(lineStart), maxLines);
+        }
+        return lines;
+    }
+
+    private static void addLogLine(List<String> lines, String line, int maxLines)
+            throws IOException {
+        if (lines.size() >= maxLines) {
+            throw new IOException("AutoFix log exceeds " + maxLines + " lines");
+        }
+        lines.add(line);
+    }
+
     /**
      * Re-apply fixes saved from the previous launch. Called at startup before
      * transformation.
@@ -199,9 +264,7 @@ public class AutoFixEngine {
         }
 
         try {
-            String json = Files.readString(FIXES_FILE);
-            Type listType = new TypeToken<List<PersistedFix>>() {}.getType();
-            List<PersistedFix> saved = GSON.fromJson(json, listType);
+            List<PersistedFix> saved = readPersistedFixes();
 
             if (saved == null || saved.isEmpty()) {
                 return 0;
@@ -890,9 +953,7 @@ public class AutoFixEngine {
         if (!Files.exists(FIXES_FILE)) return;
 
         try {
-            String json = Files.readString(FIXES_FILE);
-            Type listType = new TypeToken<List<PersistedFix>>() {}.getType();
-            List<PersistedFix> saved = GSON.fromJson(json, listType);
+            List<PersistedFix> saved = readPersistedFixes();
 
             if (saved != null) {
                 for (PersistedFix fix : saved) {
@@ -906,6 +967,13 @@ public class AutoFixEngine {
         } catch (Exception e) {
             LOGGER.debug("[AutoFix] Could not load previous fixes: {}", e.getMessage());
         }
+    }
+
+    private static List<PersistedFix> readPersistedFixes() throws IOException {
+        String json = JsonSecurity.readUtf8(FIXES_FILE, MAX_FIXES_FILE_BYTES,
+                JsonSecurity.DEFAULT_MAX_DEPTH, "Saved automatic fixes");
+        Type listType = new TypeToken<List<PersistedFix>>() {}.getType();
+        return GSON.fromJson(json, listType);
     }
 
     /** Re-applies the fix types that register redirects; others are informational. */

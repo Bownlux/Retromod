@@ -6,6 +6,8 @@ package com.retromod.core;
 
 import com.retromod.gui.RetromodGui;
 import com.retromod.gui.TitleScreenButtonInjector;
+import com.retromod.shim.ShimRegistry;
+import com.retromod.util.ArchivePublication;
 import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,6 +53,14 @@ public class RetromodNeoForge {
         publishNeoForgeEnvironment();
         boolean isServer = EnvironmentDetector.isDedicatedServer();
         LOGGER.info("Environment: {}", isServer ? "Dedicated Server" : "Client");
+
+        try {
+            com.retromod.resources.ResourceManager.processStagedPacks(
+                    RetromodVersion.TARGET_MC_VERSION,
+                    Paths.get(".").toAbsolutePath().normalize());
+        } catch (Exception e) {
+            LOGGER.warn("Could not initialize resource manager", e);
+        }
 
         RetromodTransformer transformer = RetromodTransformer.getInstance();
 
@@ -332,8 +342,8 @@ public class RetromodNeoForge {
                     // Register only shims whose target MC is <= the host. A newer shim
                     // (IItemHandler->ItemHandler, ...) applied on an older host renames to
                     // classes that don't exist there and crashes at load (#38).
-                    if (RetromodVersion.mcVersionExceeds(
-                            shim.getTargetVersion(), RetromodVersion.TARGET_MC_VERSION)) {
+                    if (!ShimRegistry.isAvailableOnHost(
+                            shim, RetromodVersion.TARGET_MC_VERSION)) {
                         continue;
                     }
                     shim.registerRedirects(transformer);
@@ -360,7 +370,7 @@ public class RetromodNeoForge {
             ZipSecurity.validateNotSymlink(modsDir);
 
             Files.createDirectories(inputDir);
-            Files.createDirectories(processedDir);
+            prepareProcessedDirectory(processedDir);
 
             if (!Files.isDirectory(inputDir)) return 0;
 
@@ -381,8 +391,8 @@ public class RetromodNeoForge {
 
                     Path transformed = transformer.transformMod(modJar, modsDir);
                     if (transformed != null) {
-                        Files.move(modJar, processedDir.resolve(fileName),
-                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        ArchivePublication.moveReplacing(
+                                modJar, processedDir.resolve(fileName));
                         count++;
                     }
                 } catch (Exception e) {
@@ -397,6 +407,11 @@ public class RetromodNeoForge {
             LOGGER.error("Error scanning retromod-input/: {}", e.getMessage());
         }
         return count;
+    }
+
+    static void prepareProcessedDirectory(Path processedDir) throws java.io.IOException {
+        Files.createDirectories(processedDir);
+        ZipSecurity.validateNotSymlink(processedDir);
     }
 
     /** Transform incompatible mods in mods/ in place, backing up originals to retromod-backups/. */
@@ -432,20 +447,18 @@ public class RetromodNeoForge {
                         LOGGER.info("Found incompatible mod in mods/: {} ({})", fileName, info.targetMcVersion());
 
                         Files.createDirectories(backupDir);
-                        Files.copy(modJar, backupDir.resolve(fileName),
-                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        ArchivePublication.copyReplacing(
+                                modJar, backupDir.resolve(fileName));
 
-                        // Transform to temp, then replace.
-                        Path tempDir = Files.createTempDirectory("retromod-inplace-");
-                        Path transformed = transformer.transformMod(modJar, tempDir);
-                        if (transformed != null) {
-                            Files.move(transformed, modJar, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        boolean replaced = withInPlaceTransformDirectory(tempDir -> {
+                            Path transformed = transformer.transformMod(modJar, tempDir);
+                            if (transformed == null) return false;
+                            ArchivePublication.moveReplacing(transformed, modJar);
+                            return true;
+                        });
+                        if (replaced) {
                             LOGGER.info("Transformed in place: {}", fileName);
                             count++;
-                        }
-                        try (var walk = Files.walk(tempDir)) {
-                            walk.sorted(java.util.Comparator.reverseOrder())
-                                .forEach(p -> { try { Files.delete(p); } catch (Exception ignored) {} });
                         }
                     }
                 } catch (Exception e) {
@@ -456,6 +469,33 @@ public class RetromodNeoForge {
             LOGGER.error("Error scanning mods/ for transformation: {}", e.getMessage());
         }
         return count;
+    }
+
+    @FunctionalInterface
+    interface TemporaryTransformOperation<T> {
+        T run(Path directory) throws Exception;
+    }
+
+    /** Runs one in-place transform with cleanup that cannot hide the transform failure. */
+    static <T> T withInPlaceTransformDirectory(TemporaryTransformOperation<T> operation)
+            throws Exception {
+        Path tempDir = Files.createTempDirectory("retromod-inplace-");
+        try {
+            return operation.run(tempDir);
+        } finally {
+            try (var walk = Files.walk(tempDir)) {
+                walk.sorted(java.util.Comparator.reverseOrder())
+                        .forEach(path -> {
+                            try {
+                                Files.deleteIfExists(path);
+                            } catch (Exception ignored) {
+                                // A cleanup failure must not replace the transform exception.
+                            }
+                        });
+            } catch (Exception ignored) {
+                // The temporary tree is isolated and can be reclaimed by the operating system.
+            }
+        }
     }
 
     /** Asks the player to restart after jars changed on disk. */

@@ -11,7 +11,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.SyntheticEmbedder;
-import com.retromod.core.VersionShim;
+import com.retromod.core.MinecraftVersionedApiShim;
 import com.retromod.shim.forge.embedded.TickEventPhaseSynthetic;
 import com.retromod.util.McReflect;
 import org.slf4j.Logger;
@@ -27,7 +27,7 @@ import java.util.Map;
  * Maps Forge event-system classes to their NeoForge equivalents (package moves, bus
  * registration, event result types).
  */
-public class ForgeEventApiShim implements VersionShim {
+public class ForgeEventApiShim implements MinecraftVersionedApiShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-ForgeEventApiShim");
     

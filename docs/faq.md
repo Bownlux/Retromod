@@ -20,12 +20,13 @@ No. Normal transformation, caching, and verification are local. The native-versi
 Retromod runs on Minecraft 1.20 through 26.2. Source support depends on the loader:
 
 - Fabric: 1.14.4+
+- Quilt: 1.18.2+
 - NeoForge: 1.20.1+
 - Forge: 1.12.2+
 
 Coverage before 1.16.5 is experimental.
 
-These are source-version floors, not host artifacts. Published host jars cover Fabric and Forge 1.20 through 26.2, plus NeoForge 1.20.1 through 26.2.
+These are source-version floors, not host artifacts. Published host jars cover Fabric, Quilt, and Forge 1.20 through 26.2, plus NeoForge 1.20.1 through 26.2. Quilt uses the shared Fabric artifact.
 
 Pre-26.1 Fabric hosts use targeted intermediary bridges instead of the full intermediary-to-Mojang remap. Common old text, entity, material, identifier, model, and entity-type migrations are covered, but redesigned APIs can still require a manual port.
 
@@ -33,11 +34,11 @@ Pre-26.1 Fabric hosts use targeted intermediary bridges instead of the full inte
 
 Yes. Install Retromod on every side that loads transformed code. Clients do not need it for a genuinely server-only mod.
 
-Paper, Spigot, Bukkit, and Purpur plugins are not supported. Retromod targets Fabric, NeoForge, and Forge mods.
+Paper, Spigot, Bukkit, and Purpur plugins are not supported. Retromod targets Fabric, Quilt, NeoForge, and Forge mods.
 
 ## Does it work with modpacks?
 
-Yes. Keep old Fabric mods in `retromod-input/` so Retromod can process them before Fabric's version check. For repeatable distribution, prepare the pack with the CLI.
+Yes. Keep old Fabric and Quilt mods in `retromod-input/` so Retromod can process them before the loader's version check. For repeatable distribution, prepare the pack with the CLI.
 
 ## What happens to dependencies?
 
@@ -49,7 +50,11 @@ Sometimes. Retromod bridges selected common 1.20.1 Forge metadata, registration,
 
 ## Can Retromod repair Mixins automatically?
 
-For a narrow, proven subset. At game launch Retromod indexes the installed Minecraft classes. The CLI gets the same target facts from `--mc-jar <target.jar>`. It can repair unique parameter-addition changes, selected zero-capture or exact-prefix handlers, and MixinExtras value modifiers that capture every old target argument. It refuses ambiguous overloads, constructors, partial captures, reordered or removed parameters, return-type changes, semantic local captures, unsafe annotations, and `remap = false` scopes.
+For a narrow, proven subset. At game launch Retromod indexes the installed Minecraft classes. The CLI gets the same target facts from `--mc-jar <target.jar>`. It can repair unique parameter-addition changes, selected zero-capture or exact-prefix handlers, and MixinExtras value modifiers that capture every old target argument. It can also move a one-target, accessor-only Mixin when every accessor has an exact owner-scoped redirect to the same destination field.
+
+It refuses mixed-purpose Mixins, unmatched companion accessors, ambiguous overloads or owners, constructors, conflicting field moves, descriptor changes, partial captures, reordered or removed parameters, return-type changes, semantic local captures, and unsafe annotations. A moved setter receives `@Mutable` only when its shim explicitly marks that exact destination.
+
+The accessor owner move accepts `remap = false` only because an exact shim redirect proves both owners. Other automatic signature repairs refuse every relevant `remap = false` scope.
 
 Curated adapters cover a few semantic migrations. Other save, worldgen, renderer, or networking changes still need a real bridge and feature testing.
 
@@ -67,7 +72,9 @@ The running classes do not match the embedded release hash. That can be a legiti
 
 ## Where are my files written?
 
-Runtime inputs and originals use `retromod-input/`, `retromod-input/processed/`, `mods/retromod-backups/`, and the game-directory `retromod-backups/` health-recovery folder. Generated reports use `config/retromod/verify-reports/`. The normal AOT cache is `config/retromod/aot-cache/`; full AOT state is `retromod-cache/full-aot/`. API archives use `config/retromod/api-archive/`. CLI `transform` output defaults to a sibling jar, `batch` uses an input-folder `retromod-output/`, and `aot` uses the normal AOT cache unless you choose `--output`. The CLI initializes the standard input and backup folders in its current working directory.
+Runtime inputs and originals use `retromod-input/`, `retromod-input/processed/`, `mods/retromod-backups/`, and the game-directory `retromod-backups/` health-recovery folder. Staged resource packs use `retromod-input/resourcepacks/`, then successful output moves to `resourcepacks/`. Staged data packs use `retromod-input/datapacks/`, with successful output in `retromod-output/datapacks/` for you to copy into a world. Successful pack sources move into the matching input folder's `processed/` subfolder.
+
+Generated reports use `config/retromod/verify-reports/`. The normal AOT cache is `config/retromod/aot-cache/`. Full AOT state uses `retromod-cache/full-aot/`. API archives use `config/retromod/api-archive/`. CLI `transform` output defaults to a sibling jar, `batch` uses an input-folder `retromod-output/`, and `aot` uses the normal AOT cache unless you choose `--output`. The CLI initializes the standard input and backup folders in its current working directory.
 
 ## Can I use Retromod commercially?
 

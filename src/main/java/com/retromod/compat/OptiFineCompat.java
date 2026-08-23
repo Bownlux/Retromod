@@ -4,6 +4,7 @@
  */
 package com.retromod.compat;
 
+import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -11,6 +12,9 @@ import javax.swing.*;
 import java.awt.*;
 import java.io.InputStream;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.jar.JarFile;
 import java.util.zip.ZipEntry;
@@ -21,6 +25,7 @@ import java.util.zip.ZipEntry;
 public final class OptiFineCompat {
     
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-OptiFine");
+    private static final long MAX_METADATA_SIZE = 2L * 1024 * 1024;
     
     private static boolean optiFineDetected = false;
     private static String optiFineVersion = null;
@@ -30,19 +35,22 @@ public final class OptiFineCompat {
     
     /** Check if a JAR is OptiFine. */
     public static boolean isOptiFine(Path jarPath) {
-        try (JarFile jar = new JarFile(jarPath.toFile())) {
-            ZipEntry entry = jar.getEntry("optifine/OptiFineTransformationService.class");
-            if (entry != null) return true;
+        try {
+            validateArchiveInput(jarPath);
+            try (JarFile jar = new JarFile(jarPath.toFile())) {
+                ZipEntry entry = jar.getEntry("optifine/OptiFineTransformationService.class");
+                if (entry != null) return true;
 
-            entry = jar.getEntry("net/optifine/Config.class");
-            if (entry != null) return true;
+                entry = jar.getEntry("net/optifine/Config.class");
+                if (entry != null) return true;
 
-            entry = jar.getEntry("optifine/Installer.class");
-            if (entry != null) return true;
+                entry = jar.getEntry("optifine/Installer.class");
+                if (entry != null) return true;
 
-            String name = jarPath.getFileName().toString().toLowerCase();
-            if (name.contains("optifine")) {
-                return true;
+                String name = jarPath.getFileName().toString().toLowerCase();
+                if (name.contains("optifine")) {
+                    return true;
+                }
             }
 
         } catch (Exception e) {
@@ -54,22 +62,23 @@ public final class OptiFineCompat {
     
     /** Get OptiFine version from JAR. */
     public static String getOptiFineVersion(Path jarPath) {
-        try (JarFile jar = new JarFile(jarPath.toFile())) {
-            ZipEntry entry = jar.getEntry("changelog.txt");
-            if (entry != null) {
-                try (InputStream in = jar.getInputStream(entry)) {
-                    String content = new String(in.readAllBytes());
+        try {
+            validateArchiveInput(jarPath);
+            try (JarFile jar = new JarFile(jarPath.toFile())) {
+                ZipEntry entry = jar.getEntry("changelog.txt");
+                if (entry != null) {
+                    String content = readUtf8Metadata(jar, entry);
                     String firstLine = content.split("\n")[0];
                     if (firstLine.contains("OptiFine")) {
                         return firstLine.trim();
                     }
                 }
-            }
 
-            // OptiFine_1.20.4_HD_U_I7.jar -> 1.20.4_HD_U_I7
-            String name = jarPath.getFileName().toString();
-            if (name.contains("OptiFine_")) {
-                return name.replace("OptiFine_", "").replace(".jar", "");
+                // OptiFine_1.20.4_HD_U_I7.jar -> 1.20.4_HD_U_I7
+                String name = jarPath.getFileName().toString();
+                if (name.contains("OptiFine_")) {
+                    return name.replace("OptiFine_", "").replace(".jar", "");
+                }
             }
 
         } catch (Exception e) {
@@ -77,6 +86,19 @@ public final class OptiFineCompat {
         }
         
         return "Unknown";
+    }
+
+    private static String readUtf8Metadata(JarFile jar, ZipEntry entry) throws java.io.IOException {
+        try (InputStream input = jar.getInputStream(entry)) {
+            return new String(ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE),
+                    StandardCharsets.UTF_8);
+        }
+    }
+
+    private static void validateArchiveInput(Path jarPath) throws java.io.IOException {
+        if (!Files.isRegularFile(jarPath, LinkOption.NOFOLLOW_LINKS)) {
+            throw new java.io.IOException("Mod input is not a regular file: " + jarPath);
+        }
     }
     
     /** Warns once Retromod has identified an OptiFine jar. */

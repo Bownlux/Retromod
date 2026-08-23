@@ -8,7 +8,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.Objects;
 
 /**
  * Security utilities for ZIP/JAR extraction.
@@ -55,6 +57,44 @@ public final class ZipSecurity {
             }
         }
         return entryName;
+    }
+
+    /**
+     * Returns a stable duplicate-detection key for an archive entry. Empty segments, dot
+     * segments, repeated separators, and backslashes collapse to the path an extractor sees.
+     */
+    public static String canonicalEntryName(String entryName) throws IOException {
+        String safeName = safeEntryName(entryName).replace('\\', '/');
+        StringBuilder canonical = new StringBuilder(safeName.length());
+        for (String segment : safeName.split("/", -1)) {
+            if (segment.isEmpty() || ".".equals(segment)) continue;
+            if (canonical.length() > 0) canonical.append('/');
+            canonical.append(segment);
+        }
+        if (canonical.length() == 0) {
+            throw new IOException("ZIP entry has no canonical path: " + entryName);
+        }
+        return canonical.toString();
+    }
+
+    /**
+     * Replaces control characters that cannot safely appear inside a JAR manifest value.
+     * Manifest writers preserve embedded line breaks, so values derived from archive metadata or
+     * file names must pass through this method before publication.
+     */
+    public static String sanitizeManifestValue(String value) {
+        Objects.requireNonNull(value, "value");
+        StringBuilder sanitized = null;
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (Character.isISOControl(character)) {
+                if (sanitized == null) {
+                    sanitized = new StringBuilder(value);
+                }
+                sanitized.setCharAt(index, '_');
+            }
+        }
+        return sanitized != null ? sanitized.toString() : value;
     }
 
     /**
@@ -114,10 +154,30 @@ public final class ZipSecurity {
      * @throws IOException if the path is a symbolic link
      */
     public static void validateNotSymlink(Path path) throws IOException {
-        if (Files.exists(path) && Files.isSymbolicLink(path)) {
+        if (Files.isSymbolicLink(path)) {
             throw new IOException("Security: symlink detected at " + path
                 + " - refusing to operate on symlinked directories");
         }
+    }
+
+    /**
+     * Resolves an input to an absolute path and refuses a missing, non-regular, or symbolic-link
+     * leaf. Parent links are left to the caller's root policy, but the supplied file itself is
+     * never followed through a link.
+     */
+    public static Path requireRegularFileNoFollow(Path path, String description)
+            throws IOException {
+        if (path == null) {
+            throw new IOException(description + " path is missing");
+        }
+        Path absolute = path.toAbsolutePath().normalize();
+        if (absolute.getFileName() == null
+                || Files.isSymbolicLink(absolute)
+                || !Files.isRegularFile(absolute, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException(description + " is not a regular non-symlink file: "
+                    + absolute);
+        }
+        return absolute;
     }
 
     /**
@@ -146,7 +206,10 @@ public final class ZipSecurity {
                 java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
                 java.nio.file.StandardOpenOption.WRITE)) {
             int n;
-            while ((n = is.read(buf)) > 0) {
+            while ((n = is.read(buf)) != -1) {
+                if (n == 0) {
+                    continue;
+                }
                 written += n;
                 if (written > maxBytes) {
                     // partial write is left for the caller's temp-dir cleanup on the IOException path

@@ -5,7 +5,7 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -25,7 +25,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Gated to 26.1+ (#9): {@code HudRenderCallback} still exists on older hosts.
  */
-public class FabricHudRenderCallbackShim implements VersionShim {
+public class FabricHudRenderCallbackShim implements AuxiliaryVersionShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 

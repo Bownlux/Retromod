@@ -169,20 +169,32 @@ class TransformFallbackParityTest {
             // WORKING read into 26.2-only Gui.screen() -> NoSuchMethodError (review finding).
             target.set(null, "26.1");
             t.clearRedirectsForTesting();
-            RetromodCli.registerAllShimsGated(t);
+            RetromodCli.registerAllShimsGated(t, "fabric");
             assertFalse(screenReadRewritten(t),
                     "a 26.1-target fallback must leave the still-public Minecraft.screen alone");
 
             // 26.2 target: the same fallback must now include the 26.2 shims and rewrite it.
             target.set(null, "26.2");
             t.clearRedirectsForTesting();
-            RetromodCli.registerAllShimsGated(t);
+            RetromodCli.registerAllShimsGated(t, "fabric");
             assertTrue(screenReadRewritten(t),
                     "a 26.2-target fallback must apply the screen hop");
         } finally {
             target.set(null, saved);
             t.clearRedirectsForTesting();
         }
+    }
+
+    @Test
+    @DisplayName("transform fallback recognizes blank, placeholder, and unparseable source versions")
+    void transformFallbackRecognizesEveryUnknownSourceShape() {
+        assertTrue(RetromodCli.isUnknownSourceVersion(null));
+        assertTrue(RetromodCli.isUnknownSourceVersion(""));
+        assertTrue(RetromodCli.isUnknownSourceVersion("   "));
+        assertTrue(RetromodCli.isUnknownSourceVersion("${minecraft_version}"));
+        assertTrue(RetromodCli.isUnknownSourceVersion("unknown"));
+        assertFalse(RetromodCli.isUnknownSourceVersion("1.20.1"));
+        assertFalse(RetromodCli.isUnknownSourceVersion(">=1.20"));
     }
 
     private static boolean screenReadRewritten(RetromodTransformer t) {

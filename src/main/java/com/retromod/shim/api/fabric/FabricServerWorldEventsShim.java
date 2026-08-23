@@ -5,7 +5,7 @@
 package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -22,7 +22,7 @@ import org.slf4j.LoggerFactory;
  * ({@link com.retromod.shim.api.fabric.embedded.ServerWorldEventsBridge}). The {@code ServerWorld}
  * to {@code ServerLevel} param change is handled by the harvest.</p>
  */
-public class FabricServerWorldEventsShim implements VersionShim {
+public class FabricServerWorldEventsShim implements AuxiliaryVersionShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 

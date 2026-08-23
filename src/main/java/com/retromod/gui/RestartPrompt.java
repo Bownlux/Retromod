@@ -4,13 +4,12 @@
  */
 package com.retromod.gui;
 
+import com.retromod.core.RetromodConfig;
 import com.retromod.util.McReflect;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Method;
-import java.nio.file.Files;
-import java.nio.file.Path;
 
 /**
  * In-game "mods converted - restart to apply" prompt (issue #33).
@@ -98,15 +97,7 @@ public final class RestartPrompt {
 
     /** Read {@code restart_prompt} from config (default {@code true} when absent). */
     static boolean configEnabled() {
-        try {
-            Path cfg = Path.of("config/retromod/config.json");
-            if (!Files.exists(cfg)) return true;
-            var obj = com.google.gson.JsonParser.parseString(Files.readString(cfg)).getAsJsonObject();
-            if (!obj.has("restart_prompt")) return true;
-            return obj.get("restart_prompt").getAsBoolean();
-        } catch (Exception e) {
-            return true; // default on
-        }
+        return RetromodConfig.getBooleanIfPresent("restart_prompt", true);
     }
 
     static void resetForTesting() { pendingCount = 0; shownThisSession = false; }

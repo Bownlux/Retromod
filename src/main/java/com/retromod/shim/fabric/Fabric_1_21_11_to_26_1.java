@@ -49,6 +49,35 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
 
         // Vanilla class moves shared with the NeoForge 26.1 shim (#64).
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
+        // The bundled Fabric intermediary table still expands these stable field ids to their
+        // pre-1.21.11 RULE_* names. Mojang-named loaders already carry the current names.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
+                .registerFabricGameRuleFieldRenames(transformer);
+
+        // Legacy Block.randomTicks accessors now land on the inherited
+        // BlockBehaviour.isRandomlyTicking field. The target field is final and every
+        // BlockState caches its value, so the Mixin pass adds @Mutable and the call adapter
+        // refreshes those states after a proven accessor setter runs (#228).
+        String block = "net/minecraft/world/level/block/Block";
+        String blockBehaviour = "net/minecraft/world/level/block/state/BlockBehaviour";
+        transformer.registerFieldRedirect(
+                "net/minecraft/class_2248", "randomTicks", "Z",
+                blockBehaviour, "isRandomlyTicking", "Z");
+        transformer.registerFieldRedirect(
+                block, "randomTicks", "Z",
+                blockBehaviour, "isRandomlyTicking", "Z");
+        transformer.registerFieldRedirect(
+                block, "field_10641", "Z",
+                blockBehaviour, "isRandomlyTicking", "Z");
+        transformer.registerFieldRedirect(
+                block, "isRandomlyTicking", "Z",
+                blockBehaviour, "isRandomlyTicking", "Z");
+        transformer.registerMutableAccessorDestination(
+                blockBehaviour, "isRandomlyTicking", "Z");
+        com.retromod.core.SyntheticEmbedder.registerClassResource(
+                transformer,
+                com.retromod.shim.fabric.embedded.LegacyBlockRandomTickBridge.INTERNAL_NAME,
+                com.retromod.shim.fabric.embedded.LegacyBlockRandomTickBridge.class);
 
         // Networking: S2C/C2S -> Clientbound/Serverbound
         transformer.registerClassRedirect(
@@ -901,7 +930,8 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             "com.retromod.shim.fabric.embedded.KeyBindingShim",
             "com.retromod.shim.fabric.embedded.ItemSafetyShim",
             "com.retromod.shim.fabric.embedded.ButtonShim",
-            "com.retromod.shim.fabric.embedded.FontBridge"
+            "com.retromod.shim.fabric.embedded.FontBridge",
+            "com.retromod.shim.fabric.embedded.LegacyBlockRandomTickBridge"
         };
     }
 

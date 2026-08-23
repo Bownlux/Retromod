@@ -6,6 +6,11 @@ package com.retromod.core;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldInsnNode;
+import org.objectweb.asm.tree.MethodInsnNode;
+import org.objectweb.asm.tree.TypeInsnNode;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -37,6 +42,16 @@ class LoaderIsolationTest {
         }
     }
 
+    private static ClassNode classNode(String internalName) throws IOException {
+        try (InputStream in = LoaderIsolationTest.class
+                .getResourceAsStream("/" + internalName + ".class")) {
+            assertNotNull(in, "class not found on the test classpath: " + internalName);
+            ClassNode node = new ClassNode();
+            new ClassReader(in).accept(node, 0);
+            return node;
+        }
+    }
+
     @Test
     @DisplayName("#40: NeoForge/Forge entry points reference no Fabric class or RetromodPreLaunch")
     void neoForgeForgeEntryPointsAreLoaderClean() throws IOException {
@@ -62,6 +77,32 @@ class LoaderIsolationTest {
     }
 
     @Test
+    @DisplayName("Shared GUI code does not resolve the Fabric entry point")
+    void sharedGuiDoesNotReferenceFabricEntrypoint() throws IOException {
+        String fabricEntrypoint = "com/retromod/core/Retromod";
+        for (String className : new String[] {
+                "com/retromod/gui/RetromodGui",
+                "com/retromod/gui/RetromodScreen",
+                "com/retromod/gui/ModCompatibilityChecker"}) {
+            ClassNode node = classNode(className);
+            for (var method : node.methods) {
+                for (var instruction : method.instructions) {
+                    String owner = null;
+                    if (instruction instanceof FieldInsnNode field) {
+                        owner = field.owner;
+                    } else if (instruction instanceof MethodInsnNode call) {
+                        owner = call.owner;
+                    } else if (instruction instanceof TypeInsnNode type) {
+                        owner = type.desc;
+                    }
+                    assertFalse(fabricEntrypoint.equals(owner),
+                            className + " must use RetromodVersion instead of the Fabric entry point");
+                }
+            }
+        }
+    }
+
+    @Test
     @DisplayName("Forge entry points publish their own loader side to EnvironmentDetector")
     void forgeEntryPointsOwnLogicalSideDetection() throws IOException {
         String neoForge = constantPool("com/retromod/core/RetromodNeoForge");
@@ -73,5 +114,20 @@ class LoaderIsolationTest {
         assertTrue(forge.contains("net.minecraftforge.fml.loading.FMLEnvironment"));
         assertTrue(forge.contains("setLoaderEnvironment"));
         assertFalse(forge.contains("net.neoforged.fml.loading.FMLEnvironment"));
+    }
+
+    @Test
+    @DisplayName("Every loader entry point processes staged resource and data packs")
+    void everyLoaderProcessesStagedPacks() throws IOException {
+        for (String className : new String[] {
+                "com/retromod/core/Retromod",
+                "com/retromod/core/RetromodForge",
+                "com/retromod/core/RetromodNeoForge"}) {
+            String cp = constantPool(className);
+            assertTrue(cp.contains("com/retromod/resources/ResourceManager"),
+                    className + " must use the loader-neutral resource manager");
+            assertTrue(cp.contains("processStagedPacks"),
+                    className + " must process staged packs during startup");
+        }
     }
 }

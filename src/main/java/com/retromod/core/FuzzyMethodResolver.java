@@ -7,6 +7,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -60,6 +62,10 @@ public class FuzzyMethodResolver {
     private static final int THRESHOLD_AUTO_APPLY = 85;
     /** Minimum score to log a warning (but not apply). */
     private static final int THRESHOLD_LOG_WARNING = 50;
+
+    private static final int MAX_ARCHIVE_ENTRIES = 100_000;
+    private static final long MAX_CLASS_BYTES = ZipSecurity.DEFAULT_MAX_ENTRY_SIZE;
+    private static final long MAX_EXPANDED_CLASS_BYTES = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
 
     /** Key: JVM internal class name. Value: methods declared on it. */
     private final Map<String, List<MethodInfo>> methodIndex = new HashMap<>();
@@ -141,12 +147,21 @@ public class FuzzyMethodResolver {
      * @throws IOException if the JAR cannot be read
      */
     public void indexJar(Path mcJar) throws IOException {
+        indexJar(mcJar, MAX_CLASS_BYTES, MAX_EXPANDED_CLASS_BYTES, MAX_ARCHIVE_ENTRIES);
+    }
+
+    /** Testable bounded index entry point. */
+    void indexJar(Path mcJar, long maxClassBytes, long maxExpandedBytes,
+                  int maxArchiveEntries) throws IOException {
         if (indexed) {
             LOGGER.debug("JAR already indexed, skipping");
             return;
         }
 
-        if (mcJar == null || !Files.exists(mcJar)) {
+        if (maxClassBytes <= 0 || maxExpandedBytes <= 0 || maxArchiveEntries <= 0) {
+            throw new IllegalArgumentException("MC index limits must be positive");
+        }
+        if (mcJar == null || !Files.isRegularFile(mcJar, LinkOption.NOFOLLOW_LINKS)) {
             LOGGER.warn("MC JAR not found at {}, fuzzy resolver disabled", mcJar);
             return;
         }
@@ -157,22 +172,45 @@ public class FuzzyMethodResolver {
         int classes = 0;
         int methods = 0;
         int fields = 0;
+        long expandedClassBytes = 0;
+
+        clearIndexData();
 
         try (JarFile jar = new JarFile(mcJar.toFile())) {
+            if (jar.size() > maxArchiveEntries) {
+                throw new IOException("MC JAR contains more than " + maxArchiveEntries
+                    + " entries: " + mcJar.getFileName());
+            }
+            Set<String> entryNames = new HashSet<>();
             Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                String entryName = entry.getName();
+                String entryName = ZipSecurity.safeEntryName(entry.getName());
+                String canonicalName = ZipSecurity.canonicalEntryName(entryName);
+                if (!entryNames.add(canonicalName)) {
+                    throw new IOException("MC JAR contains a duplicate entry: " + entryName);
+                }
 
                 // net/minecraft plus com/mojang (DFU, brigadier)
-                if (!entryName.endsWith(".class")) continue;
-                if (!entryName.startsWith("net/minecraft/") &&
-                    !entryName.startsWith("com/mojang/")) {
+                if (!canonicalName.endsWith(".class")) continue;
+                if (!canonicalName.startsWith("net/minecraft/") &&
+                    !canonicalName.startsWith("com/mojang/")) {
                     continue;
                 }
 
+                long remainingBytes = maxExpandedBytes - expandedClassBytes;
+                if (remainingBytes <= 0) {
+                    throw new IOException("MC JAR class data exceeds "
+                        + maxExpandedBytes + " bytes");
+                }
+                byte[] classBytes;
                 try (InputStream is = jar.getInputStream(entry)) {
-                    byte[] classBytes = is.readAllBytes();
+                    classBytes = ZipSecurity.safeReadAllBytes(is,
+                        Math.min(maxClassBytes, remainingBytes));
+                }
+                expandedClassBytes += classBytes.length;
+
+                try {
                     ClassReader reader = new ClassReader(classBytes);
 
                     String className = reader.getClassName();
@@ -228,6 +266,9 @@ public class FuzzyMethodResolver {
                     LOGGER.debug("Could not index class {}: {}", entryName, e.getMessage());
                 }
             }
+        } catch (IOException | RuntimeException e) {
+            clearIndexData();
+            throw e;
         }
 
         indexedClassCount = classes;
@@ -238,6 +279,20 @@ public class FuzzyMethodResolver {
         long elapsed = System.currentTimeMillis() - startTime;
         LOGGER.info("Indexed {} classes, {} methods, {} fields from MC JAR in {}ms",
                 classes, methods, fields, elapsed);
+    }
+
+    private void clearIndexData() {
+        methodIndex.clear();
+        constructorIndex.clear();
+        fieldIndex.clear();
+        classHierarchy.clear();
+        externalClassIndex.clear();
+        missingExternalClasses.clear();
+        methodResolveCache.clear();
+        fieldResolveCache.clear();
+        indexedClassCount = 0;
+        indexedMethodCount = 0;
+        indexedFieldCount = 0;
     }
 
     public boolean isIndexed() {

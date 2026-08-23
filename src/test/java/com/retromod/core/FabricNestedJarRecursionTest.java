@@ -31,7 +31,9 @@ import java.util.jar.Manifest;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Verifies that Fabric's extracted-tree runtime path reaches archives inside nested mods. */
@@ -41,7 +43,6 @@ class FabricNestedJarRecursionTest {
     private static final String NEW_TYPE = "test/recursive/NewType";
     private static final String SYNTHETIC = "com/retromod/generated/recursive/Helper";
     private static final String DEEP_CLASS = "deep/Deep";
-    private static final byte[] MALFORMED_CHILD = "not a jar".getBytes(StandardCharsets.UTF_8);
 
     @Test
     void secondLevelClassRefmapAndAccessWidenerAreTransformed(@TempDir Path dir)
@@ -64,8 +65,7 @@ class FabricNestedJarRecursionTest {
             byte[] libraryJar = jarOf(entries(
                     "fabric.mod.json", fabricMetadata(
                             "library_fixture", "META-INF/jars/deep-refmap-lib.jar"),
-                    "META-INF/jars/deep-refmap-lib.jar", deepJar,
-                    "META-INF/jars/malformed.jar", MALFORMED_CHILD));
+                    "META-INF/jars/deep-refmap-lib.jar", deepJar));
 
             Path source = dir.resolve("outer.jar");
             Files.write(source, jarOf(entries(
@@ -110,9 +110,6 @@ class FabricNestedJarRecursionTest {
                     "the second-level access widener must use the host namespace");
             assertTrue(accessWidener.contains("net/minecraft/client/Minecraft"));
 
-            assertArrayEquals(MALFORMED_CHILD,
-                    readEntry(libraryOut, "META-INF/jars/malformed.jar"),
-                    "an unreadable sibling remains unchanged");
         } finally {
             transformer.clearRedirectsForTesting();
             transformer.clearJarClassBytesProvider();
@@ -225,7 +222,7 @@ class FabricNestedJarRecursionTest {
     }
 
     @Test
-    void officialRecursionRespectsTraversalLimits(@TempDir Path dir) throws Exception {
+    void officialRecursionFailsClosedAtTraversalLimits(@TempDir Path dir) throws Exception {
         RetromodTransformer transformer = RetromodTransformer.getInstance();
         String savedTarget = RetromodVersion.TARGET_MC_VERSION;
         transformer.clearRedirectsForTesting();
@@ -238,9 +235,10 @@ class FabricNestedJarRecursionTest {
             String parentMetadata = fabricMetadata(
                     "budget_parent", "META-INF/jars/deep.jar");
             Path parent = dir.resolve("budget-parent.jar");
-            Files.write(parent, jarOf(entries(
+            byte[] originalParent = jarOf(entries(
                     "fabric.mod.json", parentMetadata,
-                    "META-INF/jars/deep.jar", child)));
+                    "META-INF/jars/deep.jar", child));
+            Files.write(parent, originalParent);
 
             long parentExpansion = parentMetadata.getBytes(StandardCharsets.UTF_8).length
                     + child.length;
@@ -252,18 +250,16 @@ class FabricNestedJarRecursionTest {
                     RetromodTransformer.NestedArchiveBudget.class);
             method.setAccessible(true);
 
-            boolean changed = (boolean) method.invoke(
-                    new FabricModTransformer("26.2"), parent,
-                    IntermediaryToMojangMapper.getInstance(), 1,
-                    "budget-parent.jar", budget);
+            InvocationTargetException failure = assertThrows(
+                    InvocationTargetException.class,
+                    () -> method.invoke(
+                            new FabricModTransformer("26.2"), parent,
+                            IntermediaryToMojangMapper.getInstance(), 1,
+                            "budget-parent.jar", budget));
 
-            assertTrue(changed, "the parent metadata should still be updated");
-            byte[] childOut = readEntry(parent, "META-INF/jars/deep.jar");
-            assertArrayEquals(child, childOut,
-                    "an unprocessed child remains byte-for-byte");
-            assertEquals("L" + OLD_TYPE + ";",
-                    readClass(readEntry(childOut, DEEP_CLASS + ".class")).fields.get(0).desc,
-                    "an unprocessed child must not publish partial changes");
+            assertInstanceOf(java.io.IOException.class, failure.getCause());
+            assertArrayEquals(originalParent, Files.readAllBytes(parent),
+                    "a rejected nested traversal must not publish partial changes");
             assertEquals(parentExpansion, budget.usedBytes(),
                     "nested traversal must stop at the configured limit");
             assertEquals(5, budget.usedEntries(),
@@ -273,6 +269,33 @@ class FabricNestedJarRecursionTest {
             transformer.clearJarClassBytesProvider();
             RetromodVersion.TARGET_MC_VERSION = savedTarget;
         }
+    }
+
+    @Test
+    void nestedPackagingBoundsManifestExpansion(@TempDir Path dir) throws Exception {
+        String manifest = "Manifest-Version: 1.0\r\nX-Fill: "
+                + "a".repeat(2 * 1024 * 1024) + "\r\n\r\n";
+        Path nested = dir.resolve("large-manifest.jar");
+        byte[] original = jarOf(entries(
+                JarFile.MANIFEST_NAME, manifest,
+                "fabric.mod.json", fabricMetadata("large_manifest", null)));
+        Files.write(nested, original);
+        Method method = FabricModTransformer.class.getDeclaredMethod(
+                "processNestedJiJJar", Path.class, String.class, int.class,
+                RetromodTransformer.NestedArchiveBudget.class);
+        method.setAccessible(true);
+
+        InvocationTargetException failure = assertThrows(
+                InvocationTargetException.class,
+                () -> method.invoke(new FabricModTransformer("26.2"), nested,
+                        "outer.jar!/META-INF/jars/large-manifest.jar", 1,
+                        RetromodTransformer.NestedArchiveBudget.defaults()));
+
+        assertInstanceOf(java.io.IOException.class, failure.getCause());
+        assertTrue(failure.getCause().getMessage().contains("ZIP entry exceeds"),
+                failure.getCause().getMessage());
+        assertArrayEquals(original, Files.readAllBytes(nested),
+                "a rejected nested manifest must leave the source archive unchanged");
     }
 
     private static LinkedHashMap<String, byte[]> entries(Object... values) {

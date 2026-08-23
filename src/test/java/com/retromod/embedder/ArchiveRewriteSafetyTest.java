@@ -8,6 +8,7 @@ import com.retromod.legacy.EpochTransition;
 import com.retromod.legacy.LegacyModAnalysis;
 import com.retromod.legacy.LegacyModSupport;
 import com.retromod.legacy.ObfuscationDatabase;
+import com.retromod.testutil.SignedJarTestSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.ClassVisitor;
@@ -28,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ArchiveRewriteSafetyTest {
 
@@ -51,6 +53,22 @@ class ArchiveRewriteSafetyTest {
             assertNotNull(result.getJarEntry("retromod_embedded/RETROMOD_PROCESSED"));
         }
         assertNoStagingFiles(dir);
+    }
+
+    @Test
+    void apiEmbedderSanitizesSigningRecordsAfterMutation(@TempDir Path dir) throws Exception {
+        Path source = SignedJarTestSupport.createSignedJar(dir, "signed-api.jar",
+                SignedJarTestSupport.entries(
+                        "assets/example/value.txt", "value".getBytes(StandardCharsets.UTF_8)));
+
+        new ApiEmbedder().embedApisIntoJar(source, Set.of());
+
+        Path output = dir.resolve("signed-api-retromod.jar");
+        SignedJarTestSupport.verifyEveryEntry(output);
+        assertFalse(SignedJarTestSupport.hasSigningMetadata(output));
+        try (JarFile result = new JarFile(output.toFile(), true)) {
+            assertNotNull(result.getJarEntry("retromod_embedded/RETROMOD_PROCESSED"));
+        }
     }
 
     @Test
@@ -104,6 +122,21 @@ class ArchiveRewriteSafetyTest {
             assertNotNull(resultJar.getJarEntry("assets/example/value.txt"));
         }
         assertNoStagingFiles(dir);
+    }
+
+    @Test
+    void legacyTransformSanitizesSigningRecordsAfterMutation(@TempDir Path dir)
+            throws Exception {
+        Path source = SignedJarTestSupport.createSignedJar(dir, "signed-legacy.jar",
+                SignedJarTestSupport.entries(
+                        "assets/example/value.txt", "value".getBytes(StandardCharsets.UTF_8)));
+
+        Path output = new LegacyModSupport(dir, "26.2")
+                .transformMod(source, transformAnalysis(source));
+
+        SignedJarTestSupport.verifyEveryEntry(output);
+        assertFalse(SignedJarTestSupport.hasSigningMetadata(output));
+        assertTrue(Files.exists(output));
     }
 
     @Test

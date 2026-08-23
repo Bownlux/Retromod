@@ -5,10 +5,10 @@
 package com.retromod.shim.api.forge;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /** JEI (Just Enough Items) recipe-viewer API, v7 through v15 for Forge/NeoForge. */
-public class JeiApiShim implements VersionShim {
+public class JeiApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

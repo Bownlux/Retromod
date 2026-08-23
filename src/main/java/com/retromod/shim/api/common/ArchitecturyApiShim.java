@@ -7,12 +7,12 @@
 package com.retromod.shim.api.common;
 
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.VersionShim;
+import com.retromod.core.AuxiliaryVersionShim;
 
 /**
  * Architectury API shim: its package and registration/event APIs moved around across v1-v9+.
  */
-public class ArchitecturyApiShim implements VersionShim {
+public class ArchitecturyApiShim implements AuxiliaryVersionShim {
     
     @Override
     public String getShimName() {

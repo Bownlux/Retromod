@@ -93,6 +93,17 @@ class MixinRefmapRemapperTest {
     }
 
     @Test
+    @DisplayName("Deep refmaps are returned unchanged before tree parsing")
+    void refusesDeepRefmapBeforeRemapping() {
+        String nested = "[".repeat(257) + "0" + "]".repeat(257);
+        String refmap = "{\"data\":{\"intermediary\":{\"ExampleMixin\":{"
+                + "\"tick\":\"Lnet/minecraft/class_310;method_1574()V\"}}},"
+                + "\"padding\":" + nested + "}";
+
+        assertEquals(refmap, MixinRefmapRemapper.remap(refmap, mapper));
+    }
+
+    @Test
     @DisplayName("Fabric refmap selectors gain parameters proven by the exact host index")
     void repairsUniqueParameterAdditionInOfficialSections() throws IOException {
         AutomaticMixinTranslator translator = translatorFor(targetClass(false));

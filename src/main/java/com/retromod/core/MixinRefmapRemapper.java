@@ -11,6 +11,7 @@ import com.google.gson.JsonParser;
 import com.retromod.mapping.IntermediaryToMojangMapper;
 import com.retromod.mixin.MixinCompatibilityTransformer;
 import com.retromod.mixin.MixinRefmapRepairIndex;
+import com.retromod.util.JsonSecurity;
 
 import java.util.function.UnaryOperator;
 
@@ -49,6 +50,7 @@ public final class MixinRefmapRemapper {
     public static String remap(String json, IntermediaryToMojangMapper mapper,
             UnaryOperator<String> selectorRepair) {
         try {
+            JsonSecurity.validate(json, "Mixin refmap JSON");
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
             boolean changed = false;
 
@@ -101,6 +103,7 @@ public final class MixinRefmapRemapper {
         }
         MixinRefmapRepairIndex.Builder repairs = MixinRefmapRepairIndex.builder();
         try {
+            JsonSecurity.validate(json, "Mixin refmap JSON");
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
             boolean changed = false;
 
@@ -149,6 +152,7 @@ public final class MixinRefmapRemapper {
     public static String remapForgeSelectors(
             String json, MixinCompatibilityTransformer transformer) {
         try {
+            JsonSecurity.validate(json, "Mixin refmap JSON");
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
             boolean[] changed = {false};
             if (root.has("mappings") && root.get("mappings").isJsonObject()) {
@@ -176,6 +180,7 @@ public final class MixinRefmapRemapper {
     public static RemapResult remapForgeSelectorsWithRepairs(
             String json, MixinCompatibilityTransformer transformer) {
         try {
+            JsonSecurity.validate(json, "Mixin refmap JSON");
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
             boolean[] changed = {false};
             MixinRefmapRepairIndex.Builder repairs = MixinRefmapRepairIndex.builder();

@@ -10,6 +10,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.retromod.util.JsonSecurity;
 import com.retromod.util.ZipSecurity;
 
 import org.objectweb.asm.AnnotationVisitor;
@@ -277,6 +278,8 @@ public final class MixinScanner {
             try (InputStream is = jar.getInputStream(e)) {
                 byte[] bytes = ZipSecurity.safeReadAllBytes(is, readLimit);
                 remainingConfigBytes += readLimit - bytes.length;
+                JsonSecurity.validate(bytes, readLimit,
+                        JsonSecurity.DEFAULT_MAX_DEPTH, "Mixin config JSON");
                 String json = new String(bytes, StandardCharsets.UTF_8);
                 if (parseMixinConfigInto(json, declared)) {
                     any = true;
@@ -291,6 +294,8 @@ public final class MixinScanner {
     /** Parse one mixin config JSON: package + mixins/client/server arrays -> internal names. */
     private static boolean parseMixinConfigInto(String json, java.util.Set<String> out) {
         try {
+            JsonSecurity.validate(json, MAX_TEXT_ENTRY_SIZE,
+                    JsonSecurity.DEFAULT_MAX_DEPTH, "Mixin config JSON");
             JsonElement root = JsonParser.parseString(json);
             if (!root.isJsonObject()) return false;
             JsonObject obj = root.getAsJsonObject();
@@ -315,9 +320,8 @@ public final class MixinScanner {
         JarEntry e = jar.getJarEntry("fabric.mod.json");
         if (e == null) return;
         try (InputStream is = jar.getInputStream(e)) {
-            String json = new String(
-                    ZipSecurity.safeReadAllBytes(is, MAX_TEXT_ENTRY_SIZE),
-                    StandardCharsets.UTF_8);
+            String json = JsonSecurity.readUtf8(is, MAX_TEXT_ENTRY_SIZE,
+                    JsonSecurity.DEFAULT_MAX_DEPTH, "fabric.mod.json");
             JsonElement root = JsonParser.parseString(json);
             if (!root.isJsonObject()) return;
             JsonElement mixins = root.getAsJsonObject().get("mixins");
