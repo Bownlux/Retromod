@@ -18,7 +18,7 @@ Download the jar that matches both your loader and Minecraft version from [Modri
 
 Every build is also on [GitHub Releases](https://github.com/Bownlux/Retromod/releases) if you prefer to grab it directly.
 
-Choose a jar from the matching loader and Minecraft folder. Quilt uses the Fabric jar for the same Minecraft version. That artifact carries both `fabric.mod.json` and `quilt.mod.json`. There is no separate Quilt jar. The release matrix contains 23 shared Fabric and Quilt jars, 23 Forge jars, and 22 NeoForge jars. The separate `retromod-1.3.0-snapshot.9-cli.jar` is a command-line tool, not a mod, and does not belong in `mods/`. That is 68 loader jars and 1 CLI artifact, or 69 artifacts total.
+Choose a jar from the matching loader and Minecraft folder. Quilt uses the Fabric jar for the same Minecraft version. That artifact carries both `fabric.mod.json` and `quilt.mod.json`. There is no separate Quilt jar. The release matrix contains 23 shared Fabric and Quilt jars, 23 Forge jars, and 22 NeoForge jars. The separate `retromod-1.3.0-snapshot.10-cli.jar` is a command-line tool, not a mod, and does not belong in `mods/`. That is 68 loader jars and 1 CLI artifact, or 69 artifacts total.
 
 Before testing a translated mod, copy the instance or back up every world you care about. Retromod backs up mod jars, not Minecraft saves. Start with a new test world when the mod changes world generation, registries, inventories, entities, or save data.
 

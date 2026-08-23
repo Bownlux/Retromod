@@ -5,7 +5,7 @@ Run older Minecraft mods on newer game versions.
 [![Build JDK 25](https://img.shields.io/badge/Build_JDK-25-blue.svg)](https://adoptium.net/)
 [![Minecraft 1.20 - 26.2](https://img.shields.io/badge/Minecraft-1.20%20--%2026.2-green.svg)](https://minecraft.net/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.3.0--snapshot.9-blueviolet.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.3.0--snapshot.10-blueviolet.svg)]()
 [![Modrinth](https://img.shields.io/badge/Download-Modrinth-00AF5C.svg)](https://modrinth.com/mod/retromod)
 [![CurseForge](https://img.shields.io/badge/Download-CurseForge-F16436.svg)](https://www.curseforge.com/minecraft/mc-mods/retromod)
 
@@ -28,7 +28,7 @@ Simple content mods, libraries, and quality-of-life mods are the best fit. Mods 
 Each full distribution has 68 loader-specific jars and one executable standalone CLI jar. The CLI can transform a modpack without launching Minecraft:
 
 ```bash
-java -jar retromod-1.3.0-snapshot.9-cli.jar --help
+java -jar retromod-1.3.0-snapshot.10-cli.jar --help
 ```
 
 Start with the [installation guide](docs/installation.md), then check the [compatibility database](https://bownlux.github.io/Retromod/compatdb/) or [troubleshooting guide](docs/troubleshooting.md) if a mod needs more work. The full docs cover the [CLI](docs/cli.md), [technical details](docs/technical.md), [build integrity](docs/authenticity.md), [security policy](SECURITY.md), and [contributing](docs/contributing.md).

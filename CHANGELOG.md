@@ -7,6 +7,7 @@ Tenth snapshot of the 1.3.0 line.
 
 ### Added
 - **Extended mappings for pre-Flattening resource names to their post-Flattening names.** This extends the initial set added in the initial commit of Retromod.
+
 ## [1.3.0-snapshot.9] - 2026-08-23
 
 Ninth snapshot of the 1.3.0 line.

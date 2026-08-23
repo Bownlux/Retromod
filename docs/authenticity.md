@@ -39,13 +39,13 @@ shasum -a 256 --check SHA256SUMS.txt
 For one downloaded jar, print its value and compare it with the matching manifest line:
 
 ```bash
-shasum -a 256 retromod-1.3.0-snapshot.9+26.2.jar
+shasum -a 256 retromod-1.3.0-snapshot.10+26.2.jar
 ```
 
 On Windows PowerShell:
 
 ```powershell
-Get-FileHash .\retromod-1.3.0-snapshot.9+26.2.jar -Algorithm SHA256
+Get-FileHash .\retromod-1.3.0-snapshot.10+26.2.jar -Algorithm SHA256
 ```
 
 Use the row for the same loader and Minecraft version. A Fabric jar and a Forge jar share a filename inside different distribution folders, but they are different files with different whole-file hashes.

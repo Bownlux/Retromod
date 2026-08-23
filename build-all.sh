@@ -12,7 +12,7 @@
 # Keep building after one target fails so the final report can list every failure.
 # set -e
 
-VERSION="1.3.0-snapshot.9"
+VERSION="1.3.0-snapshot.10"
 # Older mods are translated at runtime, so only 1.20 and newer need host jars.
 # Security-only updates for versions before 26.1.
 MC_VERSIONS=("1.20" "1.20.1" "1.20.2" "1.20.3" "1.20.4" "1.20.5" "1.20.6" "1.21" "1.21.1" "1.21.2" "1.21.3" "1.21.4" "1.21.5" "1.21.6" "1.21.7" "1.21.8" "1.21.9" "1.21.10" "1.21.11" "26.1" "26.1.1" "26.1.2" "26.2")
