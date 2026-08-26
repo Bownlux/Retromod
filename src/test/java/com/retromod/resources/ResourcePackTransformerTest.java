@@ -62,7 +62,7 @@ public class ResourcePackTransformerTest {
     }
     @Test
     void collisionTest(@TempDir Path root) {
-        // For resource packs which have files on both new and old paths
-
+        // For resource packs which have files on both new and old paths,
+        // the file on the new path should be kept.
+        }
     }
-}
