@@ -2,11 +2,11 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
-## [1.3.0-snapshot.10] - 2026-08-23
-Tenth snapshot of the 1.3.0 line.
+## [1.3.0-snapshot.10] - unreleased
+Tenth snapshot of the 1.3.0 line. Basically a continuation of the resource pack related changes in snapshot 9. 
 
 ### Added
-- **Extended mappings for pre-Flattening resource names to their post-Flattening names.** This extends the initial set added in the initial commit of Retromod.
+- Extended mappings for pre-Flattening resource names to their post-Flattening names. This extends the initial set added in the initial commit of Retromod.
 
 ## [1.3.0-snapshot.9] - 2026-08-23
 
