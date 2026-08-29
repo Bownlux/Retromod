@@ -148,7 +148,7 @@ public class ResourcePackTransformer {
         TEXTURE_RENAMES_BLOCKS.put("pumpkin_stem_disconnected", "pumpkin_stem");
 
         // plants and flowers
-        TEXTURE_RENAMES_BLOCKS.put("deadbush", "deadbush");
+        TEXTURE_RENAMES_BLOCKS.put("deadbush", "dead_bush");
         TEXTURE_RENAMES_BLOCKS.put("double_plant_fern_bottom", "large_fern_bottom");
         TEXTURE_RENAMES_BLOCKS.put("double_plant_fern_top", "large_fern_top");
         TEXTURE_RENAMES_BLOCKS.put("double_plant_grass_bottom", "tall_grass_bottom");
