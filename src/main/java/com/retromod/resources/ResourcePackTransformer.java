@@ -446,9 +446,9 @@ public class ResourcePackTransformer {
         TEXTURE_RENAMES_ITEMS.put("dye_powder_lime", "lime_dye");
         TEXTURE_RENAMES_ITEMS.put("dye_powder_magenta", "magenta_dye");
         TEXTURE_RENAMES_ITEMS.put("dye_powder_orange", "orange_dye");
-        TEXTURE_RENAMES_ITEMS.put("dye_powder_pink", "rose_red");
+        TEXTURE_RENAMES_ITEMS.put("dye_powder_pink", "pink_dye");
         TEXTURE_RENAMES_ITEMS.put("dye_powder_purple", "purple_dye");
-        TEXTURE_RENAMES_ITEMS.put("dye_powder_red", "rose_red");
+        TEXTURE_RENAMES_ITEMS.put("dye_powder_red", "red_dye");
         TEXTURE_RENAMES_ITEMS.put("dye_powder_silver", "light_gray_dye");
         TEXTURE_RENAMES_ITEMS.put("dye_powder_white", "bone_meal");
         TEXTURE_RENAMES_ITEMS.put("dye_powder_yellow", "dandelion_yellow");
