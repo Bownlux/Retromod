@@ -1,0 +1,21 @@
+name: "Sophisticated Backpacks/Core (Unofficial Fabric Port)"
+bundle: true
+badge: borked
+host_mc: "26.1.2"
+loader: "fabric"
+retromod: "1.3.0"
+mods:
+  - name: "Sophisticated Core (Unofficial Fabric Port)"
+    version: "1.2.9.21.168"
+    source_mc: "1.21.1"
+    link: "https://modrinth.com/mod/sophisticated-core-(unofficial-fabric-port)"
+  - name: "Sophisticated Backpacks (Unofficial Fabric Port)"
+    version: "3.23.4.3.106"
+    source_mc: "1.21.1"
+    link: "https://modrinth.com/mod/sophisticated-backpacks-(unoffical-fabric-port)"
+summary: "Porting Lib Fluids (Crashes at Launch)"
+details: "java.lang.RuntimeException: Could not execute entrypoint stage 'main' due to errors, provided by 'porting_lib_fluids' at 'io.github.fabricators_of_create.porting_lib.fluids.PortingLibFluids'! 	at net.fabricmc.loader.impl.FabricLoaderImpl.lambda$invokeEntrypoints$0(FabricLoaderImpl.java:413) 	at net.fabricmc.loader.impl.util.ExceptionUtil.gatherExceptions(ExceptionUtil.java:33) 	at net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:411) 	at net.fabricmc.loader.impl.game.minecraft.Hooks.startClient(Hooks.java:52) 	at knot//net.minecraft.client.Minecraft.<init>(Minecraft.java:477) 	at knot//net.minecraft.client.main.Main.main(Main.java:232) 	at net.fabricmc.loader.impl.game.minecraft.MinecraftGameProvider.launch(MinecraftGameProvider.java:514) 	at net.fabricmc.loader.impl.launch.knot.Knot.launch(Knot.java:72) 	at net.fabricmc.loader.impl.launch.knot.KnotClient.main(KnotClient.java:23) 	at org.prismlauncher.launcher.impl.StandardLauncher.launch(StandardLauncher.java:115) 	at org.prismlauncher.EntryPoint.listen(EntryPoint.java:129) 	at org.prismlauncher.EntryPoint.main(EntryPoint.java:70) 	Suppressed: java.lang.IncompatibleClassChangeError: Method 'com.mojang.serialization.Lifecycle com.mojang.serialization.Lifecycle.stable()' must be Methodref constant 		at knot//io.github.fabricators_of_create.porting_lib.util.RegistryBuilder.create(RegistryBuilder.java:89) 		at knot//io.github.fabricators_of_create.porting_lib.loot.PortingLibLoot.<clinit>(PortingLibLoot.java:27) 		at java.base/java.lang.Class.forName0(Native Method) 		at java.base/java.lang.Class.forName(Class.java:547) 		at net.fabricmc.loader.impl.util.DefaultLanguageAdapter.create(DefaultLanguageAdapter.java:53) 		at net.fabricmc.loader.impl.entrypoint.EntrypointStorage$NewEntry.getOrCreate(EntrypointStorage.java:124) 		at net.fabricmc.loader.impl.entrypoint.EntrypointContainerImpl.getEntrypoint(EntrypointContainerImpl.java:53) 		at net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:409) 		... 9 more 	Suppressed: net.fabricmc.loader.api.EntrypointException: Exception while loading entries for entrypoint 'main' provided by 'sophisticatedbackpacks' 		at net.fabricmc.loader.impl.entrypoint.EntrypointContainerImpl.getEntrypoint(EntrypointContainerImpl.java:56) 		at net.fabricmc.loader.impl.FabricLoaderImpl.invokeEntrypoints(FabricLoaderImpl.java:409) 		... 9 more 	Caused by: net.fabricmc.loader.api.LanguageAdapterException: java.lang.reflect.InvocationTargetException 		at net.fabricmc.loader.impl.util.DefaultLanguageAdapter.create(DefaultLanguageAdapter.java:63) 		at net.fabricmc.loader.impl.entrypoint.EntrypointStorage$NewEntry.getOrCreate(EntrypointStorage.java:124) 		at net.fabricmc.loader.impl.entrypoint.EntrypointContainerImpl.getEntrypoint(EntrypointContainerImpl.java:53) 		... 10 more 	Caused by: java.lang.reflect.InvocationTargetException 		at java.base/jdk.internal.reflect.DirectConstructorHandleAccessor.newInstance(DirectConstructorHandleAccessor.java:74) 		at java.base/java.lang.reflect.Constructor.newInstanceWithCaller(Constructor.java:499) 		at java.base/java.lang.reflect.Constructor.newInstance(Constructor.java:483) 		at net.fabricmc.loader.impl.util.DefaultLanguageAdapter.create(DefaultLanguageAdapter.java:61) 		... 12 more 	Caused by: java.lang.VerifyError: Bad type on operand stack"
+reporter: "GreenApplessss"
+date: "2026-08-29"
+issue: 249
+
