@@ -47,7 +47,7 @@ Use a loader-specific jar from `build-all.sh` for in-game testing. The raw `-all
 The published standalone CLI is executable because it keeps the bundled dependencies:
 
 ```bash
-java -jar dist/CLI/retromod-1.3.0-snapshot.9-cli.jar --help
+java -jar dist/CLI/retromod-1.3.0-snapshot.10-cli.jar --help
 ```
 
 From a source checkout, `mvn exec:java` remains the fallback while developing.
@@ -58,7 +58,7 @@ Keep `SignatureVerifier.EXPECTED_SELF_HASH` empty during development. Finish the
 
 ```bash
 mvn clean package -Dexec.skip=true
-python3 scripts/compute-self-hash.py target/retromod-1.3.0-snapshot.9-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.3.0-snapshot.10-all.jar
 # Update EXPECTED_SELF_HASH programmatically, then rebuild.
 mvn clean package -Dexec.skip=true
 bash build-all.sh --skip-build --require-self-hash
@@ -76,7 +76,15 @@ sha256sum --check SHA256SUMS.txt
 shasum -a 256 --check SHA256SUMS.txt
 ```
 
-Upload only the 68 loader jars to loader-specific Modrinth or CurseForge versions. Publish `dist/CLI/retromod-1.3.0-snapshot.9-cli.jar` and `dist/SHA256SUMS.txt` with the GitHub release.
+Upload only the 68 loader jars to loader-specific Modrinth or CurseForge versions. Publish `dist/CLI/retromod-1.3.0-snapshot.10-cli.jar` and `dist/SHA256SUMS.txt` with the GitHub release.
+
+## Resource Pack Mappings
+
+Keep block and item texture mappings in their matching tables. Use basenames without `.png`, directory components, uppercase letters, or resource namespaces. Do not add no-op mappings or send two source names to one destination because a pack containing both sources cannot be transformed safely.
+
+Put post-Flattening full-path moves in `src/main/resources/retromod/texture-migrations.tsv`. The first two columns are the latest source format and earliest target format for the move. Add a move only when official client assets or an upstream migration prove one successor. Do not guess from similar filenames or map a texture whose layout changed.
+
+Add a transform test for the changed names. Include a same-named texture in the other directory when the basename can overlap, and include a matching `.png.mcmeta` file for animated textures. Run `mvn test -Dexec.skip=true -Dtest=ResourcePackTextureMappingInvariantTest,VersionedTexturePathMappingsTest,CliResourcePackCommandTest` before opening the PR.
 
 ## Style
 

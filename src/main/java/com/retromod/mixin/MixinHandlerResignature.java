@@ -58,7 +58,26 @@ public final class MixinHandlerResignature {
      * A known signature change and the old first parameter types that identify it.
      * {@code null} leaves the first parameter unrestricted.
      */
-    private record SigChange(Set<String> acceptableFirstParams, List<ParamInsert> inserts) {}
+    private record SigChange(Set<String> acceptableFirstParams, List<ParamInsert> inserts,
+            String minTargetVersion) {
+
+        SigChange(Set<String> acceptableFirstParams, List<ParamInsert> inserts) {
+            this(acceptableFirstParams, inserts, null);
+        }
+
+        /**
+         * Whether this change has happened yet on the host being targeted.
+         *
+         * <p>The table sits behind a single 1.21.5 gate, but Minecraft keeps adding parameters in
+         * later versions. A change introduced in 26.3 must not be applied on 26.2, where the old
+         * signature is still the correct one.
+         */
+        boolean appliesToTarget() {
+            if (minTargetVersion == null) return true;
+            return com.retromod.core.RetromodVersion.compareMcVersions(
+                    com.retromod.core.RetromodVersion.TARGET_MC_VERSION, minTargetVersion) >= 0;
+        }
+    }
 
     /** Known changes indexed by the bare Mojang method name. */
     private static final Map<String, SigChange> SIGNATURE_CHANGES = new HashMap<>();
@@ -101,6 +120,12 @@ public final class MixinHandlerResignature {
         reg("onMobHurt", serverLevel, livingEntity);
         reg("onMobRemoved", serverLevel, livingEntity);
 
+        // Minecraft 26.3 added ServerLevel to LivingEntity.getVisibilityPercent. Found by diffing
+        // the 26.2 and 26.3 jars; it is the only leading-parameter insertion in that jump on a
+        // method mods actually hook. It is gated because the old signature is still correct on 26.2.
+        SIGNATURE_CHANGES.put("getVisibilityPercent", new SigChange(
+                Set.of(entity), List.of(serverLevel), "26.3"));
+
         // Minecraft 26.1 added a ResourceKey after the ninth captured parameter. Placing it before
         // CallbackInfo preserves the old body and rejects handlers that captured fewer parameters.
         SIGNATURE_CHANGES.put("tryGenerateStructure", new SigChange(
@@ -136,7 +161,7 @@ public final class MixinHandlerResignature {
             else if (v instanceof String s) targets.add(s);
             for (String t : targets) {
                 SigChange sc = SIGNATURE_CHANGES.get(bareName(t));
-                if (sc == null) continue;
+                if (sc == null || !sc.appliesToTarget()) continue;
                 // Owner guard: skip a bare-name match whose captured params show the handler is
                 // targeting a same-named but UNCHANGED method on another class.
                 if (sc.acceptableFirstParams() != null
@@ -227,7 +252,7 @@ public final class MixinHandlerResignature {
         // parameter would change its meaning.
         if (cbIndex < 1) return false;
 
-        if (hasUnsafeParamAnnotations(handler)) return false;
+        if (hasUnsafeParamAnnotations(handler, inserts)) return false;
 
         if (!insertRawParams(handler, inserts)) return false;
 
@@ -273,6 +298,8 @@ public final class MixinHandlerResignature {
         }
         shiftLocalVariableAnnotations(handler.visibleLocalVariableAnnotations, insSlot, insWidth);
         shiftLocalVariableAnnotations(handler.invisibleLocalVariableAnnotations, insSlot, insWidth);
+        // A @Local capture indexes the target's local variable table, which the same insertion moved.
+        MixinLocalSlotRepair.shiftCapturedIndices(handler, insSlot, insWidth, paramSlot[0]);
 
         // Insert from the end so each earlier index remains valid.
         List<Type> newArgs = new ArrayList<>(Arrays.asList(args));
@@ -335,6 +362,7 @@ public final class MixinHandlerResignature {
         int paren = selector.indexOf('(');
         if (paren < 0) return null;
         SigChange sc = SIGNATURE_CHANGES.get(bareName(selector));
+        if (sc != null && !sc.appliesToTarget()) sc = null;
         if (sc == null) return null;
         List<ParamInsert> inserts = sc.inserts();
         String head = selector.substring(0, paren);
@@ -490,6 +518,7 @@ public final class MixinHandlerResignature {
         AnnotationNode ow = annotationOf(method, OVERWRITE_DESC);
         if (ow == null) return List.of();
         SigChange sc = SIGNATURE_CHANGES.get(method.name);
+        if (sc != null && !sc.appliesToTarget()) sc = null;
         if (sc == null) return List.of();
         Set<String> acceptable = sc.acceptableFirstParams();
         if (acceptable == null || acceptable.isEmpty()) return List.of();
@@ -539,6 +568,7 @@ public final class MixinHandlerResignature {
             String newTarget = rewriteSelectorDescriptor(target);
             if (newTarget == null) return null;
             SigChange sc = SIGNATURE_CHANGES.get(bareName(target));
+            if (sc != null && !sc.appliesToTarget()) sc = null;
             if (sc == null) return null;
             // A virtual handler starts with the receiver. A static handler starts with call args.
             int paren = target.indexOf('(');
@@ -589,6 +619,46 @@ public final class MixinHandlerResignature {
      * annotated parameter. Ordinary nullability and type-use annotations move with the original
      * parameter. Mixin capture annotations are semantic, so those handlers remain manual-only.
      */
+    /**
+     * The same check for a repair whose inserted parameters are already known. A MixinExtras
+     * {@code @Local} is allowed through when {@link MixinLocalSlotRepair} can prove the capture
+     * still selects one variable; every other Mixin parameter annotation stays manual-only.
+     */
+    static boolean hasUnsafeParamAnnotations(MethodNode method, List<ParamInsert> inserts) {
+        if (!hasUnsafeParamAnnotations(method)) return false;
+        if (!onlyUnsafeAnnotationIsLocalCapture(method)) return true;
+        return !MixinLocalSlotRepair.canRepair(method, inserts);
+    }
+
+    /** Whether {@code @Local} is the only semantic Mixin annotation on the parameters. */
+    private static boolean onlyUnsafeAnnotationIsLocalCapture(MethodNode method) {
+        int parameterCount;
+        try {
+            parameterCount = Type.getArgumentTypes(method.desc).length;
+        } catch (RuntimeException e) {
+            return false;
+        }
+        return onlyLocalCaptures(method.visibleParameterAnnotations, parameterCount)
+                && onlyLocalCaptures(method.invisibleParameterAnnotations, parameterCount);
+    }
+
+    private static boolean onlyLocalCaptures(
+            List<AnnotationNode>[] annotations, int parameterCount) {
+        if (annotations == null) return true;
+        if (annotations.length != parameterCount) return false;
+        for (List<AnnotationNode> parameter : annotations) {
+            if (parameter == null) continue;
+            for (AnnotationNode annotation : parameter) {
+                String desc = annotation.desc;
+                if (desc == null) continue;
+                boolean semantic = desc.startsWith("Lorg/spongepowered/asm/mixin/")
+                        || desc.startsWith("Lcom/llamalad7/mixinextras/");
+                if (semantic && !MixinLocalSlotRepair.isLocal(annotation)) return false;
+            }
+        }
+        return true;
+    }
+
     static boolean hasUnsafeParamAnnotations(MethodNode method) {
         int parameterCount;
         try {

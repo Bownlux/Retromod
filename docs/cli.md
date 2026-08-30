@@ -7,10 +7,10 @@ nav_order: 5
 
 The CLI transforms mods without launching Minecraft. It is useful for servers, modpacks, CI, and compatibility checks.
 
-Download `retromod-1.3.0-snapshot.9-cli.jar` from the GitHub release. It bundles its dependencies and has an executable manifest:
+Download `retromod-1.3.0-snapshot.10-cli.jar` from the GitHub release. It bundles its dependencies and has an executable manifest:
 
 ```bash
-java -jar retromod-1.3.0-snapshot.9-cli.jar <command> <args>
+java -jar retromod-1.3.0-snapshot.10-cli.jar <command> <args>
 ```
 
 From a repository checkout, Maven is a useful fallback:
@@ -25,30 +25,34 @@ mvn exec:java \
 
 ```bash
 # Inspect a mod
-java -jar retromod-1.3.0-snapshot.9-cli.jar analyze path/to/mod.jar
+java -jar retromod-1.3.0-snapshot.10-cli.jar analyze path/to/mod.jar
 
 # Transform one mod and use the exact target jar for safe Mixin repairs
-java -jar retromod-1.3.0-snapshot.9-cli.jar transform path/to/mod.jar \
+java -jar retromod-1.3.0-snapshot.10-cli.jar transform path/to/mod.jar \
   --target 26.2 --mc-jar path/to/minecraft-26.2-client.jar --verify
 
 # Transform a folder
-java -jar retromod-1.3.0-snapshot.9-cli.jar batch path/to/mods \
+java -jar retromod-1.3.0-snapshot.10-cli.jar batch path/to/mods \
   --aot --mc-jar path/to/minecraft-26.2-client.jar --verify
 
 # Prepare a Minecraft instance
-java -jar retromod-1.3.0-snapshot.9-cli.jar prepare path/to/.minecraft --aot
+java -jar retromod-1.3.0-snapshot.10-cli.jar prepare path/to/.minecraft --aot
+
+# Update one resource pack without launching Minecraft
+java -jar retromod-1.3.0-snapshot.10-cli.jar resourcepack path/to/old-pack.zip \
+  --target 26.2 --output path/to/updated-packs
 
 # List registered shims
-java -jar retromod-1.3.0-snapshot.9-cli.jar shims
+java -jar retromod-1.3.0-snapshot.10-cli.jar shims
 
 # Compare two version points
-java -jar retromod-1.3.0-snapshot.9-cli.jar diff fabric 1.21.1 26.2
+java -jar retromod-1.3.0-snapshot.10-cli.jar diff fabric 1.21.1 26.2
 ```
 
 Run `--help` for the full command and option list:
 
 ```bash
-java -jar retromod-1.3.0-snapshot.9-cli.jar --help
+java -jar retromod-1.3.0-snapshot.10-cli.jar --help
 ```
 
 ## Useful Flags
@@ -60,6 +64,12 @@ java -jar retromod-1.3.0-snapshot.9-cli.jar --help
 - `--verify` checks generated output jars and writes unresolved-reference reports. With `--mc-jar`, it checks game-owned classes and members against that exact jar instead of the standalone CLI classpath, including those links inside recursively bundled libraries. Minecraft runtime libraries that live beside the client jar, plus optional third-party links used only by nested libraries, are intentionally ignored. In a batch, each generated jar is checked separately.
 - `--aot` prepares cached transforms during batch work.
 - `--force` allows a transform despite complexity warnings.
+
+## Resource Packs
+
+`resourcepack <pack.zip|folder>` updates one resource pack without requiring a game instance. It writes to `retromod-output/resourcepacks/` beside the source unless `--output <folder>` selects another directory. The source stays unchanged, and Retromod refuses to replace an existing output.
+
+The command updates supported pack metadata and applies verified texture migrations in resource-pack format order through the selected target. This includes the 1.13 Flattening, later equipment and GUI moves, the 26.1 entity reorganization, and 26.2 texture names. It does not port arbitrary models, shaders, overlays, OptiFine formats, or custom rendering code. Removed or redesigned textures without one verified successor stay unchanged.
 
 If `--target` is omitted, `--mc-jar` also tries to infer the target from the jar's `version.json`. A standard filename such as `minecraft-26.2-client.jar` is the fallback. An explicit `--target` always wins. Without `--mc-jar`, registered shims and mapping tables still run, but the exact target-method analysis is unavailable.
 

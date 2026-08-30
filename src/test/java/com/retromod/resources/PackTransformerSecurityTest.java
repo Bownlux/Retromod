@@ -265,6 +265,36 @@ class PackTransformerSecurityTest {
     }
 
     @Test
+    void resourcePackAppliesTextureMigrationsAfterTheFlattening(@TempDir Path root)
+            throws Exception {
+        Path pack = root.resolve("versioned-textures");
+        Path armor = pack.resolve(
+            "assets/minecraft/textures/models/armor/diamond_layer_1.png");
+        Path chicken = pack.resolve("assets/minecraft/textures/entity/chicken.png");
+        Files.createDirectories(armor.getParent());
+        Files.createDirectories(chicken.getParent());
+        Files.writeString(pack.resolve("pack.mcmeta"),
+            "{\"pack\":{\"pack_format\":34,\"description\":\"legacy\"}}");
+        Files.writeString(armor, "armor");
+        Files.writeString(chicken, "chicken");
+
+        Path output = root.resolve("out");
+        Files.createDirectories(output);
+        Path result = new ResourcePackTransformer("26.2").transformPack(pack, output);
+
+        try (ZipFile transformed = new ZipFile(result.toFile())) {
+            assertTrue(transformed.getEntry(
+                "assets/minecraft/textures/entity/equipment/humanoid/diamond.png") != null);
+            assertTrue(transformed.getEntry(
+                "assets/minecraft/textures/entity/chicken/chicken_temperate.png") != null);
+            assertTrue(transformed.getEntry(
+                "assets/minecraft/textures/models/armor/diamond_layer_1.png") == null);
+            assertTrue(transformed.getEntry(
+                "assets/minecraft/textures/entity/chicken.png") == null);
+        }
+    }
+
+    @Test
     void legacyPrimaryFormatControlsTextureMigrationAcrossASupportedRange(
             @TempDir Path root) throws Exception {
         Path pack = root.resolve("ranged-resource-pack");

@@ -9,6 +9,7 @@ import com.retromod.embedder.*;
 import com.retromod.aot.AotCompiler;
 import com.retromod.archive.ApiArchiveManager;
 import com.retromod.gui.ModComplexityAnalyzer;
+import com.retromod.resources.ResourcePackTransformer;
 import com.retromod.shim.ShimRegistry;
 import com.retromod.shim.fabric.*;
 import com.retromod.shim.neoforge.*;
@@ -110,6 +111,7 @@ public class RetromodCli {
                 case "legacy" -> legacyCommand(args);
                 case "overrides" -> overridesCommand(args);
                 case "prepare" -> prepareCommand(args);
+                case "resourcepack" -> resourcePackCommand(args);
                 case "score" -> scoreCommand(args);
                 case "devhelp", "migrate" -> devhelpCommand(args);
                 case "autofix" -> autofixCommand(args);
@@ -2661,6 +2663,7 @@ public class RetromodCli {
         System.out.println("  aot <mod.jar>                  Prepare one mod ahead of launch");
         System.out.println("  batch <folder>                 Update every mod in a folder");
         System.out.println("  prepare <game-dir>             Prepare a Minecraft instance");
+        System.out.println("  resourcepack <pack>            Update one resource pack");
         System.out.println("  legacy <mod.jar>               Use the legacy transform path");
         System.out.println("  embed <mod.jar>                Add required replacement APIs");
         System.out.println("  score <path>                   Score one mod or a mod folder");
@@ -2689,7 +2692,96 @@ public class RetromodCli {
         System.out.println("  retromod batch ./mods --aot --verify");
         System.out.println("  retromod transform oldmod.jar --target " + TARGET_MC_VERSION
                 + " --mc-jar minecraft-client.jar");
+        System.out.println("  retromod resourcepack old-pack.zip --target "
+                + TARGET_MC_VERSION);
         System.out.println("  retromod devhelp mymod.jar " + TARGET_MC_VERSION);
+    }
+
+    /** Updates one resource pack without requiring a staged game instance. */
+    static void resourcePackCommand(String[] args) throws Exception {
+        Path packPath = null;
+        Path outputDir = null;
+
+        for (int i = 1; i < args.length; i++) {
+            String argument = args[i];
+            if ("--output".equals(argument)) {
+                if (i + 1 >= args.length) {
+                    throw new IllegalArgumentException("--output requires a directory");
+                }
+                outputDir = Path.of(args[++i]);
+            } else if ("--target".equals(argument)) {
+                if (i + 1 >= args.length) {
+                    throw new IllegalArgumentException("--target requires a Minecraft version");
+                }
+                i++;
+            } else if (argument.startsWith("--")) {
+                throw new IllegalArgumentException("Unknown resourcepack option: " + argument);
+            } else if (packPath == null) {
+                packPath = Path.of(argument);
+            } else {
+                throw new IllegalArgumentException("resourcepack accepts one input pack");
+            }
+        }
+
+        if (packPath == null) {
+            throw new IllegalArgumentException(
+                    "Usage: resourcepack <pack.zip|folder> [--output <folder>] "
+                            + "[--target <version>]");
+        }
+
+        Path absolutePack = packPath.toAbsolutePath().normalize();
+        if (outputDir == null) {
+            Path parent = absolutePack.getParent();
+            if (parent == null) parent = Path.of(".").toAbsolutePath().normalize();
+            outputDir = parent.resolve("retromod-output/resourcepacks");
+        }
+
+        ResourcePackTransformer transformer = new ResourcePackTransformer(TARGET_MC_VERSION);
+        int sourceFormat = transformer.getPackFormat(absolutePack);
+        if (sourceFormat < 0) {
+            throw new IllegalArgumentException(
+                    "Could not read resource-pack metadata: " + absolutePack);
+        }
+
+        System.out.println("Resource pack: " + absolutePack.getFileName());
+        System.out.println("Source pack format: " + sourceFormat);
+        System.out.println("Target: Minecraft " + TARGET_MC_VERSION);
+        Path result = transformResourcePack(
+                absolutePack, outputDir.toAbsolutePath().normalize(), transformer);
+        System.out.println("Output: " + result);
+    }
+
+    static Path transformResourcePack(Path packPath, Path outputDir,
+                                      ResourcePackTransformer transformer) throws IOException {
+        Path source = packPath.toAbsolutePath().normalize();
+        Path destinationDirectory = outputDir.toAbsolutePath().normalize();
+        if (!Files.exists(source, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Resource pack not found: " + source);
+        }
+        if (Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS)
+                && destinationDirectory.startsWith(source)) {
+            throw new IOException("Resource-pack output cannot be inside the source pack: "
+                    + destinationDirectory);
+        }
+
+        boolean transform = transformer.needsTransformation(source);
+        String sourceName = source.getFileName().toString();
+        String outputName = transform ? transformedResourcePackName(sourceName) : sourceName;
+        Path plannedOutput = destinationDirectory.resolve(outputName).normalize();
+        if (!plannedOutput.startsWith(destinationDirectory)) {
+            throw new IOException("Resource-pack output escapes its directory: " + plannedOutput);
+        }
+        if (Files.exists(plannedOutput, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Resource-pack output already exists: " + plannedOutput);
+        }
+        return transformer.transformPack(source, destinationDirectory);
+    }
+
+    private static String transformedResourcePackName(String sourceName) {
+        String base = sourceName.toLowerCase(Locale.ROOT).endsWith(".zip")
+                ? sourceName.substring(0, sourceName.length() - 4)
+                : sourceName;
+        return base + "-retromod.zip";
     }
 
     /**

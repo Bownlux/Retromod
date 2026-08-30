@@ -30,8 +30,15 @@ import java.util.List;
  * alone with a warning; opt out with {@code -Dretromod.graphics.noPreference=true}.
  * Other {@code options.txt} lines are preserved.
  *
- * <p>Once OpenGL is removed (26.3), there's no backend to fall back to and raw-GL
- * mods hit the hard boundary; this is a 26.2-window measure.
+ * <p>OpenGL was expected to go away in 26.3. It has not: 26.3-snapshot-10 still ships
+ * {@code PreferredGraphicsApi.OPENGL} and a full OpenGL backend, now under
+ * {@code com/mojang/renderpearl/backend/opengl} after the rendering library was repackaged. This
+ * preference therefore still applies on 26.3. Once a release does remove OpenGL there is no backend
+ * left to fall back to and raw-GL mods hit the hard boundary.
+ *
+ * <p>26.3 also adds an {@code OptionsForceDefaultGraphicsApiFix} datafixer, so a client may reset
+ * this option back to {@code default} on upgrade. Retromod writes the preference again on the next
+ * launch, because it only acts when the key is absent or {@code default}.
  */
 public final class GraphicsBackendCompat {
 

@@ -199,24 +199,32 @@ class MixinHandlerResignatureTest {
     @Test
     @DisplayName("F1 regression: a @Local captured AFTER CallbackInfo declines (the old cbIndex-bounded guard missed it)")
     @SuppressWarnings("unchecked")
-    void localAfterCallbackInfoDeclined() {
-        // The realistic modern @Inject idiom captures locals AFTER the CallbackInfo trailer:
-        // (Entity, CIR, @Local Object). The @Local sits at param index 2 (> cbIndex=1), so a guard
-        // bounded at cbIndex never saw it; insertRawParams shifts slots/LVT but not the parameter-
-        // annotation arrays, so a ServerLevel insert would leave the @Local pinned to the CIR and
-        // Mixin would throw InvalidInjectionException (a hard crash COMPUTE_FRAMES cannot catch). The
-        // full-width guard must DECLINE and keep the soft-fail intact.
+    void localAfterCallbackInfoIsRealigned() {
+        // The modern @Inject idiom captures locals AFTER the CallbackInfo trailer:
+        // (Entity, CIR, @Local Object). Mixin's LocalVariableDiscriminator matches a capture's type
+        // with Type.equals, so an added ServerLevel cannot become a rival for an Object capture.
+        // The repair therefore proceeds, and the capture has to move with its own parameter.
         MethodNode h = new MethodNode(ACC_PRIVATE, "handler",
                 "(Lnet/minecraft/world/entity/Entity;" + CIR + "Ljava/lang/Object;)V", null, null);
         List<org.objectweb.asm.tree.AnnotationNode>[] pa = new List[3];
-        pa[2] = new java.util.ArrayList<>(List.of(          // @Local on param 2, AFTER the CIR trailer
-                new org.objectweb.asm.tree.AnnotationNode("Lcom/llamalad7/mixinextras/sugar/Local;")));
+        org.objectweb.asm.tree.AnnotationNode local =
+                new org.objectweb.asm.tree.AnnotationNode("Lcom/llamalad7/mixinextras/sugar/Local;");
+        pa[2] = new java.util.ArrayList<>(List.of(local));   // @Local on param 2, AFTER the CIR trailer
         h.invisibleParameterAnnotations = pa;
-        String before = h.desc;
-        assertFalse(MixinHandlerResignature.insertParams(h,
+        h.invisibleAnnotableParameterCount = 3;
+
+        assertTrue(MixinHandlerResignature.insertParams(h,
                         List.of(new ParamInsert(0, "Lnet/minecraft/server/level/ServerLevel;"))),
-                "a @Local captured AFTER CallbackInfo must make re-signature decline");
-        assertEquals(before, h.desc, "the declined handler is left byte-identical (soft-fail preserved)");
+                "a capture of an unrelated type does not block the repair");
+
+        assertEquals("(Lnet/minecraft/server/level/ServerLevel;"
+                        + "Lnet/minecraft/world/entity/Entity;" + CIR + "Ljava/lang/Object;)V", h.desc);
+        assertNull(h.invisibleParameterAnnotations[2],
+                "the capture must not stay pinned to the CallbackInfo");
+        assertSame(local, h.invisibleParameterAnnotations[3].get(0),
+                "it moves to the parameter it was written on");
+        assertEquals(4, h.invisibleAnnotableParameterCount,
+                "the annotable count must cover the widened parameter list");
     }
 
     @Test

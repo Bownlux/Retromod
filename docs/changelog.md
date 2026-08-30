@@ -10,6 +10,35 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.3.0 Snapshot Line
 
+### Snapshot 10, August 25, 2026
+
+- Adds an offline `resourcepack` CLI command for updating one resource pack without launching Minecraft.
+- Validates texture mappings before release and keeps same-named block and item textures separate.
+- Updates renamed entity textures from pre-1.13 packs, including boats, beds, end crystals, snow golems, and llamas.
+- Applies later texture moves in version order through 26.2, including equipment, armor trims, GUI slots, and reorganized entity textures.
+- Repairs a Mixin handler that reads a local variable from the method it hooks when Minecraft added a parameter to that method.
+- Leaves a Mixin handler alone when its body uses something Minecraft removed, instead of repairing it into a later crash.
+- Adds Minecraft 26.3 support, which repackaged the rendering library and renamed several vanilla classes.
+- Accepts Minecraft's snapshot version names, so a 26.3 snapshot is recognized as 26.3.
+- Follows a 26.3 entity method that gained a parameter, without disturbing the same method on 26.2.
+- Updates mods that use GeckoLib for its move to a new package in GeckoLib 5, which otherwise left them crashing on their first animated item.
+- Fixes a NeoForge crash where a translated mod failed on startup with `IncompatibleClassChangeError` because loader state stopped being static.
+- Renames 413 block and item textures when converting a pre-1.13 pack, derived from the game's own files, where the previous list covered 9.
+- Covers 219 later texture moves through 26.2, including the sign textures 26.2 moved into the block folder.
+- Updates a converted pack's own models so they point at the textures that moved, instead of leaving missing textures.
+- Converts textures for every namespace in a pack, so a pack that also skins mods converts fully.
+- Keeps the current file when a pack ships a texture on both the old and the new path.
+
+The command moves textures only when a version boundary has one verified successor. It does not port arbitrary models, shaders, overlays, OptiFine formats, or custom rendering code.
+
+A handler that reads a local of the same type as the added parameter is still left alone, because either variable would match. Mods disabled by the Mixin blocklist were re-checked against 26.2 and all of them still need a source port.
+
+26.3 support covers class moves, not the rendering API changes that came with them. OpenGL has not been removed in 26.3, so Retromod still selects it for translated mods.
+
+26.3 removed the worldgen configuration classes and the last hardcoded item classes outright, so mods built on either need a real port.
+
+The resource pack fixes came out of a conversation with ttaute, whose texture tables are in review.
+
 ### Snapshot 9, August 23, 2026
 
 - Moves a one-target, accessor-only Mixin when an exact owner-scoped redirect and unchanged descriptor prove the new field owner.

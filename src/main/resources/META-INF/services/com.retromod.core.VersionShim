@@ -39,6 +39,7 @@ com.retromod.shim.fabric.Fabric_1_21_10_to_1_21_11
 # Fabric shim for the 1.21.11 to 26.1 unobfuscation jump
 com.retromod.shim.fabric.Fabric_1_21_11_to_26_1
 com.retromod.shim.fabric.Fabric_26_1_to_26_2
+com.retromod.shim.fabric.Fabric_26_2_to_26_3
 
 # NeoForge shims for 1.20.1 through 1.21
 # NeoForge started at 1.20.1 when it forked from Forge
@@ -65,6 +66,7 @@ com.retromod.shim.neoforge.NeoForge_1_21_10_to_1_21_11
 # NeoForge shim for the 1.21.11 to 26.1 unobfuscation jump
 com.retromod.shim.neoforge.NeoForge_1_21_11_to_26_1
 com.retromod.shim.neoforge.NeoForge_26_1_to_26_2
+com.retromod.shim.neoforge.NeoForge_26_2_to_26_3
 
 # Forge shims for 1.12.2 through 1.20
 # Forge was the main loader before NeoForge forked at 1.20.1
@@ -104,6 +106,7 @@ com.retromod.shim.forge.Forge_1_21_10_to_1_21_11
 # Forge shim for the 1.21.11 to 26.1 unobfuscation jump
 com.retromod.shim.forge.Forge_1_21_11_to_26_1
 com.retromod.shim.forge.Forge_26_1_to_26_2
+com.retromod.shim.forge.Forge_26_2_to_26_3
 
 # Shims for commonly used mod APIs
 
@@ -144,6 +147,7 @@ com.retromod.shim.api.forge.ForgeRegistryApiShim
 
 # Cross-loader API shims (work on both Fabric and Forge/NeoForge)
 com.retromod.shim.api.common.GeckoLibApiShim
+com.retromod.shim.api.common.GeckoLib5ApiShim
 com.retromod.shim.api.common.ArchitecturyApiShim
 com.retromod.shim.api.common.CreateModApiShim
 # Runtime version-check spoofer for in-code version range checks such as

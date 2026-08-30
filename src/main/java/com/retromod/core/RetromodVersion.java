@@ -11,7 +11,7 @@ public final class RetromodVersion {
     public static volatile String TARGET_MC_VERSION = "1.21.4";
 
     /** Retromod version used by loader metadata and transform cache keys. */
-    public static final String RETROMOD_VERSION = "1.3.0-snapshot.9";
+    public static final String RETROMOD_VERSION = "1.3.0-snapshot.10";
 
     private RetromodVersion() {}
 

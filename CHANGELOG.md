@@ -2,6 +2,47 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
+## [1.3.0-snapshot.10] - 2026-08-25
+
+Tenth snapshot of the 1.3.0 line.
+
+### Added
+
+- Adds an offline `resourcepack` CLI command for updating one zip or unpacked pack without launching Minecraft. It keeps the source unchanged and refuses existing or nested output paths.
+- Validates texture mapping tables for safe one-to-one basenames, no-op entries, block and item isolation, and animation sidecar handling.
+- Moves 33 additional pre-1.13 entity textures to their verified Flattening paths, including boats, beds, illagers, end crystals, snow golems, and llamas.
+- Chains 193 verified texture moves across 14 resource-pack format boundaries, including equipment, armor trims, GUI slots, entity reorganizations, and 26.2 pillar names.
+- Repairs a MixinExtras local variable capture when the method it hooks gained a parameter, instead of refusing the handler outright. A capture that names a slot moves with the variable it selected, and a capture that selects by ordinal, by name, or by type is carried through unchanged.
+
+A capture of the same type as the added parameter is still refused, because it gains a second candidate and nothing in the bytecode says which one the author meant. A capture annotated before the `CallbackInfo` is refused as well.
+
+- Declines a handler repair when the handler's body names a Minecraft field or method the host no longer declares. Repairing a signature is what makes Mixin apply a handler, so repairing one whose body is already broken replaces a dormant feature with a crash at whatever moment that feature runs. A member whose name survives is left to the repair engines, so a method that only gained a parameter still translates as before.
+
+### Added
+- Adds Minecraft 26.3 support for Fabric, NeoForge, and Forge. 26.3 repackaged its rendering library, moving `com/mojang/blaze3d` to `com/mojang/renderpearl`, and renamed a number of vanilla classes, several only to correct capitalization such as `EnderMan` to `Enderman`. All 196 moves are checked against the 26.2 and 26.3 jars: the old name must be gone, the new name must exist, and the pairing must be proven rather than guessed from name similarity.
+- Recognizes Minecraft's own snapshot spelling. `26.3-snapshot-10` and the pre-release and candidate forms all resolve to 26.3, and the equivalent hyphenated 26.2 spellings now resolve too.
+- Keeps Retromod's own embedded helper classes on the target's class names. A helper is compiled against one Minecraft version, so its references age like a mod's do, and one that still named `com/mojang/blaze3d/PrimitiveTopology` failed to link on 26.3 even when the mod around it was translated correctly. All three embedding paths follow the moves now.
+- Follows Minecraft 26.3 adding a leading `ServerLevel` to `LivingEntity.getVisibilityPercent`, and only on 26.3 and newer. Signature repairs can now carry the version they start from, because the table sat behind a single 1.21.5 gate and a later change applied on an older host would have broken a handler that was already correct.
+- Follows GeckoLib's move from `software.bernie.geckolib` to `com.geckolib`. GeckoLib 5 renamed the package and reorganised the library in one release, so a mod built against 4.x fails on its first animated item or entity with `NoClassDefFoundError` naming a class that is simply gone, even though the host has GeckoLib installed and working. The table is derived from the 4.8.4 and 5.5.2 jars and is held back below Minecraft 1.21.5, since that is where GeckoLib 5 begins and rewriting earlier would point a mod at packages its host does not ship.
+- Reaches FML state that stopped being static on NeoForge. A mod built against the older loader calls `FMLLoader.getDist()` and `getLoadingModList()` directly, and current NeoForge keeps both behind `FMLLoader.getCurrent()`, so the mod dies on its first call with `IncompatibleClassChangeError` naming a method that plainly exists. The helper those redirects pointed at had never been written, so the `getLoadingModList` bridge had been silently inert as well.
+- Derives the Flattening texture renames from the vanilla jars instead of a hand-written list, taking the table from 9 entries to 413. A pack used to convert mostly right and quietly keep whatever the list had not reached yet. Two independent methods produce the pairs, identical PNG content across the 1.13 boundary and the texture a vanilla model names, and they agreed on 250 of the 251 pairs both produced. Every row is checked against the current jar, so a rename lands on a texture the game still ships, and five textures renamed a second time after 1.13 are chained to their current name.
+- Renames item textures as well as block textures. The two tables are kept apart because a 1.12.2 pack ships both `blocks/brick.png` and `items/brick.png` and only the block one became `bricks`.
+- Extends the later texture migrations the same way, from 193 rows to 219, derived by comparing adjacent versions at every pack-format boundary from 1.13 to 26.2. Adjacent versions are compared rather than the endpoints because a rename and a redraw look the same by name and rarely happen in the same version. The derived pass and the hand-checked rows agreed on 187 of the rows they both produced.
+- Adds the 24 sign textures 26.2 moved out of `entity/signs/` into `block/`. Content matching could not pair them because 26.2 redrew them as it moved them, so they were mapped by name with both ends checked against the jars.
+- Repoints a converted pack's own models at the textures they moved to. Moving a texture was only half the job: a pack shipping its own models still named the old path, so Minecraft resolved nothing and drew the missing-texture checkerboard. The pack looked converted and was quietly broken. Only the `textures` block of a model is rewritten, since a `parent` and a blockstate name models rather than textures.
+- Converts every namespace in a pack, not only `assets/minecraft`. A pack that also skins mods keeps those textures under `assets/<modid>`, and they followed the same 1.13 layout change, so the vanilla half converted and the modded half silently did not.
+- Keeps the current file when a pack ships a texture on both the old and the new path, instead of refusing the whole pack. A pack carrying both layouts is saying which one it means.
+
+The rendering repackage is partial: `VertexConsumer`, `BufferBuilder`, `ByteBufferBuilder`, and `PoseStack` stayed where they were, so only the classes that actually moved are redirected. A class move restores linkage, not behavior, and the rendering API changed alongside the repackage.
+
+The pack work above came out of a conversation with ttaute, whose Flattening-era texture tables are in review. Her observation that this area had barely changed since its first prototype commit is what prompted the look, and the gaps it turned up are the ones fixed here. Her hand-checked entries are applied on top of the derived table and win any disagreement, and her own test for the block and item `brick` split passes against it unchanged. Her multi-step migrations are kept as steps rather than collapsed: a pack sitting at an intermediate name still needs the rest of the journey, and a test now holds that shape.
+
+26.3 also removes rather than moves two groups, so neither is covered: most of the worldgen configuration system, including `FeatureConfiguration` and its subclasses, `ConfiguredFeature`, and `SurfaceRules`; and the last of the hardcoded item classes, `AxeItem`, `HoeItem`, `ShovelItem`, `BedItem`, and `SignItem`. Mods built on either need a real port, and both are listed in Mods That Can't Be Translated.
+
+OpenGL was expected to be removed in 26.3 and has not been. 26.3-snapshot-10 still ships `PreferredGraphicsApi.OPENGL`, so Retromod keeps selecting OpenGL for translated mods on that host.
+
+Every Mixin blocklist entry was re-checked against the 26.2 jar and none can be retired yet. Deeper and Darker's painting handler looks like the easiest, because its target only gained a leading `ServerLevel`. Its body reads `Painting.VARIANT_CODEC`, which 26.2 removed entirely, so repairing the signature would replace a dormant feature with a crash when a painting breaks. Retiring an entry needs the handler's body checked as well as its signature.
+
 ## [1.3.0-snapshot.9] - 2026-08-23
 
 Ninth snapshot of the 1.3.0 line.

@@ -22,6 +22,8 @@ These need a manual port from the mod author.
 
 | Mod or family | Main reason |
 |---|---|
+| Custom worldgen on Minecraft 26.3 | 26.3 removed the worldgen configuration classes, so a feature, carver, or surface rule written against them has nothing to bind to |
+| Custom tools, beds, and signs on Minecraft 26.3 | 26.3 removed `AxeItem`, `HoeItem`, `ShovelItem`, `BedItem`, and `SignItem`, finishing the move to data-driven items |
 | Create and Flywheel | Custom rendering, contraption internals, and deep loader integration |
 | OptiFine | Proprietary coremod and renderer replacement |
 | Veil and Veil-based mods | Custom rendering and post-processing pipeline |
@@ -33,6 +35,23 @@ These need a manual port from the mod author.
 | CoFH and Thermal across the 1.20.1 to 1.21 enchantment change | Custom enchantment subclasses and eager enchantment registration target a system that became final and data-driven |
 
 This list describes broad compatibility, not a judgment about those projects.
+
+## Minecraft 26.3 Worldgen and Items
+
+26.3 deleted most of the worldgen configuration system rather than moving it. `FeatureConfiguration`
+and its roughly forty subclasses, `ConfiguredFeature`, `SurfaceRules`, `SurfaceSystem`,
+`BlockStateProviderType`, `PlacementModifierType`, and the carver configuration classes are all gone,
+with no successor to redirect to. A mod that registers its own features, carvers, or surface rules
+needs those parts rewritten against the new system.
+
+Some neighbours only moved and are handled automatically: `DensityFunction` and `DensityFunctions`
+are now in `world/level/levelgen/densityfunction/`, and `RegistryCodecs` and `HolderSetCodec` are in
+`core/registries/codec/`.
+
+26.3 also finished the data-driven item migration by removing `AxeItem`, `HoeItem`, `ShovelItem`,
+`BedItem`, and `SignItem`. `PickaxeItem` and `SwordItem` had already gone in an earlier version. A
+mod whose tool class extends one of these needs porting to item components; there is no class to
+point the old name at.
 
 ## Large Version Jumps
 

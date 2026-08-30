@@ -1,0 +1,129 @@
+# GeckoLib 4 to GeckoLib 5 class moves.
+#
+# Format: OLD_INTERNAL_NAME<TAB>NEW_INTERNAL_NAME
+#
+# GeckoLib 5 moved the whole library from software.bernie.geckolib to com.geckolib and
+# reorganised it at the same time, so a mod built against 4.x dies on its first touch with
+# NoClassDefFoundError: software/bernie/geckolib/animatable/GeoItem (#223).
+#
+# Derived from the geckolib-forge-1.20.1-4.8.4 and geckolib-neoforge-26.1.2-5.5.2 jars. A pair
+# is taken when the plain package swap lands on a class 5.5.2 ships, or when exactly one class
+# in 5.5.2 carries that simple name. Nothing ambiguous was found, and 91 further 4.x classes
+# have no counterpart at all: those are internals such as the texture cache, and a mod that
+# reaches them needs a real port rather than a rename.
+#
+# GeckoLib 4.x tops out at Minecraft 1.21.4 and 5.x starts at 1.21.5, so the shim that reads
+# this table is gated on the host being 1.21.5 or newer. Applying it on an older host would
+# rewrite a mod onto packages that host's GeckoLib does not have.
+# 111 class moves.
+software/bernie/geckolib/GeckoLib	com/geckolib/GeckoLib
+software/bernie/geckolib/animatable/GeoBlockEntity	com/geckolib/animatable/GeoBlockEntity
+software/bernie/geckolib/animatable/GeoEntity	com/geckolib/animatable/GeoEntity
+software/bernie/geckolib/animatable/GeoItem	com/geckolib/animatable/GeoItem
+software/bernie/geckolib/animatable/GeoItem$ContextBasedAnimatableInstanceCache	com/geckolib/animatable/GeoItem$ContextBasedAnimatableInstanceCache
+software/bernie/geckolib/animatable/GeoItem$ContextBasedAnimatableInstanceCache$1	com/geckolib/animatable/GeoItem$ContextBasedAnimatableInstanceCache$1
+software/bernie/geckolib/animatable/GeoReplacedEntity	com/geckolib/animatable/GeoReplacedEntity
+software/bernie/geckolib/animatable/SingletonGeoAnimatable	com/geckolib/animatable/SingletonGeoAnimatable
+software/bernie/geckolib/animatable/stateless/StatelessAnimatable	com/geckolib/animatable/stateless/StatelessAnimatable
+software/bernie/geckolib/animatable/stateless/StatelessAnimationController	com/geckolib/animatable/stateless/StatelessAnimationController
+software/bernie/geckolib/animatable/stateless/StatelessGeoBlockEntity	com/geckolib/animatable/stateless/StatelessGeoBlockEntity
+software/bernie/geckolib/animatable/stateless/StatelessGeoEntity	com/geckolib/animatable/stateless/StatelessGeoEntity
+software/bernie/geckolib/animatable/stateless/StatelessGeoObject	com/geckolib/animatable/stateless/StatelessGeoObject
+software/bernie/geckolib/animatable/stateless/StatelessGeoReplacedEntity	com/geckolib/animatable/stateless/StatelessGeoReplacedEntity
+software/bernie/geckolib/animatable/stateless/StatelessGeoSingletonAnimatable	com/geckolib/animatable/stateless/StatelessGeoSingletonAnimatable
+software/bernie/geckolib/cache/AnimatableIdCache	com/geckolib/cache/AnimatableIdCache
+software/bernie/geckolib/cache/object/BakedGeoModel	com/geckolib/cache/model/BakedGeoModel
+software/bernie/geckolib/cache/object/GeoBone	com/geckolib/cache/model/GeoBone
+software/bernie/geckolib/cache/object/GeoCube	com/geckolib/cache/model/cuboid/GeoCube
+software/bernie/geckolib/cache/object/GeoQuad	com/geckolib/cache/model/GeoQuad
+software/bernie/geckolib/cache/object/GeoVertex	com/geckolib/cache/model/GeoVertex
+software/bernie/geckolib/constant/DataTickets	com/geckolib/constant/DataTickets
+software/bernie/geckolib/constant/DefaultAnimations	com/geckolib/constant/DefaultAnimations
+software/bernie/geckolib/core/animatable/GeoAnimatable	com/geckolib/animatable/GeoAnimatable
+software/bernie/geckolib/core/animatable/instance/AnimatableInstanceCache	com/geckolib/animatable/instance/AnimatableInstanceCache
+software/bernie/geckolib/core/animatable/instance/InstancedAnimatableInstanceCache	com/geckolib/animatable/instance/InstancedAnimatableInstanceCache
+software/bernie/geckolib/core/animatable/instance/SingletonAnimatableInstanceCache	com/geckolib/animatable/instance/SingletonAnimatableInstanceCache
+software/bernie/geckolib/core/animation/AnimatableManager	com/geckolib/animatable/manager/AnimatableManager
+software/bernie/geckolib/core/animation/AnimatableManager$ControllerRegistrar	com/geckolib/animatable/manager/AnimatableManager$ControllerRegistrar
+software/bernie/geckolib/core/animation/Animation	com/geckolib/cache/animation/Animation
+software/bernie/geckolib/core/animation/AnimationController	com/geckolib/animation/AnimationController
+software/bernie/geckolib/core/animation/AnimationController$AnimationStateHandler	com/geckolib/animation/AnimationController$AnimationStateHandler
+software/bernie/geckolib/core/animation/AnimationProcessor	com/geckolib/animation/AnimationProcessor
+software/bernie/geckolib/core/animation/ContextAwareAnimatableManager	com/geckolib/animatable/manager/ContextAwareAnimatableManager
+software/bernie/geckolib/core/animation/EasingType	com/geckolib/animation/object/EasingType
+software/bernie/geckolib/core/animation/EasingType$CatmullRomEasing	com/geckolib/animation/object/EasingType$CatmullRomEasing
+software/bernie/geckolib/core/animation/RawAnimation	com/geckolib/animation/RawAnimation
+software/bernie/geckolib/core/animation/RawAnimation$Stage	com/geckolib/animation/RawAnimation$Stage
+software/bernie/geckolib/core/keyframe/AnimationPoint	com/geckolib/animation/state/AnimationPoint
+software/bernie/geckolib/core/keyframe/BoneAnimation	com/geckolib/cache/animation/BoneAnimation
+software/bernie/geckolib/core/keyframe/Keyframe	com/geckolib/cache/animation/Keyframe
+software/bernie/geckolib/core/keyframe/KeyframeStack	com/geckolib/cache/animation/KeyframeStack
+software/bernie/geckolib/core/keyframe/event/KeyFrameEvent	com/geckolib/animation/state/KeyFrameEvent
+software/bernie/geckolib/core/keyframe/event/data/CustomInstructionKeyframeData	com/geckolib/cache/animation/keyframeevent/CustomInstructionKeyframeData
+software/bernie/geckolib/core/keyframe/event/data/KeyFrameData	com/geckolib/cache/animation/keyframeevent/KeyFrameData
+software/bernie/geckolib/core/keyframe/event/data/ParticleKeyframeData	com/geckolib/cache/animation/keyframeevent/ParticleKeyframeData
+software/bernie/geckolib/core/keyframe/event/data/SoundKeyframeData	com/geckolib/cache/animation/keyframeevent/SoundKeyframeData
+software/bernie/geckolib/core/molang/MolangQueries	com/geckolib/loading/math/MolangQueries
+software/bernie/geckolib/core/object/DataTicket	com/geckolib/constant/dataticket/DataTicket
+software/bernie/geckolib/core/object/PlayState	com/geckolib/animation/object/PlayState
+software/bernie/geckolib/core/state/BoneSnapshot	com/geckolib/animation/state/BoneSnapshot
+software/bernie/geckolib/event/GeoRenderEvent	com/geckolib/event/GeoRenderEvent
+software/bernie/geckolib/event/GeoRenderEvent$Armor	com/geckolib/event/GeoRenderEvent$Armor
+software/bernie/geckolib/event/GeoRenderEvent$Armor$CompileRenderLayers	com/geckolib/event/GeoRenderEvent$Armor$CompileRenderLayers
+software/bernie/geckolib/event/GeoRenderEvent$Armor$Pre	com/geckolib/event/GeoRenderEvent$Armor$Pre
+software/bernie/geckolib/event/GeoRenderEvent$Block	com/geckolib/event/GeoRenderEvent$Block
+software/bernie/geckolib/event/GeoRenderEvent$Block$CompileRenderLayers	com/geckolib/event/GeoRenderEvent$Block$CompileRenderLayers
+software/bernie/geckolib/event/GeoRenderEvent$Block$Pre	com/geckolib/event/GeoRenderEvent$Block$Pre
+software/bernie/geckolib/event/GeoRenderEvent$Entity	com/geckolib/event/GeoRenderEvent$Entity
+software/bernie/geckolib/event/GeoRenderEvent$Entity$CompileRenderLayers	com/geckolib/event/GeoRenderEvent$Entity$CompileRenderLayers
+software/bernie/geckolib/event/GeoRenderEvent$Entity$Pre	com/geckolib/event/GeoRenderEvent$Entity$Pre
+software/bernie/geckolib/event/GeoRenderEvent$Item	com/geckolib/event/GeoRenderEvent$Item
+software/bernie/geckolib/event/GeoRenderEvent$Item$CompileRenderLayers	com/geckolib/event/GeoRenderEvent$Item$CompileRenderLayers
+software/bernie/geckolib/event/GeoRenderEvent$Item$Pre	com/geckolib/event/GeoRenderEvent$Item$Pre
+software/bernie/geckolib/event/GeoRenderEvent$Object	com/geckolib/event/GeoRenderEvent$Object
+software/bernie/geckolib/event/GeoRenderEvent$Object$CompileRenderLayers	com/geckolib/event/GeoRenderEvent$Object$CompileRenderLayers
+software/bernie/geckolib/event/GeoRenderEvent$Object$Pre	com/geckolib/event/GeoRenderEvent$Object$Pre
+software/bernie/geckolib/event/GeoRenderEvent$ReplacedEntity	com/geckolib/event/GeoRenderEvent$ReplacedEntity
+software/bernie/geckolib/event/GeoRenderEvent$ReplacedEntity$CompileRenderLayers	com/geckolib/event/GeoRenderEvent$ReplacedEntity$CompileRenderLayers
+software/bernie/geckolib/event/GeoRenderEvent$ReplacedEntity$Pre	com/geckolib/event/GeoRenderEvent$ReplacedEntity$Pre
+software/bernie/geckolib/loading/json/raw/ModelProperties	com/geckolib/cache/model/ModelProperties
+software/bernie/geckolib/loading/object/BakedAnimations	com/geckolib/cache/animation/BakedAnimations
+software/bernie/geckolib/mixin/client/TextureManagerMixin	com/geckolib/mixin/client/TextureManagerMixin
+software/bernie/geckolib/mixin/common/AbstractContainerMenuMixin	com/geckolib/mixin/common/AbstractContainerMenuMixin
+software/bernie/geckolib/mixin/common/ItemStackMixin	com/geckolib/mixin/common/ItemStackMixin
+software/bernie/geckolib/model/DefaultedBlockGeoModel	com/geckolib/model/DefaultedBlockGeoModel
+software/bernie/geckolib/model/DefaultedEntityGeoModel	com/geckolib/model/DefaultedEntityGeoModel
+software/bernie/geckolib/model/DefaultedGeoModel	com/geckolib/model/DefaultedGeoModel
+software/bernie/geckolib/model/DefaultedItemGeoModel	com/geckolib/model/DefaultedItemGeoModel
+software/bernie/geckolib/model/GeoModel	com/geckolib/model/GeoModel
+software/bernie/geckolib/network/packet/BlockEntityAnimTriggerPacket	com/geckolib/network/packet/blockentity/BlockEntityAnimTriggerPacket
+software/bernie/geckolib/network/packet/EntityAnimTriggerPacket	com/geckolib/network/packet/entity/EntityAnimTriggerPacket
+software/bernie/geckolib/network/packet/StatelessBlockEntityPlayAnimPacket	com/geckolib/network/packet/blockentity/StatelessBlockEntityPlayAnimPacket
+software/bernie/geckolib/network/packet/StatelessBlockEntityStopAnimPacket	com/geckolib/network/packet/blockentity/StatelessBlockEntityStopAnimPacket
+software/bernie/geckolib/network/packet/StatelessEntityPlayAnimPacket	com/geckolib/network/packet/entity/StatelessEntityPlayAnimPacket
+software/bernie/geckolib/network/packet/StatelessEntityStopAnimPacket	com/geckolib/network/packet/entity/StatelessEntityStopAnimPacket
+software/bernie/geckolib/network/packet/StatelessSingletonPlayAnimPacket	com/geckolib/network/packet/singleton/StatelessSingletonPlayAnimPacket
+software/bernie/geckolib/network/packet/StatelessSingletonStopAnimPacket	com/geckolib/network/packet/singleton/StatelessSingletonStopAnimPacket
+software/bernie/geckolib/network/packet/StopTriggeredBlockEntityAnimPacket	com/geckolib/network/packet/blockentity/StopTriggeredBlockEntityAnimPacket
+software/bernie/geckolib/network/packet/StopTriggeredEntityAnimPacket	com/geckolib/network/packet/entity/StopTriggeredEntityAnimPacket
+software/bernie/geckolib/network/packet/StopTriggeredSingletonAnimPacket	com/geckolib/network/packet/singleton/StopTriggeredSingletonAnimPacket
+software/bernie/geckolib/renderer/DyeableGeoArmorRenderer	com/geckolib/renderer/specialty/DyeableGeoArmorRenderer
+software/bernie/geckolib/renderer/GeoArmorRenderer	com/geckolib/renderer/GeoArmorRenderer
+software/bernie/geckolib/renderer/GeoArmorRenderer$1	com/geckolib/renderer/GeoArmorRenderer$1
+software/bernie/geckolib/renderer/GeoArmorRenderer$2	com/geckolib/renderer/GeoArmorRenderer$2
+software/bernie/geckolib/renderer/GeoBlockRenderer	com/geckolib/renderer/GeoBlockRenderer
+software/bernie/geckolib/renderer/GeoBlockRenderer$1	com/geckolib/renderer/GeoBlockRenderer$1
+software/bernie/geckolib/renderer/GeoEntityRenderer	com/geckolib/renderer/GeoEntityRenderer
+software/bernie/geckolib/renderer/GeoEntityRenderer$1	com/geckolib/renderer/GeoEntityRenderer$1
+software/bernie/geckolib/renderer/GeoItemRenderer	com/geckolib/renderer/GeoItemRenderer
+software/bernie/geckolib/renderer/GeoObjectRenderer	com/geckolib/renderer/GeoObjectRenderer
+software/bernie/geckolib/renderer/GeoRenderer	com/geckolib/renderer/base/GeoRenderer
+software/bernie/geckolib/renderer/GeoReplacedEntityRenderer	com/geckolib/renderer/GeoReplacedEntityRenderer
+software/bernie/geckolib/renderer/GeoReplacedEntityRenderer$1	com/geckolib/renderer/GeoReplacedEntityRenderer$1
+software/bernie/geckolib/renderer/layer/AutoGlowingGeoLayer	com/geckolib/renderer/layer/builtin/AutoGlowingGeoLayer
+software/bernie/geckolib/renderer/layer/BlockAndItemGeoLayer	com/geckolib/renderer/layer/builtin/BlockAndItemGeoLayer
+software/bernie/geckolib/renderer/layer/GeoRenderLayer	com/geckolib/renderer/layer/GeoRenderLayer
+software/bernie/geckolib/renderer/layer/GeoRenderLayersContainer	com/geckolib/renderer/layer/GeoRenderLayersContainer
+software/bernie/geckolib/renderer/layer/ItemArmorGeoLayer	com/geckolib/renderer/layer/builtin/ItemArmorGeoLayer
+software/bernie/geckolib/util/GeckoLibUtil	com/geckolib/util/GeckoLibUtil
+software/bernie/geckolib/util/JsonUtil	com/geckolib/util/JsonUtil

@@ -52,7 +52,7 @@ public class ResourcePackTransformer {
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Resources");
     
     // Texture path renames between versions (old -> new)
-    private static final Map<String, String> TEXTURE_RENAMES = new HashMap<>();
+    static final Map<String, String> TEXTURE_RENAMES = new HashMap<>();
     static {
         // 1.13 flattening renames
         TEXTURE_RENAMES.put("grass_side", "grass_block_side");
@@ -150,6 +150,23 @@ public class ResourcePackTransformer {
                 transformTexturePaths(tempDir);
             }
 
+            int movedTextures = 0;
+            for (Path namespace : PackNamespaces.list(tempDir)) {
+                movedTextures += VersionedTexturePathMappings.apply(
+                    namespace.resolve("textures"), oldFormat, targetPackFormat);
+            }
+            if (movedTextures > 0) {
+                LOGGER.info("  Updated {} versioned texture path(s)", movedTextures);
+            }
+
+            // Moving a texture without repointing the models that name it leaves a pack that looks
+            // converted and renders the missing-texture checkerboard.
+            int repointed = PackTextureReferences.rewrite(
+                tempDir, blockRenames(), FlatteningTextureRenames.items());
+            if (repointed > 0) {
+                LOGGER.info("  Repointed texture references in {} model(s)", repointed);
+            }
+
             int migrated = ModDataMigrator.migrateTreeChecked(tempDir, targetMcVersion);
             if (migrated > 0) {
                 LOGGER.info("  Updated {} resource file(s)", migrated);
@@ -172,7 +189,14 @@ public class ResourcePackTransformer {
      * Transform texture paths for pre-1.13 packs.
      */
     private void transformTexturePaths(Path packDir) throws IOException {
-        Path texturesDir = packDir.resolve("assets/minecraft/textures");
+        // A pack that also skins mods keeps those textures under assets/<modid>, and they followed
+        // the same 1.13 layout change, so every namespace gets the same treatment.
+        for (Path namespace : PackNamespaces.list(packDir)) {
+            transformTexturePathsIn(namespace.resolve("textures"));
+        }
+    }
+
+    private void transformTexturePathsIn(Path texturesDir) throws IOException {
         if (!Files.exists(texturesDir)) return;
         
         // Check for old structure (blocks/ vs block/)
@@ -190,10 +214,32 @@ public class ResourcePackTransformer {
             LOGGER.debug("  Renamed textures/items → textures/item");
         }
         
-        // These are block texture names. Item textures with the same basename are unrelated.
-        for (var entry : TEXTURE_RENAMES.entrySet()) {
+        // These are block texture names. Item textures with the same basename are unrelated:
+        // a 1.12.2 pack ships both blocks/brick.png and items/brick.png, and only the block one
+        // became bricks. The curated table is applied last so a hand-checked entry always wins.
+        for (var entry : blockRenames().entrySet()) {
             renameTexture(newBlocks, entry.getKey(), entry.getValue());
         }
+        for (var entry : FlatteningTextureRenames.items().entrySet()) {
+            renameTexture(newItems, entry.getKey(), entry.getValue());
+        }
+
+        int movedTextures = LegacyTexturePathMappings.apply(texturesDir);
+        if (movedTextures > 0) {
+            LOGGER.debug("  Renamed {} legacy entity texture(s)", movedTextures);
+        }
+    }
+
+    /**
+     * The derived Flattening renames with the curated table layered on top.
+     *
+     * <p>The derived table comes from the vanilla jars and covers the whole Flattening. The curated
+     * one is hand-checked and narrower, so it is applied second and wins any disagreement.
+     */
+    static Map<String, String> blockRenames() {
+        Map<String, String> merged = new HashMap<>(FlatteningTextureRenames.blocks());
+        merged.putAll(TEXTURE_RENAMES);
+        return merged;
     }
 
     private void mergeTextureDirectory(Path source, Path destination) throws IOException {
@@ -216,7 +262,13 @@ public class ResourcePackTransformer {
                     Files.createDirectories(target);
                 } else {
                     if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-                        throw new IOException("Texture destination already exists: " + target);
+                        // A pack that ships both layouts is telling us which one it means: the file
+                        // already on the current path is the one the author maintained. Failing here
+                        // would reject the whole pack over a duplicate that has an obvious winner.
+                        LOGGER.debug("  Kept the existing {} over its legacy copy",
+                                destination.relativize(target));
+                        Files.delete(path);
+                        continue;
                     }
                     Files.createDirectories(target.getParent());
                     Files.move(path, target);

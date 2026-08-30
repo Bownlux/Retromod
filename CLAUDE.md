@@ -1,6 +1,6 @@
 # Retromod - Claude Development Guide
 
-Retromod transforms older Minecraft mod bytecode so old mods work on newer MC versions. It supports Fabric, NeoForge, and Forge with 120 registered version-shim providers and 36 registered polyfill providers. Counts drift; count non-comment, nonblank lines in `src/main/resources/META-INF/services/com.retromod.core.VersionShim` and `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider`.
+Retromod transforms older Minecraft mod bytecode so old mods work on newer MC versions. It supports Fabric, NeoForge, and Forge with 124 registered version-shim providers and 36 registered polyfill providers. Counts drift; count non-comment, nonblank lines in `src/main/resources/META-INF/services/com.retromod.core.VersionShim` and `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider`.
 
 **Repository:** https://github.com/Bownlux/Retromod.git
 
@@ -139,12 +139,12 @@ mvn package -P lite -DskipTests -Dexec.skip=true
 mvn exec:java -Dexec.mainClass="com.retromod.cli.RetromodCli" -Dexec.args="<command>" -q
 
 # Run the executable release CLI (dependencies bundled)
-java -jar dist/CLI/retromod-1.3.0-snapshot.9-cli.jar <command>
+java -jar dist/CLI/retromod-1.3.0-snapshot.10-cli.jar <command>
 ```
 
 **Important:** Always pass `-Dexec.skip=true` during build to prevent Maven from running the CLI entrypoint.
 
-Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 68 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.3.0-snapshot.9-cli.jar`.
+Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 68 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.3.0-snapshot.10-cli.jar`.
 
 ## Release integrity (self-hash)
 
@@ -153,7 +153,7 @@ Official builds embed a SHA-256 of the executable release surface in `SignatureV
 **Embed the hash as the LAST release step** (any covered code, provider, or transformation-data change shifts it):
 ```bash
 mvn clean package -Dexec.skip=true                          # build the final jars
-python3 scripts/compute-self-hash.py target/retromod-1.3.0-snapshot.9-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.3.0-snapshot.10-all.jar
 # embed the 64-hex result into SignatureVerifier.EXPECTED_SELF_HASH PROGRAMMATICALLY
 # (sed/python - never hand-typed), rebuild, then re-run the compute script and
 # compare against the embedded value (closed-loop verify)
@@ -167,7 +167,7 @@ After embedding and rebuilding, run `bash build-all.sh --skip-build --require-se
 ## Deploy to Minecraft
 
 ```bash
-cp dist/Fabric/26.1/retromod-1.3.0-snapshot.9+26.1.jar ~/Library/Application\ Support/minecraft/mods/
+cp dist/Fabric/26.1/retromod-1.3.0-snapshot.10+26.1.jar ~/Library/Application\ Support/minecraft/mods/
 ```
 
 Game directory (macOS): `~/Library/Application Support/minecraft/`
@@ -184,7 +184,7 @@ Game directory (macOS): `~/Library/Application Support/minecraft/`
 | `core/FabricModTransformer.java` | Patches fabric.mod.json version constraints |
 | `core/ForgeModTransformer.java` | Patches mods.toml/neoforge.mods.toml version constraints |
 | `core/ModVersionDetector.java` | Reads mod MC version from loader-specific metadata |
-| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,981 classes, 54,479 fields, and 57,520 methods at snapshot.9) |
+| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,981 classes, 54,479 fields, and 57,520 methods at snapshot.10) |
 | `mapping/MappingComposer.java` | Generates mapping files from TinyV2 + ProGuard sources |
 | `shim/ShimRegistry.java` | BFS chain finder with version aliases |
 | `cli/RetromodCli.java` | CLI tool (`TARGET_MC_VERSION = "26.1"`) |
@@ -210,8 +210,8 @@ Game directory (macOS): `~/Library/Application Support/minecraft/`
 ## ServiceLoader Registration
 
 Shims and polyfills are discovered via ServiceLoader:
-- `src/main/resources/META-INF/services/com.retromod.core.VersionShim` (120 registered providers at snapshot.9)
-- `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider` (36 registered providers at snapshot.9)
+- `src/main/resources/META-INF/services/com.retromod.core.VersionShim` (124 registered providers at snapshot.10)
+- `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider` (36 registered providers at snapshot.10)
 
 When adding a new shim or polyfill, ALWAYS register it in the corresponding services file.
 

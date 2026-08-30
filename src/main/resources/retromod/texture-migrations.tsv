@@ -1,0 +1,243 @@
+# source_pack_format_max	target_pack_format_min	source	destination
+#
+# Texture paths Minecraft moved after the Flattening, applied when a pack crosses the
+# boundary between the two formats on each row.
+#
+# A move can take more than one step. entity/sign.png became entity/signs/oak.png in 1.14
+# and only became block/oak_sign.png in 26.2, so both hops are listed and a pack picks up
+# whichever ones its own format has not passed yet. A destination is therefore allowed to
+# be absent from the current version as long as another row carries it onward.
+#
+# Hand-checked rows are merged with a pass derived from the vanilla client jars at every
+# pack-format boundary from 1.13 to 26.2. The derivation compares adjacent versions on
+# texture content: a PNG whose bytes are unchanged but whose path is not proves its own
+# move, and a pair is taken only when it is unambiguous in both directions. Adjacent
+# versions are compared rather than the endpoints because a rename and a redraw look the
+# same by name and rarely happen together in one version. The two agreed on 187 of the
+# rows they both produced.
+#
+# Content matching cannot pair a texture that was redrawn as it moved, which is how the
+# sign block missed it: 26.2 both moved entity/signs/ into block/ and redrew it. Those 24
+# rows were mapped by name instead, with both ends checked against the jars.
+#
+# Regenerate the derived half with scripts/harvest-texture-migrations.py.
+# 219 migrations.
+4	5	entity/iron_golem.png	entity/iron_golem/iron_golem.png
+4	4	entity/sign.png	entity/signs/oak.png
+6	7	block/grass_path_side.png	block/dirt_path_side.png
+6	7	block/grass_path_top.png	block/dirt_path_top.png
+6	7	entity/squid.png	entity/squid/squid.png
+12	13	misc/enchanted_item_glint.png	misc/enchanted_glint_item.png
+13	15	entity/decorated_pot/pottery_pattern_archer.png	entity/decorated_pot/archer_pottery_pattern.png
+13	15	item/pottery_shard_archer.png	item/archer_pottery_sherd.png
+18	22	block/grass.png	block/short_grass.png
+22	32	item/scute.png	item/turtle_scute.png
+32	34	mob_effect/bad_omen_121.png	mob_effect/bad_omen.png
+34	42	entity/elytra.png	entity/equipment/wings/elytra.png
+34	42	entity/horse/armor/horse_armor_diamond.png	entity/equipment/horse_body/diamond.png
+34	42	entity/horse/armor/horse_armor_gold.png	entity/equipment/horse_body/gold.png
+34	42	entity/horse/armor/horse_armor_iron.png	entity/equipment/horse_body/iron.png
+34	42	entity/horse/armor/horse_armor_leather.png	entity/equipment/horse_body/leather.png
+34	42	entity/llama/decor/black.png	entity/equipment/llama_body/black.png
+34	42	entity/llama/decor/blue.png	entity/equipment/llama_body/blue.png
+34	42	entity/llama/decor/brown.png	entity/equipment/llama_body/brown.png
+34	42	entity/llama/decor/cyan.png	entity/equipment/llama_body/cyan.png
+34	42	entity/llama/decor/gray.png	entity/equipment/llama_body/gray.png
+34	42	entity/llama/decor/green.png	entity/equipment/llama_body/green.png
+34	42	entity/llama/decor/light_blue.png	entity/equipment/llama_body/light_blue.png
+34	42	entity/llama/decor/light_gray.png	entity/equipment/llama_body/light_gray.png
+34	42	entity/llama/decor/lime.png	entity/equipment/llama_body/lime.png
+34	42	entity/llama/decor/magenta.png	entity/equipment/llama_body/magenta.png
+34	42	entity/llama/decor/orange.png	entity/equipment/llama_body/orange.png
+34	42	entity/llama/decor/pink.png	entity/equipment/llama_body/pink.png
+34	42	entity/llama/decor/purple.png	entity/equipment/llama_body/purple.png
+34	42	entity/llama/decor/red.png	entity/equipment/llama_body/red.png
+34	42	entity/llama/decor/trader_llama.png	entity/equipment/llama_body/trader_llama.png
+34	42	entity/llama/decor/white.png	entity/equipment/llama_body/white.png
+34	42	entity/llama/decor/yellow.png	entity/equipment/llama_body/yellow.png
+34	42	entity/wolf/wolf_armor.png	entity/equipment/wolf_body/armadillo_scute.png
+34	42	entity/wolf/wolf_armor_overlay.png	entity/equipment/wolf_body/armadillo_scute_overlay.png
+34	46	item/bundle_filled.png	item/bundle.png
+34	42	models/armor/chainmail_layer_1.png	entity/equipment/humanoid/chainmail.png
+34	42	models/armor/chainmail_layer_2.png	entity/equipment/humanoid_leggings/chainmail.png
+34	42	models/armor/diamond_layer_1.png	entity/equipment/humanoid/diamond.png
+34	42	models/armor/diamond_layer_2.png	entity/equipment/humanoid_leggings/diamond.png
+34	42	models/armor/gold_layer_1.png	entity/equipment/humanoid/gold.png
+34	42	models/armor/gold_layer_2.png	entity/equipment/humanoid_leggings/gold.png
+34	42	models/armor/iron_layer_1.png	entity/equipment/humanoid/iron.png
+34	42	models/armor/iron_layer_2.png	entity/equipment/humanoid_leggings/iron.png
+34	42	models/armor/leather_layer_1.png	entity/equipment/humanoid/leather.png
+34	42	models/armor/leather_layer_1_overlay.png	entity/equipment/humanoid/leather_overlay.png
+34	42	models/armor/leather_layer_2.png	entity/equipment/humanoid_leggings/leather.png
+34	42	models/armor/leather_layer_2_overlay.png	entity/equipment/humanoid_leggings/leather_overlay.png
+34	42	models/armor/netherite_layer_1.png	entity/equipment/humanoid/netherite.png
+34	42	models/armor/netherite_layer_2.png	entity/equipment/humanoid_leggings/netherite.png
+34	42	models/armor/turtle_layer_1.png	entity/equipment/humanoid/turtle_scute.png
+34	42	trims/models/armor/bolt.png	trims/entity/humanoid/bolt.png
+34	42	trims/models/armor/bolt_leggings.png	trims/entity/humanoid_leggings/bolt.png
+34	42	trims/models/armor/coast.png	trims/entity/humanoid/coast.png
+34	42	trims/models/armor/coast_leggings.png	trims/entity/humanoid_leggings/coast.png
+34	42	trims/models/armor/dune.png	trims/entity/humanoid/dune.png
+34	42	trims/models/armor/dune_leggings.png	trims/entity/humanoid_leggings/dune.png
+34	42	trims/models/armor/eye.png	trims/entity/humanoid/eye.png
+34	42	trims/models/armor/eye_leggings.png	trims/entity/humanoid_leggings/eye.png
+34	42	trims/models/armor/flow.png	trims/entity/humanoid/flow.png
+34	42	trims/models/armor/flow_leggings.png	trims/entity/humanoid_leggings/flow.png
+34	42	trims/models/armor/host.png	trims/entity/humanoid/host.png
+34	42	trims/models/armor/host_leggings.png	trims/entity/humanoid_leggings/host.png
+34	42	trims/models/armor/raiser.png	trims/entity/humanoid/raiser.png
+34	42	trims/models/armor/raiser_leggings.png	trims/entity/humanoid_leggings/raiser.png
+34	42	trims/models/armor/rib.png	trims/entity/humanoid/rib.png
+34	42	trims/models/armor/rib_leggings.png	trims/entity/humanoid_leggings/rib.png
+34	42	trims/models/armor/sentry.png	trims/entity/humanoid/sentry.png
+34	42	trims/models/armor/sentry_leggings.png	trims/entity/humanoid_leggings/sentry.png
+34	42	trims/models/armor/shaper.png	trims/entity/humanoid/shaper.png
+34	42	trims/models/armor/shaper_leggings.png	trims/entity/humanoid_leggings/shaper.png
+34	42	trims/models/armor/silence.png	trims/entity/humanoid/silence.png
+34	42	trims/models/armor/silence_leggings.png	trims/entity/humanoid_leggings/silence.png
+34	42	trims/models/armor/snout.png	trims/entity/humanoid/snout.png
+34	42	trims/models/armor/snout_leggings.png	trims/entity/humanoid_leggings/snout.png
+34	42	trims/models/armor/spire.png	trims/entity/humanoid/spire.png
+34	42	trims/models/armor/spire_leggings.png	trims/entity/humanoid_leggings/spire.png
+34	42	trims/models/armor/tide.png	trims/entity/humanoid/tide.png
+34	42	trims/models/armor/tide_leggings.png	trims/entity/humanoid_leggings/tide.png
+34	42	trims/models/armor/vex.png	trims/entity/humanoid/vex.png
+34	42	trims/models/armor/vex_leggings.png	trims/entity/humanoid_leggings/vex.png
+34	42	trims/models/armor/ward.png	trims/entity/humanoid/ward.png
+34	42	trims/models/armor/ward_leggings.png	trims/entity/humanoid_leggings/ward.png
+34	42	trims/models/armor/wayfinder.png	trims/entity/humanoid/wayfinder.png
+34	42	trims/models/armor/wayfinder_leggings.png	trims/entity/humanoid_leggings/wayfinder.png
+34	42	trims/models/armor/wild.png	trims/entity/humanoid/wild.png
+34	42	trims/models/armor/wild_leggings.png	trims/entity/humanoid_leggings/wild.png
+42	46	item/broken_elytra.png	item/elytra_broken.png
+42	46	item/empty_armor_slot_boots.png	gui/sprites/container/slot/boots.png
+42	46	item/empty_armor_slot_chestplate.png	gui/sprites/container/slot/chestplate.png
+42	46	item/empty_armor_slot_helmet.png	gui/sprites/container/slot/helmet.png
+42	46	item/empty_armor_slot_leggings.png	gui/sprites/container/slot/leggings.png
+42	46	item/empty_armor_slot_shield.png	gui/sprites/container/slot/shield.png
+42	46	item/empty_slot_amethyst_shard.png	gui/sprites/container/slot/amethyst_shard.png
+42	46	item/empty_slot_axe.png	gui/sprites/container/slot/axe.png
+42	46	item/empty_slot_diamond.png	gui/sprites/container/slot/diamond.png
+42	46	item/empty_slot_emerald.png	gui/sprites/container/slot/emerald.png
+42	46	item/empty_slot_hoe.png	gui/sprites/container/slot/hoe.png
+42	46	item/empty_slot_ingot.png	gui/sprites/container/slot/ingot.png
+42	46	item/empty_slot_lapis_lazuli.png	gui/sprites/container/slot/lapis_lazuli.png
+42	46	item/empty_slot_pickaxe.png	gui/sprites/container/slot/pickaxe.png
+42	46	item/empty_slot_quartz.png	gui/sprites/container/slot/quartz.png
+42	46	item/empty_slot_redstone_dust.png	gui/sprites/container/slot/redstone_dust.png
+42	46	item/empty_slot_shovel.png	gui/sprites/container/slot/shovel.png
+42	46	item/empty_slot_smithing_template_armor_trim.png	gui/sprites/container/slot/smithing_template_armor_trim.png
+42	46	item/empty_slot_smithing_template_netherite_upgrade.png	gui/sprites/container/slot/smithing_template_netherite_upgrade.png
+42	46	item/empty_slot_sword.png	gui/sprites/container/slot/sword.png
+46	55	block/creaking_heart_active.png	block/creaking_heart_awake.png
+46	55	block/creaking_heart_top_active.png	block/creaking_heart_top_awake.png
+46	55	entity/chicken.png	entity/chicken/temperate_chicken.png
+46	55	entity/strider/strider_saddle.png	entity/equipment/strider_saddle/saddle.png
+46	55	misc/enchanted_glint_entity.png	misc/enchanted_glint_armor.png
+64	69	block/chain.png	block/iron_chain.png
+64	69	item/chain.png	item/iron_chain.png
+69	75	environment/end_flash.png	environment/celestial/end_flash.png
+69	75	environment/sun.png	environment/celestial/sun.png
+69	75	gui/sprites/container/inventory/effect_background_small.png	gui/sprites/container/inventory/effect_background.png
+75	84	entity/armadillo.png	entity/armadillo/armadillo.png
+75	84	entity/armorstand/wood.png	entity/armorstand/armorstand.png
+75	84	entity/banner_base.png	entity/banner/banner_base.png
+75	84	entity/bat.png	entity/bat/bat.png
+75	84	entity/beacon_beam.png	entity/beacon/beacon_beam.png
+75	84	entity/blaze.png	entity/blaze/blaze.png
+75	84	entity/cat/all_black.png	entity/cat/cat_all_black.png
+75	84	entity/cat/black.png	entity/cat/cat_black.png
+75	84	entity/cat/british_shorthair.png	entity/cat/cat_british_shorthair.png
+75	84	entity/cat/calico.png	entity/cat/cat_calico.png
+75	84	entity/cat/jellie.png	entity/cat/cat_jellie.png
+75	84	entity/cat/persian.png	entity/cat/cat_persian.png
+75	84	entity/cat/ragdoll.png	entity/cat/cat_ragdoll.png
+75	84	entity/cat/red.png	entity/cat/cat_red.png
+75	84	entity/cat/siamese.png	entity/cat/cat_siamese.png
+75	84	entity/cat/tabby.png	entity/cat/cat_tabby.png
+75	84	entity/cat/white.png	entity/cat/cat_white.png
+75	84	entity/chicken/cold_chicken.png	entity/chicken/chicken_cold.png
+75	84	entity/chicken/temperate_chicken.png	entity/chicken/chicken_temperate.png
+75	84	entity/chicken/warm_chicken.png	entity/chicken/chicken_warm.png
+75	84	entity/copper_golem/exposed_copper_golem.png	entity/copper_golem/copper_golem_exposed.png
+75	84	entity/copper_golem/exposed_copper_golem_eyes.png	entity/copper_golem/copper_golem_eyes_exposed.png
+75	84	entity/copper_golem/oxidized_copper_golem.png	entity/copper_golem/copper_golem_oxidized.png
+75	84	entity/copper_golem/oxidized_copper_golem_eyes.png	entity/copper_golem/copper_golem_eyes_oxidized.png
+75	84	entity/copper_golem/weathered_copper_golem.png	entity/copper_golem/copper_golem_weathered.png
+75	84	entity/copper_golem/weathered_copper_golem_eyes.png	entity/copper_golem/copper_golem_eyes_weathered.png
+75	84	entity/cow/brown_mooshroom.png	entity/cow/mooshroom_brown.png
+75	84	entity/cow/cold_cow.png	entity/cow/cow_cold.png
+75	84	entity/cow/red_mooshroom.png	entity/cow/mooshroom_red.png
+75	84	entity/cow/temperate_cow.png	entity/cow/cow_temperate.png
+75	84	entity/cow/warm_cow.png	entity/cow/cow_warm.png
+75	84	entity/dolphin.png	entity/dolphin/dolphin.png
+75	84	entity/enchanting_table_book.png	entity/enchantment/enchanting_table_book.png
+75	84	entity/end_gateway_beam.png	entity/end_portal/end_gateway_beam.png
+75	84	entity/end_portal.png	entity/end_portal/end_portal.png
+75	84	entity/endermite.png	entity/endermite/endermite.png
+75	84	entity/experience_orb.png	entity/experience/experience_orb.png
+75	84	entity/fishing_hook.png	entity/fishing/fishing_hook.png
+75	84	entity/fox/snow_fox.png	entity/fox/fox_snow.png
+75	84	entity/fox/snow_fox_sleep.png	entity/fox/fox_snow_sleep.png
+75	84	entity/frog/cold_frog.png	entity/frog/frog_cold.png
+75	84	entity/frog/temperate_frog.png	entity/frog/frog_temperate.png
+75	84	entity/frog/warm_frog.png	entity/frog/frog_warm.png
+75	84	entity/guardian.png	entity/guardian/guardian.png
+75	84	entity/guardian_beam.png	entity/guardian/guardian_beam.png
+75	84	entity/guardian_elder.png	entity/guardian/guardian_elder.png
+75	84	entity/lead_knot.png	entity/lead_knot/lead_knot.png
+75	84	entity/llama/brown.png	entity/llama/llama_brown.png
+75	84	entity/llama/creamy.png	entity/llama/llama_creamy.png
+75	84	entity/llama/gray.png	entity/llama/llama_gray.png
+75	84	entity/llama/spit.png	entity/llama/llama_spit.png
+75	84	entity/llama/white.png	entity/llama/llama_white.png
+75	84	entity/minecart.png	entity/minecart/minecart.png
+75	84	entity/panda/aggressive_panda.png	entity/panda/panda_aggressive.png
+75	84	entity/panda/brown_panda.png	entity/panda/panda_brown.png
+75	84	entity/panda/lazy_panda.png	entity/panda/panda_lazy.png
+75	84	entity/panda/playful_panda.png	entity/panda/panda_playful.png
+75	84	entity/panda/weak_panda.png	entity/panda/panda_weak.png
+75	84	entity/panda/worried_panda.png	entity/panda/panda_worried.png
+75	84	entity/phantom.png	entity/phantom/phantom.png
+75	84	entity/phantom_eyes.png	entity/phantom/phantom_eyes.png
+75	84	entity/pig/cold_pig.png	entity/pig/pig_cold.png
+75	84	entity/pig/temperate_pig.png	entity/pig/pig_temperate.png
+75	84	entity/pig/warm_pig.png	entity/pig/pig_warm.png
+75	84	entity/projectiles/spectral_arrow.png	entity/projectiles/arrow_spectral.png
+75	84	entity/projectiles/tipped_arrow.png	entity/projectiles/arrow_tipped.png
+75	84	entity/shield_base.png	entity/shield/shield_base.png
+75	84	entity/shield_base_nopattern.png	entity/shield/shield_base_nopattern.png
+75	84	entity/silverfish.png	entity/silverfish/silverfish.png
+75	84	entity/snow_golem.png	entity/snow_golem/snow_golem.png
+75	84	entity/spider_eyes.png	entity/spider/spider_eyes.png
+75	84	entity/trident.png	entity/trident/trident.png
+75	84	entity/trident_riptide.png	entity/trident/trident_riptide.png
+75	84	entity/turtle/big_sea_turtle.png	entity/turtle/turtle.png
+75	84	entity/wandering_trader.png	entity/wandering_trader/wandering_trader.png
+75	84	entity/witch.png	entity/witch/witch.png
+84	88	block/purpur_pillar.png	block/purpur_pillar_side.png
+84	88	block/quartz_pillar.png	block/quartz_pillar_side.png
+84	88	entity/signs/acacia.png	block/acacia_sign.png
+84	88	entity/signs/bamboo.png	block/bamboo_sign.png
+84	88	entity/signs/birch.png	block/birch_sign.png
+84	88	entity/signs/cherry.png	block/cherry_sign.png
+84	88	entity/signs/crimson.png	block/crimson_sign.png
+84	88	entity/signs/dark_oak.png	block/dark_oak_sign.png
+84	88	entity/signs/hanging/acacia.png	block/acacia_hanging_sign.png
+84	88	entity/signs/hanging/bamboo.png	block/bamboo_hanging_sign.png
+84	88	entity/signs/hanging/birch.png	block/birch_hanging_sign.png
+84	88	entity/signs/hanging/cherry.png	block/cherry_hanging_sign.png
+84	88	entity/signs/hanging/crimson.png	block/crimson_hanging_sign.png
+84	88	entity/signs/hanging/dark_oak.png	block/dark_oak_hanging_sign.png
+84	88	entity/signs/hanging/jungle.png	block/jungle_hanging_sign.png
+84	88	entity/signs/hanging/mangrove.png	block/mangrove_hanging_sign.png
+84	88	entity/signs/hanging/oak.png	block/oak_hanging_sign.png
+84	88	entity/signs/hanging/pale_oak.png	block/pale_oak_hanging_sign.png
+84	88	entity/signs/hanging/spruce.png	block/spruce_hanging_sign.png
+84	88	entity/signs/hanging/warped.png	block/warped_hanging_sign.png
+84	88	entity/signs/jungle.png	block/jungle_sign.png
+84	88	entity/signs/mangrove.png	block/mangrove_sign.png
+84	88	entity/signs/oak.png	block/oak_sign.png
+84	88	entity/signs/pale_oak.png	block/pale_oak_sign.png
+84	88	entity/signs/spruce.png	block/spruce_sign.png
+84	88	entity/signs/warped.png	block/warped_sign.png

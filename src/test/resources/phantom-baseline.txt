@@ -60,7 +60,6 @@ com/retromod/shim/forge/embedded/WorldHeightShim
 com/retromod/shim/neoforge/embedded/AttributeShim
 com/retromod/shim/neoforge/embedded/ComponentBridgeShim
 com/retromod/shim/neoforge/embedded/ComponentItemHandlerShim
-com/retromod/shim/neoforge/embedded/FMLLoaderShim
 com/retromod/shim/neoforge/embedded/FoodPropertiesShim
 com/retromod/shim/neoforge/embedded/ItemStackHandlerShim
 com/retromod/shim/neoforge/embedded/NetworkShim

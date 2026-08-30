@@ -79,11 +79,18 @@ public class NeoForge_1_21_8_to_1_21_9 implements VersionShim {
             "com/retromod/shim/neoforge/embedded/ComponentItemHandlerShim"
         );
 
-        // FML state moved behind FMLLoader.getCurrent().
+        // FML state moved behind FMLLoader.getCurrent(). A mod that still calls the old static
+        // accessor dies with IncompatibleClassChangeError on its first call (#248).
         transformer.registerMethodRedirect(
             "net/neoforged/fml/loading/FMLLoader", "getLoadingModList",
             "()Lnet/neoforged/fml/loading/LoadingModList;",
             "com/retromod/shim/neoforge/embedded/FMLLoaderShim", "getLoadingModList",
+            "()Ljava/lang/Object;"
+        );
+        transformer.registerMethodRedirect(
+            "net/neoforged/fml/loading/FMLLoader", "getDist",
+            "()Lnet/neoforged/api/distmarker/Dist;",
+            "com/retromod/shim/neoforge/embedded/FMLLoaderShim", "getDist",
             "()Ljava/lang/Object;"
         );
 

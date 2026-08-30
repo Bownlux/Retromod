@@ -85,6 +85,34 @@ public final class SyntheticEmbedder {
      * @param uniqueKey per-mod identifier (mod id or jar name) keeping the embedded package distinct
      * @return number of synthetics embedded (0 if none referenced / none registered / error)
      */
+    /**
+     * The relocation map plus the Minecraft class moves registered for this target.
+     *
+     * <p>A synthetic is compiled against the Minecraft version Retromod was built for, so its own
+     * references age exactly like a mod's do. Minecraft 26.3 moved
+     * {@code com/mojang/blaze3d/PrimitiveTopology} and {@code VertexFormat} into
+     * {@code com/mojang/renderpearl}, and a render synthetic that still named the old owners would
+     * fail to link on that host even though the mod it was embedded for was translated correctly.
+     *
+     * <p>Relocation wins over a class move, because a synthetic's new home is decided here. A move
+     * whose destination is itself a relocated synthetic is composed through to that new home so the
+     * result never names a class that the embedding just renamed.
+     */
+    private static Map<String, String> syntheticRemapping(
+            Map<String, String> relocation, RetromodTransformer transformer) {
+        Map<String, String> classMoves = transformer.getClassRedirects();
+        if (classMoves == null || classMoves.isEmpty()) return relocation;
+
+        Map<String, String> combined = new HashMap<>();
+        for (Map.Entry<String, String> move : classMoves.entrySet()) {
+            if (relocation.containsKey(move.getKey())) continue;
+            combined.put(move.getKey(),
+                    relocation.getOrDefault(move.getValue(), move.getValue()));
+        }
+        combined.putAll(relocation);
+        return combined;
+    }
+
     public static int embed(Path modDir, String uniqueKey, RetromodTransformer transformer) {
         Map<String, byte[]> synthetics = transformer.getSyntheticClasses();
         if (synthetics == null || synthetics.isEmpty()) return 0;
@@ -110,7 +138,7 @@ public final class SyntheticEmbedder {
 
             String base = embeddedBase(uniqueKey);
             Map<String, String> rename = relocationMap(base, referenced);
-            Remapper remapper = new SimpleRemapper(rename);
+            Remapper remapper = new SimpleRemapper(syntheticRemapping(rename, transformer));
 
             Map<Path, byte[]> embeddedOutputs = new HashMap<>();
             for (String n : referenced) {
@@ -228,7 +256,7 @@ public final class SyntheticEmbedder {
 
             String base = embeddedBase(uniqueKey);
             Map<String, String> rename = relocationMap(base, referenced);
-            Remapper remapper = new SimpleRemapper(rename);
+            Remapper remapper = new SimpleRemapper(syntheticRemapping(rename, transformer));
 
             java.util.LinkedHashMap<String, byte[]> out = new java.util.LinkedHashMap<>();
             for (var en : entries.entrySet()) {
@@ -364,7 +392,7 @@ public final class SyntheticEmbedder {
 
         String base = embeddedBase(uniqueKey);
         Map<String, String> rename = relocationMap(base, referenced);
-        Remapper remapper = new SimpleRemapper(rename);
+        Remapper remapper = new SimpleRemapper(syntheticRemapping(rename, transformer));
         java.util.LinkedHashMap<String, byte[]> outputEntries = new java.util.LinkedHashMap<>();
         for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
             byte[] data = entry.getValue();

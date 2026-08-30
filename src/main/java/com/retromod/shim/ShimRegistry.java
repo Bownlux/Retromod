@@ -84,11 +84,30 @@ public class ShimRegistry {
             aliases.put("26.2-rc-" + i, "26.2");
             aliases.put("26.2 Release Candidate " + i, "26.2");
             aliases.put("26.2-snapshot." + i, "26.2");
+            // Mojang's own ids use a hyphen, as in 26.2-snapshot-1.
+            aliases.put("26.2-snapshot-" + i, "26.2");
         }
         aliases.put("26.2.0", "26.2");
         aliases.put("26.2.1", "26.2");
         aliases.put("26.2.2", "26.2");
         aliases.put("26.2.3", "26.2");
+
+        // 26.3 is in snapshot. Mojang numbers these 26.3-snapshot-N and has reached 10, so the
+        // range covers the rest of the cycle plus the pre-release and candidate spellings.
+        for (int i = 1; i <= 20; i++) {
+            aliases.put("26.3-snapshot." + i, "26.3");
+            aliases.put("26.3-snapshot-" + i, "26.3");
+            aliases.put("26.3-pre." + i, "26.3");
+            aliases.put("26.3-pre-" + i, "26.3");
+            aliases.put("26.3 Pre-Release " + i, "26.3");
+            aliases.put("26.3-rc." + i, "26.3");
+            aliases.put("26.3-rc-" + i, "26.3");
+            aliases.put("26.3 Release Candidate " + i, "26.3");
+        }
+        aliases.put("26.3.0", "26.3");
+        aliases.put("26.3.1", "26.3");
+        aliases.put("26.3.2", "26.3");
+        aliases.put("26.3.3", "26.3");
 
         VERSION_ALIASES = Collections.unmodifiableMap(aliases);
     }
