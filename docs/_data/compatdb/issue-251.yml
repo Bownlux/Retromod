@@ -1,0 +1,15 @@
+name: "Immersive Vehicles (MTS)"
+badge: borked
+mod_version: "24.0.0"
+source_mc: "26.1"
+host_mc: "26.2"
+loader: "neoforge"
+retromod: "1.3.0-snapshot.10+26.2"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/minecraft-transport-simulator"
+summary: "Crashes mod loader, at initial load time pre-menu"
+details: "The entire mod does not work and returns this error even with Retromod installed, likely due to renderer incompatibilities: ```Time: 2026-08-31 21:17:54 Description: Bootstrap net.neoforged.fml.ModLoadingException: Loading errors encountered: 	- Immersive Vehicles (formerly MTS) (mts) encountered an error while dispatching the net.neoforged.fml.event.lifecycle.FMLConstructModEvent event 	  java.lang.NoClassDefFoundError: net/minecraft/client/renderer/MultiBufferSource 	at net.neoforged.fml.ModLoader.waitForFuture(ModLoader.java:253) ~[loader-11.0.16.jar:11.0] {} 	at net.neoforged.fml.ModLoader.dispatchParallelTask(ModLoader.java:216) ~[loader-11.0.16.jar:11.0] {} 	at net.neoforged.fml.ModLoader.constructMods(ModLoader.java:124) ~[loader-11.0.16.jar:11.0] {} 	at net.neoforged.fml.ModLoader.gatherAndInitializeMods(ModLoader.java:101) ~[loader-11.0.16.jar:11.0] {} 	at TRANSFORMER/neoforge@26.2.0.75/net.neoforged.neoforge.internal.CommonModLoader.begin(CommonModLoader.java:49) ~[neoforge-26.2.0.75-universal.jar:?] {} 	at TRANSFORMER/neoforge@26.2.0.75/net.neoforged.neoforge.client.loading.ClientModLoader.begin(ClientModLoader.java:56) ~[neoforge-26.2.0.75-universal.jar:?] {} 	at TRANSFORMER/minecraft@26.2/net.minecraft.client.main.Main.main(Main.java:167) [minecraft-client-patched-26.2.0.75.jar:?] {} 	at net.neoforged.fml.startup.Client.main(Client.java:19) [loader-11.0.16.jar:11.0] {}```"
+reporter: "StratoSTARbyHIRO"
+date: "2026-09-01"
+issue: 251
+
