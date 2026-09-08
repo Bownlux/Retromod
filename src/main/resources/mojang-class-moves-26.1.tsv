@@ -315,11 +315,16 @@ net/minecraft/network/chat/contents/BlockDataSource	net/minecraft/network/chat/c
 net/minecraft/network/chat/contents/DataSource	net/minecraft/network/chat/contents/data/DataSource
 net/minecraft/network/chat/contents/EntityDataSource	net/minecraft/network/chat/contents/data/EntityDataSource
 net/minecraft/network/chat/contents/StorageDataSource	net/minecraft/network/chat/contents/data/StorageDataSource
-net/minecraft/references/Blocks	net/minecraft/world/level/block/Blocks
-net/minecraft/references/Items	net/minecraft/world/item/Items
+# The DataFixer string-id reference holder, not the vanilla Blocks registry. It became BlockIds;
+# pointing it at the registry collapsed two unrelated classes onto one name.
+net/minecraft/references/Blocks	net/minecraft/references/BlockIds
+# Same as Blocks above: the reference holder became ItemIds, not the vanilla Items registry.
+net/minecraft/references/Items	net/minecraft/references/ItemIds
 net/minecraft/server/packs/linkfs/DummyFileAttributes	net/minecraft/util/DummyFileAttributes
 net/minecraft/util/datafix/FixWolfHealth	net/minecraft/util/datafix/fixes/FixWolfHealth
-net/minecraft/world/ContainerListener	net/minecraft/world/inventory/ContainerListener
+# world/ContainerListener declared one method, containerChanged, and was removed. The inventory
+# interface of the same simple name declares slotChanged and dataChanged and is a different type
+# with its own intermediary id, so this row collapsed two unrelated interfaces onto one name.
 net/minecraft/world/entity/GlowSquid	net/minecraft/world/entity/animal/squid/GlowSquid
 net/minecraft/world/entity/animal/AbstractFish	net/minecraft/world/entity/animal/fish/AbstractFish
 net/minecraft/world/entity/animal/AbstractFish$FishMoveControl	net/minecraft/world/entity/animal/fish/AbstractFish$FishMoveControl
@@ -463,7 +468,9 @@ net/minecraft/world/entity/animal/horse/SkeletonHorse	net/minecraft/world/entity
 net/minecraft/world/entity/animal/horse/SkeletonTrapGoal	net/minecraft/world/entity/animal/equine/SkeletonTrapGoal
 net/minecraft/world/entity/animal/horse/TraderLlama	net/minecraft/world/entity/animal/equine/TraderLlama
 net/minecraft/world/entity/animal/horse/TraderLlama$TraderLlamaDefendWanderingTraderGoal	net/minecraft/world/entity/animal/equine/TraderLlama$TraderLlamaDefendWanderingTraderGoal
-net/minecraft/world/entity/animal/horse/Variant	net/minecraft/client/renderer/block/dispatch/Variant
+# The old destination was a block model Variant, matched only by simple name. The real successor
+# is the equine package's enum, which carries the same coat constants WHITE through DARK_BROWN.
+net/minecraft/world/entity/animal/horse/Variant	net/minecraft/world/entity/animal/equine/Variant
 net/minecraft/world/entity/animal/horse/ZombieHorse	net/minecraft/world/entity/animal/equine/ZombieHorse
 net/minecraft/world/entity/boss/EnderDragonPart	net/minecraft/world/entity/boss/enderdragon/EnderDragonPart
 net/minecraft/world/entity/decoration/Painting	net/minecraft/world/entity/decoration/painting/Painting
@@ -541,7 +548,11 @@ net/minecraft/world/entity/projectile/WitherSkull	net/minecraft/world/entity/pro
 net/minecraft/world/entity/projectile/windcharge/AbstractWindCharge	net/minecraft/world/entity/projectile/hurtingprojectile/windcharge/AbstractWindCharge
 net/minecraft/world/entity/projectile/windcharge/BreezeWindCharge	net/minecraft/world/entity/projectile/hurtingprojectile/windcharge/BreezeWindCharge
 net/minecraft/world/entity/projectile/windcharge/WindCharge	net/minecraft/world/entity/projectile/hurtingprojectile/windcharge/WindCharge
-net/minecraft/world/entity/schedule/Keyframe	net/minecraft/client/animation/Keyframe
+# The schedule keyframe was deleted, not moved, and neither surviving Keyframe is its successor.
+# The old class was (int startTime, float priority) with getStartTime and getPriority. On 26.2
+# client/animation/Keyframe is an animation record of vectors, and util/Keyframe is (int ticks,
+# T value), referenced only by the new world/timeline classes. Both were matched by simple name
+# alone; there is no destination for this one.
 net/minecraft/world/entity/schedule/Timeline	net/minecraft/world/timeline/Timeline
 net/minecraft/world/entity/vehicle/AbstractBoat	net/minecraft/world/entity/vehicle/boat/AbstractBoat
 net/minecraft/world/entity/vehicle/AbstractBoat$Status	net/minecraft/world/entity/vehicle/boat/AbstractBoat$Status
@@ -598,23 +609,30 @@ net/minecraft/util/FastColor$ARGB32	net/minecraft/util/ARGB
 net/minecraft/resources/ResourceLocation$Serializer	com/retromod/polyfill/minecraft/IdentifierSerializer
 # CycleOption → OptionInstance (removed in 1.19, but intermediary refs still exist)
 net/minecraft/client/CycleOption	net/minecraft/client/OptionInstance
-net/minecraft/client/CycleOption$OptionSetter	net/minecraft/client/OptionInstance$ValueSet
+# A setter callback and a ValueSet share no method, so the rename cannot make any implementor
+# work. The CycleOption row above stays: OptionInstance really is that family's successor.
 # SystemToastIds → SystemToastId (plural → singular)
 net/minecraft/client/gui/components/toasts/SystemToast$SystemToastIds	net/minecraft/client/gui/components/toasts/SystemToast$SystemToastId
 # ChatType$BoundNetwork → ChatType$Bound
 net/minecraft/network/chat/ChatType$BoundNetwork	net/minecraft/network/chat/ChatType$Bound
 # Button$OnTooltip removed (tooltips now use components directly)
-net/minecraft/client/gui/components/Button$OnTooltip	net/minecraft/client/gui/components/Tooltip
+# Button$OnTooltip was a callback interface; Tooltip is a class with no public constructor, so an
+# implementor or lambda cannot be retyped onto it. Removed rather than renamed.
 # BufferBuilder$RenderedBuffer removed
-com/mojang/blaze3d/vertex/BufferBuilder$RenderedBuffer	com/mojang/blaze3d/vertex/ByteBufferBuilder$Result
+# ByteBufferBuilder$Result is the raw slice MeshData holds, not the successor. MeshData carries
+# vertexBuffer(), indexBuffer() and drawState, which is RenderedBuffer's surface (verified).
+com/mojang/blaze3d/vertex/BufferBuilder$RenderedBuffer	com/mojang/blaze3d/vertex/MeshData
 # Matrix4f moved to JOML
 com/mojang/math/Matrix4f	org/joml/Matrix4f
 # GuiComponent was removed. GuiGraphicsExtractor is the closest equivalent.
 net/minecraft/client/gui/GuiComponent	net/minecraft/client/gui/GuiGraphicsExtractor
-# EnchantedBookItem removed (enchantments now component-based)
-net/minecraft/world/item/EnchantedBookItem	net/minecraft/world/item/Items
-# RecordItem → JukeboxPlayable (component-based in 1.21+)
-net/minecraft/world/item/RecordItem	net/minecraft/world/item/JukeboxSong
+# EnchantedBookItem was deleted, not renamed. Enchantments became a component, and Items is a
+# static holder with no Item.Properties constructor, so an extending mod traded a missing class for
+# a missing constructor. Handled by RemovedItemBaseBridge.
+# RecordItem was deleted, not renamed. Jukebox playability became an item component, and
+# JukeboxSong is a final record describing a song, not an item class. Redirecting here made a mod
+# that extended RecordItem inherit from a final class (#260). Handled by RemovedItemBaseBridge,
+# which rebases the inheritance edge onto a generated Item subclass instead.
 # DirectionProperty is now just EnumProperty
 net/minecraft/world/level/block/state/properties/DirectionProperty	net/minecraft/world/level/block/state/properties/EnumProperty
 # LazyLoadedValue was deprecated (use Suppliers.memoize), NOT renamed to Unit
@@ -623,7 +641,9 @@ net/minecraft/world/level/block/state/properties/DirectionProperty	net/minecraft
 # ClickType was split. Its container action values moved to ContainerInput.
 net/minecraft/world/inventory/ClickType	net/minecraft/world/inventory/ContainerInput
 # CompiledShaderProgram → ShaderManager (shader system redesigned)
-net/minecraft/client/renderer/CompiledShaderProgram	net/minecraft/client/renderer/ShaderManager
+# ShaderManager is the resource-reload listener that OWNS programs, not a compiled program.
+# GlProgram is the compiled program: it carries getUniform and close (verified on 26.1.2/26.2).
+net/minecraft/client/renderer/CompiledShaderProgram	com/mojang/blaze3d/opengl/GlProgram
 
 # 26.1 Weighted* class consolidation. Mojang unified WeightedRandomList
 # and SimpleWeightedRandomList into net/minecraft/util/random/WeightedList.
@@ -631,6 +651,9 @@ net/minecraft/client/renderer/CompiledShaderProgram	net/minecraft/client/rendere
 # moves old mods (Lithium, Architectury, etc.) hit NoClassDefFoundError at
 # runtime when they try to reference the old class names.
 net/minecraft/util/random/WeightedRandomList	net/minecraft/util/random/WeightedList
+# The behavior package had its own WeightedList, unrelated to the util/random one above. It became
+# ShufflingList. A name-only heuristic would wrongly pair it with util/random/WeightedList.
+net/minecraft/world/entity/ai/behavior/WeightedList	net/minecraft/world/entity/ai/behavior/ShufflingList
 net/minecraft/util/random/WeightedRandomList$WeightedEntry	net/minecraft/util/random/Weighted
 net/minecraft/util/random/SimpleWeightedRandomList	net/minecraft/util/random/WeightedList
 net/minecraft/util/random/SimpleWeightedRandomList$Builder	net/minecraft/util/random/WeightedList$Builder
@@ -868,15 +891,21 @@ net/minecraft/client/gui/screens/ReceivingLevelScreen$Reason	net/minecraft/clien
 net/minecraft/client/gui/screens/reporting/ChatReportScreen$DiscardReportWarningScreen	net/minecraft/client/gui/screens/reporting/AbstractReportScreen$DiscardReportWarningScreen
 net/minecraft/client/gui/screens/worldselection/CreateWorldScreen$DataPackReloadCookie	net/minecraft/client/gui/screens/worldselection/DataPackReloadCookie
 net/minecraft/client/gui/screens/worldselection/CreateWorldScreen$SelectedGameMode	net/minecraft/client/gui/screens/worldselection/WorldCreationUiState$SelectedGameMode
-net/minecraft/client/model/AgeableListModel	net/minecraft/client/model/BabyModelTransform
+# AgeableListModel was deleted, not renamed. BabyModelTransform is a final record holding baby
+# scaling values, so it is neither a model base nor extendable; the redirect only turned a missing
+# class into an inheritance error. A mod extending AgeableListModel needs a real model port.
 net/minecraft/client/model/AxolotlModel	net/minecraft/client/model/animal/axolotl/AdultAxolotlModel
 net/minecraft/client/model/LavaSlimeModel	net/minecraft/client/model/monster/slime/MagmaCubeModel
 net/minecraft/client/model/ParrotModel$State	net/minecraft/client/model/animal/parrot/ParrotModel$Pose
 net/minecraft/client/multiplayer/ClientPacketListener$DeferredPacket	net/minecraft/client/multiplayer/ClientCommonPacketListenerImpl$DeferredPacket
 net/minecraft/client/multiplayer/chat/report/ChatReportBuilder$CannotBuildReason	net/minecraft/client/multiplayer/chat/report/Report$CannotBuildReason
-net/minecraft/client/multiplayer/chat/report/ChatReportBuilder$ChatReport	net/minecraft/client/multiplayer/chat/report/Report
+# Report is the abstract parent; ChatReport is the concrete continuation and extends it (verified).
+net/minecraft/client/multiplayer/chat/report/ChatReportBuilder$ChatReport	net/minecraft/client/multiplayer/chat/report/ChatReport
 net/minecraft/client/particle/ParticleEngine$MutableSpriteSet	net/minecraft/client/particle/ParticleResources$MutableSpriteSet
-net/minecraft/client/renderer/FaceInfo$Constants	net/minecraft/client/renderer/FaceInfo$Extent
+# FaceInfo$Constants held six static final int fields; FaceInfo$Extent is an enum whose constants
+# share their names and not their type. A GETSTATIC of descriptor I cannot resolve against it, so
+# the rename turned a missing class into NoSuchFieldError. Field redirects onto a shim would be
+# needed to support the ordinals; the class name stays unmapped so the failure names the class.
 net/minecraft/client/renderer/LevelRenderer$RenderChunkInfo	net/minecraft/client/renderer/SectionOcclusionGraph$Node
 net/minecraft/client/renderer/RenderType$OutlineProperty	net/minecraft/client/renderer/rendertype/RenderSetup$OutlineProperty
 net/minecraft/client/renderer/block/LiquidBlockRenderer	net/minecraft/client/renderer/block/FluidRenderer
@@ -899,7 +928,10 @@ net/minecraft/client/resources/model/ModelBakery$ModelGroupKey	net/minecraft/cli
 net/minecraft/commands/CommandFunction$CacheableFunction	net/minecraft/commands/CacheableFunction
 net/minecraft/data/loot/BlockLoot	net/minecraft/data/loot/BlockLootSubProvider
 net/minecraft/data/worldgen/StructureFeatures	net/minecraft/world/level/levelgen/structure/BuiltinStructures
-net/minecraft/network/chat/TranslatableComponent	net/minecraft/network/chat/contents/TranslatableContents
+# TranslatableComponent has no class successor: TranslatableContents is the payload INSIDE a
+# component and does not implement Component, so no reference to the old name links. The correct
+# handling is Forge_1_18_2_to_1_19's pair, a redirect to Component plus a Component.translatable
+# constructor redirect. This row contradicted it and which one won depended on registration order.
 net/minecraft/network/protocol/common/custom/BrainDebugPayload$BrainDump	net/minecraft/util/debug/DebugBrainDump
 net/minecraft/network/protocol/game/ClientboundHorseScreenOpenPacket	net/minecraft/network/protocol/game/ClientboundMountScreenOpenPacket
 net/minecraft/network/protocol/game/ServerboundBlockEntityTagQuery	net/minecraft/network/protocol/game/ServerboundBlockEntityTagQueryPacket

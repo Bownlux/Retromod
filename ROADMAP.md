@@ -53,23 +53,67 @@ and both are gone.
 
 Some mixins still need a source port. True Darkness is one example because Minecraft replaced the CPU-side light texture it shadows with a different GPU system. YUNG's API's enhanced Beardifier terrain adaptation also stays disabled: its bytecode applies, but a headless 26.2 server proved that its behavior breaks current chunk scheduling.
 
+### Fabric Shims Keyed on Yarn Names
+
+About half the Minecraft-side registration keys in the Fabric shim tree are Yarn names: of 160, 84
+are Mojang and 76 are Yarn. A Yarn key cannot match a distributed mod, which carries intermediary
+names that Retromod remaps to Mojang before the instruction visitor runs. Two real mods were checked
+and neither holds a single Yarn-shaped reference.
+
+Most of those are not a defect. 28 of the 30 Yarn-keyed class redirects map the Yarn name to exactly
+the right Mojang name, so they are deliberate converters for a mod that does ship Yarn names, and
+they are merely redundant with the intermediary path for one that does not. A chain that passes
+through a stale Mojang name still lands correctly, because the transform loop keeps resolving until
+the bytecode stops changing.
+
+What is worth revisiting is the smaller set where a Yarn key is the only thing providing a repair, so
+nothing happens at all: the `DamageSource` static-field redirects and the `DimensionType` and
+`World.getDimension` method redirects in the 1.15 through 1.19 shims. Each also targets a bridge
+class that was never written, so both halves have to be done together or neither is worth doing.
+
+A related detail: `registerRemappedMethodAlias` clones a key under a Mojang owner when another shim
+registered that class redirect, but rewrites only the owner, never the method name or descriptor. An
+alias built from a Yarn-keyed entry therefore still carries a Yarn method name and matches nothing.
+
+### Deleted Base Classes
+
+Minecraft keeps folding hardcoded subclasses into data components, and a mod that extended one has
+nothing left to inherit from. A class move cannot express that: it is a rename, and pointing a
+deleted base at the nearest surviving name produced worse failures than leaving it alone. Retromod
+now rebases the inheritance edge onto a generated subclass of a base that survived, building its
+constructors from the `super(...)` calls the mods actually make. `RecordItem` and
+`EnchantedBookItem` go through it.
+
+A rebase only restores linkage. Arguments the modern base does not take are dropped, so the item
+registers and whatever the old base did with them is gone. It suits a base whose remaining job is
+registration or identity. `AgeableListModel` is the counter-example: no surviving model base accepts
+its constructors, so a mod that extends it still needs a real port, and Retromod names it in the log
+rather than guessing.
+
+The wider fix is that Retromod reads class shape from the host instead of from tables. Whether a
+name can be extended and whether a call target is an interface are both host questions, and a
+hardcoded answer is right only for the version it was written against. Both now read the indexed
+Minecraft jar first. An offline transform with no `--mc-jar` still falls back to the tables, and
+closing that gap is the next step.
+
 ### Minecraft 26.3
 
-26.3 is in snapshot. Retromod translates mods onto it: the class moves are in place for Fabric,
-NeoForge, and Forge, and Minecraft's own snapshot version names are recognized. The jump is mostly
+26.3 is in pre-release. Retromod translates mods onto it: 230 class moves for Fabric, NeoForge, and
+Forge, every one checked against the 26.3-pre-2 client, and Minecraft's own pre-release version
+names resolve to the milestone so a pre-release jar can be used as the target. The jump is mostly
 one library repackage, `com/mojang/blaze3d` becoming `com/mojang/renderpearl`, plus vanilla renames.
 
-Two things are worth knowing. The repackage is partial, so several vertex classes stayed where they
-were and only the classes that actually moved are redirected. And a class move restores linkage, not
-behavior: the rendering API changed alongside the repackage, so a mod that drives rendering directly
-still needs real adapters.
+Three groups are removed rather than moved, so no rename can cover them. Most of the worldgen
+configuration system, including `FeatureConfiguration` and its subclasses, `ConfiguredFeature`, and
+`SurfaceRules`. The last of the hardcoded item classes, `AxeItem`, `HoeItem`, `ShovelItem`,
+`BedItem`, and `SignItem`. And, new in pre-release 1, the loot number providers: `NumberProvider`
+and `NumberProviders` are gone and the family split into int-valued and float-valued packages.
+Three names exist in exactly one of the two and are carried; `ConstantValue`,
+`EnvironmentAttributeValue`, `StorageValue`, `Sum` and `UniformGenerator` exist in both, so nothing
+in the old name says which a mod meant and they are declined.
 
-OpenGL was expected to go away in 26.3 and has not. Retromod still selects it for translated mods on
-that host.
-
-Not done yet: 26.3 is absent from the release build matrix, so no 26.3 jars are published. That is a
-one-line change once 26.3 is closer to release, and it is deliberately separate because it decides
-what gets uploaded for an unreleased Minecraft version.
+A mod built on any of those needs a real port. The pack format entry tracks the pre-release and will
+move again before release. No 26.3 jars are published yet.
 
 ## Next
 

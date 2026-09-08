@@ -201,7 +201,43 @@ public class RetromodTestModNeoForge {
         n++; passed += check(n, "#234 GameRules mob-griefing field", () ->
             GameRules.RULE_MOBGRIEFING != null);
 
+        // #260: an item base Minecraft deleted rather than renamed. EnchantedBookItem went when
+        // stored enchantments became a component, and the class-move table used to point it at
+        // Items, a static holder with no constructor, so a subclass died at the super(...) call.
+        // It now rebases onto a generated Item subclass. RecordItem, the other half of #260, is
+        // deliberately absent here: it was already removed in 1.21, which this mod is built for.
+        n++; passed += check(n, "#260 removed item base EnchantedBookItem", () ->
+            linksWithoutInheritanceError(LegacyBook::new));
+
         LOG.info("{} SUMMARY: {}/{} passed", PREFIX, passed, n);
+    }
+
+    /**
+     * Whether a subclass of a removed base links, ignoring anything that happens after it does.
+     *
+     * <p>Building an item outside registration is fine on the version this mod is compiled for and
+     * can be refused on later ones for reasons unrelated to the transform, so only a linkage failure
+     * counts. {@code NoSuchMethodError} is already an {@code IncompatibleClassChangeError} subclass,
+     * which is the family this covers.
+     */
+    private boolean linksWithoutInheritanceError(Runnable probe) {
+        try {
+            probe.run();
+            return true;
+        } catch (IncompatibleClassChangeError | NoClassDefFoundError | VerifyError e) {
+            LOG.warn("{} removed base did not link: {}: {}", PREFIX,
+                    e.getClass().getSimpleName(), e.getMessage());
+            return false;
+        } catch (Throwable linkedButRefused) {
+            return true;
+        }
+    }
+
+    /** Extends a base deleted after 1.21.1, calling its one argument constructor. */
+    private static class LegacyBook extends net.minecraft.world.item.EnchantedBookItem {
+        LegacyBook() {
+            super(new net.minecraft.world.item.Item.Properties());
+        }
     }
 
     @FunctionalInterface

@@ -1,0 +1,76 @@
+# Mojang names that more than one intermediary class maps to (task: recycled-name audit).
+#
+# A collision is usually legitimate. Fabric renumbers intermediary ids across versions, so the same
+# logical class can carry an old id and a new one, and both must resolve to the same Mojang name or
+# a mod built against either version stops working. Every entry below was checked that way.
+#
+# A collision is a BUG when the two ids are genuinely different classes on 1.21.11, the last version
+# intermediary covers. That happens when Minecraft renames a class and then reuses the old name:
+# the old Cow became AbstractCow and a new Cow appeared under it. Mapping both ids to the new name
+# means a mod that meant the base silently links against the leaf. 37 rows were in that state.
+#
+# IntermediaryDestinationCollisionTest enforces this list EXACTLY:
+#   - a NEW entry fails the build. Resolve it by joining Fabric intermediary to the Mojang
+#     mappings for 1.21.11 and pointing each id at the class it actually became. Add it here only
+#     if the two ids really are the same logical class under different intermediary numbering.
+#   - a REMOVED entry also fails, so a fix has to update this file deliberately.
+#
+# Regenerate the evidence with the loom intermediary tiny plus the 1.21.11 client mappings; a jar is
+# not needed to run the test, only to decide what belongs here.
+com/mojang/blaze3d/platform/GlStateManager$DestFactor
+com/mojang/blaze3d/platform/GlStateManager$SourceFactor
+com/mojang/blaze3d/vertex/VertexFormat$IndexType
+com/mojang/blaze3d/vertex/VertexFormat$Mode
+com/mojang/realmsclient/dto/RealmsServerPlayerLists
+com/mojang/realmsclient/gui/RealmsDataFetcher
+net/minecraft/advancements/criterion/package-info
+net/minecraft/client/OptionInstance
+net/minecraft/client/OptionInstance$ValueSet
+net/minecraft/client/animation/Keyframe
+net/minecraft/client/data/models/blockstates/MultiPartGenerator$Entry
+net/minecraft/client/particle/DripParticle$DripstoneLavaFallProvider
+net/minecraft/client/particle/DripParticle$DripstoneLavaHangProvider
+net/minecraft/client/particle/DripParticle$DripstoneWaterFallProvider
+net/minecraft/client/particle/DripParticle$DripstoneWaterHangProvider
+net/minecraft/client/particle/DripParticle$HoneyFallProvider
+net/minecraft/client/particle/DripParticle$HoneyHangProvider
+net/minecraft/client/particle/DripParticle$HoneyLandProvider
+net/minecraft/client/particle/DripParticle$LavaFallProvider
+net/minecraft/client/particle/DripParticle$LavaHangProvider
+net/minecraft/client/particle/DripParticle$LavaLandProvider
+net/minecraft/client/particle/DripParticle$NectarFallProvider
+net/minecraft/client/particle/DripParticle$ObsidianTearFallProvider
+net/minecraft/client/particle/DripParticle$ObsidianTearHangProvider
+net/minecraft/client/particle/DripParticle$ObsidianTearLandProvider
+net/minecraft/client/particle/DripParticle$SporeBlossomFallProvider
+net/minecraft/client/particle/DripParticle$WaterFallProvider
+net/minecraft/client/particle/DripParticle$WaterHangProvider
+net/minecraft/client/renderer/block/dispatch/Variant
+net/minecraft/client/renderer/block/dispatch/multipart/Condition
+net/minecraft/client/resources/model/ModelDebugName
+net/minecraft/core/dispenser/DispenseItemBehavior$3
+net/minecraft/core/dispenser/DispenseItemBehavior$4
+net/minecraft/core/dispenser/DispenseItemBehavior$5
+net/minecraft/core/dispenser/DispenseItemBehavior$6
+net/minecraft/core/dispenser/DispenseItemBehavior$7
+net/minecraft/core/dispenser/DispenseItemBehavior$7$1
+net/minecraft/core/dispenser/DispenseItemBehavior$8
+net/minecraft/core/dispenser/DispenseItemBehavior$9
+net/minecraft/network/chat/contents/PlainTextContents$LiteralContents
+net/minecraft/network/protocol/game/ClientboundBossEventPacket$Operation
+net/minecraft/network/protocol/game/ClientboundSetPlayerTeamPacket
+net/minecraft/network/protocol/game/ServerboundInteractPacket$Action
+net/minecraft/network/syncher/EntityDataSerializers$2
+net/minecraft/network/syncher/EntityDataSerializers$3
+net/minecraft/network/syncher/EntityDataSerializers$4
+net/minecraft/network/syncher/EntityDataSerializers$5
+net/minecraft/network/syncher/EntityDataSerializers$6
+net/minecraft/network/syncher/EntityDataSerializers$7
+net/minecraft/server/packs/resources/ReloadableResourceManager
+net/minecraft/world/entity/ai/control/Control
+net/minecraft/world/entity/ai/util/RandomPos
+net/minecraft/world/level/block/SandBlock
+net/minecraft/world/level/levelgen/carver/CanyonWorldCarver
+net/minecraft/world/level/levelgen/carver/CarverConfiguration
+net/minecraft/world/level/levelgen/feature/configurations/DiskConfiguration
+net/minecraft/world/timeline/Timeline

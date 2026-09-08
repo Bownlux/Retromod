@@ -26,6 +26,27 @@ public class ModVersionDetector {
     private static final Gson GSON = new GsonBuilder().create();
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     private static final long MAX_METADATA_SIZE = 2L * 1024 * 1024;
+
+    /** Splits a TOML file before each array-of-tables header, which is how these files are shaped. */
+    private static final java.util.regex.Pattern TABLE_HEADER_SPLIT =
+            java.util.regex.Pattern.compile("(?m)^(?=[ \\t]*\\[\\[)");
+    /** Matches only at the start of a chunk, so it cannot scan forward. */
+    private static final java.util.regex.Pattern MODS_HEADER =
+            java.util.regex.Pattern.compile("[ \\t]*\\[\\[mods]][ \\t]*(\\R|$)");
+
+    /** No real Minecraft or mod version is longer than this. */
+    private static final int MAX_VERSION_LENGTH = 64;
+    /** No real Minecraft or loader version component has this many digits. */
+    private static final int MAX_VERSION_COMPONENT_DIGITS = 6;
+    /** NeoForge's own numbering starts at 20.2, for Minecraft 1.20.2. */
+    private static final int FIRST_NEOFORGE_MAJOR = 20;
+    /** From Minecraft 26 the version dropped its 1. prefix, so the numbers line up directly. */
+    private static final int FIRST_UNPREFIXED_MC_MAJOR = 26;
+    /**
+     * Forge's own major numbers for every Minecraft version Retromod supports sit at or above this,
+     * so a loader bound this high is Forge numbering and names no Minecraft version.
+     */
+    private static final int FORGE_NUMBERING_FLOOR = 40;
     private static final long MAX_CLASS_SCAN_SIZE = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
     private static final int MAX_JSON_DEPTH = 256;
 
@@ -272,6 +293,9 @@ public class ModVersionDetector {
         if (mcVersion == null) {
             mcVersion = inferMcVersionFromModVersion(modVersion);
         }
+        if (mcVersion == null) {
+            mcVersion = inferMcVersionFromNeoForgeRange(tomlContent);
+        }
         String neoforgeVersion = toml.get("neoforge");
 
         Set<String> packages = scanModPackages(jar, modId);
@@ -398,17 +422,135 @@ public class ModVersionDetector {
      * Forge mods appear to be their final dependency instead of the mod itself.
      */
     private String extractPrimaryModValue(String tomlContent, String key, String fallback) {
-        java.util.regex.Matcher blockMatcher = java.util.regex.Pattern
-                .compile("(?ms)^\\s*\\[\\[mods]]\\s*$.*?(?=^\\s*\\[\\[|\\z)")
-                .matcher(tomlContent);
-        if (!blockMatcher.find()) {
+        String block = firstModsBlock(tomlContent);
+        if (block == null) {
             return fallback;
         }
         java.util.regex.Matcher valueMatcher = java.util.regex.Pattern
                 .compile("(?m)^\\s*" + java.util.regex.Pattern.quote(key)
                         + "\\s*=\\s*[\"']([^\"']+)[\"']")
-                .matcher(blockMatcher.group());
+                .matcher(block);
         return valueMatcher.find() ? valueMatcher.group(1).trim() : fallback;
+    }
+
+    /**
+     * The text of the first {@code [[mods]]} table, or null when there is none.
+     *
+     * <p>Split on the table headers rather than scanning for one with a multiline regex. The regex
+     * form retried at every line start and let its leading {@code \s*} consume the rest of the file
+     * each time, so a metadata file that is mostly blank lines cost time quadratic in its length.
+     * The file comes out of a mod jar, so that was a scan of the mods folder turning into minutes of
+     * CPU on one crafted jar, before any decision about transforming it.
+     */
+    private static String firstModsBlock(String tomlContent) {
+        for (String chunk : TABLE_HEADER_SPLIT.split(tomlContent)) {
+            if (MODS_HEADER.matcher(chunk).lookingAt()) return chunk;
+        }
+        return null;
+    }
+
+    /**
+     * Derive the Minecraft version from a NeoForge mod's declared loader range.
+     *
+     * <p>Plenty of NeoForge mods declare no {@code minecraft} dependency at all, because the
+     * {@code neoforge} range already pins the version. Retromod read only the {@code minecraft}
+     * block, so those mods came back with no version, and a mod with no version is skipped rather
+     * than transformed. The mod then reached the game untouched and failed on the first class
+     * Minecraft had moved, with nothing in the log to say Retromod had passed it over (#251).
+     *
+     * <p>NeoForge's own numbering carries the answer and needs no table. On the 1.x line a build is
+     * {@code <mcMinor>.<mcPatch>.<build>}, so {@code 21.1.79} is Minecraft 1.21.1. From 26 onward
+     * the Minecraft version is the first three components, so {@code 26.1.2.101} is 26.1.2.
+     *
+     * <p>Only a lower bound whose leading component falls in NeoForge's own range is accepted.
+     * NeoForge's 1.20.1 builds ship under the Forge coordinates and are numbered {@code 47.x}, so
+     * that range says nothing about the Minecraft version. It is declined rather than read as
+     * either 1.47 or 47.1, both of which would feed the shim chain a version that never existed.
+     *
+     * @return the Minecraft version, or null when the range does not determine one
+     */
+    private String inferMcVersionFromNeoForgeRange(String tomlContent) {
+        String range = extractLoaderVersionRange(tomlContent, "neoforge");
+        if (range == null) return null;
+        String lowerBound = parseMavenVersionRange(range);
+        if (lowerBound == null) return null;
+
+        String[] parts = lowerBound.split("\\.");
+        if (parts.length < 2) return null;
+
+        // Every component is reparsed and the result rebuilt from the parsed numbers. The range
+        // comes out of a mod's own metadata, so anything echoed through verbatim is attacker text:
+        // a bound like "26.2.x/../.." would otherwise yield a version string carrying a path
+        // separator, and "21." followed by four thousand digits would yield a four thousand
+        // character version. Rebuilding guarantees the result is digits and dots.
+        int[] number = new int[Math.min(parts.length, 3)];
+        for (int i = 0; i < number.length; i++) {
+            number[i] = parseVersionComponent(parts[i]);
+            if (number[i] < 0) return null;
+        }
+
+        int leading = number[0];
+        if (leading >= FIRST_NEOFORGE_MAJOR && leading < FIRST_UNPREFIXED_MC_MAJOR) {
+            return "1." + number[0] + "." + number[1];
+        }
+        if (leading >= FIRST_UNPREFIXED_MC_MAJOR && leading < FORGE_NUMBERING_FLOOR) {
+            return number.length >= 3
+                    ? number[0] + "." + number[1] + "." + number[2]
+                    : number[0] + "." + number[1];
+        }
+        return null;
+    }
+
+    /**
+     * Whether a version bound out of mod metadata is shaped like a version at all.
+     *
+     * <p>Permissive about the punctuation real mods use, and strict about length and character
+     * class. A bound is not a free text field, and treating it as one let a crafted range become a
+     * version string of arbitrary length.
+     */
+    private static boolean isVersionLike(String bound) {
+        if (bound == null || bound.isEmpty() || bound.length() > MAX_VERSION_LENGTH) return false;
+        boolean digit = false;
+        for (int i = 0; i < bound.length(); i++) {
+            char c = bound.charAt(i);
+            if (c >= '0' && c <= '9') { digit = true; continue; }
+            boolean allowed = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || c == '.' || c == '-' || c == '_' || c == '+';
+            if (!allowed) return false;
+        }
+        return digit;
+    }
+
+    /**
+     * A single version component as a non-negative number, or -1 when it is anything else.
+     *
+     * <p>Deliberately stricter than {@link Integer#parseInt}, which accepts a leading sign and
+     * non-ASCII digits. A version component is ASCII digits and nothing else.
+     */
+    private static int parseVersionComponent(String part) {
+        if (part.isEmpty() || part.length() > MAX_VERSION_COMPONENT_DIGITS) return -1;
+        for (int i = 0; i < part.length(); i++) {
+            if (part.charAt(i) < '0' || part.charAt(i) > '9') return -1;
+        }
+        try {
+            return Integer.parseInt(part);
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    /** The {@code versionRange} of one loader dependency block, or null when it declares none. */
+    private String extractLoaderVersionRange(String tomlContent, String loaderModId) {
+        for (String block : tomlContent.split("(?=\\[\\[dependencies\\.)")) {
+            if (!java.util.regex.Pattern.compile("modId\\s*=\\s*\"" + loaderModId + "\"")
+                    .matcher(block).find()) {
+                continue;
+            }
+            java.util.regex.Matcher range = java.util.regex.Pattern
+                    .compile("versionRange\\s*=\\s*\"([^\"]+)\"").matcher(block);
+            if (range.find()) return range.group(1);
+        }
+        return null;
     }
 
     /**
@@ -449,7 +591,10 @@ public class ModVersionDetector {
         String trimmed = range.trim();
         String clean = trimmed.replaceAll("[\\[\\]()\\s]", "");
         String[] parts = clean.split(",", -1);
-        String lower = parts.length > 0 && !parts[0].isEmpty() ? parts[0] : null;
+        // The bound is a mod's own text. Everything downstream treats it as a version: it is
+        // compared, logged, written into the AOT metadata, and pattern matched. An unbounded bound
+        // made those consumers the slow part, so refuse anything that is not shaped like a version.
+        String lower = parts.length > 0 && isVersionLike(parts[0]) ? parts[0] : null;
 
         String host = RetromodVersion.TARGET_MC_VERSION;
         if (host != null && lower != null && parts.length >= 2 && !parts[1].isEmpty()) {

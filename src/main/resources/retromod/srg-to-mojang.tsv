@@ -8144,7 +8144,7 @@ FIELD	f_62055_	maxZ
 FIELD	f_62056_	shape
 FIELD	f_62136_	CODEC
 FIELD	f_62137_	biomeSource
-FIELD	f_62138_	runtimebiomeSource
+FIELD	f_62138_	runtimeBiomeSource
 FIELD	f_62245_	level
 FIELD	f_62246_	gameType
 FIELD	f_62247_	stats
@@ -36075,7 +36075,7 @@ METHOD	m_47611_	downfall
 METHOD	m_47758_	getName
 METHOD	m_47815_	getFlowerFeatures
 METHOD	m_47818_	features
-METHOD	m_47831_	getTextureLocation
+METHOD	m_47831_	build
 METHOD	m_47877_	obfuscateSeed
 METHOD	m_47967_	getFogColor
 METHOD	m_47972_	getWaterColor
@@ -43130,7 +43130,6 @@ METHOD	m_142460_	getListenerSource
 METHOD	m_142463_	createReload
 METHOD	m_142466_	load
 METHOD	m_142467_	setRemoved
-METHOD	m_142469_	createRenamer
 METHOD	m_142470_	tryPickup
 METHOD	m_142471_	fillCrashReportCategory
 METHOD	m_142472_	onRemove

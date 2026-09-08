@@ -1,3 +1,9 @@
+---
+title: Technical Capabilities
+nav_order: 11.75
+description: "What Retromod translates well, what needs a bridge, and what it cannot do."
+---
+
 # Technical Capabilities
 
 Retromod translates Java bytecode and selected mod resources. Its limits follow from that scope.

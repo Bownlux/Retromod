@@ -32,7 +32,10 @@ record PackFormat(int major, int minor) implements Comparable<PackFormat> {
         entry("26.1", 84, 0, 101, 1),
         entry("26.1.1", 84, 0, 101, 1),
         entry("26.1.2", 84, 0, 101, 1),
-        entry("26.2", 88, 0, 107, 1)
+        entry("26.2", 88, 0, 107, 1),
+        // 26.3 is still in pre-release. These are 26.3-pre-2's own version.json values and will
+        // move again before release, so treat them as tracking the pre-release rather than final.
+        entry("26.3", 97, 1, 120, 0)
     );
 
     PackFormat {

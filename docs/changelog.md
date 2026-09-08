@@ -8,6 +8,29 @@ description: "Highlights from Retromod releases."
 
 This page keeps the release history readable. The [full technical changelog](https://github.com/Bownlux/Retromod/blob/main/CHANGELOG.md) lists every fix and regression test.
 
+## 1.3.0 Release Candidates
+
+### Release Candidate 1, September 8, 2026
+
+- Loads a mod that extends a Minecraft class the game deleted, such as an older music disc, instead of pointing it at the nearest surviving name and failing at class load.
+- Reports a superclass the host cannot accept, naming the mod class and the class move that produced it, rather than leaving a crash with no mention of Retromod.
+- Fixes a crash where a translated mod failed with `must be Methodref constant` on a call to `Lifecycle`.
+- Reads whether a call target is an interface from the installed Minecraft version instead of a fixed list, so the answer is right on every supported version.
+- Transforms a NeoForge mod that pins its version through the loader rather than through a `minecraft` dependency. Those mods used to be skipped silently.
+
+- Finds an installed copy of the target Minecraft version for offline transforms, so `--mc-jar` is only needed to choose a specific one.
+
+- Renames a texture's animation metadata even when a pack replaces only the animation and not the texture, from ttaute's resource-pack test in [pull request 238](https://github.com/Bownlux/Retromod/pull/238#issuecomment-5552837060).
+- Fixes entity animation mods on 26.x, where every keyframe a mod built failed to link because a parameter type widened to an interface.
+- Tracks Minecraft 26.3 through its second pre-release, and accepts a pre-release jar when targeting the version it belongs to.
+- Corrects 40 mappings that sent a Fabric mod to the wrong class, where Minecraft had renamed a class and later reused its old name for something else.
+- Corrects eight class renames that pointed at the wrong class, found by auditing every row against the game's own files. Five now name the real successor and three are removed because the old class has none.
+- Fixes a generated Mixin bridge that declared too little stack space, which stopped the affected mods from loading.
+- Refuses malformed mod metadata and bytecode instead of working from it, so a damaged jar fails cleanly.
+- Fixes SRG name remapping for 1.12.2 mods, where two mapping tables overlapped and the less reliable one was winning, producing member names that do not exist on modern Minecraft.
+
+A converted music disc registers and does not play in a jukebox. That now comes from a data component and a datapack entry an older mod does not ship. An offline transform reads the host from an installed jar, or from `--mc-jar`. With neither, the checks fall back to Retromod's tables.
+
 ## 1.3.0 Snapshot Line
 
 ### Snapshot 10, August 25, 2026

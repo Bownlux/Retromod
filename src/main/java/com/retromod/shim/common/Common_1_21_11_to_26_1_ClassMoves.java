@@ -24,6 +24,10 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         // Bridge_Block.onPlace crash). Bridged by a per-mod synthetic.
         IsOverloadBridgeSynthetic.register(transformer);
 
+        // Deleted item bases that mods extend. A class move cannot express a deletion, and
+        // pointing one at the nearest surviving name produced an inheritance error instead (#260).
+        RemovedItemBaseBridge.register(transformer);
+
         registerOfficialEntityTypeBuildBridge(transformer);
         registerLegacyContainerInput(transformer);
 
@@ -307,6 +311,23 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                 "net/minecraft/world/phys/Vec3", "<init>", "(Lorg/joml/Vector3f;)V",
                 "net/minecraft/world/phys/Vec3", "<init>", "(Lorg/joml/Vector3fc;)V",
                 0, 0);
+        // Keyframe's constructors took the same joml concrete->interface widening as Vec3 above:
+        // (float, Vector3f, Interpolation) and the four-arg pre/post form now declare Vector3fc.
+        // Vector3f implements Vector3fc, so the value on the stack is already assignable and only
+        // the descriptor moves. Entity animation mods build every keyframe through these, so the
+        // gap is wide: two corpus mods alone account for 4,760 call sites, and every one of them
+        // was a NoSuchMethodError on 26.2 and 26.3.
+        String keyframe = "net/minecraft/client/animation/Keyframe";
+        String interp = "Lnet/minecraft/client/animation/AnimationChannel$Interpolation;";
+        t.registerConvertingRedirect(
+                keyframe, "<init>", "(FLorg/joml/Vector3f;" + interp + ")V",
+                keyframe, "<init>", "(FLorg/joml/Vector3fc;" + interp + ")V",
+                0, 0);
+        t.registerConvertingRedirect(
+                keyframe, "<init>", "(FLorg/joml/Vector3f;Lorg/joml/Vector3f;" + interp + ")V",
+                keyframe, "<init>", "(FLorg/joml/Vector3fc;Lorg/joml/Vector3fc;" + interp + ")V",
+                0, 0);
+
         // PoseStack.mulPose(Quaternionf)/(Matrix4f) widened their arg to the joml INTERFACE
         // (Quaternionfc/Matrix4fc) in 26.x, same concrete->interface modernization as Vec3 above and
         // the addVertex(Matrix4f) rename. The concrete-typed overloads are gone, so a rendering mod

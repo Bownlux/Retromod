@@ -17,9 +17,11 @@ public class Fabric_1_15_2_to_1_16_5 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // Yarn's world/dimension/DimensionType is world/level/dimension/DimensionType in Mojang
+        // naming. This used to name the source on both sides, which registered a no-op.
         transformer.registerClassRedirect(
             "net/minecraft/world/dimension/DimensionType",
-            "net/minecraft/world/dimension/DimensionType"
+            "net/minecraft/world/level/dimension/DimensionType"
         );
         // getDimension() became RegistryKey-based
         transformer.registerMethodRedirect(

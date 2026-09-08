@@ -136,16 +136,26 @@ public final class SrgToMojangMapper {
      * The 1.12.2-era SRG dictionary ({@code func_NNN_x}/{@code field_NNN_x} -> readable names,
      * harvested from the MCPBot 1.12.2 CSVs filtered against Mojang's official 1.20.1 names by
      * {@code scripts/harvest-1.12.2-srg-members.py}). Loaded into the SAME maps as the modern
-     * {@code m_}/{@code f_} dictionary: the key patterns never collide, and the remapper picks
-     * the branch by prefix.
+     * {@code m_}/{@code f_} dictionary.
+     *
+     * <p>The key patterns DO collide, which is why load order matters. 5,458 keys appear in both
+     * files, because the main table carries old {@code field_}/{@code func_} spellings as well as
+     * the modern ones. The two are not equally trustworthy: the main table is an owner and
+     * descriptor disciplined join, while this one keeps whatever readable name MCP used, filtered
+     * only by "the name exists somewhere". Where they disagree, this file tends to hold the name
+     * from the mod's own era rather than the host's, and that name is exactly what will not
+     * resolve: {@code isInvalid} for {@code isRemoved}, {@code entityId} for {@code id},
+     * {@code maxStringLength} for {@code maxLength} (all verified against the 26.2 jar).
      */
     private static final String RESOURCE_PATH_1122 = "/retromod/srg-1.12.2-to-mojang.tsv";
 
     private static SrgToMojangMapper loadFromResource() {
         Map<String, String> methods = new HashMap<>();
         Map<String, String> fields = new HashMap<>();
-        boolean any = loadOne(RESOURCE_PATH, methods, fields);
-        any |= loadOne(RESOURCE_PATH_1122, methods, fields);
+        // Weaker table first so the owner-verified one overrides it on every shared key. The
+        // 1.12.2 table still supplies the ids the main table does not carry.
+        boolean any = loadOne(RESOURCE_PATH_1122, methods, fields);
+        any |= loadOne(RESOURCE_PATH, methods, fields);
         if (!any) {
             LOGGER.warn("Could not find SRG to Mojang mapping data at {} or {}. "
                             + "SRG name remapping is unavailable.",

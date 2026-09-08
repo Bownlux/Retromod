@@ -30,6 +30,17 @@ import java.util.zip.*;
  */
 public class AotCompiler {
 
+    /**
+     * A dotted number anywhere in a version string.
+     *
+     * <p>Deliberately not {@code String.matches(".*\\d+\\.\\d+.*")}. That form backtracks
+     * quadratically on a long run of digits with no dot, and the version can come from a mod's own
+     * metadata, so a crafted jar turned a scan of the mods folder into minutes of CPU. Anchoring
+     * nothing and using find() is linear.
+     */
+    private static final java.util.regex.Pattern DOTTED_NUMBER =
+            java.util.regex.Pattern.compile("\\d+\\.\\d+");
+
     private static final Logger LOGGER = LoggerFactory.getLogger("retromod-aot");
 
     private static final Path AOT_CACHE_DIR = Path.of("config/retromod/aot-cache");
@@ -226,7 +237,24 @@ public class AotCompiler {
     private static boolean isUnknownSourceVersion(String sourceVersion) {
         return sourceVersion == null || sourceVersion.isBlank()
                 || sourceVersion.contains("$")
-                || !sourceVersion.matches(".*\\d+\\.\\d+.*");
+                || hasControlCharacter(sourceVersion)
+                || !DOTTED_NUMBER.matcher(sourceVersion).find();
+    }
+
+    /**
+     * Whether a version carries a line terminator or other control character.
+     *
+     * <p>Checked explicitly because the version is written into a jar manifest, where a line
+     * terminator starts a new header. This used to be an accident of the previous regex, which
+     * could not match across a newline and so reported such a version as unknown. That regex was
+     * replaced because it backtracked quadratically, so the guard it was providing is stated here
+     * instead of depending on the matcher's line handling.
+     */
+    private static boolean hasControlCharacter(String version) {
+        for (int i = 0; i < version.length(); i++) {
+            if (Character.isISOControl(version.charAt(i))) return true;
+        }
+        return false;
     }
 
     private List<VersionShim> withApiShims(

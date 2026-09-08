@@ -305,6 +305,39 @@ public class ResourcePackTransformer {
                 LOGGER.debug("  Renamed {} to {}", oldName, newName);
             }
         }
+        renameOrphanAnimationMetadata(blockTextures, oldName, newName);
+    }
+
+    /**
+     * Rename an animation sidecar whose texture the pack does not override.
+     *
+     * <p>A pack can ship {@code fire_layer_0.png.mcmeta} without {@code fire_layer_0.png}, keeping
+     * the vanilla texture and replacing only its animation. The rename above walks the {@code .png}
+     * files and carries each one's sidecar with it, so a sidecar with no texture beside it was left
+     * on the old name and stopped matching anything.
+     *
+     * <p>Both extensions are kept. The name is {@code texture.png.mcmeta}, so renaming the texture
+     * part must not turn it into {@code texture.mcmeta}, which Minecraft would not read.
+     */
+    private void renameOrphanAnimationMetadata(Path textures, String oldName, String newName)
+            throws IOException {
+        String oldSidecar = oldName + ".png.mcmeta";
+        try (var stream = Files.walk(textures)) {
+            for (Path path : stream
+                    .filter(p -> p.getFileName().toString().equals(oldSidecar))
+                    .toList()) {
+                if (Files.exists(path.resolveSibling(oldName + ".png"), LinkOption.NOFOLLOW_LINKS)) {
+                    continue; // its texture is still here, so the loop above already moved it
+                }
+                Path target = path.resolveSibling(newName + ".png.mcmeta");
+                if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new IOException("Texture rename destination already exists: " + target);
+                }
+                Files.move(path, target);
+                LOGGER.debug("  Renamed orphan animation metadata {} to {}", oldSidecar,
+                        target.getFileName());
+            }
+        }
     }
 
     private void refuseDowngrade(PackMetadata.DeclaredFormats formats, Path packPath)

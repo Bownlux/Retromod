@@ -503,5 +503,18 @@ public final class Mc26_2To26_3CoreMoves {
                 "net/minecraft/world/level/levelgen/structure/placement/AbstractSpreadingStructurePlacement$FrequencyReducer");
         t.registerClassRedirect("net/minecraft/world/level/storage/loot/ValidationContext$MissingReferenceProblem",
                 "net/minecraft/world/level/storage/loot/ValidationContext$RecursiveElementReferenceProblem");
+
+        // Loot number providers split into an int-valued and a float-valued family in 26.3-pre-1.
+        // Only the three names that exist in exactly one of the two are carried. ConstantValue,
+        // EnvironmentAttributeValue, StorageValue, Sum and UniformGenerator each exist under BOTH
+        // ints and floats, so nothing in the old name says which a mod meant; those are declined.
+        // NumberProvider and NumberProviders themselves are gone, so a mod that implements the
+        // interface needs a real port either way (verified against the 26.3-pre-2 client).
+        String loot = "net/minecraft/world/level/storage/loot/providers/number/";
+        t.registerClassRedirect(loot + "BinomialDistributionGenerator",
+                loot + "ints/BinomialDistributionGenerator");
+        t.registerClassRedirect(loot + "ScoreboardValue", loot + "ints/ScoreboardValue");
+        t.registerClassRedirect(loot + "EnchantmentLevelProvider",
+                loot + "floats/EnchantmentLevelProvider");
     }
 }

@@ -106,7 +106,54 @@ public class RetromodTestModForge {
         n++; passed += check(n, "#234 GameRules mob-griefing field", () ->
             GameRules.RULE_MOBGRIEFING != null);
 
+        // #260: item bases Minecraft deleted rather than renamed. RecordItem went when jukebox
+        // playability became a component, EnchantedBookItem when stored enchantments did. Neither
+        // has a class successor, and the class-move table used to name the nearest surviving class:
+        // a final record for one, a constructor-less holder for the other. Both now rebase onto a
+        // generated Item subclass. Only linkage is asserted, since the dropped constructor
+        // arguments are gone by design.
+        n++; passed += check(n, "#260 removed item base RecordItem", () ->
+            linksWithoutInheritanceError(LegacyDisc::new));
+        n++; passed += check(n, "#260 removed item base EnchantedBookItem", () ->
+            linksWithoutInheritanceError(LegacyBook::new));
+
         LOG.info("{} SUMMARY: {}/{} passed", PREFIX, passed, n);
+    }
+
+    /**
+     * Whether a subclass of a removed base links, ignoring anything that happens after it does.
+     *
+     * <p>Building an item outside registration is fine on the version this mod is compiled for and
+     * can be refused on later ones for reasons unrelated to the transform, so only a linkage failure
+     * counts. {@code NoSuchMethodError} and {@code NoSuchFieldError} are already
+     * {@code IncompatibleClassChangeError} subclasses, which is the family this covers.
+     */
+    private boolean linksWithoutInheritanceError(Runnable probe) {
+        try {
+            probe.run();
+            return true;
+        } catch (IncompatibleClassChangeError | NoClassDefFoundError | VerifyError e) {
+            LOG.warn("{} removed base did not link: {}: {}", PREFIX,
+                    e.getClass().getSimpleName(), e.getMessage());
+            return false;
+        } catch (Throwable linkedButRefused) {
+            return true;
+        }
+    }
+
+    /** Extends a base deleted after 1.20.1, calling its four argument constructor. */
+    private static class LegacyDisc extends net.minecraft.world.item.RecordItem {
+        LegacyDisc() {
+            super(1, (net.minecraft.sounds.SoundEvent) null,
+                    new net.minecraft.world.item.Item.Properties(), 1);
+        }
+    }
+
+    /** Same shape, different removed base and a one argument constructor. */
+    private static class LegacyBook extends net.minecraft.world.item.EnchantedBookItem {
+        LegacyBook() {
+            super(new net.minecraft.world.item.Item.Properties());
+        }
     }
 
     @FunctionalInterface

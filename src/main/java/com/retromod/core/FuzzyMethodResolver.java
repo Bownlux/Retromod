@@ -82,6 +82,20 @@ public class FuzzyMethodResolver {
     /** Key: JVM internal class name. Value: its superclass plus implemented interfaces. */
     private final Map<String, List<String>> classHierarchy = new HashMap<>();
 
+    /**
+     * Class access flags from the indexed jar, keyed by internal name. Kept because a name that is
+     * a legal TYPE is not always a legal SUPERCLASS: redirecting an extended base to a final class
+     * produces IncompatibleClassChangeError at class load, long after the transform (#260).
+     */
+    private final Map<String, Integer> classAccess = new HashMap<>();
+
+    /**
+     * Indexed classes that declare a PermittedSubclasses attribute. A sealed class is not final, so
+     * its access flags look extendable, and extending it anyway fails with
+     * IncompatibleClassChangeError: "Failed listed permitted subclass check".
+     */
+    private final Set<String> sealedClasses = new HashSet<>();
+
     /** Platform ancestors loaded lazily for exact inherited-member checks only. */
     private final Map<String, ExternalClassInfo> externalClassIndex = new ConcurrentHashMap<>();
 
@@ -225,12 +239,18 @@ public class FuzzyMethodResolver {
                         Collections.addAll(parents, interfaces);
                     }
                     classHierarchy.put(className, parents);
+                    classAccess.put(className, reader.getAccess());
 
                     // signatures only: SKIP_CODE + SKIP_DEBUG for speed
                     List<MethodInfo> classMethods = new ArrayList<>();
                     List<FieldInfo> classFields = new ArrayList<>();
 
                     reader.accept(new ClassVisitor(Opcodes.ASM9) {
+                        @Override
+                        public void visitPermittedSubclass(String permittedSubclass) {
+                            sealedClasses.add(className);
+                        }
+
                         @Override
                         public MethodVisitor visitMethod(int access, String name,
                                 String descriptor, String signature, String[] exceptions) {
@@ -286,6 +306,8 @@ public class FuzzyMethodResolver {
         constructorIndex.clear();
         fieldIndex.clear();
         classHierarchy.clear();
+        classAccess.clear();
+        sealedClasses.clear();
         externalClassIndex.clear();
         missingExternalClasses.clear();
         methodResolveCache.clear();
@@ -310,6 +332,21 @@ public class FuzzyMethodResolver {
         if (!indexed || internalName == null) return false;
         // classHierarchy has an entry for every indexed class, even members-free ones
         return classHierarchy.containsKey(internalName);
+    }
+
+    /**
+     * Class access flags for an indexed class, or {@code -1} when the jar is not indexed or does
+     * not contain the class. Callers must treat {@code -1} as "unknown" and not as "no flags set".
+     */
+    /** Whether an indexed class is sealed, so only its listed subclasses may extend it. */
+    public boolean isSealed(String internalName) {
+        return indexed && internalName != null && sealedClasses.contains(internalName);
+    }
+
+    public int classAccess(String internalName) {
+        if (!indexed || internalName == null) return -1;
+        Integer access = classAccess.get(internalName);
+        return access == null ? -1 : access;
     }
 
     /**
@@ -1145,8 +1182,28 @@ public class FuzzyMethodResolver {
      *
      * @param mcVersion the Minecraft version to find, e.g. "26.1"
      */
+    /**
+     * Whether a version string is safe to interpolate into a launcher library path.
+     *
+     * <p>The version lands in the path twice, as a directory and inside the file name, so a value
+     * carrying a separator and a parent reference makes the two uses cancel and the lookup resolve
+     * outside the library tree. A Minecraft version is digits, dots, and the punctuation snapshots
+     * use, so anything else is refused rather than sanitized.
+     */
+    private static boolean isSafeVersionSegment(String mcVersion) {
+        if (mcVersion == null || mcVersion.isEmpty() || mcVersion.length() > 64) return false;
+        if (mcVersion.contains("..")) return false;
+        for (int i = 0; i < mcVersion.length(); i++) {
+            char c = mcVersion.charAt(i);
+            boolean allowed = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')
+                    || (c >= 'A' && c <= 'Z') || c == '.' || c == '-' || c == '_' || c == '+';
+            if (!allowed) return false;
+        }
+        return true;
+    }
+
     public static Path findMcJarByVersion(String mcVersion) {
-        if (mcVersion == null || mcVersion.isEmpty()) return null;
+        if (!isSafeVersionSegment(mcVersion)) return null;
 
         String home = System.getProperty("user.home");
         String os = System.getProperty("os.name", "").toLowerCase();

@@ -89,6 +89,12 @@ class Mc26_2To26_3CoreMovesTest {
     }
 
     private static Path hostJar(String version) {
+        // A pre-release wins over a plain jar of the same version. While a version is still in
+        // development the newest build is the authority, and an older snapshot sitting under the
+        // plain name reports a correct move as a hijack.
+        Path preRelease = newestPreRelease(version);
+        if (preRelease != null) return preRelease;
+
         String home = System.getProperty("user.home", "");
         for (Path candidate : java.util.List.of(
                 Path.of(home, "Library/Application Support/PrismLauncher/libraries",
@@ -97,6 +103,36 @@ class Mc26_2To26_3CoreMovesTest {
             if (Files.isRegularFile(candidate)) return candidate;
         }
         return null;
+    }
+
+    /**
+     * The highest {@code -pre-N} jar for a version still in pre-release.
+     *
+     * <p>A version under development moves, and the moves table has to track the newest build
+     * rather than whichever snapshot happened to be downloaded first. 26.3 moved the loot number
+     * providers between snapshot 10 and pre-release 1, so validating against the older jar reported
+     * a correct move as a hijack of a live class.
+     */
+    private static Path newestPreRelease(String version) {
+        Path dir = Path.of("test-jars-mixin");
+        if (!Files.isDirectory(dir)) return null;
+        Path best = null;
+        int bestNumber = -1;
+        try (var entries = Files.list(dir)) {
+            for (Path candidate : entries.toList()) {
+                String name = candidate.getFileName().toString();
+                java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("^minecraft-" + java.util.regex.Pattern.quote(version)
+                                + "-pre-(\\d+)-client\\.jar$")
+                        .matcher(name);
+                if (!m.matches()) continue;
+                int number = Integer.parseInt(m.group(1));
+                if (number > bestNumber) { bestNumber = number; best = candidate; }
+            }
+        } catch (Exception ignored) {
+            return null;
+        }
+        return best;
     }
 
     private static Set<String> classNames(Path jar) throws Exception {

@@ -56,6 +56,25 @@ public final class Mc26_1To26_2CoreMoves {
         t.registerClassRedirect("com/mojang/blaze3d/pipeline/RenderPipeline$UniformDescription",
                 "com/mojang/blaze3d/pipeline/BindGroupLayout$UniformDescription");
 
+        // EntityPredicate$LocationWrapper deliberately has no hop. 26.2 decomposed the single
+        // record into three separate entity sub-predicates, so there is no one-to-one successor and
+        // any rename would be another wrong destination. A mod using it needs a real port.
+
+        // No blend-factor redirect belongs here. 26.2 merged SourceFactor and DestFactor into
+        // BlendFactor AND changed the RenderSystem.blendFunc overload that consumed them, so a
+        // rename would leave a call to a method that no longer exists. RemovedRenderStateNeutralize
+        // already nulls the enum reads and the call, which is the conservative handling
+        // (ClientStructureBridge26xTest.blendFactorTeardown26_2 holds that shape).
+
+        // 26.2 renamed the enclosing chunk-compile task, taking its nested result type with it. The
+        // 26.1 table carries the outer move but stopped at this nested name, so a mod translated
+        // through both jumps kept a name that 26.2 does not have (verified against both jars).
+        t.registerClassRedirect(
+                "net/minecraft/client/renderer/chunk/"
+                        + "SectionRenderDispatcher$RenderSection$CompileTask$SectionTaskResult",
+                "net/minecraft/client/renderer/chunk/"
+                        + "SectionRenderDispatcher$RenderSection$SectionTask$SectionTaskResult");
+
         t.registerClassRedirect("net/minecraft/advancements/CriteriaTriggers",
                 "net/minecraft/advancements/triggers/CriteriaTriggers");
         t.registerClassRedirect("net/minecraft/advancements/Criterion",

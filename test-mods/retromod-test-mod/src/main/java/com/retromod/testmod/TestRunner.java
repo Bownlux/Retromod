@@ -37,6 +37,7 @@ import com.retromod.testmod.tests.Test15InheritedEntityWorld;
 import com.retromod.testmod.tests.Test16SingleFabricApiProvider;
 import com.retromod.testmod.tests.Test17BlockRandomTicksAccessor;
 import com.retromod.testmod.tests.Test18GameRulesField;
+import com.retromod.testmod.tests.Test19RemovedItemBase;
 import com.retromod.testmod.tests.TextTests;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -111,6 +112,7 @@ public final class TestRunner {
         all.addAll(StatusEffectTests.all());
         all.add(Test14RevampedEntityBridges.entityTagMembership());
         all.add(new Test15InheritedEntityWorld());
+        all.add(new Test19RemovedItemBase());
         return List.copyOf(all);
     }
 

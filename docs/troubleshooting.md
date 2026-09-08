@@ -69,6 +69,24 @@ For a known fatal handler, advanced users can extend `config/retromod/mixin-bloc
 
 Omit `methods` only when the entire mixin must be disabled.
 
+## A Mod Extends a Class Minecraft Removed
+
+`IncompatibleClassChangeError`, or a Retromod log line saying a mod class `extends` something that
+does not exist, is final, or is an interface.
+
+Minecraft keeps folding hardcoded subclasses into data components and deleting the old base. A mod
+that extended one has nothing left to inherit from, and a rename cannot substitute for a class that
+is gone. Retromod names the mod class, the base, and why the base cannot be used.
+
+Retromod supplies a replacement base for some of these, such as the old music disc and enchanted
+book item classes. Those mods load, and the behavior the old base carried in its constructor does
+not come back: a converted music disc registers and does not play in a jukebox. Where there is no
+replacement, the mod needs a real port. Attach the log line to an issue with the mod and its
+version.
+
+Offline transforms read this from the Minecraft jar. The CLI uses an installed copy of the target
+version when it finds one, and `--mc-jar <target.jar>` names it explicitly.
+
 ## Forge or NeoForge Module Errors
 
 `Modules X and Y export package Z` usually means two jars provide the same library. Remove the duplicate standalone dependency when another mod already bundles it.

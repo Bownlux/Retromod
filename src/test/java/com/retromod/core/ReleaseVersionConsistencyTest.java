@@ -202,28 +202,37 @@ class ReleaseVersionConsistencyTest {
     }
 
     private static void assertSnapshotChangelogDatesMatch(String version) throws Exception {
+        // The public heading spells the build out in words, so the two files carry the same date in
+        // two formats and can drift apart. That matters more now that the published site is built
+        // from docs/: a wrong date there is what readers see.
+        String publicHeading;
         Matcher snapshot = Pattern.compile("-snapshot\\.(\\d+)$").matcher(version);
-        if (!snapshot.find()) {
+        Matcher candidate = Pattern.compile("-rc\\.(\\d+)$").matcher(version);
+        if (snapshot.find()) {
+            publicHeading = "### Snapshot " + snapshot.group(1);
+        } else if (candidate.find()) {
+            publicHeading = "### Release Candidate " + candidate.group(1);
+        } else {
             return;
         }
 
-        Matcher fullHeading = Pattern.compile(
+        Matcher fullDateMatch = Pattern.compile(
                 "(?m)^## \\[" + Pattern.quote(version) + "\\] - (\\d{4}-\\d{2}-\\d{2})$")
                 .matcher(Files.readString(Path.of("CHANGELOG.md")));
-        assertTrue(fullHeading.find(), "CHANGELOG.md is missing the current snapshot date");
+        assertTrue(fullDateMatch.find(), "CHANGELOG.md is missing the date for " + version);
 
-        Matcher publicHeading = Pattern.compile(
-                "(?m)^### Snapshot " + Pattern.quote(snapshot.group(1))
-                        + ", ([A-Za-z]+ \\d{1,2}, \\d{4})$")
+        Matcher publicDateMatch = Pattern.compile(
+                "(?m)^" + Pattern.quote(publicHeading) + ", ([A-Za-z]+ \\d{1,2}, \\d{4})$")
                 .matcher(Files.readString(Path.of("docs/changelog.md")));
-        assertTrue(publicHeading.find(), "docs/changelog.md is missing the current snapshot date");
+        assertTrue(publicDateMatch.find(),
+                "docs/changelog.md is missing \"" + publicHeading + ", <date>\"");
 
-        LocalDate fullDate = LocalDate.parse(fullHeading.group(1));
+        LocalDate fullDate = LocalDate.parse(fullDateMatch.group(1));
         LocalDate publicDate = LocalDate.parse(
-                publicHeading.group(1),
+                publicDateMatch.group(1),
                 DateTimeFormatter.ofPattern("MMMM d, uuuu", Locale.US));
         assertEquals(fullDate, publicDate,
-                "the full and public changelogs must use the same snapshot date");
+                "the full and public changelogs must give " + version + " the same date");
     }
 
     private static boolean contains(Path path, String value) {

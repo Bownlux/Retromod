@@ -35,6 +35,17 @@ import java.util.regex.Pattern;
  */
 public class RetromodCli {
 
+    /**
+     * A dotted number anywhere in a version string.
+     *
+     * <p>Deliberately not {@code String.matches(".*\\d+\\.\\d+.*")}. That form backtracks
+     * quadratically on a long run of digits with no dot, and the version can come from a mod's own
+     * metadata, so a crafted jar turned a scan of the mods folder into minutes of CPU. Anchoring
+     * nothing and using find() is linear.
+     */
+    private static final java.util.regex.Pattern DOTTED_NUMBER =
+            java.util.regex.Pattern.compile("\\d+\\.\\d+");
+
     private static final Logger LOGGER = LoggerFactory.getLogger("retromod-cli");
     private static final String VERSION = RetromodVersion.RETROMOD_VERSION;
     // Each command can override this with --target.
@@ -322,7 +333,10 @@ public class RetromodCli {
      */
     private static void initializeMixinTargetIndex(
             RetromodTransformer transformer, Path mcJarPath) {
-        if (mcJarPath == null) return;
+        if (mcJarPath == null) {
+            indexInstalledMinecraft(transformer);
+            return;
+        }
         if (!Files.isRegularFile(mcJarPath)) {
             throw new IllegalArgumentException("Target Minecraft JAR not found: " + mcJarPath);
         }
@@ -334,6 +348,34 @@ public class RetromodCli {
         }
         System.out.println("Loaded target method index: " + mcJarPath.getFileName()
                 + " (" + resolver.getIndexedMethodCount() + " methods)");
+    }
+
+    /**
+     * Index an installed copy of the target Minecraft version when no {@code --mc-jar} was given.
+     *
+     * <p>Several checks are only as good as what Retromod can read about the host. Whether a class
+     * can be extended, and whether a call target is an interface, are questions about the version
+     * being translated to, and with nothing indexed they fall back to tables that are right only
+     * for the versions they were written against. A launcher usually has the jar on disk already,
+     * so look there before giving up.
+     *
+     * <p>This is best effort and stays quiet when it finds nothing. An explicit {@code --mc-jar}
+     * that cannot be read is an error, because the user asked for it; a guess that does not pan out
+     * is not. Pass {@code --mc-jar} to be certain which jar is used.
+     */
+    private static void indexInstalledMinecraft(RetromodTransformer transformer) {
+        Path found = com.retromod.core.FuzzyMethodResolver.findMcJarByVersion(TARGET_MC_VERSION);
+        if (found == null) return;
+        try {
+            transformer.initFuzzyResolver(found);
+        } catch (RuntimeException e) {
+            return;
+        }
+        var resolver = transformer.getFuzzyResolver();
+        if (resolver == null || !resolver.isIndexed()) return;
+        System.out.println("Using installed Minecraft " + TARGET_MC_VERSION + " for host checks: "
+                + found + " (" + resolver.getIndexedClassCount() + " classes). "
+                + "Pass --mc-jar to choose a different one.");
     }
 
     /**
@@ -350,7 +392,7 @@ public class RetromodCli {
                         + TARGET_MC_VERSION + ".");
                 return;
             }
-            if (!inferred.equals(TARGET_MC_VERSION)) {
+            if (!sameMilestone(inferred, TARGET_MC_VERSION)) {
                 throw new IllegalArgumentException("--target " + TARGET_MC_VERSION
                         + " does not match Minecraft JAR version " + inferred
                         + ": " + mcJarPath);
@@ -363,11 +405,26 @@ public class RetromodCli {
                     + TARGET_MC_VERSION + ".");
             return;
         }
-        if (inferred.equals(TARGET_MC_VERSION)) return;
+        if (sameMilestone(inferred, TARGET_MC_VERSION)) return;
         TARGET_MC_VERSION = inferred;
         RetromodVersion.TARGET_MC_VERSION = inferred;
         System.out.println("Target Minecraft version: " + inferred
                 + " (read from " + mcJarPath.getFileName() + ")");
+    }
+
+    /**
+     * Whether two version strings name the same milestone.
+     *
+     * <p>A pre-release jar reports its own id, so {@code 26.3-pre-2} would not equal a
+     * {@code --target 26.3} the user reasonably typed, and the command refused a jar that is
+     * exactly the right one. The shim registry already knows every spelling a milestone answers to,
+     * so ask it rather than comparing the raw strings.
+     */
+    private static boolean sameMilestone(String left, String right) {
+        if (left == null || right == null) return false;
+        if (left.equals(right)) return true;
+        return com.retromod.shim.ShimRegistry.resolveVersion(left)
+                .equals(com.retromod.shim.ShimRegistry.resolveVersion(right));
     }
 
     /** Reads the official version.json, with a standard client filename as a fallback. */
@@ -936,7 +993,24 @@ public class RetromodCli {
     static boolean isUnknownSourceVersion(String sourceVersion) {
         return sourceVersion == null || sourceVersion.isBlank()
                 || sourceVersion.contains("$")
-                || !sourceVersion.matches(".*\\d+\\.\\d+.*");
+                || hasControlCharacter(sourceVersion)
+                || !DOTTED_NUMBER.matcher(sourceVersion).find();
+    }
+
+    /**
+     * Whether a version carries a line terminator or other control character.
+     *
+     * <p>Checked explicitly because the version is written into a jar manifest, where a line
+     * terminator starts a new header. This used to be an accident of the previous regex, which
+     * could not match across a newline and so reported such a version as unknown. That regex was
+     * replaced because it backtracked quadratically, so the guard it was providing is stated here
+     * instead of depending on the matcher's line handling.
+     */
+    private static boolean hasControlCharacter(String version) {
+        for (int i = 0; i < version.length(); i++) {
+            if (Character.isISOControl(version.charAt(i))) return true;
+        }
+        return false;
     }
     
     /** Show API differences between two versions. */

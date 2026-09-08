@@ -4,6 +4,7 @@
  */
 package com.retromod.mixin;
 
+import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AbstractInsnNode;
@@ -21,11 +22,16 @@ import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.TypeInsnNode;
 import org.objectweb.asm.tree.VarInsnNode;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.List;
 
 /** Repairs legacy Mixin members whose old descriptor can be preserved as a bridge overload. */
 final class MixinLegacyMemberBridge {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("retromod-mixin");
 
     private static final String MIXIN_DESC = "Lorg/spongepowered/asm/mixin/Mixin;";
     private static final String SHADOW_DESC = "Lorg/spongepowered/asm/mixin/Shadow;";
@@ -429,7 +435,7 @@ final class MixinLegacyMemberBridge {
         // The camera can be a non-player entity, and the old method returned null for that.
         code.add(new InsnNode(Opcodes.ACONST_NULL));
         code.add(new InsnNode(Opcodes.ARETURN));
-        shadow.maxStack = 1;
+        computeMaxStack(classNode, shadow);
         shadow.maxLocals = 2;
         return true;
     }
@@ -460,7 +466,7 @@ final class MixinLegacyMemberBridge {
             code.add(new MethodInsnNode(Opcodes.INVOKESTATIC, wrapper, "register",
                     "(Ljava/lang/String;L" + MAP_CODEC + ";)" + returns, false));
             code.add(new InsnNode(Opcodes.ARETURN));
-            registrar.maxStack = 2;
+            computeMaxStack(classNode, registrar);
             registrar.maxLocals = 3;
             modified = true;
         }
@@ -479,7 +485,7 @@ final class MixinLegacyMemberBridge {
             code.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, wrapper, "<init>",
                     "(L" + MAP_CODEC + ";)V", false));
             code.add(new InsnNode(Opcodes.ARETURN));
-            factory.maxStack = 3;
+            computeMaxStack(classNode, factory);
             factory.maxLocals = 2;
             modified = true;
         }
@@ -541,7 +547,7 @@ final class MixinLegacyMemberBridge {
         shadow.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, LIVING_ENTITY,
                 "hasEffect", NEW_HAS_EFFECT, false));
         shadow.instructions.add(new InsnNode(Opcodes.IRETURN));
-        shadow.maxStack = 3;
+        computeMaxStack(classNode, shadow);
         shadow.maxLocals = 2;
 
         boolean needsGetEffectBridge = false;
@@ -614,9 +620,49 @@ final class MixinLegacyMemberBridge {
         invoker.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, POSE, "<init>",
                 "(Ljava/lang/String;IILjava/lang/String;)V", false));
         invoker.instructions.add(new InsnNode(Opcodes.ARETURN));
-        invoker.maxStack = 6;
+        computeMaxStack(classNode, invoker);
         invoker.maxLocals = 2;
         return true;
+    }
+
+    /**
+     * Set {@code maxStack} from the instructions rather than by hand.
+     *
+     * <p>A bridged class is re-emitted without frame or stack computation, so whatever these
+     * generators put in {@code maxStack} is what ships. Counting it by hand went wrong once and the
+     * result is a {@code VerifyError} at class load, which surfaces as the mod failing to load with
+     * no mention of the bridge: the Pose invoker peaks at seven stack slots and declared six.
+     *
+     * <p>ASM already knows how to compute this, so ask it. The method is written into a throwaway
+     * writer with {@code COMPUTE_MAXS} and the computed value read back. {@code maxLocals} stays as
+     * the generator set it, because it is derived from the descriptor and is not error prone the
+     * same way.
+     */
+    private static void computeMaxStack(ClassNode owner, MethodNode method) {
+        try {
+            ClassWriter probe = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+            probe.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, owner.name, null,
+                    owner.superName == null ? "java/lang/Object" : owner.superName, null);
+            ClassNode holder = new ClassNode();
+            holder.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, owner.name, null,
+                    owner.superName == null ? "java/lang/Object" : owner.superName, null);
+            method.accept(holder);
+            MethodNode written = holder.methods.get(holder.methods.size() - 1);
+            written.accept(probe);
+            probe.visitEnd();
+            ClassNode back = new ClassNode();
+            new org.objectweb.asm.ClassReader(probe.toByteArray()).accept(back, 0);
+            for (MethodNode m : back.methods) {
+                if (m.name.equals(method.name) && m.desc.equals(method.desc)) {
+                    method.maxStack = Math.max(method.maxStack, m.maxStack);
+                    return;
+                }
+            }
+        } catch (RuntimeException e) {
+            // A generator that cannot be re-emitted keeps whatever it set. Leaving the hand value
+            // is no worse than before this helper existed.
+            LOGGER.debug("Could not compute maxStack for {}{}: {}", method.name, method.desc, e.toString());
+        }
     }
 
     private static void makeConcreteUnique(MethodNode method, String annotationToRemove) {

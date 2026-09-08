@@ -47,14 +47,19 @@ public final class ClassResourceInspector {
         return false;
     }
 
+    /**
+     * Largest class file worth inspecting. The rest of the codebase reads class bytes through
+     * {@link com.retromod.util.ZipSecurity#safeReadAllBytes}, and this path was the exception:
+     * it handed the raw stream to ASM, which grows a buffer to whatever the stream produces. The
+     * resource can come from a mod's own jar on a flat class loader, so the size is not ours to
+     * trust. Minecraft's largest class is comfortably under this.
+     */
+    private static final long MAX_CLASS_BYTES = 8L * 1024 * 1024;
+
     private static ClassNode readFrom(ClassLoader loader, String resource) {
         if (loader == null) return null;
         try (InputStream in = loader.getResourceAsStream(resource)) {
-            if (in == null) return null;
-            ClassNode node = new ClassNode();
-            new ClassReader(in).accept(node,
-                    ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-            return node;
+            return parse(in);
         } catch (IOException | RuntimeException e) {
             return null;
         }
@@ -62,14 +67,20 @@ public final class ClassResourceInspector {
 
     private static ClassNode readBootstrap(String resource) {
         try (InputStream in = Object.class.getModule().getResourceAsStream(resource)) {
-            if (in == null) return null;
-            ClassNode node = new ClassNode();
-            new ClassReader(in).accept(node,
-                    ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-            return node;
+            return parse(in);
         } catch (IOException | RuntimeException e) {
             return null;
         }
+    }
+
+    /** Read a bounded number of bytes, then parse structure only. */
+    private static ClassNode parse(InputStream in) throws IOException {
+        if (in == null) return null;
+        byte[] bytes = com.retromod.util.ZipSecurity.safeReadAllBytes(in, MAX_CLASS_BYTES);
+        ClassNode node = new ClassNode();
+        new ClassReader(bytes).accept(node,
+                ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return node;
     }
 
     /**

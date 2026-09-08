@@ -174,6 +174,18 @@ public class RetromodTransformer implements ClassFileTransformer {
     // mods extending it get their superclass changed to a bridge plus the interface added.
     private final Map<String, SuperclassRedirect> superclassRedirects = new ConcurrentHashMap<>(16);
 
+    /** Memoized answer to "is this call owner an interface on the host". */
+    private final Map<String, Boolean> interfaceKinds = new ConcurrentHashMap<>(64);
+    /** Host shape of names seen in an {@code extends} slot. See {@link SuperclassSafety}. */
+    private final Map<String, SuperclassSafety.Verdict> superclassVerdicts = new ConcurrentHashMap<>(16);
+    /** Ceiling on constructor shapes absorbed into one generated base. See absorbLegacyCtor. */
+    private static final int MAX_ABSORBED_LEGACY_CTORS = 64;
+
+    /** Generated stand-in bases, keyed by the generated name. See {@link LegacyBaseSynthesizer}. */
+    private final Map<String, LegacyBaseSpec> generatedLegacyBases = new ConcurrentHashMap<>(4);
+    /** Bases already reported as unusable, so the explanation is logged once per base. */
+    private final Set<String> reportedIllegalSuperclasses = ConcurrentHashMap.newKeySet();
+
     // Supplies classes from the jar currently being transformed. Those classes are not on the
     // transform classpath yet, but ASM still needs their hierarchy to compute valid frames.
     private volatile Function<String, byte[]> jarClassBytes;
@@ -1548,6 +1560,124 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
+     * Base classes whose inheritance edge is rebased. Exposed so a test can hold the rule that a
+     * rebased base must not also be a class move: the remapper runs first and the rename would win.
+     */
+    public java.util.Set<String> getSuperclassRebaseSources() {
+        return java.util.Set.copyOf(superclassRedirects.keySet());
+    }
+
+    /**
+     * Rebase a base class that the host DELETED onto a generated stand-in.
+     *
+     * <p>Use this instead of {@link #registerClassRedirect} when a mod extends a class the host no
+     * longer has. A redirect can only point at something that already exists, and a surviving class
+     * with a different constructor cannot accept the old {@code super(...)} call. This registers the
+     * inheritance edge onto a Retromod-owned class that extends {@code modernBase} and grows a
+     * constructor for each {@code super(...)} descriptor actually seen during the transform, so no
+     * list of historical constructor shapes has to be maintained.
+     *
+     * <p>A descriptor whose arguments cannot supply {@code modernCtorDesc} is refused and logged.
+     * The mod then fails with a named missing constructor rather than loading against a base that
+     * silently dropped an argument it needed.
+     *
+     * @param removedBase     internal name of the deleted class the mods extend
+     * @param generatedName   Retromod-owned internal name to generate
+     * @param modernBase      surviving base for the generated class to extend
+     * @param modernCtorDesc  descriptor of the {@code modernBase} constructor to forward to
+     */
+    public void registerGeneratedLegacyBase(String removedBase, String generatedName,
+            String modernBase, String modernCtorDesc) {
+        generatedLegacyBases.put(generatedName, new LegacyBaseSpec(modernBase, modernCtorDesc,
+                ConcurrentHashMap.newKeySet()));
+        registerSyntheticClass(generatedName, LegacyBaseSynthesizer.generate(
+                generatedName, modernBase, modernCtorDesc, List.of()));
+        registerSuperclassRebase(removedBase, generatedName);
+        LOGGER.debug("Registered generated legacy base: {} -> {} extends {}",
+                removedBase, generatedName, modernBase);
+    }
+
+    /**
+     * Whether the rebase target can accept this {@code super(...)} descriptor: either it is not a
+     * generated base, in which case it was declared to have matching constructors, or it is one and
+     * just grew the constructor.
+     */
+    private boolean absorbsOrIsNotGenerated(String newSuperclass, String descriptor) {
+        return !generatedLegacyBases.containsKey(newSuperclass)
+                || absorbLegacyCtor(newSuperclass, descriptor);
+    }
+
+    /**
+     * Add {@code descriptor} to a generated legacy base and rebuild it, so the rebased
+     * {@code super(...)} call has a constructor to land on.
+     *
+     * @return true when the base now declares that constructor
+     */
+    private boolean absorbLegacyCtor(String generatedName, String descriptor) {
+        LegacyBaseSpec spec = generatedLegacyBases.get(generatedName);
+        if (spec == null) return false;
+
+        // One lock per base, because the whole read, decide, generate and publish sequence has to be
+        // atomic. The AOT compilers transform a jar's classes on several threads against this one
+        // shared transformer, and a check-then-act here would let two threads each generate from
+        // their own snapshot and publish, silently dropping the other's constructor.
+        synchronized (spec) {
+            if (spec.observedCtorDescs().contains(descriptor)) return true;
+
+            // The descriptor is the mod's own super(...) call, so it only has to satisfy ASM's
+            // parser. Reject anything the JVM would not accept before it can reach the shared base,
+            // which every mod extending the same removed class links against.
+            if (!LegacyBaseSynthesizer.isUsableCtorDescriptor(descriptor)) {
+                LOGGER.warn("Refusing super{} for {}: not a usable constructor descriptor.",
+                        descriptor, generatedName);
+                return false;
+            }
+            // The class is rebuilt on each new shape, so many distinct shapes cost quadratic time
+            // and grow the class without limit. A real mod uses a handful for one base.
+            if (spec.observedCtorDescs().size() >= MAX_ABSORBED_LEGACY_CTORS) {
+                LOGGER.warn("Refusing to absorb super{} into {}: already carrying {} constructors, "
+                        + "which is past the limit. The mod extends a removed base with an "
+                        + "implausible number of constructor shapes.",
+                        descriptor, generatedName, MAX_ABSORBED_LEGACY_CTORS);
+                return false;
+            }
+
+            // Generate before committing. A descriptor that survives validation and still fails to
+            // emit must not be left in the set, or it poisons the base for every later mod.
+            List<String> candidate = new ArrayList<>(spec.observedCtorDescs());
+            candidate.add(descriptor);
+            byte[] generated;
+            try {
+                generated = LegacyBaseSynthesizer.generate(
+                        generatedName, spec.modernBase(), spec.modernCtorDesc(), candidate);
+            } catch (RuntimeException e) {
+                LOGGER.warn("Cannot absorb super{} into {}: {}", descriptor, generatedName,
+                        e.toString());
+                return false;
+            }
+            spec.observedCtorDescs().add(descriptor);
+            registerSyntheticClass(generatedName, generated);
+            return true;
+        }
+    }
+
+    /**
+     * Whether a generated base has taken all the constructor shapes it will take.
+     *
+     * <p>Consulted before the {@code extends} edge is rebased, so a saturated base behaves as if the
+     * bridge were not registered at all. Rebasing the edge while refusing the matching
+     * {@code super(...)} rewrite would leave a class extending the generated base and calling a
+     * constructor on the old one, which fails verification rather than linkage and is harder to read.
+     */
+    private boolean isLegacyBaseSaturated(String generatedName) {
+        LegacyBaseSpec spec = generatedLegacyBases.get(generatedName);
+        if (spec == null) return false;
+        synchronized (spec) {
+            return spec.observedCtorDescs().size() >= MAX_ABSORBED_LEGACY_CTORS;
+        }
+    }
+
+    /**
      * Starts a standalone offline input with no registrations from the previous input.
      * Call this only at an offline transform boundary, before registering that input's complete
      * shim, polyfill, and mapping set. Runtime loader entry points keep one host-wide set instead.
@@ -1591,6 +1721,10 @@ public class RetromodTransformer implements ClassFileTransformer {
         fieldRedirects.clear();
         mutableAccessorDestinations.clear();
         superclassRedirects.clear();
+        superclassVerdicts.clear();
+        interfaceKinds.clear();
+        generatedLegacyBases.clear();
+        reportedIllegalSuperclasses.clear();
         constructorRedirects.clear();
         constructorRedirectOwners.clear();
         fieldAccessorRedirects.clear();
@@ -3074,10 +3208,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     // fix the opcode. MutableComponent is deliberately not here: it's still a class (implements
     // Component), so INVOKEVIRTUAL on it is correct.
     private static final Set<String> KNOWN_INTERFACES = Set.of(
-        "com/mojang/serialization/DataResult",
         "com/mojang/serialization/DynamicOps",
         "com/mojang/serialization/MapLike",
-        "com/mojang/serialization/Lifecycle",
         "net/minecraft/core/Registry",  // Registry became an interface in newer MC
         // Component (the old yarn Text class) became an interface in 26.1; without this,
         // INVOKEVIRTUAL on .copy()/.append() after remap fails verification.
@@ -3090,23 +3222,59 @@ public class RetromodTransformer implements ClassFileTransformer {
         "java/util/function/Supplier"
     );
 
-    // Types that became interfaces only on 26.x - consulted only on 26.x hosts. On 1.20.x-1.21.x
-    // hosts these are still abstract CLASSES, and rewriting a valid INVOKEVIRTUAL/Methodref call
-    // to interface form there corrupts working translations (review finding, empirically
-    // reproduced: IntProvider.codec itf=true / getMinValue INVOKEINTERFACE on a class).
-    // HeightProvider stayed a class even on 26.2 and stays out.
-    private static final Set<String> KNOWN_INTERFACES_26X = Set.of(
+    // Types that became interfaces at a known version, and are still CLASSES below it. Rewriting a
+    // valid class call into interface form on an older host corrupts a working translation, so each
+    // entry carries the Minecraft version the change landed in.
+    private static final Map<String, String> INTERFACE_SINCE = Map.of(
+        // DataFixerUpper 7, which Minecraft 1.20.5 introduced. The 1.20 to 1.20.4 hosts ship
+        // DataFixerUpper 6, where DataResult is a plain class (verified from the shipped jars).
+        "com/mojang/serialization/DataResult", "1.20.5",
         // Found on the headless 26.2 server: YungJigsawStructure's codec calls
-        // IntProvider.codec(int,int) and died "must be InterfaceMethodref".
-        "net/minecraft/util/valueproviders/IntProvider",
-        "net/minecraft/util/valueproviders/FloatProvider"
+        // IntProvider.codec(int,int) and died "must be InterfaceMethodref". HeightProvider stayed a
+        // class even on 26.2 and stays out.
+        "net/minecraft/util/valueproviders/IntProvider", "26.1",
+        "net/minecraft/util/valueproviders/FloatProvider", "26.1"
     );
 
-    /** Owner is an interface on the CURRENT host (static set + host-gated 26.x additions). */
-    private static boolean isKnownInterface(String owner) {
-        return KNOWN_INTERFACES.contains(owner)
-                || (KNOWN_INTERFACES_26X.contains(owner)
-                    && RetromodVersion.isUnobfuscatedTarget(RetromodVersion.TARGET_MC_VERSION));
+    /**
+     * Whether the owner is an interface on the CURRENT host.
+     *
+     * <p>The host answers first, because it is the only source that is right for every version. The
+     * tables below are the fallback for an offline transform with no {@code --mc-jar}, where nothing
+     * can be read. A flat list of names is wrong by construction on any host it was not written
+     * against, which is how {@code Lifecycle} sat there for a year without ever having been an
+     * interface in any version (#249), so anything that changed kind belongs in
+     * {@link #INTERFACE_SINCE} with the version it changed in.
+     */
+    private boolean isKnownInterface(String owner) {
+        // The owner comes from the mod's bytecode, so it is attacker chosen and unbounded. Probing
+        // and memoizing every distinct one would let a jar full of invented owners grow the cache
+        // without limit and, worse, resolve a MOD's own class through the live loader and let it
+        // decide the call form. Only names the host actually owns are probed; everything else falls
+        // straight through to the tables, which are small and need no memo.
+        if (!isHostOwnedName(owner)) return tabledInterfaceKind(owner);
+        // Called for every method instruction, and a miss can parse a class file, so memoize.
+        return interfaceKinds.computeIfAbsent(owner, this::readInterfaceKind);
+    }
+
+    /** Names the running Minecraft or the JDK owns, as opposed to a mod's own classes. */
+    private static boolean isHostOwnedName(String owner) {
+        return owner != null
+                && (owner.startsWith("net/minecraft/") || owner.startsWith("com/mojang/")
+                    || owner.startsWith("java/"));
+    }
+
+    private boolean readInterfaceKind(String owner) {
+        Boolean host = SuperclassSafety.isInterfaceOnHost(owner, fuzzyResolver);
+        if (host != null) return host;
+        return tabledInterfaceKind(owner);
+    }
+
+    private boolean tabledInterfaceKind(String owner) {
+        if (KNOWN_INTERFACES.contains(owner)) return true;
+        String since = INTERFACE_SINCE.get(owner);
+        return since != null && RetromodVersion.compareMcVersions(
+                RetromodVersion.TARGET_MC_VERSION, since) >= 0;
     }
 
     private class RetromodClassVisitor extends ClassVisitor {
@@ -3164,6 +3332,12 @@ public class RetromodTransformer implements ClassFileTransformer {
             // Check if superclass needs to be rewritten (class-to-interface polyfill)
             if (superName != null && !superclassRedirects.isEmpty()) {
                 SuperclassRedirect redirect = superclassRedirects.get(superName);
+                if (redirect != null && isLegacyBaseSaturated(redirect.newSuperclass())) {
+                    LOGGER.warn("Not rebasing {} onto the saturated base {}; leaving {} in place so "
+                            + "the failure names the removed class instead of failing verification.",
+                            name, redirect.newSuperclass(), superName);
+                    redirect = null;
+                }
                 if (redirect != null) {
                     LOGGER.debug("Rewriting superclass of {} from {} to {}",
                             name, superName, redirect.newSuperclass());
@@ -3174,7 +3348,79 @@ public class RetromodTransformer implements ClassFileTransformer {
                     return;
                 }
             }
+
+            reportIllegalSuperclass(name, superName);
+
             super.visit(version, access, name, signature, superName, interfaces);
+        }
+
+        /**
+         * Report a superclass that the host cannot possibly accept, naming the redirect that
+         * produced it.
+         *
+         * <p>{@code superName} has already been through the class remapper here, so this sees the
+         * name that would be written to the output. A class move is a flat rename and does not
+         * know which slot it lands in, so a destination that is fine as a type can be final, an
+         * interface, or absent, and therefore illegal to extend. Without this the mod loads to
+         * {@code IncompatibleClassChangeError} with no mention of Retromod, the mod's real base
+         * class, or the table row responsible (#260).
+         *
+         * <p>This reports and does not repair. Undoing the rename on the {@code extends} slot alone
+         * would leave the {@code super(...)} call pointing at the new owner, which fails
+         * verification instead of linkage. A base that mods genuinely extend needs a registered
+         * {@link #registerSuperclassRebase} to a class that carries the old constructors, and the
+         * block above applies that when one exists.
+         */
+        private void reportIllegalSuperclass(String className, String superName) {
+            if (superName == null || classRedirects.isEmpty()) return;
+            if (!superName.startsWith("net/minecraft/") && !superName.startsWith("com/mojang/")) {
+                return;
+            }
+            SuperclassSafety.Verdict verdict = superclassVerdicts.computeIfAbsent(
+                    superName, n -> SuperclassSafety.classify(n, fuzzyResolver));
+            if (!SuperclassSafety.cannotBeExtended(verdict)) return;
+            // Keyed on the base, not the class: a mod's whole model or item package usually extends
+            // the same one, and repeating the explanation per subclass buries it.
+            if (!reportedIllegalSuperclasses.add(superName)) {
+                LOGGER.debug("{} also extends the unusable base {}", className, superName);
+                return;
+            }
+
+            String original = soleRedirectSourceOf(superName);
+            LOGGER.error("{} extends {}, which {} on this Minecraft version, so this mod cannot "
+                    + "load. {} Retromod has no replacement base for it yet. Report this line with "
+                    + "the mod and its version. Any other class extending the same base fails the "
+                    + "same way.",
+                    className, superName, describe(verdict),
+                    original == null
+                            ? "Minecraft removed it outright rather than moving it."
+                            : "It came from the class move " + original + " -> " + superName + ".");
+        }
+
+        /**
+         * The one registered class move that produces {@code destination}, or null when none does
+         * or when several do. Several sources collapsing onto one destination is real in the
+         * tables (both weighted-list classes map to WeightedList), and naming an arbitrary one of
+         * them in an error message would send the reader to the wrong row.
+         */
+        private String describe(SuperclassSafety.Verdict verdict) {
+            return switch (verdict) {
+                case INTERFACE -> "is an interface and belongs in implements, not extends";
+                case FINAL_CLASS -> "is final and cannot be a superclass";
+                case SEALED -> "is sealed and permits only its own listed subclasses";
+                case ABSENT -> "does not exist";
+                case CLASS, UNKNOWN -> "is usable";
+            };
+        }
+
+        private String soleRedirectSourceOf(String destination) {
+            String found = null;
+            for (Map.Entry<String, String> entry : classRedirects.entrySet()) {
+                if (!entry.getValue().equals(destination)) continue;
+                if (found != null) return null;
+                found = entry.getKey();
+            }
+            return found;
         }
 
         private String[] mergeInterfaces(String[] existing, String[] additional) {
@@ -3950,7 +4196,8 @@ public class RetromodTransformer implements ClassFileTransformer {
                     && classSuperNameOriginal != null && owner.equals(classSuperNameOriginal)
                     && !superclassRedirects.isEmpty()) {
                 SuperclassRedirect rebase = superclassRedirects.get(owner);
-                if (rebase != null && rebase.rewriteSuperCtor()) {
+                if (rebase != null && rebase.rewriteSuperCtor()
+                        && absorbsOrIsNotGenerated(rebase.newSuperclass(), descriptor)) {
                     LOGGER.debug("Rebased super() owner: {}.<init>{} -> {}",
                             owner, descriptor, rebase.newSuperclass());
                     super.visitMethodInsn(Opcodes.INVOKESPECIAL, rebase.newSuperclass(),
@@ -4541,6 +4788,15 @@ public class RetromodTransformer implements ClassFileTransformer {
     ) {}
     /** Superclass rewrite: changes extends + adds interface implementations. */
     public record SuperclassRedirect(String newSuperclass, String[] addInterfaces, boolean rewriteSuperCtor) {}
+
+    /**
+     * A generated stand-in for a deleted base class, plus every {@code super(...)} descriptor seen
+     * so far. The descriptor set grows as mods are transformed, and the generated bytes are rebuilt
+     * each time it does, so the stand-in ends up carrying exactly the constructors the mods in this
+     * run actually call rather than a guessed list of historical shapes.
+     */
+    private record LegacyBaseSpec(String modernBase, String modernCtorDesc,
+            java.util.Set<String> observedCtorDescs) {}
     /** Lookup key for constructor redirects: matches (class being constructed, constructor descriptor). */
     public record ConstructorKey(String className, String constructorDesc) {}
     /** Target of a constructor→factory redirect: the static method to call instead. */
