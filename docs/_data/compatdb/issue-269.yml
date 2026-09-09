@@ -1,0 +1,14 @@
+name: "Cracker's Wither Storm"
+badge: borked
+mod_version: "4.2.1 | 1.20.1"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.3.0-rc.1"
+links:
+  modrinth: "https://modrinth.com/mod/crackers-wither-storm-mod"
+summary: "Crashes due to mixin issue."
+details: "- Crashes on startup due to a mixin not having a certain field exposed."
+reporter: "agmass"
+date: "2026-09-09"
+issue: 269
+
