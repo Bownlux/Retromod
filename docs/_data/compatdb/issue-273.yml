@@ -1,0 +1,15 @@
+name: "Refined Storage Delight"
+badge: borked
+mod_version: "1.0.3.1-1.20.1"
+source_mc: "1.20.1"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.3.0-rc1"
+links:
+  github: "https://metamods.net/en/mods/refined-storage-delight"
+summary: "Farmer Delight dependency is hardcoded, using 1.20.1-{version} for dependency, making it inherently incompatible with 1.21.1"
+details: "(Sorry in advance for the mod's source link, it's literally the only place I could find it.) ``` ---- Minecraft Crash Report ---- // Shall we play a game? Time: 2026-09-12 23:21:34 Description: Mod loading failures have occurred; consult the issue messages for more details net.neoforged.neoforge.logging.CrashReportExtender$ModLoadingCrashException: Mod loading has failed A detailed walkthrough of the error, its code path and all known details is as follows: --------------------------------------------------------------------------------------- -- Mod loading issue for: refinedstoragedelight -- Details: 	Mod file: /C:/Users/ztedu/AppData/Roaming/PrismLauncher/instances/1.21.1/minecraft/mods/refinedstoragedelight-1.0.3.1-1.20.1-retromod.jar 	Failure message: Mod refinedstoragedelight requires farmersdelight 1.20.1-1.2.4 or above 		Currently, farmersdelight is 1.3.4 		 	Mod version: 1.0.3.1-1.20.1 	Mod issues URL: <No issues URL found> 	Exception message: <No associated exception found> ```"
+reporter: "ledfwil"
+date: "2026-09-13"
+issue: 273
+
