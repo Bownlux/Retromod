@@ -113,9 +113,12 @@ public class TileEntityPolyfill implements PolyfillProvider {
             "net/minecraft/tileentity/TileEntityEnderChest",
             "net/minecraft/world/level/block/entity/EnderChestBlockEntity");
 
+        // Lives in the piston package, not block.entity, and has since before 1.21.1 (checked
+        // against Mojang's 1.21.1 mappings and the 26.3 jar). The old destination resolved to
+        // nothing, so this traded one missing class for another.
         transformer.registerClassRedirect(
             "net/minecraft/tileentity/TileEntityPiston",
-            "net/minecraft/world/level/block/entity/PistonMovingBlockEntity");
+            "net/minecraft/world/level/block/piston/PistonMovingBlockEntity");
 
         transformer.registerClassRedirect(
             "net/minecraft/tileentity/TileEntitySkull",

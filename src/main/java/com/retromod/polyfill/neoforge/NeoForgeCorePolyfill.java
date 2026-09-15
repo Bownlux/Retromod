@@ -9,8 +9,16 @@ import com.retromod.polyfill.PolyfillProvider;
 
 /**
  * Polyfill for removed NeoForge APIs.
- * Covers Transfer API (ItemStackHandler, ComponentItemHandler),
- * rendering events (RenderHighlightEvent), and annotation changes.
+ *
+ * <p>Covers the removed block-outline render event and the {@code javax.annotation} stubs that
+ * NeoForge stopped shipping.
+ *
+ * <p>It used to claim the Transfer API rework removed {@code ItemStackHandler} and
+ * {@code ComponentItemHandler} and pointed both at {@code IItemHandlerShim}. Neither class was
+ * removed: both are still present on 26.1 with their old shape, and the shim was a static utility
+ * with a private constructor, so a mod doing {@code new ItemStackHandler(9)} or extending it was
+ * rewritten onto something it could not construct or subclass. Only the loader entry points
+ * disabled this category, so the damage landed on the offline CLI and AOT paths.
  */
 public class NeoForgeCorePolyfill implements PolyfillProvider {
 
@@ -27,8 +35,6 @@ public class NeoForgeCorePolyfill implements PolyfillProvider {
     @Override
     public String[] getRemovedClasses() {
         return new String[]{
-            "net/neoforged/neoforge/items/ItemStackHandler",
-            "net/neoforged/neoforge/items/ComponentItemHandler",
             "net/neoforged/neoforge/client/event/RenderHighlightEvent",
             "net/neoforged/neoforge/client/event/RenderHighlightEvent$Block",
             "javax/annotation/Nullable",
@@ -39,9 +45,6 @@ public class NeoForgeCorePolyfill implements PolyfillProvider {
     @Override
     public String[] getPolyfillClasses() {
         return new String[]{
-            // Stubs relocated to com.retromod.shim.neoforge.embedded to avoid
-            // JPMS split-package conflicts on NeoForge 26.1+
-            "com.retromod.shim.neoforge.embedded.IItemHandlerShim",
             "javax.annotation.Nullable",
             "javax.annotation.Nonnull"
         };
@@ -49,17 +52,8 @@ public class NeoForgeCorePolyfill implements PolyfillProvider {
 
     @Override
     public void registerPolyfills(RetromodTransformer transformer) {
-        // Register class redirects so the transformer rewrites references
-        // from removed NeoForge classes to our embedded shim implementations
-        transformer.registerClassRedirect(
-            "net/neoforged/neoforge/items/ItemStackHandler",
-            "com/retromod/shim/neoforge/embedded/IItemHandlerShim"
-        );
-        transformer.registerClassRedirect(
-            "net/neoforged/neoforge/items/ComponentItemHandler",
-            "com/retromod/shim/neoforge/embedded/IItemHandlerShim"
-        );
-
+        // RenderHighlightEvent is genuinely gone, but replacing it needs the block-outline render
+        // state, so it is reported as removed rather than redirected somewhere that cannot answer.
         for (String cls : getPolyfillClasses()) {
             transformer.registerEmbeddedShim(cls);
         }

@@ -174,9 +174,12 @@ public class BlockPolyfill implements PolyfillProvider {
             "net/minecraft/block/BlockAnvil",
             "net/minecraft/world/level/block/AnvilBlock");
 
+        // GlassBlock was folded into TransparentBlock, which keeps the same
+        // (BlockBehaviour.Properties) constructor. Verified absent on 26.1 through 26.3, and
+        // already gone in Mojang's 1.21.1 mappings, so the old destination never resolved there.
         transformer.registerClassRedirect(
             "net/minecraft/block/BlockGlass",
-            "net/minecraft/world/level/block/GlassBlock");
+            "net/minecraft/world/level/block/TransparentBlock");
 
         transformer.registerClassRedirect(
             "net/minecraft/block/BlockStainedGlass",

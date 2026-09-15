@@ -139,12 +139,12 @@ mvn package -P lite -DskipTests -Dexec.skip=true
 mvn exec:java -Dexec.mainClass="com.retromod.cli.RetromodCli" -Dexec.args="<command>" -q
 
 # Run the executable release CLI (dependencies bundled)
-java -jar dist/CLI/retromod-1.3.0-rc.1-cli.jar <command>
+java -jar dist/CLI/retromod-1.3.0-cli.jar <command>
 ```
 
 **Important:** Always pass `-Dexec.skip=true` during build to prevent Maven from running the CLI entrypoint.
 
-Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 68 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.3.0-rc.1-cli.jar`.
+Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 70 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.3.0-cli.jar`.
 
 ## Release integrity (self-hash)
 
@@ -153,21 +153,21 @@ Official builds embed a SHA-256 of the executable release surface in `SignatureV
 **Embed the hash as the LAST release step** (any covered code, provider, or transformation-data change shifts it):
 ```bash
 mvn clean package -Dexec.skip=true                          # build the final jars
-python3 scripts/compute-self-hash.py target/retromod-1.3.0-rc.1-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.3.0-all.jar
 # embed the 64-hex result into SignatureVerifier.EXPECTED_SELF_HASH PROGRAMMATICALLY
 # (sed/python - never hand-typed), rebuild, then re-run the compute script and
 # compare against the embedded value (closed-loop verify)
 ```
 The excluded loader-variant classes are the only covered-surface differences between distributions, so **one value matches every per-loader dist jar and the standalone CLI** from `build-all.sh`. In dev, leave `EXPECTED_SELF_HASH=""`: the verifier then reports `UNKNOWN` and logs the computed hash so you can grab it. No keystore, no signing.
 
-After embedding and rebuilding, run `bash build-all.sh --skip-build --require-self-hash`. A complete release has 23 Fabric, 23 Forge, 22 NeoForge, and 1 CLI artifact. That is 68 loader jars plus the CLI, or 69 artifacts total. Verify all rows in `dist/SHA256SUMS.txt` before publishing.
+After embedding and rebuilding, run `bash build-all.sh --skip-build --require-self-hash`. A complete release has 24 Fabric, 23 Forge, 23 NeoForge, and 1 CLI artifact. That is 70 loader jars plus the CLI, or 71 artifacts total. Forge stops at 26.2 because Forge has published no 26.3 build. Verify all rows in `dist/SHA256SUMS.txt` before publishing.
 
-**`build-all.sh` removes generated `retromod-*.jar` files only after its build and integrity preflight passes.** It preserves other files under `dist/`, including `dist/MODRINTH_CHANGELOG.md`. Clear `dist/` before a version-bumped release build, then recreate that hand-written release note with the final self-hash. Confirm the tree with `PYTHONPATH=. python3 -c "from scripts.release_artifacts import validate_release_artifacts as v; v('<version>')"` and check the self-hash is one value across a Fabric, Forge, NeoForge, and the CLI jar. Modrinth and CurseForge receive only the 68 loader jars; the CLI and checksum manifest ship on GitHub Releases.
+**`build-all.sh` removes generated `retromod-*.jar` files only after its build and integrity preflight passes.** It preserves other files under `dist/`, including `dist/MODRINTH_CHANGELOG.md`. Clear `dist/` before a version-bumped release build, then recreate that hand-written release note with the final self-hash. Confirm the tree with `PYTHONPATH=. python3 -c "from scripts.release_artifacts import validate_release_artifacts as v; v('<version>')"` and check the self-hash is one value across a Fabric, Forge, NeoForge, and the CLI jar. Modrinth and CurseForge receive only the 70 loader jars; the CLI and checksum manifest ship on GitHub Releases.
 
 ## Deploy to Minecraft
 
 ```bash
-cp dist/Fabric/26.1/retromod-1.3.0-rc.1+26.1.jar ~/Library/Application\ Support/minecraft/mods/
+cp dist/Fabric/26.1/retromod-1.3.0+26.1.jar ~/Library/Application\ Support/minecraft/mods/
 ```
 
 Game directory (macOS): `~/Library/Application Support/minecraft/`

@@ -9,7 +9,7 @@ Retromod installs like a normal mod. There is no separate installer.
 
 ## Requirements
 
-- A supported host build: Fabric, Quilt, or Forge on Minecraft 1.20 through 26.2, or NeoForge on Minecraft 1.20.1 through 26.2
+- A supported host build: Fabric or Quilt on Minecraft 1.20 through 26.3, Forge on 1.20 through 26.2, or NeoForge on 1.20.1 through 26.3
 - The Java version required by Minecraft: Java 17 for 1.20-1.20.4, Java 21 for 1.20.5-1.21.x, and Java 25 for 26.x
 - Fabric API on Fabric
 - The matching Fabric API on Quilt. On older hosts where Quilted Fabric API is available, it is also supported.
@@ -18,7 +18,7 @@ Download the jar that matches both your loader and Minecraft version from [Modri
 
 Every build is also on [GitHub Releases](https://github.com/Bownlux/Retromod/releases) if you prefer to grab it directly.
 
-Choose a jar from the matching loader and Minecraft folder. Quilt uses the Fabric jar for the same Minecraft version. That artifact carries both `fabric.mod.json` and `quilt.mod.json`. There is no separate Quilt jar. The release matrix contains 23 shared Fabric and Quilt jars, 23 Forge jars, and 22 NeoForge jars. The separate `retromod-1.3.0-rc.1-cli.jar` is a command-line tool, not a mod, and does not belong in `mods/`. That is 68 loader jars and 1 CLI artifact, or 69 artifacts total.
+Choose a jar from the matching loader and Minecraft folder. Quilt uses the Fabric jar for the same Minecraft version. That artifact carries both `fabric.mod.json` and `quilt.mod.json`. There is no separate Quilt jar. The release matrix contains 23 shared Fabric and Quilt jars, 23 Forge jars, and 22 NeoForge jars. The separate `retromod-1.3.0-cli.jar` is a command-line tool, not a mod, and does not belong in `mods/`. That is 68 loader jars and 1 CLI artifact, or 69 artifacts total.
 
 Before testing a translated mod, copy the instance or back up every world you care about. Retromod backs up mod jars, not Minecraft saves. Start with a new test world when the mod changes world generation, registries, inventories, entities, or save data.
 

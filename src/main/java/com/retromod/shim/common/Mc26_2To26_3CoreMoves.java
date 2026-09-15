@@ -41,7 +41,8 @@ public final class Mc26_2To26_3CoreMoves {
     public static void register(RetromodTransformer t) {
         registerRenderLibraryRepackage(t);
         registerVanillaMoves(t);
-    }
+            registerRemovedToolBases(t);
+}
 
     /** {@code com/mojang/blaze3d} became {@code com/mojang/renderpearl} (182 classes). */
     private static void registerRenderLibraryRepackage(RetromodTransformer t) {
@@ -516,5 +517,27 @@ public final class Mc26_2To26_3CoreMoves {
         t.registerClassRedirect(loot + "ScoreboardValue", loot + "ints/ScoreboardValue");
         t.registerClassRedirect(loot + "EnchantmentLevelProvider",
                 loot + "floats/EnchantmentLevelProvider");
+    }
+
+    /**
+     * Tool classes 26.3 removed, rebased onto {@code Item}.
+     *
+     * <p>{@code AxeItem}, {@code ShovelItem} and {@code HoeItem} outlived the rest of the tool
+     * hierarchy: they are still present on 26.1 and 26.2 and go at 26.3. That is why they sit here
+     * rather than with the bases {@link com.retromod.shim.common.RemovedItemBaseBridge} handles.
+     * A rebase does not check whether the host still has the class, so registering these from the
+     * 26.1 bridge would take a mod off a class that works on the host it is running on.
+     *
+     * <p>Their material and mining arguments are components now, so the generated base drops them.
+     * The tool registers and behaves as a plain item until its mod sets those components.
+     */
+    private static void registerRemovedToolBases(RetromodTransformer t) {
+        for (String removed : new String[]{"AxeItem", "ShovelItem", "HoeItem"}) {
+            t.registerGeneratedLegacyBase(
+                    "net/minecraft/world/item/" + removed,
+                    "com/retromod/generated/Legacy" + removed,
+                    "net/minecraft/world/item/Item",
+                    "(Lnet/minecraft/world/item/Item$Properties;)V");
+        }
     }
 }

@@ -32,6 +32,34 @@ public final class RemovedItemBaseBridge {
     private static final String GENERATED_ENCHANTED_BOOK =
             "com/retromod/generated/LegacyEnchantedBookItem";
 
+    /**
+     * Item subclasses 26.x removed that a mod extends directly, all of which sat on {@code Item}.
+     *
+     * <p>The tool classes were a chain, {@code SwordItem} and {@code DiggerItem} on
+     * {@code TieredItem} on {@code Item}, and every link of it is gone: material, mining level and
+     * attack damage are components now. The rest each held one behaviour that became a component.
+     * Only classes already absent on 26.1 belong in this list, because the bridge that registers it
+     * applies from 26.1 up and a rebase is not conditional on the class being missing.
+     * Checked against the 1.20.1 Mojang-mapped jar for what they extended, and against 26.3 for
+     * which of those bases survived, so each lands on a real class rather than the nearest name.
+     *
+     * <p>A mod with custom tools or armour is most of what people translate, and every one of them
+     * stopped at the {@code extends}. Rebasing keeps the item registering with its name, texture,
+     * recipe and tab. What the old base did with its other constructor arguments does not come
+     * back: a rebased sword is an ordinary item until its mod sets the components itself.
+     */
+    private static final String[] REMOVED_ITEM_BASES = {
+        // Tools and weapons. AxeItem, ShovelItem and HoeItem are NOT here: they survived into
+        // 26.1 and 26.2 and only went at 26.3, so they are registered by the 26.3 shim, which
+        // only applies on a host that actually lost them.
+        "SwordItem", "PickaxeItem", "DiggerItem", "TieredItem",
+        // Wearables that were plain Item subclasses.
+        "ArmorItem", "AnimalArmorItem", "ElytraItem",
+        // One behaviour each, all of it now a component.
+        "BookItem", "BannerPatternItem", "ChorusFruitItem", "HoneyBottleItem", "MilkBucketItem",
+        "SuspiciousStewItem", "OminousBottleItem", "FireworkStarItem", "SaddleItem", "ComplexItem",
+    };
+
     private RemovedItemBaseBridge() {}
 
     public static void register(RetromodTransformer transformer) {
@@ -48,5 +76,18 @@ public final class RemovedItemBaseBridge {
         transformer.registerGeneratedLegacyBase(
                 "net/minecraft/world/item/EnchantedBookItem", GENERATED_ENCHANTED_BOOK,
                 ITEM, ITEM_CTOR);
+
+        for (String removed : REMOVED_ITEM_BASES) {
+            transformer.registerGeneratedLegacyBase(
+                    "net/minecraft/world/item/" + removed,
+                    "com/retromod/generated/Legacy" + removed,
+                    ITEM, ITEM_CTOR);
+        }
+
+        // Not bridged here: BedItem and ItemNameBlockItem sat on BlockItem, and SignItem on
+        // StandingAndWallBlockItem. Both of those bases survive, so the right base is one of them
+        // rather than Item, and their constructors take the block before the properties while the
+        // old ones took it after. Rebasing those needs argument reordering, which the constructor
+        // absorber refuses on purpose, so they still report rather than guess.
     }
 }

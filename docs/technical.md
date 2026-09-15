@@ -62,7 +62,7 @@ Minecraft version shims form the transition graph between source and host releas
 
 Staged resource packs enter through `retromod-input/resourcepacks/`. Successful output goes to `resourcepacks/`, then the source moves to `retromod-input/resourcepacks/processed/`. Staged data packs enter through `retromod-input/datapacks/`. Their output waits in `retromod-output/datapacks/` because the loader does not know the target world during startup. A successful data pack source moves to `retromod-input/datapacks/processed/`.
 
-Pack processing runs on Fabric, Quilt, Forge, and NeoForge. Retromod uses the exact resource and data format for every published host through 26.2, including minor format components. It preserves unrelated `pack.mcmeta` fields. It refuses unknown hosts, malformed ranges, newer-only input, unsupported archives, and overlay metadata that needs a range rewrite. Refused input stays staged.
+Pack processing runs on Fabric, Quilt, Forge, and NeoForge. Retromod uses the exact resource and data format for every published host through 26.3, including minor format components. It preserves unrelated `pack.mcmeta` fields. It refuses unknown hosts, malformed ranges, newer-only input, unsupported archives, and overlay metadata that needs a range rewrite. Refused input stays staged.
 
 Data packs run the shared 26.x content migrator even when `pack.mcmeta` already advertises the target format. Legacy resource packs run item-definition and content migration only during an actual format upgrade. A compatible pack that needs no content change is copied without rewriting its payload.
 

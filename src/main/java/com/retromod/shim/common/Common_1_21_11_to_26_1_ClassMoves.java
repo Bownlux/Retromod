@@ -27,6 +27,7 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         // Deleted item bases that mods extend. A class move cannot express a deletion, and
         // pointing one at the nearest surviving name produced an inheritance error instead (#260).
         RemovedItemBaseBridge.register(transformer);
+        RemovedBaseToParentBridge.register(transformer);
 
         registerOfficialEntityTypeBuildBridge(transformer);
         registerLegacyContainerInput(transformer);
@@ -96,21 +97,34 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         registerRegistryValueGetterRename(transformer);
         registerClientAccessorRenames26_1(transformer);
         registerCorpus26xDescriptorAdaptations(transformer);
-    }
+    
+        // Every loader needs this: the old RULE_* spelling is the pre-26.1 Mojang name, so a
+        // NeoForge or Forge mod from 1.20 or 1.21 carries it just as a Fabric one does.
+        registerGameRuleFieldRenames(transformer);
+}
 
     /**
-     * Repairs the GameRules constant rename that occurred after the bundled 1.21.4 intermediary
-     * mapping was generated. Fabric kept the same field ids, so a current Fabric mod still carries
-     * names such as {@code field_19388}; the base map expands those ids to the old {@code RULE_*}
-     * spelling before this owner-scoped pass selects the 26.1 field. Every entry below was matched
-     * through the 1.21.11 intermediary mapping and verified on the 26.1.2 host class.
+     * Repairs the GameRules constant rename that 26.1 made.
+     *
+     * <p>This runs for every loader. It was Fabric only, on the reasoning that a Mojang-named
+     * loader already carries the current names, which holds only for a mod built after the rename.
+     * A 1.20 or 1.21 NeoForge or Forge mod writes {@code GameRules.RULE_MOBGRIEFING} because that
+     * was the Mojang name then, and it died with {@code NoSuchFieldError} on 26.x. The test mod
+     * catches it, which is how this was found; game rules are common enough in modded code that it
+     * is worth stating plainly that the old spelling is a Mojang name too, not a Fabric artifact.
+     *
+     * <p>Fabric reaches it by a second route: Fabric kept the same field ids, so a current Fabric
+     * mod still carries names such as {@code field_19388}, and the base map expands those ids to
+     * the old {@code RULE_*} spelling before this owner-scoped pass selects the 26.1 field. Every
+     * entry below was matched through the 1.21.11 intermediary mapping and verified on the 26.1.2
+     * host class.
      *
      * <p>Retromod refuses {@code RULE_DOFIRETICK}, whose boolean contract became a radius, and the
      * three negative-to-positive rules {@code RULE_DISABLE_ELYTRA_MOVEMENT_CHECK},
      * {@code RULE_DISABLE_PLAYER_MOVEMENT_CHECK}, and {@code RULE_DISABLE_RAIDS}. A field rename
      * cannot preserve those values without an inversion adapter.</p>
      */
-    public static void registerFabricGameRuleFieldRenames(RetromodTransformer transformer) {
+    public static void registerGameRuleFieldRenames(RetromodTransformer transformer) {
         String owner = "net/minecraft/world/level/gamerules/GameRules";
         String descriptor = "Lnet/minecraft/world/level/gamerules/GameRule;";
         String[][] renames = {
@@ -163,9 +177,19 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
             {"RULE_UNIVERSAL_ANGER", "UNIVERSAL_ANGER"},
             {"RULE_WATER_SOURCE_CONVERSION", "WATER_SOURCE_CONVERSION"}
         };
+        // Registered under both spellings of the owner. A mod built before 26.1 names
+        // world/level/GameRules and the class move carries it to gamerules/GameRules, but a field
+        // redirect is keyed on the owner it is asked about, and which of the two that is depends on
+        // whether the remap has already run on this pass. Keying both means the rename lands either
+        // way, and the pre-move entry also repoints the owner itself, so one rewrite does both.
+        String legacyOwner = "net/minecraft/world/level/GameRules";
+        String legacyDescriptor = "Lnet/minecraft/world/level/GameRules$Key;";
         for (String[] rename : renames) {
             transformer.registerFieldRedirect(
                     owner, rename[0], descriptor,
+                    owner, rename[1], descriptor);
+            transformer.registerFieldRedirect(
+                    legacyOwner, rename[0], legacyDescriptor,
                     owner, rename[1], descriptor);
         }
     }

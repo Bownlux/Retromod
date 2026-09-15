@@ -33,9 +33,9 @@ record PackFormat(int major, int minor) implements Comparable<PackFormat> {
         entry("26.1.1", 84, 0, 101, 1),
         entry("26.1.2", 84, 0, 101, 1),
         entry("26.2", 88, 0, 107, 1),
-        // 26.3 is still in pre-release. These are 26.3-pre-2's own version.json values and will
-        // move again before release, so treat them as tracking the pre-release rather than final.
-        entry("26.3", 97, 1, 120, 0)
+        // Read from the released 26.3 client's own version.json. The data format moved from 120 to
+        // 121 between pre-2 and release, which is why a pre-release value is never left in place.
+        entry("26.3", 97, 1, 121, 0)
     );
 
     PackFormat {
@@ -52,8 +52,21 @@ record PackFormat(int major, int minor) implements Comparable<PackFormat> {
         return target(minecraftVersion).data();
     }
 
+    /**
+     * Pack formats for a host version, including a pre-release of one.
+     *
+     * <p>A pre-release host reports its own id, so a 26.3 release candidate arrives as
+     * {@code 26.3-rc.1} and never matched the {@code 26.3} key. That threw while the resource
+     * manager was being built, which on a Fabric client means every pack transform is skipped for
+     * the whole session on exactly the builds people run in the weeks before a release. The shim
+     * registry already knows every spelling a milestone answers to, so ask it rather than keeping
+     * a second list here.
+     */
     private static TargetFormats target(String minecraftVersion) {
         TargetFormats formats = TARGETS.get(minecraftVersion);
+        if (formats == null && minecraftVersion != null) {
+            formats = TARGETS.get(com.retromod.shim.ShimRegistry.resolveVersion(minecraftVersion));
+        }
         if (formats == null) {
             throw new IllegalArgumentException("Unsupported Minecraft pack target: "
                 + minecraftVersion + ". Use a published Retromod host version.");

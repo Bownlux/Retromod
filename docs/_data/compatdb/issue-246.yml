@@ -1,0 +1,15 @@
+name: "The Slumbering Omen"
+bundle: true
+badge: borked
+host_mc: "1.20.1"
+loader: "forge"
+retromod: "4.2.0"
+mods:
+  - name: "The Slumbering Omen"
+    link: "https://www.curseforge.com/minecraft/mc-mods/the-slumbering-omen"
+summary: "Game failed to start and crashed directly."
+details: "[2026-08-26 20:49:27.456] [INFO] [dev.kostromdan.mods.crash_assistant.app.CrashAssistantApp]: Reading finished in 7 ms [2026-08-26 20:49:27.716] [INFO] [LogAnalysisScripts]: Running script: log_analysis/example.jexl [2026-08-26 20:49:27.774] [INFO] [dev.kostromdan.mods.crash_assistant.app.CrashAssistantApp]: Analysis finished in 363 ms [2026-08-26 20:49:27.786] [INFO] [dev.kostromdan.mods.crash_assistant.app.CrashAssistantApp]: Showing KnownCrashReason: MissingUnsupportedDependencies   We detected a dependency conflict in the **latest.log**. Missing or unsupported mandatory dependencies:     Mod ID: 'minecraft', Requested by: 'the_slumbering_omen', Expected range: '[1.19.2,1.19.2]', Actual version: '1.20.1'   To resolve this issue, please **carefully** read the above message and attempt to resolve all conflicts.   Mapping of mod IDs to JAR names (for reference only): the_slumbering_omen -> theslumberingomen4.2unfinished.jar   [2026-08-26 20:49:36.445] [INFO] [dev.kostromdan.mods.crash_assistant.app.CrashAssistantApp]: Shown KnownCrashReason: MissingUnsupportedDependencies (Seen warning for 8.586s) [2026-08-26 20:50:03.036] [INFO] [dev.kostromdan.mods.crash_assistant.app.CrashAssistantApp]: Crash Assistant closed."
+reporter: "WindowsdePC"
+date: "2026-08-28"
+issue: 246
+

@@ -105,10 +105,14 @@ public class JeiApiShim implements AuxiliaryVersionShim {
             "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;DD)V"
         );
 
-        transformer.registerClassRedirect(
-            "com/mojang/blaze3d/vertex/PoseStack",
-            "net/minecraft/client/gui/GuiGraphics"
-        );
+        // PoseStack is deliberately NOT redirected to GuiGraphics here. JEI swapped the parameter
+        // type on its own draw(), which the redirect above already handles by taking it as Object.
+        // A class redirect is global: it rewrote every PoseStack in the mod, including the 3D stack
+        // an entity renderer uses, which has nothing to do with JEI. The 26.1 move then carried
+        // GuiGraphics on to GuiGraphicsExtractor, so an ordinary pushPose became
+        // GuiGraphicsExtractor.pushPose, a method that does not exist. Scanning 13 popular mods
+        // found this in 12 of them, around 500 call sites. PoseStack is present on 26.1, 26.2 and
+        // 26.3, so there is nothing to redirect it to in the first place.
 
         // IRecipeLayout.getItemStacks() was replaced by a different slot system.
         transformer.registerMethodRedirect(

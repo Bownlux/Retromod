@@ -1,0 +1,42 @@
+# Inner classes that move into a different outer, where that outer has no row of its own.
+#
+# Most of these are fine: the outer class still exists on the host, so a mod naming it needs no
+# repair and only the inner moved. Some are not: GameRules had its row deleted while its
+# VisitorCaller row stayed, and a mod reading a game rule died with NoClassDefFoundError until the
+# test mod caught it in game.
+#
+# Telling the two apart needs the host jars and the member comparison the audit does, which the
+# suite has neither of. So this file records the ones present when the check was written, and
+# OuterClassMoveCoverageTest fails only on a NEW one, which is the case worth a second look.
+# Resolving one means adding its row above and deleting its line here.
+net/minecraft/advancements/AdvancementList	net/minecraft/advancements/AdvancementTree
+net/minecraft/advancements/critereon/ItemAttributeModifiersPredicate	net/minecraft/core/component/predicates/AttributeModifiersPredicate
+net/minecraft/advancements/critereon/ItemFireworkExplosionPredicate	net/minecraft/core/component/predicates/FireworkExplosionPredicate
+net/minecraft/advancements/critereon/KilledByCrossbowTrigger	net/minecraft/advancements/criterion/KilledByArrowTrigger
+net/minecraft/client/gui/MapRenderer	net/minecraft/client/resources/MapTextureManager
+net/minecraft/client/gui/components/DebugScreenOverlay	net/minecraft/client/gui/components/debug/DebugEntryMemory
+net/minecraft/client/gui/screens/reporting/ChatReportScreen	net/minecraft/client/gui/screens/reporting/AbstractReportScreen
+net/minecraft/client/gui/screens/worldselection/CreateWorldScreen	net/minecraft/client/gui/screens/worldselection/WorldCreationUiState
+net/minecraft/client/multiplayer/ClientPacketListener	net/minecraft/client/multiplayer/ClientCommonPacketListenerImpl
+net/minecraft/client/multiplayer/chat/report/ChatReportBuilder	net/minecraft/client/multiplayer/chat/report/Report
+net/minecraft/client/particle/ParticleEngine	net/minecraft/client/particle/ParticleResources
+net/minecraft/client/renderer/LevelRenderer	net/minecraft/client/renderer/SectionOcclusionGraph
+net/minecraft/client/renderer/block/ModelBlockRenderer	net/minecraft/client/renderer/block/BlockModelLighter
+net/minecraft/client/renderer/block/model/BlockModel	net/minecraft/client/resources/model/UnbakedModel
+net/minecraft/client/renderer/block/model/BlockModel	net/minecraft/client/resources/model/cuboid/CuboidModel
+net/minecraft/client/renderer/chunk/ChunkRenderDispatcher	net/minecraft/client/renderer/chunk/SectionCompiler
+net/minecraft/client/resources/model/BlockStateModelLoader	net/minecraft/client/resources/model/ModelGroupCollector
+net/minecraft/client/resources/model/ModelBakery	net/minecraft/client/resources/model/ModelGroupCollector
+net/minecraft/item/Item	net/minecraft/world/item/Item
+net/minecraft/server/commands/TeleportCommand	net/minecraft/server/commands/LookAt
+net/minecraft/world/entity/AgableMob	net/minecraft/world/entity/AgeableMob
+net/minecraft/world/item/FireworkRocketItem	net/minecraft/world/item/component/FireworkExplosion
+net/minecraft/world/level/biome/Biome	net/minecraft/world/level/biome/Climate
+net/minecraft/world/level/block/PressurePlateBlock	net/minecraft/world/level/block/state/properties/BlockSetType
+net/minecraft/world/level/block/entity/BeaconBlockEntity	net/minecraft/world/level/block/entity/BeaconBeamOwner
+net/minecraft/world/level/levelgen/feature/SpikeFeature	net/minecraft/world/level/levelgen/feature/EndSpikeFeature
+net/minecraft/world/level/levelgen/feature/stateproviders/RuleBasedBlockStateProvider	net/minecraft/world/level/levelgen/feature/stateproviders/RuleBasedStateProvider
+net/minecraft/world/level/levelgen/structure/MineShaftPieces	net/minecraft/world/level/levelgen/structure/structures/MineshaftPieces
+net/minecraft/world/level/levelgen/structure/NetherBridgePieces	net/minecraft/world/level/levelgen/structure/structures/NetherFortressPieces
+net/minecraft/world/level/storage/loot/functions/CopyNbtFunction	net/minecraft/world/level/storage/loot/functions/CopyCustomDataFunction
+net/minecraft/world/level/storage/loot/functions/LootingEnchantFunction	net/minecraft/world/level/storage/loot/functions/EnchantedCountIncreaseFunction

@@ -12,8 +12,8 @@ import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
 
 /**
- * Shim for NeoForge 1.21.8 mods on 1.21.9+: Transfer API rework, FML state access,
- * KeyMapping category records, and the RenderHighlightEvent removal.
+ * Shim for NeoForge 1.21.8 mods on 1.21.9+: the FMLLoader static-to-instance move,
+ * and KeyMapping category records.
  */
 public class NeoForge_1_21_8_to_1_21_9 implements VersionShim {
     
@@ -37,62 +37,85 @@ public class NeoForge_1_21_8_to_1_21_9 implements VersionShim {
         return "neoforge";
     }
     
+    private static final String FML_LOADER = "net/neoforged/fml/loading/FMLLoader";
+    private static final String FML_ENVIRONMENT = "net/neoforged/fml/loading/FMLEnvironment";
+    private static final String DIST_DESC = "()Lnet/neoforged/api/distmarker/Dist;";
+
+    /**
+     * Rewrites one old {@code FMLLoader} static into {@code FMLLoader.getCurrent().newName()}.
+     *
+     * <p>Emitting {@code getCurrent()} unconditionally is safe here because a shim only registers
+     * when its target version is at or below the host, so the accessor this leans on exists
+     * wherever these redirects can apply.
+     */
+    private static void registerLoaderInstanceCall(
+            RetromodTransformer transformer, String oldName, String desc, String newName) {
+        transformer.registerSingletonStaticRedirect(
+            FML_LOADER, oldName, desc,
+            FML_LOADER, "getCurrent", "()L" + FML_LOADER + ";",
+            newName, desc
+        );
+    }
+
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
 
-        // Transfer API rework: route deprecated IItemHandler calls through the shim
-        // (IItemHandler -> ResourceHandler<ItemResource>).
+        // The Transfer API rework left IItemHandler alone. Checked against the loader jars:
+        // getSlots, getStackInSlot, insertItem, extractItem, getSlotLimit and isItemValid have the
+        // same signatures on 26.1 as on 1.21.1, and ItemStackHandler and ComponentItemHandler are
+        // both still there, so a call site needs no repair. What did change is serialization,
+        // INBTSerializable<CompoundTag> to ValueIOSerializable, which is a semantic migration and
+        // not something a call redirect can express.
+
+        // RenderHighlightEvent was removed in favour of ExtractBlockOutlineRenderStateEvent. That
+        // is a render-state rework rather than a rename, so a mod using it still needs a real port.
+
+        // 1.21.9 turned FMLLoader from a static utility into an instance reached through
+        // FMLLoader.getCurrent(), and replaced FMLEnvironment's two static fields with static
+        // methods. A mod built against the old shape links fine and then dies on its first call
+        // with IncompatibleClassChangeError naming a method that plainly exists (#248).
+
+        // Dist and the production flag kept an exact static form on FMLEnvironment, whose bodies
+        // are literally FMLLoader.getCurrent().getDist() and .isProduction(). A static-to-static
+        // redirect is the whole repair for these two, and it stays a direct call, which matters
+        // because a side check is the kind of thing a mod runs every tick.
         transformer.registerMethodRedirect(
-            "net/neoforged/neoforge/items/IItemHandler", "getSlots", "()I",
-            "com/retromod/shim/neoforge/embedded/IItemHandlerShim", "getSlots",
-            "(Ljava/lang/Object;)I"
+            FML_LOADER, "getDist", DIST_DESC,
+            FML_ENVIRONMENT, "getDist", DIST_DESC
         );
-        
         transformer.registerMethodRedirect(
-            "net/neoforged/neoforge/items/IItemHandler", "getStackInSlot",
-            "(I)Lnet/minecraft/world/item/ItemStack;",
-            "com/retromod/shim/neoforge/embedded/IItemHandlerShim", "getStackInSlot",
-            "(Ljava/lang/Object;I)Lnet/minecraft/world/item/ItemStack;"
-        );
-        
-        transformer.registerMethodRedirect(
-            "net/neoforged/neoforge/items/IItemHandler", "insertItem",
-            "(ILnet/minecraft/world/item/ItemStack;Z)Lnet/minecraft/world/item/ItemStack;",
-            "com/retromod/shim/neoforge/embedded/IItemHandlerShim", "insertItem",
-            "(Ljava/lang/Object;ILnet/minecraft/world/item/ItemStack;Z)Lnet/minecraft/world/item/ItemStack;"
-        );
-        
-        transformer.registerMethodRedirect(
-            "net/neoforged/neoforge/items/IItemHandler", "extractItem",
-            "(IIZ)Lnet/minecraft/world/item/ItemStack;",
-            "com/retromod/shim/neoforge/embedded/IItemHandlerShim", "extractItem",
-            "(Ljava/lang/Object;IIZ)Lnet/minecraft/world/item/ItemStack;"
-        );
-        
-        transformer.registerClassRedirect(
-            "net/neoforged/neoforge/items/ItemStackHandler",
-            "com/retromod/shim/neoforge/embedded/ItemStackHandlerShim"
+            FML_LOADER, "isProduction", "()Z",
+            FML_ENVIRONMENT, "isProduction", "()Z"
         );
 
-        transformer.registerClassRedirect(
-            "net/neoforged/neoforge/items/ComponentItemHandler",
-            "com/retromod/shim/neoforge/embedded/ComponentItemHandlerShim"
+        // The same two on FMLEnvironment were public static final fields, so a read has to become
+        // a call. Both were final, so no mod can hold a write for the rewrite to get wrong.
+        transformer.registerFieldRedirect(
+            FML_ENVIRONMENT, "dist", "Lnet/neoforged/api/distmarker/Dist;",
+            FML_ENVIRONMENT, "getDist", DIST_DESC
+        );
+        transformer.registerFieldRedirect(
+            FML_ENVIRONMENT, "production", "Z",
+            FML_ENVIRONMENT, "isProduction", "()Z"
         );
 
-        // FML state moved behind FMLLoader.getCurrent(). A mod that still calls the old static
-        // accessor dies with IncompatibleClassChangeError on its first call (#248).
-        transformer.registerMethodRedirect(
-            "net/neoforged/fml/loading/FMLLoader", "getLoadingModList",
-            "()Lnet/neoforged/fml/loading/LoadingModList;",
-            "com/retromod/shim/neoforge/embedded/FMLLoaderShim", "getLoadingModList",
-            "()Ljava/lang/Object;"
-        );
-        transformer.registerMethodRedirect(
-            "net/neoforged/fml/loading/FMLLoader", "getDist",
-            "()Lnet/neoforged/api/distmarker/Dist;",
-            "com/retromod/shim/neoforge/embedded/FMLLoaderShim", "getDist",
-            "()Ljava/lang/Object;"
-        );
+        // The rest gained no static form, so each call has to pick up the loader instance first.
+        // Names and return types survived except the two NeoForge renamed on the way.
+        registerLoaderInstanceCall(transformer, "getLoadingModList",
+            "()Lnet/neoforged/fml/loading/LoadingModList;", "getLoadingModList");
+        registerLoaderInstanceCall(transformer, "getGamePath",
+            "()Ljava/nio/file/Path;", "getGameDir");
+        registerLoaderInstanceCall(transformer, "versionInfo",
+            "()Lnet/neoforged/fml/loading/VersionInfo;", "getVersionInfo");
+        registerLoaderInstanceCall(transformer, "getGameLayer",
+            "()Ljava/lang/ModuleLayer;", "getGameLayer");
+        registerLoaderInstanceCall(transformer, "getBindings",
+            "()Lnet/neoforged/fml/IBindingsProvider;", "getBindings");
+
+        // Not bridged, because 1.21.9 removed them outright rather than moving them:
+        // beginModScan, completeScan, modLauncherModList, addAccessTransformer, beforeStart,
+        // getLauncherInfo, launcherHandlerName, progressWindowTick, and the backgroundScanHandler
+        // field. Those are loader plumbing, so a mod reaching them needs a real port.
 
         // KeyMapping dropped its String-category constructor for a Category record;
         // the shim builds the record from the old string.
@@ -101,17 +124,6 @@ public class NeoForge_1_21_8_to_1_21_9 implements VersionShim {
             "(Ljava/lang/String;Lcom/mojang/blaze3d/platform/InputConstants$Type;ILjava/lang/String;)V",
             "com/retromod/shim/neoforge/embedded/KeyMappingShim", "create",
             "(Ljava/lang/String;Ljava/lang/Object;ILjava/lang/String;)Ljava/lang/Object;"
-        );
-
-        // RenderHighlightEvent was replaced by ExtractBlockOutlineRenderStateEvent.
-        transformer.registerClassRedirect(
-            "net/neoforged/neoforge/client/event/RenderHighlightEvent",
-            "com/retromod/shim/neoforge/embedded/RenderHighlightEventShim"
-        );
-
-        transformer.registerClassRedirect(
-            "net/neoforged/neoforge/client/event/RenderHighlightEvent$Block",
-            "com/retromod/shim/neoforge/embedded/RenderHighlightEventShim$Block"
         );
 
         // Entity.getWorld() -> getEntityWorld().
@@ -134,12 +146,7 @@ public class NeoForge_1_21_8_to_1_21_9 implements VersionShim {
     @Override
     public String[] getShimClasses() {
         return new String[] {
-            "com.retromod.shim.neoforge.embedded.IItemHandlerShim",
-            "com.retromod.shim.neoforge.embedded.ItemStackHandlerShim",
-            "com.retromod.shim.neoforge.embedded.ComponentItemHandlerShim",
-            "com.retromod.shim.neoforge.embedded.FMLLoaderShim",
-            "com.retromod.shim.neoforge.embedded.KeyMappingShim",
-            "com.retromod.shim.neoforge.embedded.RenderHighlightEventShim"
+            "com.retromod.shim.neoforge.embedded.KeyMappingShim"
         };
     }
 }

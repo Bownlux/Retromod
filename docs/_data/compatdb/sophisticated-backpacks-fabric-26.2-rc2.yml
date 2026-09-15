@@ -1,0 +1,26 @@
+name: Sophisticated Backpacks + Core (Unofficial Fabric Port)
+bundle: true
+badge: borked
+host_mc: 26.2
+loader: fabric
+retromod: 1.3.0-rc.2
+mods:
+- name: Sophisticated Core (Unofficial Fabric Port)
+  version: 1.21.1-1.2.9.21.168
+  source_mc: 1.21.1
+  link: https://modrinth.com/mod/sophisticated-core-(unofficial-fabric-port)
+- name: Sophisticated Backpacks (Unoffical Fabric Port)
+  version: 1.21.1-3.23.4.3.106
+  source_mc: 1.21.1
+  link: https://modrinth.com/mod/sophisticated-backpacks-(unoffical-fabric-port)
+summary: Retested on 1.3.0-rc.2. The reported crash is gone, and the mod is now blocked on its
+  rendering instead.
+details: The original report (issue 249) crashed on a call to Lifecycle, which rc-1 fixed. Both jars
+  now transform without error. What stops them is two model bases Minecraft removed, ItemOverrides
+  and AgeableListModel, which BackpackDynamicModel and BackpackModel extend. Neither can be
+  rebased. EntityModel survives but its whole contract changed at 26.x, from a type parameter of
+  Entity to one of EntityRenderState and from a no-argument constructor to one taking a ModelPart,
+  and setupAnim is gone. A stand-in base would link and then draw nothing, so Retromod reports the
+  missing base by name instead. This needs a real port of the mod's rendering.
+reporter: Bownlux
+date: 2026-09-13

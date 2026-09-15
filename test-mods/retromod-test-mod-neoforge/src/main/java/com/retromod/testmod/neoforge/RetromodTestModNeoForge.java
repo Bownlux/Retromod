@@ -22,6 +22,8 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.loading.FMLEnvironment;
+import net.neoforged.fml.loading.FMLLoader;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
 import org.slf4j.Logger;
@@ -208,6 +210,20 @@ public class RetromodTestModNeoForge {
         // deliberately absent here: it was already removed in 1.21, which this mod is built for.
         n++; passed += check(n, "#260 removed item base EnchantedBookItem", () ->
             linksWithoutInheritanceError(LegacyBook::new));
+
+        // #248: NeoForge 1.21.9 turned FMLLoader's statics into instance methods behind
+        // FMLLoader.getCurrent(), and replaced FMLEnvironment's two fields with methods. This mod
+        // is built against 21.1, where the old shape is what the compiler emits, so these four
+        // call sites are the exact bytecode a reported mod died on. A miss is not a wrong answer,
+        // it is IncompatibleClassChangeError or NoSuchFieldError on the first call.
+        n++; passed += check(n, "#248 FMLLoader.getDist static accessor", () ->
+            FMLLoader.getDist() != null);
+        n++; passed += check(n, "#248 FMLEnvironment.dist field read", () ->
+            FMLEnvironment.dist != null);
+        n++; passed += check(n, "#248 production flag in both of its forms", () ->
+            FMLEnvironment.production == FMLLoader.isProduction());
+        n++; passed += check(n, "#248 FMLLoader.getGamePath renamed accessor", () ->
+            FMLLoader.getGamePath() != null);
 
         LOG.info("{} SUMMARY: {}/{} passed", PREFIX, passed, n);
     }

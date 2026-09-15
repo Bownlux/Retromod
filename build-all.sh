@@ -3,25 +3,25 @@
 # Copyright (c) 2026 RevivalSMP. MIT License.
 #
 # Builds Retromod for each supported host:
-#   - Fabric (1.20 through 26.2)
+#   - Fabric (1.20 through 26.3)
 #   - Forge (1.20 through 26.2)
-#   - NeoForge (1.20.1 through 26.2)
+#   - NeoForge (1.20.1 through 26.3)
 #   - Standalone CLI
 # Older mods are translated at runtime and do not need separate host jars.
 
 # Keep building after one target fails so the final report can list every failure.
 # set -e
 
-VERSION="1.3.0-rc.1"
+VERSION="1.3.0"
 # Older mods are translated at runtime, so only 1.20 and newer need host jars.
 # Security-only updates for versions before 26.1.
-MC_VERSIONS=("1.20" "1.20.1" "1.20.2" "1.20.3" "1.20.4" "1.20.5" "1.20.6" "1.21" "1.21.1" "1.21.2" "1.21.3" "1.21.4" "1.21.5" "1.21.6" "1.21.7" "1.21.8" "1.21.9" "1.21.10" "1.21.11" "26.1" "26.1.1" "26.1.2" "26.2")
+MC_VERSIONS=("1.20" "1.20.1" "1.20.2" "1.20.3" "1.20.4" "1.20.5" "1.20.6" "1.21" "1.21.1" "1.21.2" "1.21.3" "1.21.4" "1.21.5" "1.21.6" "1.21.7" "1.21.8" "1.21.9" "1.21.10" "1.21.11" "26.1" "26.1.1" "26.1.2" "26.2" "26.3")
 LOADERS=("fabric" "forge" "neoforge")
 
 echo "Retromod multi-version build ${VERSION}"
 echo
 echo "Building for:"
-echo "  - ${#MC_VERSIONS[@]} Minecraft versions (1.20 - 26.2)"
+echo "  - ${#MC_VERSIONS[@]} Minecraft versions (1.20 - 26.3)"
 echo "  - ${#LOADERS[@]} mod loaders (Fabric, Forge, NeoForge)"
 echo ""
 
@@ -90,7 +90,7 @@ if [ "$SKIP_BUILD" = false ]; then
     # Build the base JAR first
     echo "[Step 1/4] Building base JAR with Maven..."
     # The exec plugin calls this script with --skip-build to create dist/. Skipping it here avoids
-    # running the entire 69-jar distribution phase once inside Maven and then again below.
+    # running the entire 71-jar distribution phase once inside Maven and then again below.
     if ! mvn clean package -DskipTests -Dexec.skip=true; then
         echo "ERROR: Maven failed while building the base JAR."
         exit 1
@@ -291,8 +291,13 @@ loader_supports_version() {
             esac
             ;;
         forge)
-            # Forge 26.2 shipped (forge 65.x), so every listed MC version now builds.
-            return 0
+            # Forge 26.2 shipped (forge 65.x). Forge has published nothing for 26.3 yet, and a jar
+            # declaring a Forge version that does not exist is worse than no jar, so 26.3 is left
+            # out of the Forge matrix until a build appears. Fabric and NeoForge both have one.
+            case $ver in
+                26.3*) return 1 ;;
+                *) return 0 ;;
+            esac
             ;;
         *) return 0 ;;
     esac
@@ -625,6 +630,8 @@ create_mod_jar() {
         # Keep the earliest compatible 26.2 beta as the floor. Maven ordering places every
         # stable 26.2 build above it, while the exact Minecraft dependency remains the host gate.
         26.2*)                  NEOFORGE_LV="26.2.0.0-beta" ;;
+        # 26.3 shipped the day this line was released; the only NeoForge build is the beta.
+        26.3*)                  NEOFORGE_LV="26.3.0.0-beta" ;;
         *)                      NEOFORGE_LV="20" ;;  # Permissive fallback
     esac
 
@@ -910,9 +917,9 @@ echo
 echo "Build complete"
 echo
 echo "Output structure:"
-echo "  dist/Fabric/     hosts 1.20 through 26.2"
-echo "  dist/Forge/      hosts 1.20 through 26.2"
-echo "  dist/NeoForge/   hosts 1.20.1 through 26.2"
+echo "  dist/Fabric/     hosts 1.20 through 26.3"
+echo "  dist/Forge/      hosts 1.20 through 26.2 (Forge has no 26.3 build yet)"
+echo "  dist/NeoForge/   hosts 1.20.1 through 26.3"
 echo "  dist/CLI/        retromod-${VERSION}-cli.jar"
 echo ""
 echo "Summary:"
@@ -929,11 +936,11 @@ if [ $FAILED -gt 0 ]; then
 fi
 
 # A successful command can still omit a target, so require the complete release matrix.
-EXPECTED_FABRIC=23
+EXPECTED_FABRIC=24
 EXPECTED_FORGE=23
-EXPECTED_NEOFORGE=22
+EXPECTED_NEOFORGE=23
 EXPECTED_CLI=1
-EXPECTED_TOTAL=69
+EXPECTED_TOTAL=71
 RELEASE_OK=1
 for triple in \
         "Fabric:${FABRIC_COUNT}:${EXPECTED_FABRIC}" \

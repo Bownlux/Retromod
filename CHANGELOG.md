@@ -2,6 +2,65 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
+## [1.3.0] - 2026-09-15
+
+**Stable release.** Promoted from `1.3.0-rc.2`, with Minecraft 26.3 support added on release day and the fixes listed below found by scanning a corpus of widely used mods rather than waiting for reports. The 1.3.0 line ran `snapshot.1` through `snapshot.10`, then `rc.1` and `rc.2`; the sections below have the detail.
+
+Headline work over 1.2.0: mods that extend a class Minecraft deleted now load, across the tool, armour, disc and screen families; the intermediary table was audited against the game's own files and 40 misdirected mappings corrected; Mixin signature repair became exact and conservative; and Forge, NeoForge and Fabric were brought level on repairs that had silently been running on only one of them.
+
+### Added
+
+- Minecraft 26.3 support for Fabric and NeoForge, verified against the released 26.3 client. Forge is not included for 26.3 because Forge has published no build for it; the Forge column stops at 26.2 and will follow when one appears.
+
+### Fixed
+
+- Stops rewriting `PoseStack`. A bridge for one JEI method was registered as a class redirect, which is global, so it rewrote every `PoseStack` in the mod including the 3D stack an entity renderer uses. The 26.1 move then carried the result on to `GuiGraphicsExtractor`, where an ordinary `pushPose` does not exist, so rendering died the first time it ran. Found in 12 of 13 widely used mods, about 500 call sites.
+- Rebases a removed base class on Forge as well. Forge assembles its own list of the shared 26.1 adaptations rather than calling the common one, so it reached none of the removed-base bridges: a Forge mod with a custom tool, armour piece or music disc transformed correctly through the CLI and then failed at its `extends` in game.
+- Reads game rules on every loader. 26.1 renamed all 46 constants, and the repair ran only on Fabric, on the reasoning that a Mojang-named loader already carries the current names. That is true of a mod built after 26.1 and of nothing older.
+- Loads a mod that extends `EffectRenderingInventoryScreen`, `AbstractProjectileDispenseBehavior`, or any of twenty removed item classes including the whole tool and armour hierarchy.
+- Restores the class move for `GameRules`, whose row had been deleted while the row for its nested `VisitorCaller` stayed.
+- Renames `ForgeSpawnEggItem` to vanilla's `SpawnEggItem`, which Forge dropped once vanilla could do the same job.
+- Stops reporting that a mod cannot load when it transforms fine. A class move can be a chain, and the check ran against a name that was still mid-chain, so every mod with a custom advancement trigger was reported as unloadable.
+- Reads pack formats on a pre-release host, instead of turning pack transformation off for the whole session.
+- Translates `Tier` and its `Tiers` constants to `ToolMaterial`.
+
+Known 26.3 limitation, found on release day: `Feature` became an interface at 26.3, having been an abstract class through 26.2. A worldgen mod that writes `extends Feature` cannot be rebased onto it, so those mods need a real port. Retromod reports this by name, saying that the class is an interface and belongs in `implements`, rather than letting it fail later with nothing pointing at the cause.
+
+Some limits are unchanged and worth stating plainly. A mod whose rendering is built on `BlockEntityWithoutLevelRenderer`, `ItemOverrides` or `AgeableListModel` still needs a real port: 26.x rebuilt entity and item rendering around render states, and a stand-in base would link and then draw nothing. The same is true of a custom loot function serializer, which the codec rework removed outright. Retromod reports these by name rather than guessing.
+
+## [1.3.0-rc.2] - 2026-09-13
+
+Second release candidate of the 1.3.0 line.
+
+### Fixed
+
+- Creates a creative tab again for a mod built before 1.19.3. Up to 1.19.2 a mod made a tab by subclassing `CreativeModeTab` and calling its `String` constructor; 1.19.3 replaced that with a builder and deleted the constructor. The subclass still loads, so nothing complains until it runs, and then the mod dies during construction with `NoSuchMethodError` and the loader refuses every later event it would have received. Every MCreator mod of that era generates this shape. The inheritance edge now moves onto a generated subclass that titles a builder-made tab with the name the mod passed, and the mod's own icon override still answers.
+- Reads which side a NeoForge mod is running on again. NeoForge 1.21.9 turned `FMLLoader` from a static utility into an instance behind `FMLLoader.getCurrent()`, and replaced `FMLEnvironment`'s `dist` and `production` fields with methods. An older mod links fine and then dies on its first call with `IncompatibleClassChangeError` naming a method that plainly still exists, which is why this read as a missing method rather than a moved one. The two with an exact static form become direct calls on `FMLEnvironment`, and the five without one pick up the loader instance first. The repair was previously registered for 26.1, so it did not cover a 1.21.9, 1.21.10 or 1.21.11 host, and it went through reflection on what can be a per-tick call.
+- Stops rewriting the NeoForge item, fluid and energy handler interfaces. The 1.21.9 Transfer API rework added `ResourceHandler` and `EnergyHandler` but kept `IItemHandler`, `IEnergyStorage`, `IFluidHandler`, `ItemStackHandler` and `ComponentItemHandler`, all with the members they had before. Retromod treated them as removed and pointed them at the new types, so a mod class implementing the old interface came out implementing one whose methods it does not have, and one that constructed or extended a handler came out pointing at a class with no constructor it could reach. Only the loader entry points switched this off, so it landed on the offline CLI and AOT paths. Item handler calls also no longer go through a reflective lookup on each call.
+- Drops four redirects that named a class Retromod never ships, so the log no longer reports them as dropped on every run.
+- Loads a mod with custom tools or armour on 26.x. Minecraft folded the whole tool hierarchy into data components in two steps: `SwordItem`, `PickaxeItem`, `DiggerItem` and `TieredItem` were gone by 26.1, and `AxeItem`, `ShovelItem` and `HoeItem` go at 26.3. Seventeen more item classes went the same way. A mod extending any of them stopped at the `extends` before any of its own code ran, which is most of what people translate. Each now rebases onto a generated `Item` subclass that keeps the old constructor. The three that survive into 26.2 are registered only for 26.3, so a 26.1 or 26.2 host leaves them alone.
+- Translates `Tier` and its `Tiers` constants to `ToolMaterial`, which carries the same vanilla materials and the same durability, speed, attack bonus and repair items. Without it a rebased tool still named a missing class in its own constructor.
+- Restores the class move for `GameRules`, which moved into its own package at 26.1. The row had been deleted while the one for its nested `VisitorCaller` stayed, so a mod reading any game rule failed on a class the table describes in a comment as covered.
+- Points two legacy renames at classes that exist. A 1.12.2 mod's glass block and piston block entity were aimed at names Minecraft had already retired by 1.21.1, so the repair replaced one missing class with another.
+- Reads pack formats on a pre-release host. A release candidate reports its own id, so `26.3-rc.1` matched no known target and the resource manager failed to start, turning off pack transformation for the session on exactly the builds people test before a release.
+- Renames the game rule constants on every loader, not only on Fabric. 26.1 renamed all 46 of them, `RULE_MOBGRIEFING` to `MOB_GRIEFING` and the rest. The repair was Fabric only, on the reasoning that a Mojang-named loader already carries the current names, which is true of a mod built after 26.1 and of nothing older. A 1.20 or 1.21 NeoForge or Forge mod reading any game rule failed with `NoSuchFieldError`. The rename is also registered against the name the class had before it moved, so the move and the rename compose instead of one of them being wasted.
+
+- Rebases a removed base on Forge too. Forge assembles its own list of the shared 26.1 adaptations rather than calling the common one, so it reached none of the removed-base bridges. A Forge mod with a custom tool, armour piece or music disc transformed correctly through the CLI and then failed at its `extends` when the game ran it, which is the harder version of that bug to report.
+- Loads a mod that extends `EffectRenderingInventoryScreen` or `AbstractProjectileDispenseBehavior`. Both were a surviving class plus one extra behaviour, and both are rebased onto the class they used to extend, with the same constructor. The screen opens and stops drawing the potion effect panel beside the inventory; the dispenser behaviour registers and drops its item rather than firing it.
+- Stops reporting that a mod cannot load when it can. A class move can be a chain, and a remapper resolves one hop per pass, so the check for an unusable superclass ran against a name that was still mid-chain. Every mod with a custom advancement trigger was reported as unloadable on 26.2 and later while transforming perfectly well. The check now waits for the chain to end.
+
+- Renames `ForgeSpawnEggItem` to vanilla's `SpawnEggItem`. Forge deleted its wrapper once vanilla could take the entity type and both colours as components, and there is no spawn egg class left anywhere under `net/minecraftforge` on 26.2. A subclass calling the old four-argument constructor still needs a port; naming the type, which is what most mods do with it, works again.
+
+- Stops rewriting `PoseStack`. The JEI bridge redirected it to `GuiGraphics` because JEI had swapped that parameter type on its own `draw()`, but a class redirect is global: it rewrote every `PoseStack` in the mod, including the 3D stack an entity renderer uses, and the 26.1 move then carried the result on to `GuiGraphicsExtractor`. An ordinary `pushPose` came out as `GuiGraphicsExtractor.pushPose`, which does not exist, so rendering died the first time it ran. Scanning 13 widely used mods found it in 12 of them, about 500 call sites. `PoseStack` is present on 26.1, 26.2 and 26.3, so there was never anything to redirect it to.
+
+
+
+The block outline render event NeoForge removed in 1.21.9 still has no bridge, and a mod using it needs a real port. Nothing changed there; it is now reported as removed rather than pointed at a class that does not exist.
+
+### Changed
+
+- Speeds up the name matching an offline transform falls back on when a member cannot be resolved exactly. Every caller only asks whether two names are within an edit distance, so the check answers that instead of computing the distance: a pair whose lengths differ by more than the bound is rejected outright, and the rest fill only the band of the table that the bound can reach. Measured 6.8 times faster at the threshold used for a rename. It is the resolver's hottest step, though ASM parsing still dominates a whole-jar transform, so expect the difference to show on a mod with many unresolved references rather than on every jar.
+
 ## [1.3.0-rc.1] - 2026-09-08
 
 First release candidate of the 1.3.0 line.

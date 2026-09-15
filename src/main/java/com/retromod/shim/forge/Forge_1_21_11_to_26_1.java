@@ -118,6 +118,18 @@ public class Forge_1_21_11_to_26_1 implements VersionShim {
         // Minecraft.getInstance().hasX). Shared with the NeoForge/Fabric path.
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
             .registerCorpus26xDescriptorAdaptations(transformer);
+        // 26.1 renamed every GameRules constant (RULE_MOBGRIEFING -> MOB_GRIEFING and 45 more).
+        // The old spelling is the pre-26.1 Mojang name, so a 1.20 or 1.21 Forge mod carries it and
+        // hits NoSuchFieldError without this. Shared with the NeoForge/Fabric path.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
+            .registerGameRuleFieldRenames(transformer);
+
+        // Bases Minecraft deleted, rebased so a mod that extends one still loads. Forge assembles
+        // its own list instead of calling the common register(), so it reached neither of these:
+        // a Forge mod with a custom tool, armour piece or music disc failed at its extends in game
+        // while the same jar transformed correctly on the command line.
+        com.retromod.shim.common.RemovedItemBaseBridge.register(transformer);
+        com.retromod.shim.common.RemovedBaseToParentBridge.register(transformer);
 
         // EntityType.BOAT/CHEST_BOAT split into per-wood types in 26.1; OAK is
         // the common default for old mods.

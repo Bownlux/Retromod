@@ -1,0 +1,15 @@
+name: "Pyrologer And Friends"
+badge: borked
+mod_version: "1.6.5.7"
+source_mc: "1.19.2"
+host_mc: "1.20.1"
+loader: "forge"
+retromod: "1.3.0-snapshot.10"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/pyrologer-and-friends"
+summary: "I run Minecraft, \"Error loading mods\" just show up"
+details: "[latest.log](https://github.com/user-attachments/files/31952288/latest.log)"
+reporter: "HyperGamingYT60"
+date: "2026-09-08"
+issue: 264
+

@@ -5,8 +5,8 @@ REM Builds Fabric, Forge, NeoForge, and the standalone CLI.
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
-set "VERSION=1.3.0-rc.1"
-set "MC_VERSIONS=1.20 1.20.1 1.20.2 1.20.3 1.20.4 1.20.5 1.20.6 1.21 1.21.1 1.21.2 1.21.3 1.21.4 1.21.5 1.21.6 1.21.7 1.21.8 1.21.9 1.21.10 1.21.11 26.1 26.1.1 26.1.2 26.2"
+set "VERSION=1.3.0"
+set "MC_VERSIONS=1.20 1.20.1 1.20.2 1.20.3 1.20.4 1.20.5 1.20.6 1.21 1.21.1 1.21.2 1.21.3 1.21.4 1.21.5 1.21.6 1.21.7 1.21.8 1.21.9 1.21.10 1.21.11 26.1 26.1.1 26.1.2 26.2 26.3"
 set "LOADERS=fabric forge neoforge"
 set "EXPECTED_FABRIC=23"
 set "EXPECTED_FORGE=23"
@@ -267,6 +267,8 @@ set "LOADER=%~1"
 set "MC_VERSION=%~2"
 
 if /I "%LOADER%"=="neoforge" if "%MC_VERSION%"=="1.20" exit /b 0
+REM Forge has published no 26.3 build, so that column stops at 26.2. Mirrors build-all.sh.
+if /I "%LOADER%"=="forge" if "%MC_VERSION%"=="26.3" exit /b 0
 
 set "LOADER_DIR="
 if /I "%LOADER%"=="fabric" set "LOADER_DIR=Fabric"
@@ -495,6 +497,7 @@ if "%MC_VERSION%"=="26.1" set "NEOFORGE_LV=26.1"
 if "%MC_VERSION%"=="26.1.1" set "NEOFORGE_LV=26.1"
 if "%MC_VERSION%"=="26.1.2" set "NEOFORGE_LV=26.1"
 if "%MC_VERSION%"=="26.2" set "NEOFORGE_LV=26.2.0.0-beta"
+if "%MC_VERSION%"=="26.3" set "NEOFORGE_LV=26.3.0.0-beta"
 exit /b 0
 
 :write_forge_toml

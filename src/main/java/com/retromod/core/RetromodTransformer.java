@@ -3358,8 +3358,9 @@ public class RetromodTransformer implements ClassFileTransformer {
          * Report a superclass that the host cannot possibly accept, naming the redirect that
          * produced it.
          *
-         * <p>{@code superName} has already been through the class remapper here, so this sees the
-         * name that would be written to the output. A class move is a flat rename and does not
+         * <p>{@code superName} has been through the class remapper for this pass, which is not
+         * always the final name: a chained move resolves one hop per pass. A name that is itself a
+         * redirect source is skipped and reported, if it still deserves it, once the chain ends. A class move is a flat rename and does not
          * know which slot it lands in, so a destination that is fine as a type can be final, an
          * interface, or absent, and therefore illegal to extend. Without this the mod loads to
          * {@code IncompatibleClassChangeError} with no mention of Retromod, the mod's real base
@@ -3376,6 +3377,14 @@ public class RetromodTransformer implements ClassFileTransformer {
             if (!superName.startsWith("net/minecraft/") && !superName.startsWith("com/mojang/")) {
                 return;
             }
+            // A move can be a chain. The tables take advancements/critereon/X to
+            // advancements/criterion/X, and the 26.2 step takes that to advancements/triggers/X,
+            // which is where the mod actually lands. A remapper resolves one hop per pass, so on
+            // the pass that makes the first hop this sees a name nothing will ever extend. The
+            // loop folds the rest and calls this again on the result, so a name that still has a
+            // redirect of its own is not the answer yet and reporting it says a mod cannot load
+            // when it transforms perfectly well.
+            if (classRedirects.containsKey(superName)) return;
             SuperclassSafety.Verdict verdict = superclassVerdicts.computeIfAbsent(
                     superName, n -> SuperclassSafety.classify(n, fuzzyResolver));
             if (!SuperclassSafety.cannotBeExtended(verdict)) return;
@@ -4355,7 +4364,12 @@ public class RetromodTransformer implements ClassFileTransformer {
             }
 
             // Singleton-static redirect: no-arg static helper -> SINGLETON.getInstance().method().
-            if (target == null && !singletonRedirects.isEmpty()) {
+            // Only an invokestatic qualifies. The rewrite emits an INVOKEVIRTUAL whose owner, name
+            // and descriptor can be identical to what was matched (FMLLoader.getLoadingModList()
+            // kept all three when it stopped being static), and a class is visited more than once,
+            // so without this the rewrite matches its own output and pushes a second receiver every
+            // pass. Checking the opcode is also what the registration already promises.
+            if (target == null && opcode == Opcodes.INVOKESTATIC && !singletonRedirects.isEmpty()) {
                 SingletonTarget s = singletonRedirects.get(key);
                 if (s != null) {
                     markFrameInvalidatingRewrite();

@@ -736,6 +736,12 @@ net/minecraft/network/protocol/game/ServerboundResourcePackPacket$Action	net/min
 net/minecraft/network/protocol/status/ClientboundPongResponsePacket	net/minecraft/network/protocol/ping/ClientboundPongResponsePacket
 net/minecraft/network/protocol/status/ServerboundPingRequestPacket	net/minecraft/network/protocol/ping/ServerboundPingRequestPacket
 net/minecraft/world/item/ArmorMaterial	net/minecraft/world/item/equipment/ArmorMaterial
+# Tier and its Tiers enum became the ToolMaterial record. It carries the same vanilla
+# constants (WOOD, STONE, IRON, DIAMOND, GOLD, NETHERITE, plus COPPER) and the same
+# durability, speed, attack bonus, enchantment value and repair items, so a field read of
+# Tiers.IRON lands on ToolMaterial.IRON. Verified against the 26.3 jar.
+net/minecraft/world/item/Tier	net/minecraft/world/item/ToolMaterial
+net/minecraft/world/item/Tiers	net/minecraft/world/item/ToolMaterial
 net/minecraft/world/item/ArmorMaterials	net/minecraft/world/item/equipment/ArmorMaterials
 net/minecraft/world/item/armortrim/ArmorTrim	net/minecraft/world/item/equipment/trim/ArmorTrim
 net/minecraft/world/item/armortrim/TrimMaterial	net/minecraft/world/item/equipment/trim/TrimMaterial
@@ -1062,6 +1068,12 @@ net/minecraft/client/renderer/RenderType	net/minecraft/client/renderer/rendertyp
 # moves tsv (not code registration) so the intermediary composition folds
 # class_1928 -> gamerules/GameRules in ONE remap pass (a code-registered second hop
 # churned extra passes into the cap on real jars). Members bridge via the common shim.
+net/minecraft/world/level/GameRules	net/minecraft/world/level/gamerules/GameRules
+# Key became the typed GameRule, so a field or parameter declared as GameRules.Key needs the
+# new type or its descriptor names a class that is gone. The rule CONSTANTS were renamed at
+# the same time (RULE_MOBGRIEFING -> MOB_GRIEFING, 46 of them), which is a member mapping and
+# not covered here.
+net/minecraft/world/level/GameRules$Key	net/minecraft/world/level/gamerules/GameRule
 
 # GlStateManager inner state classes + GlConst/GlDebug (blaze3d platform -> opengl,
 # 26.1 GL rewrite). The outer GlStateManager and the $SourceFactor/$DestFactor inners

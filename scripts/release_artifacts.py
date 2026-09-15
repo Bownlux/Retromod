@@ -34,16 +34,20 @@ MINECRAFT_VERSIONS = (
     "26.1.1",
     "26.1.2",
     "26.2",
+    "26.3",
 )
+
+# Forge has published no 26.3 build, so that column stops one version short of the others.
+FORGE_VERSIONS = tuple(v for v in MINECRAFT_VERSIONS if not v.startswith("26.3"))
 
 LOADER_MATRIX = (
     ("Fabric", "fabric", MINECRAFT_VERSIONS),
-    ("Forge", "forge", MINECRAFT_VERSIONS),
+    ("Forge", "forge", FORGE_VERSIONS),
     ("NeoForge", "neoforge", MINECRAFT_VERSIONS[1:]),
 )
 
-EXPECTED_MOD_COUNT = 68
-EXPECTED_ARTIFACT_COUNT = 69
+EXPECTED_MOD_COUNT = 70
+EXPECTED_ARTIFACT_COUNT = 71
 MAX_MANIFEST_BYTES = 1024 * 1024
 CHECKSUM_LINE = re.compile(r"^([0-9A-Fa-f]{64})[ \t]+\*?(.+)$")
 

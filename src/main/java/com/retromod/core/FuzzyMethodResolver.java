@@ -102,6 +102,12 @@ public class FuzzyMethodResolver {
     /** Negative cache for platform classes that could not be inspected. */
     private final Set<String> missingExternalClasses = ConcurrentHashMap.newKeySet();
 
+    /** Edits that still read as a rename of the same member rather than a different one. */
+    private static final int MAX_RENAME_EDITS = 3;
+
+    /** Edits within which two object type names are treated as related rather than unrelated. */
+    private static final int MAX_RELATED_TYPE_EDITS = 10;
+
     /** Cap on resolve-cache entries; once hit, the cache is cleared. A mod has ~50-200 unresolved refs. */
     private static final int MAX_CACHE_SIZE = 10_000;
 
@@ -715,8 +721,7 @@ public class FuzzyMethodResolver {
         if (candidateName.equals(unresolvedName)) {
             score += SCORE_EXACT_NAME;
         } else {
-            int editDistance = levenshteinDistance(unresolvedName, candidateName);
-            if (editDistance <= 3) {
+            if (levenshteinAtMost(unresolvedName, candidateName, MAX_RENAME_EDITS)) {
                 score += SCORE_LEVENSHTEIN_CLOSE;
             } else {
                 String candLower = candidateName.toLowerCase();
@@ -768,7 +773,7 @@ public class FuzzyMethodResolver {
             if (unresolvedPrimitive && candidatePrimitive && !unresolvedReturn.equals(candidateReturn)) {
                 return 0; // two different primitives
             }
-            if (levenshteinDistance(unresolvedReturn, candidateReturn) > 10) {
+            if (!levenshteinAtMost(unresolvedReturn, candidateReturn, MAX_RELATED_TYPE_EDITS)) {
                 return 0; // unrelated object types
             }
             score -= 20; // similar object types: penalize
@@ -904,8 +909,7 @@ public class FuzzyMethodResolver {
         if (candidate.name().equals(unresolvedName)) {
             score += SCORE_EXACT_NAME;
         } else {
-            int editDistance = levenshteinDistance(unresolvedName, candidate.name());
-            if (editDistance <= 3) {
+            if (levenshteinAtMost(unresolvedName, candidate.name(), MAX_RENAME_EDITS)) {
                 score += SCORE_LEVENSHTEIN_CLOSE;
             } else {
                 String candName = candidate.name();
@@ -995,7 +999,92 @@ public class FuzzyMethodResolver {
         return false;
     }
 
-    /** Levenshtein edit distance, two-row DP in O(min(m,n)) space. A distance of 1-3 suggests a rename. */
+    /**
+     * Whether the edit distance between {@code a} and {@code b} is at most {@code max}.
+     *
+     * <p>Every caller only asks whether the distance clears a threshold, never what it is, and this
+     * runs once per candidate member while resolving a reference, so it is the hottest thing the
+     * resolver does. Two properties make the answer much cheaper than the distance. The distance is
+     * never smaller than the difference in length, which settles most pairs without touching the
+     * DP at all. And a distance of at most {@code max} can only come from cells within {@code max}
+     * of the diagonal, so the DP fills a band rather than the whole table and gives up as soon as
+     * an entire row is already past the threshold.
+     *
+     * <p>{@link #levenshteinDistance} stays as the plain statement of the same function, and
+     * {@code LevenshteinBoundTest} holds the two against each other.
+     */
+    static boolean levenshteinAtMost(String a, String b, int max) {
+        if (max < 0) return false;
+        if (a.equals(b)) return true;
+
+        int lengthGap = Math.abs(a.length() - b.length());
+        if (lengthGap > max) return false; // no edit sequence can close a bigger gap
+
+        if (a.length() > b.length()) { // keep a the shorter one, so the band indexes the short axis
+            String tmp = a;
+            a = b;
+            b = tmp;
+        }
+        int shortLen = a.length();
+        int longLen = b.length();
+        if (shortLen == 0) return longLen <= max;
+
+        // Anything past the threshold is clamped to this, so it stays out of the running without
+        // the arithmetic below drifting upward row after row.
+        final int tooFar = max + 1;
+
+        int[] prev = new int[shortLen + 1];
+        int[] curr = new int[shortLen + 1];
+        for (int i = 0; i <= shortLen; i++) {
+            prev[i] = Math.min(i, tooFar);
+        }
+
+        for (int j = 1; j <= longLen; j++) {
+            int lo = Math.max(1, j - max);
+            int hi = Math.min(shortLen, j + max);
+
+            curr[0] = Math.min(j, tooFar);
+            if (lo > 1) {
+                curr[lo - 1] = tooFar; // left neighbour of the band, never a usable path
+            }
+
+            int rowBest = tooFar;
+            for (int i = lo; i <= hi; i++) {
+                int cost = (a.charAt(i - 1) == b.charAt(j - 1)) ? 0 : 1;
+                int best = Math.min(
+                        Math.min(curr[i - 1] + 1, prev[i] + 1),
+                        prev[i - 1] + cost);
+                if (best > tooFar) {
+                    best = tooFar;
+                }
+                curr[i] = best;
+                if (best < rowBest) {
+                    rowBest = best;
+                }
+            }
+            for (int i = hi + 1; i <= shortLen; i++) {
+                curr[i] = tooFar; // right of the band
+            }
+
+            if (rowBest > max) {
+                return false; // every remaining path is already too long
+            }
+
+            int[] tmp = prev;
+            prev = curr;
+            curr = tmp;
+        }
+
+        return prev[shortLen] <= max;
+    }
+
+    /**
+     * Levenshtein edit distance, two-row DP in O(min(m,n)) space. A distance of 1-3 suggests a
+     * rename.
+     *
+     * <p>Kept as the reference the bounded {@link #levenshteinAtMost} is checked against. Prefer
+     * that one at a call site: nothing here needs the distance itself.
+     */
     static int levenshteinDistance(String a, String b) {
         if (a.equals(b)) return 0;
         if (a.isEmpty()) return b.length();

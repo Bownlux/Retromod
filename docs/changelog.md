@@ -8,7 +8,36 @@ description: "Highlights from Retromod releases."
 
 This page keeps the release history readable. The [full technical changelog](https://github.com/Bownlux/Retromod/blob/main/CHANGELOG.md) lists every fix and regression test.
 
+## 1.3.0, September 15, 2026
+
+The deleted-base-class update:
+
+- Added Minecraft 26.3 support for Fabric and NeoForge on release day. Forge follows when Forge ships a 26.3 build.
+- Loads mods that extend a class Minecraft deleted, across tools, armour, music discs, screens and more.
+- Fixed rendering in most translated mods. A bridge for one JEI method had been rewriting every `PoseStack` in the mod.
+- Brought Forge, NeoForge and Fabric level on repairs that had been running on only one of them, including game rules and every removed base class.
+- Corrected 40 mappings that sent a Fabric mod to the wrong class, and audited the class-move table against the game's own files.
+- Made Mixin signature repair exact: it retypes only a uniquely proven change and refuses everything ambiguous.
+
+A mod built on the old entity or item rendering still needs a real port, because 26.x rebuilt both around render states. Retromod names the missing class rather than guessing at a replacement. One 26.3 change lands the same way: `Feature` became an interface, so a worldgen mod that extends it needs a port too.
+
 ## 1.3.0 Release Candidates
+
+### Release Candidate 2, September 13, 2026
+
+- Creates a creative tab again for a mod built before 1.19.3, which previously stopped the whole mod from loading.
+- Reads which side a NeoForge mod is running on again, on every host from 1.21.9 up.
+- Stops rewriting the NeoForge item, fluid and energy handler interfaces, which the 1.21.9 Transfer API rework kept rather than removed. Rewriting them broke mods that were working, on the command line and in ahead-of-time builds.
+- Loads a mod with custom tools or armour on 26.x. Minecraft removed the classes those mods extend, so they stopped before running any of their own code.
+- Restores the translation for `GameRules`, so a mod that reads a game rule works again.
+- Reads pack formats on a pre-release host, instead of turning pack transformation off for the session.
+- Reads game rules again on NeoForge and Forge. Minecraft renamed all 46 of them at 26.1, and the repair for that had been running only on Fabric.
+- Rebases a removed base class on Forge too, which had been missing that repair entirely in game.
+- Loads a mod that extends the inventory screen with the potion effect panel, or the projectile dispenser behaviour.
+- Stops reporting that a mod cannot load when it transforms fine. Mods with custom advancement triggers were all being reported that way.
+- Fixes rendering in most mods. A bridge for one JEI method was rewriting every `PoseStack` in the mod, which broke drawing code that had nothing to do with JEI.
+
+A bridged creative tab appears with its name and icon and starts empty, because what fills a tab changed at the same time. That bridge is Forge only. The block outline render event removed in 1.21.9 still has no replacement, so a mod using it needs a real port.
 
 ### Release Candidate 1, September 8, 2026
 

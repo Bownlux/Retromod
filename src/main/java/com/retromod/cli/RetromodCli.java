@@ -2937,6 +2937,10 @@ public class RetromodCli {
                     if (i + 1 >= args.length) { System.err.println("--output needs a path"); System.exit(1); }
                     outputPath = Path.of(args[++i]);
                 }
+                // Consumed by the global parser before the command runs, and the report header
+                // shows the version it settled on. Warning that it is ignored says the opposite of
+                // what happened, and reads as though the report came out against the wrong target.
+                case "--target" -> i++;
                 default -> System.err.println("Ignoring unknown flag: " + args[i]);
             }
         }

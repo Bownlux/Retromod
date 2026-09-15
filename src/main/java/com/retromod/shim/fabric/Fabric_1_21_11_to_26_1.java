@@ -49,10 +49,6 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
 
         // Vanilla class moves shared with the NeoForge 26.1 shim (#64).
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
-        // The bundled Fabric intermediary table still expands these stable field ids to their
-        // pre-1.21.11 RULE_* names. Mojang-named loaders already carry the current names.
-        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
-                .registerFabricGameRuleFieldRenames(transformer);
 
         // Legacy Block.randomTicks accessors now land on the inherited
         // BlockBehaviour.isRandomlyTicking field. The target field is final and every

@@ -20,7 +20,7 @@ No status disables features.
 
 ## Verify a Download
 
-For stronger verification, compare the whole jar's SHA-256 with `SHA256SUMS.txt` from the same official GitHub release. The manifest covers all 68 loader jars and the standalone CLI artifact.
+For stronger verification, compare the whole jar's SHA-256 with `SHA256SUMS.txt` from the same official GitHub release. The manifest covers all 70 loader jars and the standalone CLI artifact.
 
 For a complete extracted `dist/` tree on Linux:
 
@@ -39,13 +39,13 @@ shasum -a 256 --check SHA256SUMS.txt
 For one downloaded jar, print its value and compare it with the matching manifest line:
 
 ```bash
-shasum -a 256 retromod-1.3.0-rc.1+26.2.jar
+shasum -a 256 retromod-1.3.0+26.2.jar
 ```
 
 On Windows PowerShell:
 
 ```powershell
-Get-FileHash .\retromod-1.3.0-rc.1+26.2.jar -Algorithm SHA256
+Get-FileHash .\retromod-1.3.0+26.2.jar -Algorithm SHA256
 ```
 
 Use the row for the same loader and Minecraft version. A Fabric jar and a Forge jar share a filename inside different distribution folders, but they are different files with different whole-file hashes.

@@ -18,7 +18,7 @@ from scripts.release_artifacts import (
 )
 
 
-VERSION = "1.3.0-rc.1"
+VERSION = "1.3.0"
 # Deliberately not a real release, so a version bump can never make it match.
 MISMATCHED_VERSION = "0.0.0-not-the-pom-version"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -66,9 +66,10 @@ class ReleaseArtifactValidationTest(unittest.TestCase):
         artifacts = self._validate()
 
         self.assertEqual(EXPECTED_ARTIFACT_COUNT, len(artifacts))
-        self.assertEqual(23, sum(a.loader_name == "fabric" for a in artifacts))
+        self.assertEqual(24, sum(a.loader_name == "fabric" for a in artifacts))
+        # Forge stops at 26.2: Forge has published no 26.3 build.
         self.assertEqual(23, sum(a.loader_name == "forge" for a in artifacts))
-        self.assertEqual(22, sum(a.loader_name == "neoforge" for a in artifacts))
+        self.assertEqual(23, sum(a.loader_name == "neoforge" for a in artifacts))
         self.assertEqual(1, sum(not a.is_mod for a in artifacts))
         self.assertTrue(all(a.sha256 for a in artifacts))
 

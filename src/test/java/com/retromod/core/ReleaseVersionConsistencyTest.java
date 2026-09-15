@@ -184,11 +184,15 @@ class ReleaseVersionConsistencyTest {
 
     @Test
     void canonicalVersionIsTheOnlyJavaSourceLiteral() throws Exception {
-        String version = RetromodVersion.RETROMOD_VERSION;
+        // The quotes matter. What this guards against is runtime code writing the version out as
+        // its own string constant, which is a quoted literal. A bare substring search also matched
+        // a comment that merely names the release, and, once the version became plain 1.3.0, the
+        // "21.3.0" inside an unrelated archive table. Neither is a copied version.
+        String literal = '"' + RetromodVersion.RETROMOD_VERSION + '"';
         long filesWithLiteral;
         try (var sources = Files.walk(Path.of("src/main/java"))) {
             filesWithLiteral = sources.filter(path -> path.toString().endsWith(".java"))
-                    .filter(path -> contains(path, version))
+                    .filter(path -> contains(path, literal))
                     .count();
         }
         assertEquals(1, filesWithLiteral,

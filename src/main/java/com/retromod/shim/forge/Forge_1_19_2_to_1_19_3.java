@@ -17,6 +17,11 @@ public class Forge_1_19_2_to_1_19_3 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // A 1.19.2 mod makes a creative tab by subclassing CreativeModeTab and calling its String
+        // constructor, which 1.19.3 deleted in favour of a builder. The subclass loads and then
+        // dies on its own super(...) call (#264). Rebase it onto a generated bridge.
+        CreativeModeTabBridge.register(transformer);
+
         // No class-redirect for Registry: it still exists as a type, so renaming it would break
         // every Registry<T> use. The moved statics (BLOCK, ITEM, ...) need FieldRedirects instead.
         transformer.registerMethodRedirect(

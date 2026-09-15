@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.common;
 
+import java.nio.charset.StandardCharsets;
 import com.retromod.util.SafeClassWriter;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
@@ -410,9 +411,24 @@ public final class Gui2DTransformMigration {
     }
 
     /** Cheap UTF-8 byte scan: does the class pool mention pushPose/popPose or PoseStack at all? */
+    /** Encoded once. These used to be built with getBytes() on every class that was scanned. */
+    private static final byte[] POSE = "Pose".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] PUSH_POSE = "pushPose".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] POP_POSE = "popPose".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] POSE_STACK = "PoseStack".getBytes(StandardCharsets.UTF_8);
+
+    /**
+     * Whether a class is worth parsing, decided from the raw bytes.
+     *
+     * <p>All three markers contain "Pose", and almost no class in a mod contains it at all, so one
+     * scan for the shared substring settles the common case. Only a class that passes it pays for
+     * the precise checks. This runs on every class of every jar, so the three full scans it
+     * replaces were the larger part of what this migration cost on a mod it never touches.
+     */
     private static boolean referencesPoseOp(byte[] b) {
-        return indexOf(b, "pushPose".getBytes()) >= 0 || indexOf(b, "popPose".getBytes()) >= 0
-                || indexOf(b, "PoseStack".getBytes()) >= 0;
+        if (indexOf(b, POSE) < 0) return false;
+        return indexOf(b, PUSH_POSE) >= 0 || indexOf(b, POP_POSE) >= 0
+                || indexOf(b, POSE_STACK) >= 0;
     }
 
     private static int indexOf(byte[] haystack, byte[] needle) {
