@@ -1,0 +1,14 @@
+name: "Minepathy"
+badge: borked
+mod_version: "1.1.1, MC 1.21.11."
+host_mc: "26.2"
+loader: "fabric"
+retromod: "1.3.0"
+links:
+  modrinth: "https://modrinth.com/mod/minepathy"
+summary: "Unable to launch."
+details: "Unable to launch. [14:37:29] [main/WARN]: Error loading class: retromod/stripped/BucketableMixin (java.lang.ClassNotFoundException: retromod/stripped/BucketableMixin)  [14:37:29] [main/WARN]: @Mixin target retromod/stripped/BucketableMixin was not found mixins.cardinal_components_entity.json:common.BucketableMixin from mod cardinal-components-entity [14:37:30] [main/WARN]: Error loading class: retromod/stripped/PlayerEntityRendererMixin (java.lang.ClassNotFoundException: retromod/stripped/PlayerEntityRendererMixin) [14:37:30] [main/WARN]: @Mixin target retromod/stripped/PlayerEntityRendererMixin was not found minepathy.mixins.json:client.PlayerEntityRendererMixin from mod minepathy Errors start to occur. org.spongepowered.asm.mixin.injection.throwables.InvalidInjectionException: Invalid descriptor on minepathy.mixins.json:ItemEntityMixin from mod minepathy->@Inject::minepathy$merge(Lnet/minecraft/world/entity/item/ItemEntity;Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/entity/item/ItemEntity;Lnet/minecraft/world/item/ItemStack;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V! Expected (Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/item/ItemStack;ILorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V but found (Lnet/minecraft/world/entity/item/ItemEntity;Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/entity/item/ItemEntity;Lnet/minecraft/world/item/ItemStack;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V [ -> Inject -> minepathy.mixins.json:ItemEntityMixin from mod minepathy->@Inject::minepathy$merge"
+reporter: "Createdman1"
+date: "2026-09-10"
+issue: 271
+
