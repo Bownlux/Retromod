@@ -1,0 +1,14 @@
+name: "Hold My Items"
+badge: borked
+mod_version: "1.21.11"
+host_mc: "26.3"
+loader: "fabric"
+retromod: "1.3.0"
+links:
+  modrinth: "https://modrinth.com/mod/hold-my-items"
+summary: "Loads but unusable"
+details: "whole mod gets put into folder but nothing happens, not usable"
+reporter: "linkumsclan31"
+date: "2026-09-16"
+issue: 281
+
