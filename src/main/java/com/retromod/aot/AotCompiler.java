@@ -564,8 +564,12 @@ public class AotCompiler {
                         entry.getKey(), entry.getValue());
             }
             
+            java.util.Set<String> danglingAdvancements = com.retromod.resources.ModDataMigrator
+                    .danglingRecipeAdvancements(originalResources.keySet(),
+                            originalResources::get, targetMcVersion);
             for (Map.Entry<String, byte[]> entry : originalResources.entrySet()) {
                 if (entry.getKey().equals("META-INF/MANIFEST.MF")) continue;
+                if (danglingAdvancements.contains(entry.getKey())) continue;
 
                 byte[] data = entry.getValue();
 

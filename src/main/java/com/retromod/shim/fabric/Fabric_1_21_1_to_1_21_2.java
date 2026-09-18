@@ -179,6 +179,12 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
             "net/minecraft/world/InteractionResult"
         );
 
+        // The block adapter matches Mojang names, which a Fabric mod only has after the 26.x remap.
+        if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            com.retromod.shim.common.LegacyBlockApiSynthetic.register(transformer);
+        }
+
         // Registry getter renames
         transformer.registerMethodRedirect(
             "net/minecraft/core/Registry", "getHolderOrThrow",

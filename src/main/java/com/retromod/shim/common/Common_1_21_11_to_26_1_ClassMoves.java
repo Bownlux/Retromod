@@ -538,6 +538,45 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
     }
 
     /**
+     * The Mojang-named half of the 1.21.2 {@code ItemInteractionResult} merge, for NeoForge and Forge
+     * mods. The class redirect alone left the constants unresolvable: since 1.21.2 each field is
+     * typed by its record ({@code InteractionResult$Success} and so on), and three were renamed or
+     * removed. {@code PASS_TO_DEFAULT_BLOCK_INTERACTION} crashed Macaw's Bridges on the first right
+     * click. The mapping matches {@link #registerItemInteractionResultBridge}. {@code InteractionResult}
+     * was an enum until 1.21.2, so its own {@code CONSUME_PARTIAL} and {@code sidedSuccess} are
+     * covered by registering both owner spellings.
+     */
+    public static void registerMojangItemInteractionResultBridge(RetromodTransformer t) {
+        String oldOwner = "net/minecraft/world/ItemInteractionResult";
+        String newOwner = "net/minecraft/world/InteractionResult";
+        t.registerClassRedirect(oldOwner, newOwner);
+        String[][] constants = {
+                {"SUCCESS", "SUCCESS", "Success"},
+                {"CONSUME", "CONSUME", "Success"},
+                {"CONSUME_PARTIAL", "CONSUME", "Success"},
+                {"PASS_TO_DEFAULT_BLOCK_INTERACTION", "TRY_WITH_EMPTY_HAND", "TryEmptyHandInteraction"},
+                {"SKIP_DEFAULT_BLOCK_INTERACTION", "FAIL", "Fail"},
+                {"FAIL", "FAIL", "Fail"},
+                {"PASS", "PASS", "Pass"},
+        };
+        String poly = "com/retromod/polyfill/minecraft/RetroItemInteractionResult";
+        ensureSyntheticRegistered(t, poly);
+        for (String owner : new String[]{oldOwner, newOwner}) {
+            for (String[] c : constants) {
+                t.registerFieldRedirect(owner, c[0], null,
+                        newOwner, c[1], "L" + newOwner + "$" + c[2] + ";");
+            }
+            t.registerMethodRedirect(owner, "sidedSuccess", "(Z)L" + owner + ";",
+                    poly, "sidedSuccess", "(Z)Ljava/lang/Object;");
+            // An enum method became an interface method, so the old INVOKEVIRTUAL cannot link.
+            t.registerMethodRedirect(owner, "consumesAction", "()Z",
+                    poly, "consumesAction", "(Ljava/lang/Object;)Z");
+            t.registerMethodRedirect(owner, "result", "()L" + newOwner + ";",
+                    poly, "result", "(Ljava/lang/Object;)Ljava/lang/Object;");
+        }
+    }
+
+    /**
      * {@code ItemInteractionResult} ({@code class_9062}, the 1.20.5-1.21.1 sided item-use result)
      * was merged back into {@code InteractionResult} at 1.21.2 and is ABSENT from the 1.21.4-era
      * intermediary tsv (it died before the harvest), so nothing remapped it: 6 corpus mods carry

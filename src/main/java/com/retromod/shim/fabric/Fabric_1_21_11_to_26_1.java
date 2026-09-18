@@ -47,6 +47,31 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
         // Vanilla content holder fields whose type became ResourceKey<X> in MC 1.21.
         registerRegistryRefRedirects(transformer);
 
+        // 26.x refuses to construct a block whose Properties carry no registry id. NeoForge mods
+        // get the id from their deferred register; a Fabric mod builds the block inside the
+        // Registry.register argument list, so every Fabric mod that adds a block died at its own
+        // class init with "Block id not set". The adapter stamps the id, which is already on the
+        // stack at that point, and these factories read it back while the block is built.
+        transformer.registerSyntheticClass(
+            com.retromod.shim.fabric.FabricRegistryIdSynthetic.INTERNAL,
+            com.retromod.shim.fabric.FabricRegistryIdSynthetic.generate());
+        transformer.registerMethodRedirect(
+            "net/minecraft/world/level/block/state/BlockBehaviour$Properties", "of",
+            "()Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;",
+            com.retromod.shim.fabric.FabricRegistryIdSynthetic.INTERNAL, "blockOf",
+            "()Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;");
+        transformer.registerConstructorRedirect(
+            "net/minecraft/world/item/Item$Properties", "()V",
+            com.retromod.shim.fabric.FabricRegistryIdSynthetic.INTERNAL, "itemProps",
+            "()Lnet/minecraft/world/item/Item$Properties;");
+        transformer.registerMethodRedirect(
+            "net/minecraft/world/level/block/state/BlockBehaviour$Properties", "ofFullCopy",
+            "(Lnet/minecraft/world/level/block/state/BlockBehaviour;)"
+                + "Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;",
+            com.retromod.shim.fabric.FabricRegistryIdSynthetic.INTERNAL, "blockOfFullCopy",
+            "(Lnet/minecraft/world/level/block/state/BlockBehaviour;)"
+                + "Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;");
+
         // Vanilla class moves shared with the NeoForge 26.1 shim (#64).
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
 

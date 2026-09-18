@@ -417,4 +417,61 @@ class ModDataMigratorTest {
         assertTrue(changed >= 1, "the created definition counts as a change");
         assertTrue(Files.readString(def).contains("\"m:item/gadget\""));
     }
+    @Test
+    void recipeUnlockedConditionRenamedOn263() {
+        // Macaw's Trapdoors and Bridges: 652 of these stopped a 26.3 world from loading.
+        String in = "{\"criteria\":{\"has_the_recipe\":{\"trigger\":\"minecraft:recipe_unlocked\","
+                + "\"conditions\":{\"recipe\":\"m:thing\"}}},\"rewards\":{\"recipes\":[\"m:thing\"]}}";
+        String out = mig("data/m/advancement/recipes/thing.json", in, "26.3");
+        assertTrue(out.contains("\"conditions\":{\"recipes\":\"m:thing\"}"), out);
+        assertEquals(in, mig("data/m/advancement/recipes/thing.json", in, "26.2"),
+                "26.2 still reads the old key");
+    }
+    @Test
+    void legacyRecipeIngredientsBecomeStrings() {
+        // Macaw's Roofs: 607 recipes in this shape stopped a 26.3 world from loading.
+        String in = "{\"type\":\"minecraft:crafting_shaped\",\"pattern\":[\"WS\"],"
+                + "\"key\":{\"W\":{\"item\":\"minecraft:acacia_log\"},\"S\":{\"tag\":\"c:rods\"}},"
+                + "\"result\":{\"id\":\"m:roof\"}}";
+        String out = mig("data/m/recipe/roof.json", in, "26.3");
+        assertTrue(out.contains("\"W\":\"minecraft:acacia_log\""), out);
+        assertTrue(out.contains("\"S\":\"#c:rods\""), out);
+
+        String shapeless = "{\"type\":\"minecraft:crafting_shapeless\",\"ingredients\":"
+                + "[{\"item\":\"minecraft:stick\"},[{\"item\":\"minecraft:oak_log\"},{\"item\":\"minecraft:birch_log\"}]],"
+                + "\"result\":{\"id\":\"m:x\"}}";
+        String converted = mig("data/m/recipe/x.json", shapeless, "26.2");
+        assertTrue(converted.contains("\"ingredients\":[\"minecraft:stick\",[\"minecraft:oak_log\",\"minecraft:birch_log\"]]"),
+                converted);
+    }
+
+    @Test
+    void customIngredientsAreLeftAlone() {
+        String in = "{\"type\":\"minecraft:smelting\",\"ingredient\":{\"type\":\"neoforge:components\",\"items\":\"minecraft:stick\"},"
+                + "\"result\":{\"id\":\"m:x\"}}";
+        assertEquals(in, mig("data/m/recipe/x.json", in, "26.3"));
+    }
+    @Test
+    void recipeAdvancementForMissingRecipeIsDroppedOn263(@TempDir Path root)
+            throws Exception {
+        // Macaw's Bridges rewards mcwbridges:iron_bridge, but its recipe is iron_bridge_middle.
+        Path adv = root.resolve("data/mcwbridges/advancement/recipes/iron_bridge.json");
+        Path kept = root.resolve("data/mcwbridges/advancement/recipes/iron_bridge_pier.json");
+        Path other = root.resolve("data/mcwbridges/advancement/recipes/uses_other_mod.json");
+        Files.createDirectories(adv.getParent());
+        Files.createDirectories(root.resolve("data/mcwbridges/recipe"));
+        Files.writeString(root.resolve("data/mcwbridges/recipe/iron_bridge_pier.json"), "{}");
+        Files.writeString(adv, "{\"rewards\":{\"recipes\":[\"mcwbridges:iron_bridge\"]}}");
+        Files.writeString(kept, "{\"rewards\":{\"recipes\":[\"mcwbridges:iron_bridge_pier\"]}}");
+        Files.writeString(other, "{\"rewards\":{\"recipes\":[\"othermod:thing\"]}}");
+
+        assertTrue(ModDataMigrator.danglingRecipeAdvancements(
+                java.util.List.of("data/mcwbridges/advancement/recipes/iron_bridge.json"),
+                name -> new byte[0], "26.2").isEmpty(), "26.2 ignores dangling ids");
+
+        ModDataMigrator.migrateTree(root, "26.3");
+        assertFalse(Files.exists(adv), "the advancement for a missing recipe must be dropped");
+        assertTrue(Files.exists(kept), "an advancement for a shipped recipe stays");
+        assertTrue(Files.exists(other), "another mod may provide a foreign recipe");
+    }
 }

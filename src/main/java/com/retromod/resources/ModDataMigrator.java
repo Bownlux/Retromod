@@ -53,6 +53,10 @@ import com.google.gson.stream.JsonToken;
  *       {@code minecraft:splash_potion} and {@code minecraft:lingering_potion} (vanilla's
  *       {@code ThrownPotionSplitFix}). Scoped to {@code tags/entity_type/} files only, since
  *       the potion item is unchanged.</li>
+ *   <li>recipe ingredient objects ({@code {"item": ...}}, {@code {"tag": ...}}) to the 1.21.2
+ *       string form.</li>
+ *   <li>{@code recipe_unlocked} condition {@code "recipe"} to {@code "recipes"}: 26.3 renamed
+ *       it. Gated to 26.3 and newer targets.</li>
  * </ul>
  */
 public final class ModDataMigrator {
@@ -137,6 +141,20 @@ public final class ModDataMigrator {
         String probe = new String(normalized, StandardCharsets.UTF_8);
         if (probe.contains("entity_properties") || (advancementLike && probe.contains("\"type\""))) {
             normalized = migrateEntityPredicates(normalized, advancementLike);
+        }
+
+        // 26.3 renamed the recipe_unlocked condition "recipe" to "recipes", and advancements are
+        // loaded with the registries, so one old file stopped the world from loading.
+        if (entryName.contains("/advancement") && probe.contains("recipe_unlocked")
+                && !RetromodVersion.mcVersionExceeds("26.3", targetMcVersion)) {
+            normalized = migrateRecipeUnlockedConditions(normalized);
+        }
+
+        // 1.21.2 replaced ingredient objects ({"item": ...}, {"tag": ...}) with a bare id or
+        // "#tag" string. 26.2 skipped such recipes; 26.3 loads recipes with the registries, so one
+        // old recipe stopped the world from loading.
+        if (isRecipeFile(entryName) && (probe.contains("\"item\"") || probe.contains("\"tag\""))) {
+            normalized = migrateRecipeIngredients(normalized);
         }
 
         String in = new String(normalized, StandardCharsets.UTF_8);
@@ -334,6 +352,18 @@ public final class ModDataMigrator {
             }
         }
 
+        for (String advancement : danglingRecipeAdvancements(relNames, rel -> {
+            try (InputStream input = Files.newInputStream(root.resolve(rel))) {
+                return ZipSecurity.safeReadAllBytes(input, MAX_MIGRATABLE_FILE_BYTES);
+            } catch (IOException unreadable) {
+                return null;
+            }
+        }, targetMcVersion)) {
+            Files.delete(root.resolve(advancement));
+            relNames.remove(advancement);
+            changed++;
+        }
+
         // 1.21.4+ client item definitions: a pre-1.21.4 mod ships only models/item/*.json, and
         // without an assets/<ns>/items/<id>.json per item everything renders as the purple/black
         // missing model ("Missing item model for location <ns>:<id>").
@@ -456,6 +486,188 @@ public final class ModDataMigrator {
             "equipment", "minecraft:equipment",
             "distance", "minecraft:distance",
             "stepping_on", "minecraft:stepping_on");
+
+    private static final Pattern RECIPE_ADVANCEMENT =
+            Pattern.compile("data/([a-z0-9_.-]+)/advancements?/recipes/.+\\.json");
+
+    /**
+     * Recipe advancements that name a recipe from their own namespace which the jar does not ship.
+     * Older versions ignored the dangling id; 26.3 binds it as a registry reference, so one such
+     * file stopped the world from loading (Macaw's Bridges ships {@code iron_bridge} for a recipe
+     * named {@code iron_bridge_middle}). Other namespaces are left alone, since another mod may
+     * provide them.
+     *
+     * @param entryNames every entry path in the jar or tree, forward-slash separated
+     * @param reader reads one entry's bytes, or returns null when it cannot
+     * @return the advancement entries to drop; empty below 26.3
+     */
+    public static java.util.Set<String> danglingRecipeAdvancements(
+            java.util.Collection<String> entryNames,
+            java.util.function.Function<String, byte[]> reader, String targetMcVersion) {
+        java.util.Set<String> dangling = new java.util.TreeSet<>();
+        if (targetMcVersion == null || RetromodVersion.mcVersionExceeds("26.3", targetMcVersion)) {
+            return dangling;
+        }
+        java.util.Set<String> names = new java.util.HashSet<>(entryNames);
+        for (String name : names) {
+            java.util.regex.Matcher m = RECIPE_ADVANCEMENT.matcher(name);
+            if (!m.matches()) continue;
+            byte[] json = reader.apply(name);
+            if (json == null) continue;
+            for (String id : rewardedRecipes(normalizeLenientJson(json))) {
+                int colon = id.indexOf(':');
+                if (colon < 0 || !id.substring(0, colon).equals(m.group(1))) continue;
+                String path = id.substring(colon + 1);
+                String ns = m.group(1);
+                if (!names.contains("data/" + ns + "/recipe/" + path + ".json")
+                        && !names.contains("data/" + ns + "/recipes/" + path + ".json")) {
+                    dangling.add(name);
+                    break;
+                }
+            }
+        }
+        if (!dangling.isEmpty()) {
+            LOGGER.info("Dropping {} recipe advancement(s) for recipes the mod does not ship: {}",
+                    dangling.size(), dangling);
+        }
+        return dangling;
+    }
+
+    private static List<String> rewardedRecipes(byte[] json) {
+        List<String> ids = new java.util.ArrayList<>();
+        try {
+            com.google.gson.JsonElement root = com.google.gson.JsonParser
+                    .parseString(new String(json, StandardCharsets.UTF_8));
+            if (!root.isJsonObject()) return ids;
+            com.google.gson.JsonElement rewards = root.getAsJsonObject().get("rewards");
+            if (rewards != null && rewards.isJsonObject()
+                    && rewards.getAsJsonObject().get("recipes") instanceof com.google.gson.JsonArray list) {
+                for (com.google.gson.JsonElement id : list) {
+                    if (id.isJsonPrimitive()) ids.add(id.getAsString());
+                }
+            }
+        } catch (RuntimeException unparseable) {
+            // leave the file to the loader's own error
+        }
+        return ids;
+    }
+
+    private static boolean isRecipeFile(String entryName) {
+        return (entryName.contains("/recipe/") || entryName.contains("/recipes/"))
+                && !entryName.contains("/advancement");
+    }
+
+    /** Recipe fields that hold one ingredient, and the fields that hold a map or list of them. */
+    private static final List<String> SINGLE_INGREDIENT_FIELDS =
+            List.of("ingredient", "template", "base", "addition");
+
+    /**
+     * Convert pre-1.21.2 ingredient objects to the string form. Only an object whose sole key is
+     * {@code item} or {@code tag}, or an array made entirely of them, is converted; a loader's
+     * custom ingredient (anything with a {@code type}) is left alone.
+     */
+    static byte[] migrateRecipeIngredients(byte[] json) {
+        try {
+            com.google.gson.JsonElement root = com.google.gson.JsonParser
+                    .parseString(new String(json, StandardCharsets.UTF_8));
+            if (!root.isJsonObject()) return json;
+            com.google.gson.JsonObject recipe = root.getAsJsonObject();
+            boolean changed = false;
+            for (String field : SINGLE_INGREDIENT_FIELDS) {
+                com.google.gson.JsonElement converted = legacyIngredient(recipe.get(field));
+                if (converted != null) {
+                    recipe.add(field, converted);
+                    changed = true;
+                }
+            }
+            if (recipe.has("key") && recipe.get("key").isJsonObject()) {
+                for (var entry : recipe.getAsJsonObject("key").entrySet()) {
+                    com.google.gson.JsonElement converted = legacyIngredient(entry.getValue());
+                    if (converted != null) {
+                        entry.setValue(converted);
+                        changed = true;
+                    }
+                }
+            }
+            if (recipe.has("ingredients") && recipe.get("ingredients").isJsonArray()) {
+                com.google.gson.JsonArray list = recipe.getAsJsonArray("ingredients");
+                for (int i = 0; i < list.size(); i++) {
+                    com.google.gson.JsonElement converted = legacyIngredient(list.get(i));
+                    if (converted != null) {
+                        list.set(i, converted);
+                        changed = true;
+                    }
+                }
+            }
+            return changed ? root.toString().getBytes(StandardCharsets.UTF_8) : json;
+        } catch (RuntimeException e) {
+            return json;   // unparseable or unexpected shape: leave the file alone
+        }
+    }
+
+    /** The string form of one legacy ingredient, or null when it is not a legacy ingredient. */
+    private static com.google.gson.JsonElement legacyIngredient(com.google.gson.JsonElement value) {
+        if (value == null) return null;
+        if (value.isJsonObject()) {
+            String id = legacyIngredientId(value.getAsJsonObject());
+            return id == null ? null : new com.google.gson.JsonPrimitive(id);
+        }
+        if (value.isJsonArray() && !value.getAsJsonArray().isEmpty()) {
+            com.google.gson.JsonArray ids = new com.google.gson.JsonArray();
+            for (com.google.gson.JsonElement alternative : value.getAsJsonArray()) {
+                if (!alternative.isJsonObject()) return null;
+                String id = legacyIngredientId(alternative.getAsJsonObject());
+                if (id == null || id.startsWith("#")) return null; // a tag cannot join a list
+                ids.add(id);
+            }
+            return ids;
+        }
+        return null;
+    }
+
+    private static String legacyIngredientId(com.google.gson.JsonObject ingredient) {
+        if (ingredient.size() != 1) return null;
+        com.google.gson.JsonElement item = ingredient.get("item");
+        if (item != null && item.isJsonPrimitive()) return item.getAsString();
+        com.google.gson.JsonElement tag = ingredient.get("tag");
+        if (tag != null && tag.isJsonPrimitive()) return "#" + tag.getAsString();
+        return null;
+    }
+
+    /**
+     * Rename {@code conditions.recipe} to {@code conditions.recipes} in every
+     * {@code minecraft:recipe_unlocked} criterion. Returns the input array unchanged when nothing
+     * matched or the JSON doesn't parse.
+     */
+    static byte[] migrateRecipeUnlockedConditions(byte[] json) {
+        try {
+            com.google.gson.JsonElement root = com.google.gson.JsonParser
+                    .parseString(new String(json, StandardCharsets.UTF_8));
+            if (!root.isJsonObject() || !root.getAsJsonObject().has("criteria")
+                    || !root.getAsJsonObject().get("criteria").isJsonObject()) {
+                return json;
+            }
+            boolean changed = false;
+            for (var entry : root.getAsJsonObject().getAsJsonObject("criteria").entrySet()) {
+                if (!entry.getValue().isJsonObject()) continue;
+                com.google.gson.JsonObject criterion = entry.getValue().getAsJsonObject();
+                com.google.gson.JsonElement trigger = criterion.get("trigger");
+                if (trigger == null || !trigger.isJsonPrimitive()) continue;
+                String id = trigger.getAsString();
+                if (!id.equals("minecraft:recipe_unlocked") && !id.equals("recipe_unlocked")) continue;
+                com.google.gson.JsonElement conditions = criterion.get("conditions");
+                if (conditions == null || !conditions.isJsonObject()) continue;
+                com.google.gson.JsonObject c = conditions.getAsJsonObject();
+                if (c.has("recipe") && !c.has("recipes")) {
+                    c.add("recipes", c.remove("recipe"));
+                    changed = true;
+                }
+            }
+            return changed ? root.toString().getBytes(StandardCharsets.UTF_8) : json;
+        } catch (RuntimeException e) {
+            return json;   // unparseable or unexpected shape: leave the file alone
+        }
+    }
 
     /**
      * Rewrite 1.21.x {@code entity_properties} predicates to the 26.x registry-keyed form.

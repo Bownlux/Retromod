@@ -722,6 +722,14 @@ public class RetromodTransformer implements ClassFileTransformer {
         if (remappedOwner.equals(oldOwner) && remappedDesc.equals(oldDesc)) {
             return;
         }
+        // A wrapper class folded into its target leaves an alias that points at itself, such as
+        // FabricBlockSettings.of() becoming Properties.of() -> Properties.of(). It rewrites nothing,
+        // and storing it replaced a real redirect on that key: on NeoForge it erased the
+        // Properties.of() id bridge, so every block built from it failed "Block id not set".
+        if (!target.devirtualize() && target.owner().equals(remappedOwner)
+                && target.name().equals(oldName) && target.desc().equals(remappedDesc)) {
+            return;
+        }
         methodRedirects.put(new MethodKey(remappedOwner, oldName, remappedDesc), target);
         methodRedirectOwners.add(remappedOwner);
     }
@@ -2069,6 +2077,16 @@ public class RetromodTransformer implements ClassFileTransformer {
                     repaired, currentJarClassBytesProvider());
         }
         repaired = com.retromod.shim.common.LegacyInputEventCallAdapter.apply(repaired);
+        // Only when the Fabric id bridge is registered, which is the 26.x Fabric path.
+        if (syntheticClasses.containsKey(
+                com.retromod.shim.fabric.FabricRegistryIdSynthetic.INTERNAL)) {
+            repaired = com.retromod.shim.fabric.FabricRegistryIdAdapter.apply(repaired);
+        }
+        // Only when a 1.21.1 to 1.21.2 shim registered the helper, so newer mods are untouched.
+        if (syntheticClasses.containsKey(
+                com.retromod.shim.common.LegacyBlockApiSynthetic.INTERNAL)) {
+            repaired = com.retromod.shim.common.LegacyBlockApiAdapter.apply(repaired);
+        }
         // GUI override repair matches Mojang descriptors and proven post-remap base classes.
         repaired = com.retromod.shim.common.LegacyGuiOverrideAdapter.apply(repaired);
         repaired = com.retromod.shim.common.LegacyEntityRendererAdapter.apply(repaired);

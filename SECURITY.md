@@ -2,7 +2,9 @@
 
 ## Supported Releases
 
-Security fixes are made for the active 1.3 pre-release line and the latest 1.2 stable release. Older lines may be fixed only when the same change applies cleanly.
+Security fixes are made for the latest 1.3 release and the latest 1.2 release. Older lines may be fixed only when the same change applies cleanly.
+
+Past audits are published once the fixing release is out: [1.3.0](docs-dev/security-audit-1.3.0.md).
 
 ## Report a Vulnerability
 

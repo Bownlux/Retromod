@@ -12,6 +12,11 @@ public class Forge_1_21_1_to_1_21_2 implements VersionShim {
     @Override public String getSourceVersion() { return "1.21.1"; }
     @Override public String getTargetVersion() { return "1.21.2"; }
     @Override public String getModLoaderType() { return "forge"; }
-    @Override public void registerRedirects(RetromodTransformer transformer) {}
+    @Override public void registerRedirects(RetromodTransformer transformer) {
+        // Same vanilla 1.21.2 changes as the NeoForge shim; Forge mods use the same Mojang names.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
+            .registerMojangItemInteractionResultBridge(transformer);
+        com.retromod.shim.common.LegacyBlockApiSynthetic.register(transformer);
+    }
     @Override public String[] getShimClasses() { return new String[0]; }
 }

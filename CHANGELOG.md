@@ -2,6 +2,25 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
+## [1.3.1] - 2026-09-16
+
+Patch release. Fixes the reason most Fabric mods could not be used on 26.x, plus two smaller gaps found after 1.3.0 shipped.
+
+### Fixed
+
+- Loads a Fabric mod that adds blocks or items on 26.x. 26.x refuses to construct a block until its registry id is stamped on its `Properties`. A NeoForge mod gets that from its deferred register, and Retromod has bridged it there since 1.2.0. Fabric has no deferred register: the mod calls `Registry.register(registry, id, block)` and builds the block inside the argument list, so nothing ran before the constructor and every such mod died at its own class init with `NullPointerException: Block id not set`. The id is still reachable, because arguments evaluate left to right, so it is stamped where it is produced and read back while the block is built. The same is done for items, which fail the same way one line later. A `Properties` held in a shared field is also stamped where it is passed to the constructor, since that one was never created inside a registration to begin with.
+- Translates `GlassBlock` to `TransparentBlock`. Only the 1.12.2 spelling had been repointed, so a mod naming the modern one still failed with `NoClassDefFoundError`.
+- Stops `gaps` reporting that it ignored `--target`, which it honours.
+- Loads NeoForge mods that build blocks from `BlockBehaviour.Properties.of()` on 26.x again. The Fabric `FabricBlockSettings` polyfill left a self-referencing alias on `Properties.of()` that replaced the registry id bridge, so the mod failed at registration with `Block id not set`. Only the in-game NeoForge path loads Fabric polyfills, so offline transforms were unaffected.
+- Repairs 1.21.1 NeoForge and Forge mods that use `ItemInteractionResult`. The class merged into `InteractionResult` at 1.21.2 and only the class name was repointed, so the first right click on such a block threw `NoSuchFieldError: PASS_TO_DEFAULT_BLOCK_INTERACTION`. The constants now resolve to their typed 1.21.2 fields, and `sidedSuccess` and `consumesAction` are bridged.
+- Keeps 1.21.1 block item names. A `BlockItem` used its block's description id until 1.21.2, so a mod whose lang file has only `block.` keys showed raw `item.` keys for every block item.
+- Converts pre-1.21.2 recipe ingredients such as `{"item": "minecraft:stick"}` to the string form. 26.2 skipped those recipes; 26.3 loads recipes with the registries, so one old recipe stopped the world from loading.
+- Renames the `recipe_unlocked` advancement condition `recipe` to `recipes` for 26.3.
+- Drops a recipe advancement that rewards a recipe from its own mod that the mod does not ship. Older versions ignored the dangling id; 26.3 refuses to load the world.
+- Bridges pre-1.21.2 `updateShape` and `getOcclusionShape` overrides to the new signatures. The old overrides still loaded but were never called, so blocks that connect to their neighbors stopped connecting.
+
+Found by running mods rather than by a report. Other 1.21.2 signature changes are not bridged yet: `neighborChanged` now receives an `Orientation` instead of the neighbor position, and `appendHoverText` takes a `TooltipDisplay` and a `Consumer`, so those overrides still go uncalled. A Fabric mod can still fail for reasons this does not touch: a removed Fabric API class such as the old `FuelRegistry` is a rewritten API rather than a rename, `ArmorMaterial` became a record so a mod implementing it hits `IncompatibleClassChangeError`, and `Feature` became an interface at 26.3 so a worldgen mod extending it needs a port.
+
 ## [1.3.0] - 2026-09-15
 
 **Stable release.** Promoted from `1.3.0-rc.2`, with Minecraft 26.3 support added on release day and the fixes listed below found by scanning a corpus of widely used mods rather than waiting for reports. The 1.3.0 line ran `snapshot.1` through `snapshot.10`, then `rc.1` and `rc.2`; the sections below have the detail.

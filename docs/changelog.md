@@ -8,6 +8,18 @@ description: "Highlights from Retromod releases."
 
 This page keeps the release history readable. The [full technical changelog](https://github.com/Bownlux/Retromod/blob/main/CHANGELOG.md) lists every fix and regression test.
 
+## 1.3.1, September 16, 2026
+
+- Fabric mods that add blocks or items now load on 26.x. This was the single biggest reason a Fabric mod would not start, and it affected every one of them that adds content.
+- Translates `GlassBlock` to `TransparentBlock`, which a mod naming the modern spelling still needed.
+- The `gaps` command no longer claims it ignored `--target`.
+- Fixes `Block id not set` for NeoForge mods transformed in-game on 26.x.
+- Fixes a crash on right click with 1.21.1 NeoForge and Forge mods that use `ItemInteractionResult`.
+- Lets 26.3 worlds load with mods that ship pre-1.21.2 recipes or recipe advancements.
+- Keeps 1.21.1 block item names, and restores block overrides such as `updateShape` so connected blocks connect again.
+
+A Fabric mod can still fail for other reasons. A removed Fabric API class is a rewritten API rather than a rename, and `Feature` became an interface at 26.3, so a worldgen mod extending it needs a real port.
+
 ## 1.3.0, September 15, 2026
 
 The deleted-base-class update:

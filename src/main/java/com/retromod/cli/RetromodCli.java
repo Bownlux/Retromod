@@ -1236,8 +1236,23 @@ public class RetromodCli {
             long totalRead = 0;
             int totalEntries = 0;
             Set<String> outputEntryNames = new HashSet<>();
+            List<String> inputEntryNames = new ArrayList<>();
+            for (var scan = inJar.entries(); scan.hasMoreElements()
+                    && inputEntryNames.size() <= MAX_ARCHIVE_ENTRY_COUNT; ) {
+                inputEntryNames.add(scan.nextElement().getName());
+            }
+            Set<String> danglingAdvancements = com.retromod.resources.ModDataMigrator
+                    .danglingRecipeAdvancements(inputEntryNames, name -> {
+                        var adv = inJar.getJarEntry(name);
+                        try (var in = inJar.getInputStream(adv)) {
+                            return com.retromod.util.ZipSecurity.safeReadAllBytes(in);
+                        } catch (IOException unreadable) {
+                            return null;
+                        }
+                    }, TARGET_MC_VERSION);
             while (entries.hasMoreElements()) {
                 var entry = entries.nextElement();
+                if (danglingAdvancements.contains(entry.getName())) continue;
                 if (++totalEntries > MAX_ARCHIVE_ENTRY_COUNT) {
                     throw new IOException("mod jar contains more than "
                             + MAX_ARCHIVE_ENTRY_COUNT + " entries: " + input);

@@ -82,7 +82,7 @@ Contained does not mean partial. If a rule belongs in one shared layer, fix it t
 
 - Keep suspected and confirmed vulnerability details private until disclosure is approved.
 - Do not announce a security fix or publish vulnerability details until the affected stable version with the fix is released.
-- For the current 1.3.0 pre-release line, keep audit findings and security-fix details private until stable 1.3.0 is released.
+- Keep an audit finding and its fix detail private until the stable release carrying the fix is out. The 1.3.0 audit is published at `docs-dev/security-audit-1.3.0.md`; do the same for the next one, naming the version rather than hardcoding a line that goes stale at the next bump.
 - If a vulnerability is fixed directly on a stable release line, defer the public technical details until the first snapshot of the next version.
 - Before the embargo lifts, keep private maintainer notes with the impact, affected versions, fix, tests, and disclosure timeline. Do not put exploit instructions or identifying audit details in public changelogs, issues, pull requests, or release notes.
 - Coordinate disclosure timing with the maintainer and, when applicable, the reporter. Public text after the embargo should explain user impact and the fixed versions without unnecessary exploit detail.
@@ -139,12 +139,12 @@ mvn package -P lite -DskipTests -Dexec.skip=true
 mvn exec:java -Dexec.mainClass="com.retromod.cli.RetromodCli" -Dexec.args="<command>" -q
 
 # Run the executable release CLI (dependencies bundled)
-java -jar dist/CLI/retromod-1.3.0-cli.jar <command>
+java -jar dist/CLI/retromod-1.3.1-cli.jar <command>
 ```
 
 **Important:** Always pass `-Dexec.skip=true` during build to prevent Maven from running the CLI entrypoint.
 
-Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 70 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.3.0-cli.jar`.
+Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 70 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.3.1-cli.jar`.
 
 ## Release integrity (self-hash)
 
@@ -153,7 +153,7 @@ Official builds embed a SHA-256 of the executable release surface in `SignatureV
 **Embed the hash as the LAST release step** (any covered code, provider, or transformation-data change shifts it):
 ```bash
 mvn clean package -Dexec.skip=true                          # build the final jars
-python3 scripts/compute-self-hash.py target/retromod-1.3.0-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.3.1-all.jar
 # embed the 64-hex result into SignatureVerifier.EXPECTED_SELF_HASH PROGRAMMATICALLY
 # (sed/python - never hand-typed), rebuild, then re-run the compute script and
 # compare against the embedded value (closed-loop verify)
@@ -167,7 +167,7 @@ After embedding and rebuilding, run `bash build-all.sh --skip-build --require-se
 ## Deploy to Minecraft
 
 ```bash
-cp dist/Fabric/26.1/retromod-1.3.0+26.1.jar ~/Library/Application\ Support/minecraft/mods/
+cp dist/Fabric/26.1/retromod-1.3.1+26.1.jar ~/Library/Application\ Support/minecraft/mods/
 ```
 
 Game directory (macOS): `~/Library/Application Support/minecraft/`

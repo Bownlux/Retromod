@@ -33,10 +33,11 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
             "net/minecraft/world/InteractionResultHolder",
             "net/minecraft/world/InteractionResult"
         );
-        transformer.registerClassRedirect(
-            "net/minecraft/world/ItemInteractionResult",
-            "net/minecraft/world/InteractionResult"
-        );
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
+            .registerMojangItemInteractionResultBridge(transformer);
+
+        // updateShape/getOcclusionShape signatures and the BlockItem description id changed.
+        com.retromod.shim.common.LegacyBlockApiSynthetic.register(transformer);
 
         transformer.registerMethodRedirect(
             "net/minecraft/core/RegistryAccess", "registryOrThrow",

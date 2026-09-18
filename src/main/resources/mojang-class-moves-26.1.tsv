@@ -970,6 +970,11 @@ net/minecraft/world/item/FireworkRocketItem$Shape	net/minecraft/world/item/compo
 net/minecraft/world/item/FishBucketItem	net/minecraft/world/item/MobBucketItem
 net/minecraft/world/level/biome/Biome$ClimateParameters	net/minecraft/world/level/biome/Climate$ParameterPoint
 net/minecraft/world/level/block/AbstractGlassBlock	net/minecraft/world/level/block/TransparentBlock
+# GlassBlock was folded into TransparentBlock alongside AbstractGlassBlock, and kept the same
+# (BlockBehaviour.Properties) constructor. Only the 1.12.2 legacy name had been repointed, so a
+# mod naming the modern Mojang name still died: Hearth and Home fails at its own class init on
+# 26.3 with NoClassDefFoundError on GlassBlock, found by launching it.
+net/minecraft/world/level/block/GlassBlock	net/minecraft/world/level/block/TransparentBlock
 net/minecraft/world/level/block/BambooBlock	net/minecraft/world/level/block/BambooStalkBlock
 net/minecraft/world/level/block/EnchantmentTableBlock	net/minecraft/world/level/block/EnchantingTableBlock
 net/minecraft/world/level/block/FarmBlock	net/minecraft/world/level/block/FarmlandBlock
