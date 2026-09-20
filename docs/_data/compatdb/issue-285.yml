@@ -1,0 +1,15 @@
+name: "Polished Planks"
+badge: borked
+mod_version: "1.0.0"
+source_mc: "1.21.1"
+host_mc: "26.1.2"
+loader: "neoforge"
+retromod: "1.3.1"
+links:
+  modrinth: "https://modrinth.com/mod/polished-planks"
+summary: "Crashes on startup with \"Block id not set\""
+details: "The mod transforms with the following issue: ``` Retromod transform check Mod:     polished_planks-1.0.0.jar Target:  MC 26.1.2 Time:    2026-09-21 00:03:45 Result:  needs review Found 1 issue(s): Missing Methods   - net.minecraft.data.recipes.ShapedRecipeBuilder.shaped() not found in MC 26.1.2 ``` and crashes on a `Block id not set` error on startup, a similar issue to what is listed as being fixed for Fabric in Retromod 1.3.1: ``` net.neoforged.fml.ModLoadingException: Loading errors encountered: 	- Polished Planks (polished_planks) encountered an error while dispatching the net.neoforged.neoforge.registries.RegisterEvent event 	  java.lang.NullPointerException: Block id not set 	- Polished Planks (polished_planks) encountered an error while dispatching the net.neoforged.neoforge.registries.RegisterEvent event 	  java.lang.NullPointerException: Trying to access unbound value: ResourceKey[minecraft:block / polished_planks:polished_acacia_planks] 	at net.neoforged.fml.ModLoader.waitForFuture(ModLoader.java:253) ~[loader-11.0.15.jar:11.0] {} 	at net.neoforged.fml.ModLoader.waitForTask(ModLoader.java:155) ~[loader-11.0.15.jar:11.0] {} 	at net.neoforged.fml.ModLoader.runInitTask(ModLoader.java:135) ~[loader-11.0.15.jar:11.0] {} 	at TRANSFORMER/neoforge@26.1.2.109/net.neoforged.neoforge.internal.CommonModLoader.begin(CommonModLoader.java:51) ~[neoforge-26.1.2.109-universal.jar:?] {} 	at TRANSFORMER/neoforge@26.1.2.109/net.neoforged.neoforge.client.loading.ClientModLoader.begin(ClientModLoader.java:55) ~[neoforge-26.1.2.109-universal.jar:?] {} 	at TRANSFORMER/minecraft@26.1.2/net.minecraft.client.main.Main.main(Main.java:122) [minecraft-client-patched-26.1.2.109.jar:?] {} 	at net.neoforged.fml.startup.Client.main(Client.java:19) [loader-11.0.15.jar:11.0] {} 	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[?:?] {} 	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[?:?] {} 	at io.github.zekerzhayard.forgewrapper.installer.Main.main(Main.java:67) [ForgeWrapper-prism-2026-08-01.jar:prism-2026-08-01] {} 	at org.prismlauncher.launcher.impl.StandardLauncher.launch(StandardLauncher.java:115) [NewLaunch.jar:?] {} 	at org.prismlauncher.EntryPoint.listen(EntryPoint.java:129) [NewLaunch.jar:?] {} 	at org.prismlauncher.EntryPoint.main(EntryPoint.java:70) [NewLaunch.jar:?] {} ``` Full crash log: [crash-2026-09-21_00.04.40-client.txt](https://github.com/user-attachments/files/32445750/crash-2026-09-21_00.04.40-client.txt)"
+reporter: "ttaute"
+date: "2026-09-20"
+issue: 285
+
