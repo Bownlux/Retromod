@@ -1,0 +1,15 @@
+name: "Bountiful Fares and NexusLib"
+bundle: true
+badge: borked
+host_mc: "26.1.2"
+loader: "fabric"
+retromod: "1.3.1"
+mods:
+  - name: "NexusLib https://modrinth.com/mod/nexuslib"
+  - name: "Bountiful Fares https://modrinth.com/mod/bountiful-fares"
+summary: "Needs Transform"
+details: "# Bountiful Fares 1.21.1 + NexusLib compatibility issues on Minecraft 26.1.2 ## Summary I am testing Retromod 1.3.1 on Fabric to see whether Bountiful Fares 3.0.13 for Minecraft 1.21.1 can be used on Minecraft 26.1.2. Retromod successfully starts, loads its mappings, class redirects, polyfills and compatibility shims, and both Bountiful Fares and NexusLib are detected as loaded mods. However, several compatibility issues occur during startup. Some are handled by Retromod and allow startup to continue, but the game eventually crashes during client initialization because NexusLib references a particle render type that no longer exists in Minecraft 26.1.2. There also appears to be a separate issue involving Retromod's `RetroSimpleJsonReloadListener` polyfill and its shaded Gson implementation. ## Environment - Minecraft: 26.1.2 - Fabric Loader: 0.19.5 - Fabric API: 0.155.3+26.1.2 - Retromod: 1.3.1 - Bountiful Fares: 3.0.13 for Fabric 1.21.1 - NexusLib: 1.2.0 for Fabric 1.21.1 - Cloth Config: 26.1.154 - Java: Microsoft OpenJDK 25.0.1 - OS: Windows 11 - Launcher: Prism Launcher 11.1.0 The original 1.21.1 Bountiful Fares and NexusLib jars were disabled after Retromod generated their converted versions. Loaded converted mods: ```text bountifulfares-fabric-1.21.1-3.0.13-retromod nexuslib-fabric-1.21.1-1.2.0-retromod ``` ## Main crash The final crash happens during client initialization: ```text java.lang.NoSuchFieldError: Class net.minecraft.client.particle.ParticleRenderType does not have member field 'net.minecraft.client.particle.ParticleRenderType CUSTOM' at net.minecraft.client.particle.ParticleEngine.handler$bgi000$nexuslib$addParticleRenderTypes at net.minecraft.client.particle.ParticleEngine.<clinit> at net.minecraft.client.Minecraft.<init> ``` This appears to originate from a NexusLib mixin that attempts to access: ```java ParticleRenderType.CUSTOM ``` On Minecraft 26.1.2, that field is no longer present. This is the error that ultimately prevents the game from reaching the title screen. ## Bountiful Fares mixin compatibility issues Before the final NexusLib crash, several Bountiful Fares mixins fail to apply."
+reporter: "ElMolgajete"
+date: "2026-09-25"
+issue: 294
+
