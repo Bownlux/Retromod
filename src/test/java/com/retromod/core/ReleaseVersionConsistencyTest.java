@@ -114,11 +114,20 @@ class ReleaseVersionConsistencyTest {
         assertTrue(windowsBuilder.contains("POM_VERSION"));
         assertTrue(windowsBuilder.contains("--require-self-hash"));
         assertTrue(windowsBuilder.contains("scripts\\compute-self-hash.py"));
-        assertTrue(windowsBuilder.contains("EXPECTED_FABRIC=23"));
-        assertTrue(windowsBuilder.contains("EXPECTED_FORGE=23"));
-        assertTrue(windowsBuilder.contains("EXPECTED_NEOFORGE=22"));
-        assertTrue(windowsBuilder.contains("EXPECTED_CLI=1"));
-        assertTrue(windowsBuilder.contains("EXPECTED_TOTAL=69"));
+        // Both builders must demand the same complete matrix. The Windows counts once lagged a
+        // release behind (23/23/22, total 69), so a correct 26.3 build would have failed there.
+        int versions = shellArray(unixBuilder, "MC_VERSIONS").size();
+        for (String[] expected : new String[][]{
+                {"FABRIC", String.valueOf(versions)},
+                {"FORGE", String.valueOf(versions)},
+                {"NEOFORGE", String.valueOf(versions - 1)},
+                {"CLI", "1"},
+                {"TOTAL", String.valueOf(3 * versions)}}) {
+            assertTrue(unixBuilder.contains("EXPECTED_" + expected[0] + "=" + expected[1]),
+                    "build-all.sh must expect " + expected[1] + " for " + expected[0]);
+            assertTrue(windowsBuilder.contains("EXPECTED_" + expected[0] + "=" + expected[1]),
+                    "build-all.bat must expect " + expected[1] + " for " + expected[0]);
+        }
         assertTrue(windowsBuilder.contains("SHA256SUMS.txt"));
         assertTrue(windowsBuilder.contains(
                 "'fabric':{'fabric.mod.json','quilt.mod.json'}"));

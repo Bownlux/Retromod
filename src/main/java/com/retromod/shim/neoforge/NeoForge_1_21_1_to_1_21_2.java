@@ -16,6 +16,8 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // Vanilla item bases removed in 1.21.2, rebased only on hosts that lost them.
+        com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21.2");
         // 1.21.2 pathfinding refactor renamed the PathType constants.
         String pathType = "net/minecraft/world/level/pathfinder/PathType";
         transformer.registerFieldRedirect(pathType, "DAMAGE_FIRE", pathType, "FIRE");

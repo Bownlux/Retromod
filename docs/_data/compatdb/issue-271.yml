@@ -1,0 +1,14 @@
+name: "Minepathy"
+badge: borked
+mod_version: "1.1.1"
+source_mc: "1.21.11"
+host_mc: "26.2"
+loader: "fabric"
+retromod: "1.3.0"
+links:
+  modrinth: "https://modrinth.com/mod/minepathy"
+summary: "Unable to launch."
+details: "Invalid descriptor on its ItemEntity merge mixin: 26.2 changed that method's parameters and return type, which the automatic mixin repair declines. The retromod/stripped warnings in the log are mixins Retromod disabled on purpose."
+reporter: "Createdman1"
+date: "2026-09-10"
+issue: 271

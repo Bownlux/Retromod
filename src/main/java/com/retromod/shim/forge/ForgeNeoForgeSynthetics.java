@@ -34,7 +34,7 @@ import static org.objectweb.asm.Opcodes.*;
  *       (method parameter, field declaration). Common uses are re-pointed by
  *       {@link com.retromod.shim.api.forge.ForgeRegistryApiShim}; it carries no members.</li>
  *   <li>DistExecutor: all-static helper for client/server-split execution. Each method delegates
- *       to {@code FMLEnvironment.getDist()} and runs the action only on a matching dist; the
+ *       to the running side and runs the action only on a matching dist; the
  *       {@code safe*} variants' serializable SAMs are companion marker interfaces. The migration
  *       shim renames {@code Dist} to NeoForge's before this applies.</li>
  * </ul>
@@ -262,12 +262,25 @@ public final class ForgeNeoForgeSynthetics {
         return cw.toByteArray();
     }
 
+    /**
+     * Pushes the running side. {@code FMLEnvironment.getDist()} arrived in NeoForge 1.21.9 and the
+     * public {@code dist} field it replaced is gone there, so the generated code follows the host.
+     */
+    private static void readDist(MethodVisitor m) {
+        if (com.retromod.core.RetromodVersion.compareMcVersions(
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "1.21.9") >= 0) {
+            m.visitMethodInsn(INVOKESTATIC, FMLENV, "getDist", "()" + L_DIST, false);
+        } else {
+            m.visitFieldInsn(GETSTATIC, FMLENV, "dist", L_DIST);
+        }
+    }
+
     /** {@code static void name(Dist, Supplier)}: if getDist()==dist, ((Runnable) supplier.get()).run(). */
     private static void emitRunWhenOn(ClassWriter cw, String name) {
         MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, name,
                 "(" + L_DIST + "L" + SUPPLIER + ";)V", null, null);
         m.visitCode();
-        m.visitMethodInsn(INVOKESTATIC, FMLENV, "getDist", "()" + L_DIST, false);
+        readDist(m);
         m.visitVarInsn(ALOAD, 0);
         Label end = new Label();
         m.visitJumpInsn(IF_ACMPNE, end);
@@ -287,7 +300,7 @@ public final class ForgeNeoForgeSynthetics {
                 "(" + L_DIST + "L" + SUPPLIER + ";)Ljava/lang/Object;", null,
                 new String[]{"java/lang/Exception"});
         m.visitCode();
-        m.visitMethodInsn(INVOKESTATIC, FMLENV, "getDist", "()" + L_DIST, false);
+        readDist(m);
         m.visitVarInsn(ALOAD, 0);
         Label els = new Label();
         m.visitJumpInsn(IF_ACMPNE, els);
@@ -308,7 +321,7 @@ public final class ForgeNeoForgeSynthetics {
         MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, name,
                 "(L" + SUPPLIER + ";L" + SUPPLIER + ";)Ljava/lang/Object;", null, null);
         m.visitCode();
-        m.visitMethodInsn(INVOKESTATIC, FMLENV, "getDist", "()" + L_DIST, false);
+        readDist(m);
         m.visitFieldInsn(GETSTATIC, DIST, "CLIENT", L_DIST);
         Label server = new Label(), run = new Label();
         m.visitJumpInsn(IF_ACMPNE, server);

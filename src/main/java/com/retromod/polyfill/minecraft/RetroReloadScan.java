@@ -45,8 +45,8 @@ public final class RetroReloadScan {
             Class<?> converterCls = Class.forName("net.minecraft.resources.FileToIdConverter");
             Class<?> rmCls = Class.forName("net.minecraft.server.packs.resources.ResourceManager");
             Class<?> idCls = Class.forName("net.minecraft.resources.Identifier");
-            Class<?> gsonCls = Class.forName("com.google.gson.Gson");
-            Class<?> jsonElementCls = Class.forName("com.google.gson.JsonElement");
+            Class<?> gsonCls = Class.forName(com.retromod.util.HostLibraryNames.binaryName(com.retromod.util.HostLibraryNames.GSON));
+            Class<?> jsonElementCls = Class.forName(com.retromod.util.HostLibraryNames.binaryName(com.retromod.util.HostLibraryNames.JSON_ELEMENT));
             java.lang.reflect.Method fromJson = Class.forName("net.minecraft.util.GsonHelper")
                     .getMethod("fromJson", gsonCls, java.io.Reader.class, Class.class);
             Object conv = converterCls.getMethod("json", String.class).invoke(null, directory);

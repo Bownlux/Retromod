@@ -824,6 +824,11 @@ public class ForgeModTransformer {
 
         content = updateMinecraftVersionRange(content);
 
+        // The language provider checks loaderVersion against its own version, which moves with
+        // every Forge release (javafml 66 on 26.3). A bounded range such as [47,48) rejects the
+        // mod at discovery, before any bytecode runs, on Forge as well as NeoForge.
+        content = relaxLoaderVersion(content);
+
         // Forge 1.16+ rejects a jar whose mods.toml lacks a top-level license;
         // supply a neutral default when the source has none (#62).
         content = ensureLicense(content);
@@ -922,8 +927,8 @@ public class ForgeModTransformer {
      * value is checked against the host's FancyModLoader version, which doesn't track
      * that number, so a literal range rejects the mod on NeoForge.
      */
-    static String relaxLoaderVersion(String toml) {
-        return toml.replaceAll("(?m)^(\\s*loaderVersion\\s*=\\s*)\"[^\"]*\"", "$1\"[1,)\"");
+    public static String relaxLoaderVersion(String toml) {
+        return toml.replaceAll("(?m)^(\\s*loaderVersion\\s*=\\s*)(\"[^\"]*\"|'[^']*')", "$1\"[1,)\"");
     }
 
     /**
@@ -1015,6 +1020,45 @@ public class ForgeModTransformer {
         return result.toString();
     }
 
+    private static final Pattern NEGATIVE_DEPENDENCY_TYPE = Pattern.compile(
+            "^\\s*type\\s*=\\s*[\"'](incompatible|discouraged)[\"']", Pattern.CASE_INSENSITIVE);
+
+    private static final Pattern DEPENDENCY_TYPE = Pattern.compile("^\\s*type\\s*=");
+
+    /** Marks every line of a dependency block that declares a {@code type}. */
+    static boolean[] typedDependencyLines(String[] lines) {
+        return blockLinesMatching(lines, DEPENDENCY_TYPE);
+    }
+
+    /**
+     * Marks every line of a dependency block whose {@code type} is {@code incompatible} or
+     * {@code discouraged}. The type may come before or after the {@code versionRange}.
+     */
+    static boolean[] negativeDependencyLines(String[] lines) {
+        return blockLinesMatching(lines, NEGATIVE_DEPENDENCY_TYPE);
+    }
+
+    /** Marks every line of each dependency block in which some line matches {@code pattern}. */
+    private static boolean[] blockLinesMatching(String[] lines, Pattern pattern) {
+        boolean[] marked = new boolean[lines.length];
+        int blockStart = -1;
+        for (int i = 0; i <= lines.length; i++) {
+            boolean header = i < lines.length && lines[i].trim().startsWith("[");
+            if (header || i == lines.length) {
+                if (blockStart >= 0) {
+                    boolean matches = false;
+                    for (int j = blockStart; j < i; j++) {
+                        if (pattern.matcher(lines[j]).find()) matches = true;
+                    }
+                    if (matches) java.util.Arrays.fill(marked, blockStart, i, true);
+                }
+                blockStart = i < lines.length && lines[i].trim().startsWith("[[dependencies")
+                        ? i : -1;
+            }
+        }
+        return marked;
+    }
+
     /**
      * Update the minecraft versionRange in TOML content, and relax ranges for
      * third-party APIs Retromod shims (otherwise the loader blocks the mod even
@@ -1023,13 +1067,23 @@ public class ForgeModTransformer {
     private String updateMinecraftVersionRange(String toml) {
         StringBuilder result = new StringBuilder();
         String[] lines = toml.split("\n");
+        boolean[] negativeRange = negativeDependencyLines(lines);
+        boolean[] typed = typedDependencyLines(lines);
         String currentDepModId = null;
 
-        for (String line : lines) {
+        for (int lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            String line = lines[lineIndex];
             String trimmed = line.trim();
 
             if (trimmed.startsWith("[[dependencies")) {
                 currentDepModId = null;
+            }
+
+            // An incompatible or discouraged dependency's range lists the versions to avoid, so
+            // widening it would reject every version instead of none.
+            if (negativeRange[lineIndex]) {
+                result.append(line).append("\n");
+                continue;
             }
 
             // find() not matches(): a trailing inline comment like modId="forge"
@@ -1051,18 +1105,21 @@ public class ForgeModTransformer {
                 } else if ("forge".equals(currentDepModId) || "neoforge".equals(currentDepModId)) {
                     result.append("versionRange = \"[0,)\"\n");
                     currentDepModId = null;
-                } else if (targetMcVersion.startsWith("26.")) {
-                    // 26.1+: relax all non-core deps; most old versions aren't available
-                    result.append("versionRange = \"[0,)\"\n");
-                    LOGGER.info("  Relaxed dependency: {} -> [0,...) (26.1+ compat)", currentDepModId);
-                    currentDepModId = null;
                 } else {
-                    result.append(line).append("\n");
+                    // A sibling mod built for the host rarely satisfies a range written for the
+                    // old version: Farmer's Delight 1.3.4 sorts below "1.20.1-1.2.4" (#273). An
+                    // optional dependency is still range-checked when present, so the range goes.
+                    result.append("versionRange = \"[0,)\"\n");
+                    LOGGER.info("  Relaxed dependency: {} -> [0,...)", currentDepModId);
+                    currentDepModId = null;
                 }
             } else if (currentDepModId != null &&
                        !("minecraft".equals(currentDepModId) || "neoforge".equals(currentDepModId) || "forge".equals(currentDepModId))
                        && trimmed.startsWith("mandatory")) {
                 result.append("mandatory = false\n");
+                // NeoForge from 1.20.2 ignores mandatory and treats a block without a type as
+                // required, so GeckoLib's optional geckoanimfix became a hard failure.
+                if (!typed[lineIndex]) result.append("type = \"optional\"\n");
             } else if (currentDepModId != null &&
                        !("minecraft".equals(currentDepModId) || "neoforge".equals(currentDepModId) || "forge".equals(currentDepModId))
                        && trimmed.matches("type\\s*=\\s*\"required\".*")) {

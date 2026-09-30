@@ -1,0 +1,14 @@
+name: "Head Index"
+badge: diamond
+mod_version: "1.2.1"
+source_mc: "26.2"
+host_mc: "26.3"
+loader: "fabric"
+retromod: "1.3.1"
+links:
+  modrinth: "https://modrinth.com/mod/headindex"
+summary: "Commands and picking up heads work."
+details: "As reported. /head player looks profiles up through authlib classes 26.3 renamed, which 1.3.2 carries, and through two methods that gained a Prediction parameter, which are not bridged yet."
+reporter: "Bogdan172-xd"
+date: "2026-09-25"
+issue: 292

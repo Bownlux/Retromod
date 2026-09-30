@@ -97,6 +97,10 @@ If a transformed jar name contains spaces or unusual punctuation, update Retromo
 
 Forge 1.20.1 and modern NeoForge use substantially different APIs. Retromod bridges selected metadata, registration, event-bus, networking, and removed-class paths, but some mods still need a Forge host. If a mod fails during registry lifecycle, packet delivery, data generation, rendering, or another deep Forge subsystem, try the matching Forge build and include the NeoForge log in a report.
 
+## A Very Large Mod Is Skipped
+
+Retromod refuses a jar whose contents exceed 500 MB unpacked, or that holds a single file over 50 MB. The log shows `ZIP total extracted size exceeds limit` or `ZIP entry exceeds`. The limit stops a crafted archive from exhausting memory during a transform. A jar above it stays untransformed, so the loader then rejects it for its declared Minecraft version, which looks like Retromod having done nothing. Very large jars are usually a mod plus bundled assets. Try a build without the bundled resource pack, or an earlier version below the limit.
+
 ## Cache Looks Stale
 
 Current builds stamp AOT caches and invalidate mismatches automatically. During same-version development runs, delete `config/retromod/aot-cache/` to force a rebuild.

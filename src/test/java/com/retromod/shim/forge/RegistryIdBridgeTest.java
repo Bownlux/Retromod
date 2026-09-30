@@ -103,6 +103,95 @@ class RegistryIdBridgeTest {
                 "no raw DeferredRegister.register(String,Supplier) call may survive");
     }
 
+    /** {@code DeferredRegister.createBlocks(...)} returns the Blocks subclass, whose register is typed. */
+    private static byte[] typedRegistrarFixture() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "com/example/TypedReg", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "build",
+                "(Lnet/neoforged/neoforge/registries/DeferredRegister$Blocks;"
+                        + "Lnet/neoforged/neoforge/registries/DeferredRegister$Items;"
+                        + "Lnet/neoforged/bus/api/IEventBus;Ljava/util/function/Supplier;)V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitLdcInsn("thing");
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, BLOCKS_REGISTER_OWNER, "register",
+                "(Ljava/lang/String;Ljava/util/function/Supplier;)"
+                        + "Lnet/neoforged/neoforge/registries/DeferredBlock;", false);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitLdcInsn("thing");
+        mv.visitVarInsn(Opcodes.ALOAD, 3);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, ITEMS_REGISTER_OWNER, "register",
+                "(Ljava/lang/String;Ljava/util/function/Supplier;)"
+                        + "Lnet/neoforged/neoforge/registries/DeferredItem;", false);
+        mv.visitInsn(Opcodes.POP);
+        // The event-bus overload shares the name and must be left alone.
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, BLOCKS_REGISTER_OWNER, "register",
+                "(Lnet/neoforged/bus/api/IEventBus;)V", false);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    private static final String BLOCKS_REGISTER_OWNER =
+            "net/neoforged/neoforge/registries/DeferredRegister$Blocks";
+    private static final String ITEMS_REGISTER_OWNER =
+            "net/neoforged/neoforge/registries/DeferredRegister$Items";
+
+    @Test
+    void typedDeferredRegisterSubclassesAreBridged() {
+        // #285: DeferredRegister.createBlocks(...) hands back the Blocks subclass, so the call site
+        // names DeferredRegister$Blocks.register and returns DeferredBlock. Keyed only on the base
+        // class, the id bridge never matched and the block was built with no id.
+        McReflect.setForceNeoForge(true);
+        RetromodVersion.TARGET_MC_VERSION = "26.1";
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        new ForgeRegistryApiShim().registerRedirects(t);
+
+        byte[] out = t.transformClass(typedRegistrarFixture(), "com/example/TypedReg.class");
+
+        assertTrue(containsCall(out, RegistryIdBridgeSynthetic.INTERNAL, "register",
+                        RegistryIdBridgeSynthetic.REGISTER_DESC),
+                "the typed register must route through the id bridge");
+        for (String owner : new String[]{BLOCKS_REGISTER_OWNER, ITEMS_REGISTER_OWNER}) {
+            String returned = owner.endsWith("Blocks")
+                    ? "Lnet/neoforged/neoforge/registries/DeferredBlock;"
+                    : "Lnet/neoforged/neoforge/registries/DeferredItem;";
+            assertFalse(containsCall(out, owner, "register",
+                            "(Ljava/lang/String;Ljava/util/function/Supplier;)" + returned),
+                    "no raw typed register(String,Supplier) may survive on " + owner);
+        }
+        for (String cast : new String[]{"net/neoforged/neoforge/registries/DeferredBlock",
+                                        "net/neoforged/neoforge/registries/DeferredItem"}) {
+            assertTrue(containsCheckCast(out, cast),
+                    "the widened DeferredHolder return must be cast back to " + cast);
+        }
+        assertTrue(containsCall(out, BLOCKS_REGISTER_OWNER, "register",
+                        "(Lnet/neoforged/bus/api/IEventBus;)V"),
+                "the event-bus overload shares the name and must be left alone");
+    }
+
+    /** True if the class bytes contain a CHECKCAST to the given type. */
+    private static boolean containsCheckCast(byte[] classBytes, String type) {
+        boolean[] found = {false};
+        new ClassReader(classBytes).accept(new org.objectweb.asm.ClassVisitor(Opcodes.ASM9) {
+            @Override public MethodVisitor visitMethod(int a, String n, String d, String s, String[] e) {
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override public void visitTypeInsn(int op, String t) {
+                        if (op == Opcodes.CHECKCAST && t.equals(type)) found[0] = true;
+                    }
+                };
+            }
+        }, 0);
+        return found[0];
+    }
+
     @Test
     void bridgeIsNotAppliedOnPre26Hosts() {
         // Pre-1.21.3 has no Properties.setId; the id bridge must not be wired there.

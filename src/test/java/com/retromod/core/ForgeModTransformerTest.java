@@ -64,6 +64,86 @@ class ForgeModTransformerTest {
     }
 
     @Test
+    @DisplayName("#273: the in-game path relaxes a sibling range and loaderVersion off 26.x too")
+    void transformModRelaxesSiblingRangeBelow26(@TempDir Path tmp) throws Exception {
+        Path src = tmp.resolve("rsd-fixture.jar");
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(src))) {
+            writeEntry(jos, "META-INF/mods.toml",
+                    "modLoader=\"javafml\"\nloaderVersion=\"[47,48)\"\nlicense=\"MIT\"\n"
+                  + "[[mods]]\nmodId=\"rsd_fixture\"\n"
+                  + "[[dependencies.rsd_fixture]]\nmodId=\"farmersdelight\"\n"
+                  + "type=\"required\"\nversionRange=\"[1.20.1-1.2.4,)\"\n"
+                  + "[[dependencies.rsd_fixture]]\nmodId=\"minecraft\"\n"
+                  + "versionRange=\"[1.20.1,1.21)\"\n");
+        }
+
+        Path out = new ForgeModTransformer("1.21.1")
+                .transformMod(src, Files.createDirectory(tmp.resolve("out")));
+
+        assertNotNull(out);
+        String toml = readEntry(out, "META-INF/mods.toml");
+        if (toml == null) toml = readEntry(out, "META-INF/neoforge.mods.toml");
+        assertTrue(toml.contains("versionRange = \"[0,)\""),
+                "Farmer's Delight 1.3.4 sorts below 1.20.1-1.2.4: " + toml);
+        assertTrue(toml.contains("\"optional\""), toml);
+        assertTrue(toml.contains("loaderVersion=\"[1,)\""), toml);
+    }
+
+    @Test
+    @DisplayName("#283: an old mandatory-only dependency is marked optional for NeoForge")
+    void transformModMarksMandatoryOnlyDependencyOptional(@TempDir Path tmp) throws Exception {
+        Path src = tmp.resolve("mandatory-fixture.jar");
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(src))) {
+            writeEntry(jos, "META-INF/mods.toml",
+                    "modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\nlicense=\"MIT\"\n"
+                  + "[[mods]]\nmodId=\"mand_fixture\"\n"
+                  + "[[dependencies.mand_fixture]]\nmodId=\"geckoanimfix\"\n"
+                  + "mandatory=false\nversionRange=\"[1.0,)\"\n"
+                  + "[[dependencies.mand_fixture]]\nmodId=\"curios\"\n"
+                  + "mandatory=true\ntype=\"required\"\nversionRange=\"[5.0,)\"\n"
+                  + "[[dependencies.mand_fixture]]\nmodId=\"minecraft\"\n"
+                  + "versionRange=\"[1.20.1,1.21)\"\n");
+        }
+
+        Path out = new ForgeModTransformer("1.21.1")
+                .transformMod(src, Files.createDirectory(tmp.resolve("out")));
+
+        String toml = readEntry(out, "META-INF/mods.toml");
+        if (toml == null) toml = readEntry(out, "META-INF/neoforge.mods.toml");
+        String gecko = toml.substring(toml.indexOf("geckoanimfix"), toml.indexOf("curios"));
+        assertTrue(gecko.contains("type = \"optional\""),
+                "NeoForge ignores mandatory and requires an untyped dependency: " + gecko);
+        String curios = toml.substring(toml.indexOf("curios"), toml.indexOf("\"minecraft\""));
+        assertEquals(1, curios.split("type\\s*=", -1).length - 1,
+                "a block that already has a type must not get a duplicate key: " + curios);
+    }
+
+    @Test
+    @DisplayName("an incompatible dependency keeps its range whichever line comes first")
+    void transformModKeepsIncompatibleRange(@TempDir Path tmp) throws Exception {
+        Path src = tmp.resolve("incompatible-fixture.jar");
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(src))) {
+            writeEntry(jos, "META-INF/mods.toml",
+                    "modLoader=\"javafml\"\nloaderVersion='[47,48)'\nlicense=\"MIT\"\n"
+                  + "[[mods]]\nmodId=\"inc_fixture\"\n"
+                  + "[[dependencies.inc_fixture]]\nmodId=\"embeddium\"\n"
+                  + "versionRange=\"[,0.3.20)\"\ntype=\"incompatible\"\n"
+                  + "[[dependencies.inc_fixture]]\nmodId=\"minecraft\"\n"
+                  + "versionRange=\"[1.20.1,1.21)\"\n");
+        }
+
+        Path out = new ForgeModTransformer("1.21.1")
+                .transformMod(src, Files.createDirectory(tmp.resolve("out")));
+
+        String toml = readEntry(out, "META-INF/mods.toml");
+        if (toml == null) toml = readEntry(out, "META-INF/neoforge.mods.toml");
+        assertTrue(toml.contains("versionRange=\"[,0.3.20)\""),
+                "widening would make every Embeddium incompatible: " + toml);
+        assertTrue(toml.contains("loaderVersion=\"[1,)\""),
+                "a single-quoted loaderVersion is relaxed too: " + toml);
+    }
+
+    @Test
     @DisplayName("#221: runtime transform sanitizes an AccessTransformer inside Jar-in-Jar")
     void transformModSanitizesNestedAccessTransformer(@TempDir Path tmp) throws Exception {
         byte[] nested = jarBytes("META-INF/accesstransformer.cfg",

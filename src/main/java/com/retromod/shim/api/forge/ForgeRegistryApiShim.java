@@ -108,6 +108,21 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
                 "net/neoforged/neoforge/registries/DeferredRegister", "register",
                 "(Ljava/lang/String;Ljava/util/function/Supplier;)Lnet/neoforged/neoforge/registries/DeferredHolder;",
                 B, "register", RegistryIdBridgeSynthetic.REGISTER_DESC, true);
+            // DeferredRegister.createBlocks(...) hands back the Blocks subclass, and its register
+            // overload returns DeferredBlock, so a call site keyed on the base class never matched
+            // and the block was built with no id (#285, the standard 1.21 NeoForge idiom). The
+            // devirtualized call casts the DeferredHolder back to the declared return type.
+            String[][] typedRegisters = {
+                {"Blocks", "DeferredBlock"},
+                {"Items", "DeferredItem"},
+            };
+            for (String[] typed : typedRegisters) {
+                transformer.registerMethodRedirect(
+                    "net/neoforged/neoforge/registries/DeferredRegister$" + typed[0], "register",
+                    "(Ljava/lang/String;Ljava/util/function/Supplier;)"
+                        + "Lnet/neoforged/neoforge/registries/" + typed[1] + ";",
+                    B, "register", RegistryIdBridgeSynthetic.REGISTER_DESC, true);
+            }
             // Block Properties factories -> id-stamping helpers (no-op when the thread-local isn't set).
             transformer.registerMethodRedirect(
                 "net/minecraft/world/level/block/state/BlockBehaviour$Properties", "of",

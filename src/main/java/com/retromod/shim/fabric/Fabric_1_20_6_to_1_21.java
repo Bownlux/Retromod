@@ -46,6 +46,15 @@ public class Fabric_1_20_6_to_1_21 implements VersionShim {
             "net/minecraft/class_2960", "method_60655",
             "(Ljava/lang/String;Ljava/lang/String;)Lnet/minecraft/class_2960;"
         );
+        // The 1-arg ctor went private at the same time. method_60654 = parse, which throws on a
+        // bad id as the constructor did. The host has three static (String) factories, so
+        // Pre1_20_5IdentifierCtorBridge cannot pick one and this redirect must be explicit.
+        transformer.registerConstructorRedirect(
+            "net/minecraft/class_2960",
+            "(Ljava/lang/String;)V",
+            "net/minecraft/class_2960", "method_60654",
+            "(Ljava/lang/String;)Lnet/minecraft/class_2960;"
+        );
 
         // Entity.changeDimension -> teleportTo (renamed in 1.21)
         transformer.registerMethodRedirect(

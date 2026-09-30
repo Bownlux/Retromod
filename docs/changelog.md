@@ -8,6 +8,26 @@ description: "Highlights from Retromod releases."
 
 This page keeps the release history readable. The [full technical changelog](https://github.com/Bownlux/Retromod/blob/main/CHANGELOG.md) lists every fix and regression test.
 
+## 1.3.2, September 30, 2026
+
+- Adds Forge 26.3.
+- Fixes a startup `VerifyError` for 1.21.6 to 1.21.11 Fabric mods that draw text on 26.x.
+- Follows 26.3's new key numbering, so old keybinds land on the right keys, and fixes the keybind and `isKeyDown` crashes 26.3 caused.
+- Keeps item tooltips from mods built before 1.21.5.
+- Fixes custom swords, tools, and armor on 1.21.5 and newer, and removed item classes such as music discs on 1.21 through 1.21.11.
+- Fixes `Block id not set` for NeoForge mods that use `DeferredRegister.createBlocks`.
+- Fixes a `VerifyError` in the published jars from Retromod's own Gson relocation.
+- Starts on NeoForge 1.21.1 again. The published 1.3.x jars stopped the game there before it wrote a log.
+- Fixes a `NoSuchMethodError` on `getDist` for Forge mods on NeoForge 1.21.1.
+- Keeps a mod's optional NeoForge companion from being treated as required.
+- Fixes `@Accessor` and `@Invoker` failures in Forge mods on Mojang-named hosts, and `new Identifier(String)` in Fabric mods on 1.21 and newer.
+- Fixes an `AbstractMethodError` in Fabric mods that register a HUD element or a similar callback as a lambda on 26.x.
+- Fixes NeoForge keybinds with a conflict context on 26.x, and a creative tab crash on newer Forge.
+- Lists a mod's keybinds under its own category again instead of Miscellaneous.
+- Loads mods whose sibling dependency or loader version was written for the old version.
+
+A mod that compares raw key codes itself still needs a port on 26.3. A custom tool tier that implements `Tier` still fails, because `Tier` became a record at 1.21.2.
+
 ## 1.3.1, September 16, 2026
 
 - Fabric mods that add blocks or items now load on 26.x. This was the single biggest reason a Fabric mod would not start, and it affected every one of them that adds content.

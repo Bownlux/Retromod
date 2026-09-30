@@ -770,6 +770,33 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                 "(Ljava/lang/String;ILjava/lang/String;)V",
                 "com/retromod/polyfill/minecraft/RetroKeyMapping", "createDefault",
                 "(Ljava/lang/String;ILjava/lang/String;)Ljava/lang/Object;");
+
+        // NeoForge's conflict-context constructors lost their String category at 1.21.9 as well,
+        // so a NeoForge keybind naming an IKeyConflictContext died with NoSuchMethodError.
+        String settings = "Lnet/neoforged/neoforge/client/settings/";
+        String context = settings + "IKeyConflictContext;";
+        String modifier = settings + "KeyModifier;";
+        String type = "Lcom/mojang/blaze3d/platform/InputConstants$Type;";
+        String key = "Lcom/mojang/blaze3d/platform/InputConstants$Key;";
+        String[][] conflictForms = {
+            {"(Ljava/lang/String;" + context + type + "ILjava/lang/String;)V", "createConflict",
+                "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;ILjava/lang/String;)"},
+            {"(Ljava/lang/String;" + context + key + "Ljava/lang/String;)V", "createConflictKey",
+                "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/String;)"},
+            {"(Ljava/lang/String;" + context + modifier + type + "ILjava/lang/String;)V",
+                "createConflictModifier",
+                "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;I"
+                    + "Ljava/lang/String;)"},
+            {"(Ljava/lang/String;" + context + modifier + key + "Ljava/lang/String;)V",
+                "createConflictModifierKey",
+                "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;"
+                    + "Ljava/lang/String;)"},
+        };
+        for (String[] form : conflictForms) {
+            t.registerConstructorRedirect("net/minecraft/client/KeyMapping", form[0],
+                    "com/retromod/polyfill/minecraft/RetroKeyMapping", form[1],
+                    form[2] + "Ljava/lang/Object;");
+        }
     }
 
     /**

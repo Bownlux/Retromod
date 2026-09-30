@@ -130,11 +130,18 @@ class CreativeModeTabBridgeTest {
                 .filter(m -> m.name.equals("<init>") && m.desc.equals("(Ljava/lang/String;)V"))
                 .findFirst().orElseThrow();
 
-        boolean builds = false, titles = false, callsSuper = false;
+        boolean builds = false, titles = false, callsSuper = false, names = false;
         for (AbstractInsnNode insn : ctor.instructions) {
             if (!(insn instanceof MethodInsnNode call)) continue;
             if (call.name.equals("builder") && call.owner.equals(TAB)) builds = true;
             if (call.name.equals("title")) titles = true;
+            if (call.name.equals("literal")) {
+                names = true;
+                // #290: Component is an interface, and a plain Methodref to it fails at link time
+                // with IncompatibleClassChangeError the moment the tab is constructed.
+                assertTrue(call.itf, "Component.literal must be called through an "
+                        + "InterfaceMethodref");
+            }
             if (call.name.equals("<init>") && call.owner.equals(TAB)) {
                 callsSuper = true;
                 assertTrue(call.desc.endsWith("Builder;)V"),
@@ -145,6 +152,7 @@ class CreativeModeTabBridgeTest {
         assertTrue(builds, "the tab has to come from CreativeModeTab.builder()");
         assertTrue(titles, "the name the mod passed has to become the tab's title");
         assertTrue(callsSuper, "the bridge must actually initialise its superclass");
+        assertTrue(names, "the title must come from Component.literal, checked for its itf flag");
     }
 
     @Test

@@ -16,34 +16,16 @@ public class NeoForge_1_21_4_to_1_21_5 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/SwordItem",
-            "net/minecraft/world/item/Item"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/PickaxeItem",
-            "net/minecraft/world/item/Item"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/AxeItem",
-            "net/minecraft/world/item/Item"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/ShovelItem",
-            "net/minecraft/world/item/Item"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/HoeItem",
-            "net/minecraft/world/item/Item"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/DiggerItem",
-            "net/minecraft/world/item/Item"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/ArmorItem",
-            "net/minecraft/world/item/Item"
-        );
+        // Vanilla item bases removed in 1.21.5, rebased only on hosts that lost them.
+        com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21.5");
+        // appendHoverText moved to TooltipDisplay + Consumer; keep old tooltip overrides called.
+        com.retromod.shim.common.LegacyTooltipSynthetic.register(transformer);
+
+        // The tool and armour classes are not redirected to Item. Redirecting them won the extends
+        // slot ahead of the removed-base rebase, so a sword became "extends Item" with a super call
+        // to an Item(Tier, int, float, Properties) constructor that does not exist. The rebase
+        // registered above handles SwordItem, PickaxeItem, DiggerItem and ArmorItem; AxeItem,
+        // ShovelItem and HoeItem still exist until 26.3, whose shim rebases them.
     }
 
     @Override public String[] getShimClasses() { return new String[0]; }

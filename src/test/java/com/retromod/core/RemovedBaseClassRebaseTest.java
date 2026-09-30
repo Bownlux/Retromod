@@ -202,11 +202,12 @@ class RemovedBaseClassRebaseTest {
     }
 
     @Test
-    @DisplayName("the removed base is no longer renamed onto a final class")
+    @DisplayName("the removed base is renamed only onto its generated stand-in, never a final class")
     void removedBaseIsNotAClassMove() {
-        // The table row that caused #260. It must stay out: a class move cannot express a
-        // deletion, and the nearest surviving name was a final record.
-        assertNull(transformer.getClassRedirects().get(REMOVED),
-                REMOVED + " must not be registered as a class move");
+        // The table row that caused #260 pointed RecordItem at JukeboxSong, a final record. The
+        // only rename allowed is onto the generated stand-in, so an instanceof, a cast or a
+        // parameter type that names the removed class still links.
+        assertEquals(GENERATED, transformer.getClassRedirects().get(REMOVED),
+                REMOVED + " may only be renamed onto the generated base");
     }
 }

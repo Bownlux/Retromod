@@ -32,8 +32,37 @@ class ForgeFmlPackageMigrationTest {
     }
 
     @Test
+    void distFieldStaysAFieldBeforeNeoForge1_21_9() {
+        // NeoForge 1.21.1 has only the dist field; getDist() there was a NoSuchMethodError (#283).
+        RetromodTransformer transformer = configuredTransformer();
+        byte[] output = transformer.transformClass(fmlFixture(), "test/LegacyFmlUser.class");
+
+        boolean[] readsField = {false};
+        new ClassReader(output).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor,
+                    String signature, String[] exceptions) {
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitFieldInsn(int opcode, String owner, String fieldName,
+                            String fieldDescriptor) {
+                        if (opcode == Opcodes.GETSTATIC && owner.equals(NEW_FML)
+                                && fieldName.equals("dist") && fieldDescriptor.equals(NEW_DIST)) {
+                            readsField[0] = true;
+                        }
+                    }
+                };
+            }
+        }, 0);
+
+        assertTrue(readsField[0], "FMLEnvironment.dist should stay a NeoForge field read");
+    }
+
+    @Test
     void oldFmlPackagesAndDistFieldMoveToCurrentNeoForgeApi() {
         RetromodTransformer transformer = configuredTransformer();
+        // The 1.21.9 shim, present in the chain on newer hosts, turns the field into getDist().
+        new com.retromod.shim.neoforge.NeoForge_1_21_8_to_1_21_9().registerRedirects(transformer);
         byte[] output = transformer.transformClass(fmlFixture(), "test/LegacyFmlUser.class");
 
         boolean[] shape = new boolean[3];

@@ -2235,8 +2235,8 @@ public class FabricModTransformer {
             // These classes come from Java or libraries bundled with Minecraft.
             String[] safeLibraryPrefixes = {
                 "java/", "javax/", "jdk/", "sun/",
-                "com/google/gson/", "com/google/common/",
-                "org/slf4j/", "org/apache/logging/",
+                com.retromod.util.HostLibraryNames.GSON_PACKAGE + "/", "com/google/common/",
+                com.retromod.util.HostLibraryNames.SLF4J_PACKAGE + "/", "org/apache/logging/",
                 "org/apache/commons/", "org/objectweb/asm/", "org/lwjgl/",
                 "io/netty/", "com/mojang/",
                 "it/unimi/dsi/fastutil/", "org/joml/",

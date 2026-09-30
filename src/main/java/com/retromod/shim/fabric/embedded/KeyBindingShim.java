@@ -29,6 +29,8 @@ public final class KeyBindingShim {
 
     /** Creates a KeyBinding from the old String category API. Called by transformed bytecode. */
     public static Object create(String translationKey, Object inputType, int keyCode, String categoryString) {
+        // 26.3 renumbered keys for SDL; a no-op on a GLFW host.
+        keyCode = com.retromod.polyfill.minecraft.RetroKeyMapping.hostCode(inputType, keyCode);
         initialize();
 
         if (initFailed) {

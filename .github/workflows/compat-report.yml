@@ -128,7 +128,18 @@ jobs:
               }
             }
             entry += `  summary: ${q(summary || 'No summary given.')}\n`;
-            if (details) entry += `  details: ${q(details)}\n`;
+            // Reporters paste whole crash reports here. The card renders details as one
+            // paragraph and already links the issue, so keep the opening lines and send the
+            // reader there for the rest. A maintainer can still write a real diagnosis in review.
+            const MAX_DETAILS = 400;
+            let shortDetails = String(details || '').replace(/[\r\n]+/g, ' ').trim();
+            if (shortDetails.length > MAX_DETAILS) {
+              const cut = shortDetails.slice(0, MAX_DETAILS);
+              const lastSpace = cut.lastIndexOf(' ');
+              shortDetails = (lastSpace > MAX_DETAILS / 2 ? cut.slice(0, lastSpace) : cut)
+                + ' ... full log in the linked issue.';
+            }
+            if (shortDetails) entry += `  details: ${q(shortDetails)}\n`;
             entry += `  reporter: ${q(issue.user.login)}\n  date: ${q(today)}\n  issue: ${issue.number}\n`;
 
             // Create the branch, commit, and PR.

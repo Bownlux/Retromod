@@ -76,8 +76,9 @@ public final class CreativeModeTabBridge {
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, TAB, "builder", "()L" + BUILDER + ";", false);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
+        // Component is an interface, so the static call needs an InterfaceMethodref (#290).
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, COMPONENT, "literal",
-                "(Ljava/lang/String;)L" + MUTABLE + ";", false);
+                "(Ljava/lang/String;)L" + MUTABLE + ";", true);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, BUILDER, "title",
                 "(L" + COMPONENT + ";)L" + BUILDER + ";", false);
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, TAB, "<init>", "(L" + BUILDER + ";)V", false);

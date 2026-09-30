@@ -93,7 +93,7 @@ class ForgeNeoForgeSyntheticsTest {
     }
 
     @Test
-    @DisplayName("#85 DistExecutor: 9 run/call/forDist static methods, all delegating to FMLEnvironment.getDist()")
+    @DisplayName("#85 DistExecutor: 9 run/call/forDist static methods, all checking the running side")
     void distExecutor() {
         byte[] b = ForgeNeoForgeSynthetics.generateDistExecutor();
         assertStructurallySound(b, "DistExecutor"); // branches on absent Dist type
@@ -110,13 +110,17 @@ class ForgeNeoForgeSyntheticsTest {
         for (String n : new String[]{"runForDist", "unsafeRunForDist", "safeRunForDist"}) {
             assertNotNull(method(cn, n, "(" + sup + sup + ")Ljava/lang/Object;"), n + " (Supplier,Supplier)Object");
         }
-        // Every non-ctor method must consult the current dist.
+        // Every non-ctor method must consult the current dist, through getDist() or the dist field
+        // depending on the host (see distExecutorFollowsTheHost).
         boolean allDelegate = cn.methods.stream().filter(m -> !m.name.equals("<init>")).allMatch(m ->
                 java.util.Arrays.stream(m.instructions.toArray()).anyMatch(in ->
-                        in instanceof org.objectweb.asm.tree.MethodInsnNode mi
+                        (in instanceof org.objectweb.asm.tree.MethodInsnNode mi
                                 && mi.owner.equals("net/neoforged/fml/loading/FMLEnvironment")
-                                && mi.name.equals("getDist")));
-        assertTrue(allDelegate, "every DistExecutor method must check FMLEnvironment.getDist()");
+                                && mi.name.equals("getDist"))
+                        || (in instanceof org.objectweb.asm.tree.FieldInsnNode fi
+                                && fi.owner.equals("net/neoforged/fml/loading/FMLEnvironment")
+                                && fi.name.equals("dist"))));
+        assertTrue(allDelegate, "every DistExecutor method must check the running side");
     }
 
     @Test
@@ -143,5 +147,36 @@ class ForgeNeoForgeSyntheticsTest {
         assertEquals("java/lang/Object", cn.superName);
         // A method here means callers hit NoSuchMethodError at runtime.
         assertTrue(cn.methods.isEmpty(), "marker interface must declare no methods");
+    }
+
+    @Test
+    @DisplayName("DistExecutor reads the field before NeoForge 1.21.9 and calls getDist() from it")
+    void distExecutorFollowsTheHost() {
+        String previous = com.retromod.core.RetromodVersion.TARGET_MC_VERSION;
+        try {
+            // getDist() arrived in 1.21.9; calling it on 1.21.1 was a NoSuchMethodError.
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = "1.21.1";
+            assertTrue(readsDist(ForgeNeoForgeSynthetics.generateDistExecutor(), false),
+                    "1.21.1 only has the dist field");
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = "1.21.9";
+            assertTrue(readsDist(ForgeNeoForgeSynthetics.generateDistExecutor(), true),
+                    "1.21.9 replaced the field with getDist()");
+        } finally {
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = previous;
+        }
+    }
+
+    /** Whether every side read uses the getter ({@code viaGetter}) or the field, and never the other. */
+    private static boolean readsDist(byte[] bytes, boolean viaGetter) {
+        ClassNode cn = new ClassNode();
+        new ClassReader(bytes).accept(cn, 0);
+        int getter = 0, field = 0;
+        for (MethodNode m : cn.methods) {
+            for (var insn : m.instructions) {
+                if (insn instanceof org.objectweb.asm.tree.MethodInsnNode c && c.name.equals("getDist")) getter++;
+                if (insn instanceof org.objectweb.asm.tree.FieldInsnNode f && f.name.equals("dist")) field++;
+            }
+        }
+        return viaGetter ? getter > 0 && field == 0 : field > 0 && getter == 0;
     }
 }

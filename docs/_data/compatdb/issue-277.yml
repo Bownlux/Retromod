@@ -1,0 +1,14 @@
+name: "Harder Workbench"
+badge: borked
+mod_version: "1.0.4"
+source_mc: "1.19.2"
+host_mc: "1.20.1"
+loader: "forge"
+retromod: "1.3.0-rc.1"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/harder-workbench"
+summary: "NoSuchMethodError on client startup."
+details: "The pre-1.19.3 CreativeModeTab(String) constructor, the same gap as Pyrologer And Friends: the creative tab bridge does not work on a Forge host that runs SRG names."
+reporter: "MeeM-segma"
+date: "2026-09-15"
+issue: 277

@@ -1925,6 +1925,11 @@ public class RetromodCli {
                 boolean isNeoForge = block.contains("\"neoforge\"");
                 boolean isForge = block.contains("\"forge\"");
                 boolean isCoreDependent = isMinecraft || isNeoForge || isForge;
+                // An incompatible or discouraged dependency's range lists versions to avoid.
+                if (block.matches("(?s).*\\btype\\s*=\\s*[\"'](?i:incompatible|discouraged)[\"'].*")) {
+                    result.append(block);
+                    continue;
+                }
 
                 // Maven range format: [1.21,1.21.1) or [1.21.8,1.22)
                 // Exact ranges such as [1.21.1] reject every newer host too (#188, Caelum).
@@ -1944,6 +1949,12 @@ public class RetromodCli {
                 );
 
                 if (!isCoreDependent) {
+                    // Matches the in-game path: an optional dependency is still range-checked
+                    // when present, and a sibling built for the host rarely fits the old range.
+                    block = block.replaceAll(
+                        "(versionRange\\s*=\\s*\")[^\"]*\"",
+                        "$1[0,)\""
+                    );
                     block = block.replaceAll(
                         "(type\\s*=\\s*\")required\"",
                         "$1optional\""
@@ -1953,12 +1964,22 @@ public class RetromodCli {
                         "(mandatory\\s*=\\s*)true",
                         "$1false"
                     );
+                    // NeoForge from 1.20.2 ignores mandatory and treats a block without a type
+                    // as required, so an optional old-format dependency must say so.
+                    if (block.matches("(?s).*\\bmandatory\\s*=.*")
+                            && !block.matches("(?s).*\\btype\\s*=.*")) {
+                        block = block.replaceFirst("(?m)^(\\s*mandatory\\s*=[^\\n]*)$",
+                                "$1\ntype=\"optional\"");
+                    }
                 }
 
                 result.append(block);
             }
 
-            return result.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            // The language provider checks loaderVersion against its own version, which moves
+            // with every Forge release, so a bounded range rejects the mod at discovery.
+            return com.retromod.core.ForgeModTransformer.relaxLoaderVersion(result.toString())
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
         } catch (Exception e) {
             return tomlData;
         }

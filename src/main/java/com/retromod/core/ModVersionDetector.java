@@ -719,7 +719,7 @@ public class ModVersionDetector {
         packages.removeIf(pkg ->
             pkg.startsWith("org/apache/") ||
             pkg.startsWith("com/google/") ||
-            pkg.startsWith("org/slf4j/") ||
+            pkg.startsWith(com.retromod.util.HostLibraryNames.SLF4J_PACKAGE + "/") ||
             pkg.startsWith("kotlin/") ||
             pkg.startsWith("org/objectweb/")
         );

@@ -33,7 +33,8 @@ public final class ReloadListenerSynthetic {
     private static final String RESOURCE_MANAGER = "net/minecraft/server/packs/resources/ResourceManager";
     private static final String PROFILER = "net/minecraft/util/profiling/ProfilerFiller";
     private static final String SCAN = "com/retromod/polyfill/minecraft/RetroReloadScan";
-    private static final String GSON = "com/google/gson/Gson";
+    // The mod's Gson, not Retromod's relocated copy; see HostLibraryNames.
+    private static final String GSON = com.retromod.util.HostLibraryNames.GSON;
 
     /** ClassWriter whose frame computation never needs the (absent) MC hierarchy. */
     private static ClassWriter newWriter() {

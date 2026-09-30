@@ -50,6 +50,9 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             registerForgeOfficialNetworkBridge(transformer);
         }
 
+        // Vanilla, so it applies on Forge too: RecordItem was removed in 1.21.
+        com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21");
+
         // These only apply on a NeoForge runtime; on Forge they break @Mod lookup (see class javadoc).
         if (!McReflect.isNeoForge()) {
             LOGGER.debug("Skipping Forge → NeoForge migration redirects (runtime is not NeoForge)");
@@ -184,12 +187,10 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "net/minecraftforge/forgespi/language/IModInfo",
             "net/neoforged/neoforgespi/language/IModInfo"
         );
-        transformer.registerFieldRedirect(
-            "net/neoforged/fml/loading/FMLEnvironment", "dist",
-            "Lnet/neoforged/api/distmarker/Dist;",
-            "net/neoforged/fml/loading/FMLEnvironment", "getDist",
-            "()Lnet/neoforged/api/distmarker/Dist;"
-        );
+        // FMLEnvironment.dist stays a field read here. getDist() only exists from NeoForge 1.21.9,
+        // and redirecting on every host broke each migrated mod that checked its side on 1.21.1
+        // through 1.21.8 with NoSuchMethodError. NeoForge_1_21_8_to_1_21_9 redirects it where the
+        // getter exists.
 
         // ForgeSpawnEggItem's constructor has the same supplier and color shape as the removed
         // DeferredSpawnEggItem API. The embedded replacement moves the entity type onto the modern

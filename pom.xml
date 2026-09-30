@@ -6,7 +6,7 @@
 
     <groupId>com.retromod</groupId>
     <artifactId>retromod</artifactId>
-    <version>1.3.1</version>
+    <version>1.3.2</version>
     <packaging>jar</packaging>
 
     <name>Retromod</name>
@@ -104,6 +104,15 @@
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
             <version>${gson.version}</version>
+            <exclusions>
+                <!-- Gson 2.11+ depends on these compile-time annotations. Shaded unrelocated, they
+                     split a package NeoForge 1.21.1 ships as a module, and the game failed to boot
+                     before writing a log. Gson does not need them at runtime. -->
+                <exclusion>
+                    <groupId>com.google.errorprone</groupId>
+                    <artifactId>error_prone_annotations</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- TOML Parsing (for Forge mods.toml) -->
@@ -451,6 +460,10 @@
                                         <exclude>META-INF/*.SF</exclude>
                                         <exclude>META-INF/*.DSA</exclude>
                                         <exclude>META-INF/*.RSA</exclude>
+                                        <!-- A dependency's module descriptor names packages the
+                                             relocations moved, so it describes nothing real. -->
+                                        <exclude>module-info.class</exclude>
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
                                     </excludes>
                                 </filter>
                             </filters>

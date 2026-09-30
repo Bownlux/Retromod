@@ -7,7 +7,7 @@ package com.retromod.shim.common;
 import com.retromod.core.RetromodTransformer;
 
 /**
- * Keeps mods that extend a deleted vanilla item class loadable on 26.x.
+ * Keeps mods that extend a deleted vanilla item class loadable on every host that removed it.
  *
  * <p>Minecraft has been folding hardcoded item subclasses into data components for several
  * versions. The class disappears, and every mod that extended it stops loading. There is nothing to
@@ -28,66 +28,82 @@ public final class RemovedItemBaseBridge {
 
     private static final String ITEM = "net/minecraft/world/item/Item";
     private static final String ITEM_CTOR = "(Lnet/minecraft/world/item/Item$Properties;)V";
-    private static final String GENERATED_RECORD = "com/retromod/generated/LegacyRecordItem";
-    private static final String GENERATED_ENCHANTED_BOOK =
-            "com/retromod/generated/LegacyEnchantedBookItem";
 
     /**
-     * Item subclasses 26.x removed that a mod extends directly, all of which sat on {@code Item}.
+     * Item subclasses Minecraft removed that a mod extends directly, all of which sat on
+     * {@code Item}, with the version each disappeared in, read from Mojang's own client mappings.
+     *
+     * <p>A rebase is not conditional on the class being missing, so each base is registered by
+     * the shim for the version that removed it and applies only on a host that lost it. They used
+     * to be registered from 26.1 only, which left every NeoForge and Forge host from 1.21 through
+     * 1.21.11 without them: a 1.20.1 music disc mod still failed on 1.21.1 with
+     * {@code NoClassDefFoundError: RecordItem}.
      *
      * <p>The tool classes were a chain, {@code SwordItem} and {@code DiggerItem} on
      * {@code TieredItem} on {@code Item}, and every link of it is gone: material, mining level and
      * attack damage are components now. The rest each held one behaviour that became a component.
-     * Only classes already absent on 26.1 belong in this list, because the bridge that registers it
-     * applies from 26.1 up and a rebase is not conditional on the class being missing.
-     * Checked against the 1.20.1 Mojang-mapped jar for what they extended, and against 26.3 for
-     * which of those bases survived, so each lands on a real class rather than the nearest name.
+     * {@code AxeItem}, {@code ShovelItem} and {@code HoeItem} are not here: they survived until
+     * 26.3, so the 26.3 shim registers them.
      *
      * <p>A mod with custom tools or armour is most of what people translate, and every one of them
      * stopped at the {@code extends}. Rebasing keeps the item registering with its name, texture,
      * recipe and tab. What the old base did with its other constructor arguments does not come
-     * back: a rebased sword is an ordinary item until its mod sets the components itself.
+     * back: a rebased sword is an ordinary item until its mod sets the components itself, and a
+     * rebased music disc no longer plays in a jukebox, because that now comes from the
+     * {@code jukebox_playable} component.
      */
-    private static final String[] REMOVED_ITEM_BASES = {
-        // Tools and weapons. AxeItem, ShovelItem and HoeItem are NOT here: they survived into
-        // 26.1 and 26.2 and only went at 26.3, so they are registered by the 26.3 shim, which
-        // only applies on a host that actually lost them.
-        "SwordItem", "PickaxeItem", "DiggerItem", "TieredItem",
-        // Wearables that were plain Item subclasses.
-        "ArmorItem", "AnimalArmorItem", "ElytraItem",
-        // One behaviour each, all of it now a component.
-        "BookItem", "BannerPatternItem", "ChorusFruitItem", "HoneyBottleItem", "MilkBucketItem",
-        "SuspiciousStewItem", "OminousBottleItem", "FireworkStarItem", "SaddleItem", "ComplexItem",
-    };
+    private static final java.util.Map<String, String> REMOVED_IN = java.util.Map.ofEntries(
+        java.util.Map.entry("RecordItem", "1.21"),
+        java.util.Map.entry("EnchantedBookItem", "1.21.2"),
+        java.util.Map.entry("TieredItem", "1.21.2"),
+        java.util.Map.entry("ElytraItem", "1.21.2"),
+        java.util.Map.entry("BookItem", "1.21.2"),
+        java.util.Map.entry("ChorusFruitItem", "1.21.2"),
+        java.util.Map.entry("HoneyBottleItem", "1.21.2"),
+        java.util.Map.entry("MilkBucketItem", "1.21.2"),
+        java.util.Map.entry("SuspiciousStewItem", "1.21.2"),
+        java.util.Map.entry("OminousBottleItem", "1.21.2"),
+        java.util.Map.entry("ComplexItem", "1.21.2"),
+        java.util.Map.entry("SwordItem", "1.21.5"),
+        java.util.Map.entry("PickaxeItem", "1.21.5"),
+        java.util.Map.entry("DiggerItem", "1.21.5"),
+        java.util.Map.entry("ArmorItem", "1.21.5"),
+        java.util.Map.entry("AnimalArmorItem", "1.21.5"),
+        java.util.Map.entry("BannerPatternItem", "1.21.5"),
+        java.util.Map.entry("FireworkStarItem", "1.21.5"),
+        java.util.Map.entry("SaddleItem", "1.21.5"));
 
     private RemovedItemBaseBridge() {}
 
+    /** Registers every base. The 26.1 shim calls this, since all of them are gone by then. */
     public static void register(RetromodTransformer transformer) {
-        // RecordItem held the comparator output, the sound, and the track length. All three moved
-        // into the jukebox_playable component and the JukeboxSong registry, and the class was
-        // removed (verified absent on 26.1.2 and 26.2). Item is not final and still takes
-        // Properties, so it is a working base for the subclass.
-        transformer.registerGeneratedLegacyBase(
-                "net/minecraft/world/item/RecordItem", GENERATED_RECORD, ITEM, ITEM_CTOR);
-
-        // EnchantedBookItem went the same way when enchantments became a component. The table used
-        // to point it at Items, a static holder with no constructor at all, so an extending mod
-        // traded a missing class for a missing constructor (verified absent on 26.1.2 and 26.2).
-        transformer.registerGeneratedLegacyBase(
-                "net/minecraft/world/item/EnchantedBookItem", GENERATED_ENCHANTED_BOOK,
-                ITEM, ITEM_CTOR);
-
-        for (String removed : REMOVED_ITEM_BASES) {
-            transformer.registerGeneratedLegacyBase(
-                    "net/minecraft/world/item/" + removed,
-                    "com/retromod/generated/Legacy" + removed,
-                    ITEM, ITEM_CTOR);
-        }
+        for (String removed : REMOVED_IN.keySet()) registerBase(transformer, removed);
 
         // Not bridged here: BedItem and ItemNameBlockItem sat on BlockItem, and SignItem on
         // StandingAndWallBlockItem. Both of those bases survive, so the right base is one of them
         // rather than Item, and their constructors take the block before the properties while the
         // old ones took it after. Rebasing those needs argument reordering, which the constructor
         // absorber refuses on purpose, so they still report rather than guess.
+    }
+
+    /** Registers only the bases Minecraft removed in exactly {@code mcVersion}. */
+    public static void registerRemovedIn(RetromodTransformer transformer, String mcVersion) {
+        REMOVED_IN.forEach((removed, version) -> {
+            if (version.equals(mcVersion)) registerBase(transformer, removed);
+        });
+    }
+
+    /** The version {@code simpleName} was removed in, or null when this bridge does not cover it. */
+    static String removedIn(String simpleName) {
+        return REMOVED_IN.get(simpleName);
+    }
+
+    private static void registerBase(RetromodTransformer transformer, String removed) {
+        String generated = "com/retromod/generated/Legacy" + removed;
+        // Every shim from the removal version up to 26.1 can reach this; register once, so a base
+        // that already absorbed constructors is not reset by a later shim.
+        if (transformer.getSyntheticClasses().containsKey(generated)) return;
+        transformer.registerGeneratedLegacyBase(
+                "net/minecraft/world/item/" + removed, generated, ITEM, ITEM_CTOR);
     }
 }

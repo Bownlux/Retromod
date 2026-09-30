@@ -147,13 +147,11 @@ public class RenderingPolyfill implements PolyfillProvider {
             "(Ljava/lang/Object;IIIII)V"
         );
 
-        // GuiComponent.drawString(Font, String, int, int, int) → shim
-        transformer.registerMethodRedirect(
-            "net/minecraft/client/gui/GuiComponent", "drawString",
-            "(Lnet/minecraft/client/gui/Font;Ljava/lang/String;III)V",
-            "com/retromod/polyfill/minecraft/rendering/embedded/GuiComponentShim", "drawString",
-            "(Ljava/lang/Object;Ljava/lang/String;III)V"
-        );
+        // No drawString redirect. The old GuiComponent.drawString was static and took a PoseStack
+        // first, so a key of (Font, String, int, int, int) never matched old code. Because the 1.20
+        // shims class-redirect GuiComponent to GuiGraphics, that key became exactly the modern
+        // GuiGraphics.drawString, which returns void from 1.21.6, and it turned every text draw in
+        // a 1.21.6 to 1.21.11 mod into a VerifyError (#281, Hold My Items on 26.3).
 
         // GuiComponent.blit(PoseStack, int, int, int, int, int, int) → shim
         transformer.registerMethodRedirect(

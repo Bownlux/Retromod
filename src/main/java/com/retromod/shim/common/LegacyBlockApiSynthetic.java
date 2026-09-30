@@ -13,9 +13,9 @@ import static org.objectweb.asm.Opcodes.*;
 /**
  * Helper for {@link LegacyBlockApiAdapter}, embedded into a pre-1.21.2 mod.
  *
- * <p>Registering it is also the adapter's gate. Only the 1.21.1 to 1.21.2 shims register it, so a
- * mod written for 1.21.2 or newer, whose {@code new BlockItem(...)} deliberately uses the item
- * description prefix, is never touched.
+ * <p>Registering it is also the adapter's gate: only the 1.21.1 to 1.21.2 shims register it, so a
+ * host older than 1.21.2 never runs the adapter. On a newer host it applies to every transformed
+ * mod. A block item then shows its block's name, which is what vanilla's own block items do.
  */
 public final class LegacyBlockApiSynthetic {
 

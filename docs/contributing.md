@@ -47,7 +47,7 @@ Use a loader-specific jar from `build-all.sh` for in-game testing. The raw `-all
 The published standalone CLI is executable because it keeps the bundled dependencies:
 
 ```bash
-java -jar dist/CLI/retromod-1.3.1-cli.jar --help
+java -jar dist/CLI/retromod-1.3.2-cli.jar --help
 ```
 
 From a source checkout, `mvn exec:java` remains the fallback while developing.
@@ -58,13 +58,13 @@ Keep `SignatureVerifier.EXPECTED_SELF_HASH` empty during development. Finish the
 
 ```bash
 mvn clean package -Dexec.skip=true
-python3 scripts/compute-self-hash.py target/retromod-1.3.1-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.3.2-all.jar
 # Update EXPECTED_SELF_HASH programmatically, then rebuild.
 mvn clean package -Dexec.skip=true
 bash build-all.sh --skip-build --require-self-hash
 ```
 
-The required matrix is 24 Fabric host jars for 1.20 through 26.3, 23 Forge host jars for 1.20 through 26.2, 23 NeoForge host jars for 1.20.1 through 26.3, and one standalone CLI jar. That is 70 loader jars plus the CLI, or 71 artifacts total. Forge has no 26.3 build, so its column stops one version short. `dist/SHA256SUMS.txt` must have one row per artifact.
+The required matrix is 24 Fabric host jars for 1.20 through 26.3, 24 Forge host jars for 1.20 through 26.3, 23 NeoForge host jars for 1.20.1 through 26.3, and one standalone CLI jar. That is 71 loader jars plus the CLI, or 72 artifacts total. `dist/SHA256SUMS.txt` must have one row per artifact.
 
 Validate the complete tree before publishing:
 
@@ -76,7 +76,7 @@ sha256sum --check SHA256SUMS.txt
 shasum -a 256 --check SHA256SUMS.txt
 ```
 
-Upload only the 68 loader jars to loader-specific Modrinth or CurseForge versions. Publish `dist/CLI/retromod-1.3.1-cli.jar` and `dist/SHA256SUMS.txt` with the GitHub release.
+Upload only the 71 loader jars to loader-specific Modrinth or CurseForge versions. Publish `dist/CLI/retromod-1.3.2-cli.jar` and `dist/SHA256SUMS.txt` with the GitHub release.
 
 ## Resource Pack Mappings
 

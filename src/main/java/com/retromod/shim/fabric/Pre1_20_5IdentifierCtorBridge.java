@@ -47,6 +47,13 @@ public final class Pre1_20_5IdentifierCtorBridge {
         String fromNsPathName = findStaticFactory(identifier,
                 "(Ljava/lang/String;Ljava/lang/String;)" + L_IDENTIFIER);
 
+        // Where the constructor is still public the mod's call already works, and the only
+        // candidate factory can be the null-returning tryParse or tryBuild.
+        if (hasPublicConstructor(identifier, "(Ljava/lang/String;)V")) parseName = null;
+        if (hasPublicConstructor(identifier, "(Ljava/lang/String;Ljava/lang/String;)V")) {
+            fromNsPathName = null;
+        }
+
         int registered = 0;
         if (parseName != null) {
             transformer.registerConstructorRedirect(
@@ -69,6 +76,16 @@ public final class Pre1_20_5IdentifierCtorBridge {
             LOGGER.debug("Added {} Identifier constructor {}", registered,
                     registered == 1 ? "redirect" : "redirects");
         }
+    }
+
+    private static boolean hasPublicConstructor(ClassNode cls, String descriptor) {
+        for (var m : cls.methods) {
+            if (m.name.equals("<init>") && m.desc.equals(descriptor)
+                    && (m.access & Opcodes.ACC_PUBLIC) != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

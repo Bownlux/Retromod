@@ -312,6 +312,22 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             "net/fabricmc/fabric/api/transfer/v1/item/ContainerStorage"
         );
 
+        // Fabric API renamed six single-method interfaces by 26.1, checked against Fabric API
+        // 0.141.4 (1.21.11) and 0.145.4 (26.1.2). Lambdas implementing the first three otherwise
+        // throw AbstractMethodError on first use; the last three are ordinary calls.
+        String fabricApi = "net/fabricmc/fabric/api/";
+        String[][] interfaceRenames = {
+            {"client/rendering/v1/hud/HudElement", "render", "extractRenderState"},
+            {"item/v1/CustomDamageHandler", "damage", "hurtAndBreak"},
+            {"item/v1/EquipmentSlotProvider", "getPreferredEquipmentSlot", "getEquipmentSlotForItem"},
+            {"resource/v1/DataResourceLoader", "registerReloader", "registerReloadListener"},
+            {"transfer/v1/fluid/FluidVariant", "withComponentChanges", "withComponents"},
+            {"transfer/v1/item/ItemVariant", "withComponentChanges", "withComponents"},
+        };
+        for (String[] rename : interfaceRenames) {
+            transformer.registerInterfaceMethodRename(fabricApi + rename[0], rename[1], rename[2]);
+        }
+
         // KeyBinding -> KeyMapping
         transformer.registerClassRedirect(
             "net/fabricmc/fabric/api/client/keybinding/v1/KeyBindingHelper",

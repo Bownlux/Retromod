@@ -65,12 +65,17 @@ class Mc26_2To26_3CoreMovesTest {
         Path host = hostJar("26.3");
         Assumptions.assumeTrue(host != null, "26.3 jar present");
         Set<String> present = classNames(host);
+        present.addAll(authlibClasses("26.3"));
 
         for (Map.Entry<String, String> move : moves().entrySet()) {
             assertFalse(present.contains(move.getKey()),
                     "26.3 still declares " + move.getKey()
                             + ", so redirecting it would hijack a live class");
-            assertTrue(present.contains(move.getValue()),
+            // A removed base points at its generated stand-in, which Retromod embeds itself.
+            boolean generated = move.getValue().startsWith("com/retromod/generated/")
+                    && RetromodTransformer.getInstance().getSyntheticClasses()
+                            .containsKey(move.getValue());
+            assertTrue(present.contains(move.getValue()) || generated,
                     "26.3 does not declare " + move.getValue() + ", so the move points nowhere");
         }
     }
@@ -81,6 +86,7 @@ class Mc26_2To26_3CoreMovesTest {
         Path host = hostJar("26.2");
         Assumptions.assumeTrue(host != null, "26.2 jar present");
         Set<String> present = classNames(host);
+        present.addAll(authlibClasses("26.2"));
 
         for (String old : moves().keySet()) {
             assertTrue(present.contains(old),
@@ -133,6 +139,24 @@ class Mc26_2To26_3CoreMovesTest {
             return null;
         }
         return best;
+    }
+
+    /**
+     * The authlib moves point into the authlib jar the version ships, not the client jar: 9.0.75
+     * with 26.2 and 10.0.77 with 26.3. Missing jars contribute nothing, so those moves then fail
+     * loudly rather than pass unchecked.
+     */
+    private static Set<String> authlibClasses(String version) throws Exception {
+        String authlib = switch (version) {
+            case "26.2" -> "9.0.75";
+            case "26.3" -> "10.0.77";
+            default -> null;
+        };
+        if (authlib == null) return Set.of();
+        Path jar = Path.of(System.getProperty("user.home", ""),
+                "Library/Application Support/PrismLauncher/libraries/com/mojang/authlib",
+                authlib, "authlib-" + authlib + ".jar");
+        return Files.isRegularFile(jar) ? classNames(jar) : Set.of();
     }
 
     private static Set<String> classNames(Path jar) throws Exception {

@@ -26,7 +26,7 @@ Retromod runs on Minecraft 1.20 through 26.3. Source support depends on the load
 
 Coverage before 1.16.5 is experimental.
 
-These are source-version floors, not host artifacts. Published host jars cover Fabric and Quilt 1.20 through 26.3, Forge 1.20 through 26.2, and NeoForge 1.20.1 through 26.3. Quilt uses the shared Fabric artifact. Forge stops at 26.2 because Forge has published no 26.3 build.
+These are source-version floors, not host artifacts. Published host jars cover Fabric and Quilt 1.20 through 26.3, Forge 1.20 through 26.3, and NeoForge 1.20.1 through 26.3. Quilt uses the shared Fabric artifact.
 
 Pre-26.1 Fabric hosts use targeted intermediary bridges instead of the full intermediary-to-Mojang remap. Common old text, entity, material, identifier, model, and entity-type migrations are covered, but redesigned APIs can still require a manual port.
 

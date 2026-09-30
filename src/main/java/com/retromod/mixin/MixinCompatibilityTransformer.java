@@ -1209,8 +1209,21 @@ public final class MixinCompatibilityTransformer {
             return "L" + newOwner + ";" + newMethod + desc;
         }
 
-        // name with descriptor, no owner
+        // Forge refmaps store accessor, invoker, and shadow targets without an owner, and no
+        // mixin target is in scope while a refmap is read (#269, Wither Storm's f_20888_).
         int descIdx = target.indexOf('(');
+        int colonIdx = target.indexOf(':');
+        if (descIdx < 0 && colonIdx > 0) {
+            String fieldName = target.substring(0, colonIdx);
+            String fieldDesc = remapDescriptorClasses(target.substring(colonIdx + 1));
+            String newField = remapFieldName(fieldName, fieldDesc);
+            if (newField.equals(fieldName)) {
+                newField = transformer.remapOwnerlessSrgName(fieldName, true);
+            }
+            return newField + ":" + fieldDesc;
+        }
+
+        // name with descriptor, no owner
         if (descIdx >= 0) {
             String methodName = target.substring(0, descIdx);
             String desc = target.substring(descIdx);
@@ -1219,13 +1232,18 @@ public final class MixinCompatibilityTransformer {
             desc = remapDescriptorClasses(desc);
             String newMethod = methodName.startsWith("<")
                 ? methodName
-                : remapBareMethodName(methodName, desc);
+                : remapOwnerlessMethodName(methodName, desc);
             return newMethod + desc;
         }
 
         // bare name (never rename constructors)
         if (target.startsWith("<")) return target;
-        return remapBareMethodName(target);
+        return remapOwnerlessMethodName(target, "");
+    }
+
+    private String remapOwnerlessMethodName(String name, String descriptor) {
+        String renamed = remapBareMethodName(name, descriptor);
+        return renamed.equals(name) ? transformer.remapOwnerlessSrgName(name, false) : renamed;
     }
 
     /** Remap an owner-qualified selector stored in a refmap resource. */

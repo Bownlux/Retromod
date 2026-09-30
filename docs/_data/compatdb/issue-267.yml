@@ -1,0 +1,14 @@
+name: "Grids Are Dumb"
+badge: borked
+mod_version: "26.0.6.0"
+source_mc: "1.20.1"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.3.0-rc.1"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/grids-are-dumb"
+summary: "Fails while constructing the mod."
+details: "NoClassDefFoundError: IConfigSpec. This is a Forge mod on NeoForge, and the Forge to NeoForge bridge does not carry Forge's config-spec types yet."
+reporter: "Blu-the-Umbreon"
+date: "2026-09-08"
+issue: 267

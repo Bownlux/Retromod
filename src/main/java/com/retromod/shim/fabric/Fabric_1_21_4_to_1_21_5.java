@@ -16,41 +16,17 @@ public class Fabric_1_21_4_to_1_21_5 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
-        // 1.21.5 folded the tool/armor item classes into Item (data components).
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/SwordItem",
-            "net/minecraft/world/item/Item"
-        );
+        // The tooltip adapter matches Mojang names, which a Fabric mod only has after the 26.x remap.
+        if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            com.retromod.shim.common.LegacyTooltipSynthetic.register(transformer);
+        }
 
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/PickaxeItem",
-            "net/minecraft/world/item/Item"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/AxeItem",
-            "net/minecraft/world/item/Item"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/ShovelItem",
-            "net/minecraft/world/item/Item"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/HoeItem",
-            "net/minecraft/world/item/Item"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/DiggerItem",
-            "net/minecraft/world/item/Item"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/ArmorItem",
-            "net/minecraft/world/item/Item"
-        );
+        // The tool and armour classes are not redirected to Item. Redirecting them won the extends
+        // slot ahead of the removed-base rebase, so a sword became "extends Item" with a super call
+        // to an Item(Tier, int, float, Properties) constructor that does not exist. The rebase
+        // registered from 26.1 handles SwordItem, PickaxeItem, DiggerItem and ArmorItem; AxeItem,
+        // ShovelItem and HoeItem still exist until 26.3, whose shim rebases them.
 
         transformer.registerClassRedirect(
             "net/minecraft/world/level/saveddata/maps/ForcedChunksSavedData",

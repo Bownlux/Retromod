@@ -169,6 +169,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     // it also rewrites method references (ResourceKey::location), which methodRedirects
     // can't reach. Only for 26.1+ targets, where the old name is gone.
     private final Map<String, String> mojangMethodRenames = new ConcurrentHashMap<>(16);
+    /** {@code interface#oldName} to the new abstract method name, for lambdas implementing it. */
+    private final Map<String, String> functionalInterfaceRenames = new ConcurrentHashMap<>(16);
 
     // Class-to-interface migrations: when a class becomes an interface in newer MC,
     // mods extending it get their superclass changed to a bridge plus the interface added.
@@ -887,6 +889,20 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
+     * Rename an interface's single abstract method, for callers and for implementations written
+     * as a lambda or method reference. A lambda names the method it implements in its
+     * {@code invokedynamic}, and {@code LambdaMetafactory} binds that name against the runtime
+     * interface, so a stale name builds an object that throws {@code AbstractMethodError} on
+     * first call. Fabric API's {@code HudElement.render} became {@code extractRenderState} at
+     * 26.1, and a 1.21.x HUD lambda failed that way on every frame (#281, Hold My Items).
+     * A class that implements the interface directly is not covered.
+     */
+    public void registerInterfaceMethodRename(String iface, String name, String newName) {
+        registerMethodRename(iface, name, newName);
+        functionalInterfaceRenames.put(iface + "#" + name, newName);
+    }
+
+    /**
      * Register a removed method to be neutralized at every call site: the call is dropped
      * and replaced with stack-balanced pops (args + receiver) plus a default return value,
      * so a mod calling a method deleted on the host loads instead of hitting
@@ -1212,6 +1228,16 @@ public class RetromodTransformer implements ClassFileTransformer {
                 com.retromod.mapping.TargetSrgMapper.memberKey(
                         mappedOwner, mappedName, mappedDescriptor),
                 mappedName);
+    }
+
+    /**
+     * Resolve an SRG member name that a Forge refmap stores without its owner. SRG names are
+     * unique, so the Mojang name is safe on a host that runs Mojang names. A pre-26 Forge host
+     * needs the owner to find its own SRG name, so the old name stays there.
+     */
+    public String remapOwnerlessSrgName(String name, boolean field) {
+        if (!targetSrgMethodNames.isEmpty() || !targetSrgFieldNames.isEmpty()) return name;
+        return (field ? srgFieldNames : srgMethodNames).getOrDefault(name, name);
     }
 
     /** Resolve a field selector stored outside ordinary bytecode instructions. */
@@ -1601,6 +1627,14 @@ public class RetromodTransformer implements ClassFileTransformer {
         registerSyntheticClass(generatedName, LegacyBaseSynthesizer.generate(
                 generatedName, modernBase, modernCtorDesc, List.of()));
         registerSuperclassRebase(removedBase, generatedName);
+        // The rest of a mod names the removed class too: an instanceof, a cast, a parameter type.
+        // Each would be a NoClassDefFoundError, and a parameter type fails verification for the
+        // whole class. The generated base is the one class that stands in for it, so references
+        // move there as well. The remapper then writes the generated name into the extends slot
+        // before the rebase is consulted, so the rebase is also keyed on it, which is what lets the
+        // super(...) call be absorbed.
+        registerClassRedirect(removedBase, generatedName);
+        registerSuperclassRebase(generatedName, generatedName);
         LOGGER.debug("Registered generated legacy base: {} -> {} extends {}",
                 removedBase, generatedName, modernBase);
     }
@@ -1712,6 +1746,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         singletonOwners.clear();
         staticFieldNullers.clear();
         mojangMethodRenames.clear();
+        functionalInterfaceRenames.clear();
         // These member-name maps drive the remap gate (hasIntermediaryNames); leaving them
         // populated lets a prior test's applyTo() / registerSrgNameMappings() leak into the next.
         intermediaryMethodNames.clear();
@@ -2087,6 +2122,15 @@ public class RetromodTransformer implements ClassFileTransformer {
                 com.retromod.shim.common.LegacyBlockApiSynthetic.INTERNAL)) {
             repaired = com.retromod.shim.common.LegacyBlockApiAdapter.apply(repaired);
         }
+        // Only when a 1.21.4 to 1.21.5 shim registered the helper, so newer mods are untouched.
+        if (syntheticClasses.containsKey(
+                com.retromod.shim.common.LegacyTooltipSynthetic.INTERNAL)) {
+            repaired = com.retromod.shim.common.LegacyTooltipAdapter.apply(repaired);
+        }
+        // Only where the key polyfill is registered; the adapter itself checks for a 26.3 host.
+        if (syntheticClasses.containsKey(com.retromod.shim.common.LegacyKeyCodeAdapter.POLY)) {
+            repaired = com.retromod.shim.common.LegacyKeyCodeAdapter.apply(repaired);
+        }
         // GUI override repair matches Mojang descriptors and proven post-remap base classes.
         repaired = com.retromod.shim.common.LegacyGuiOverrideAdapter.apply(repaired);
         repaired = com.retromod.shim.common.LegacyEntityRendererAdapter.apply(repaired);
@@ -2230,7 +2274,7 @@ public class RetromodTransformer implements ClassFileTransformer {
             boolean hasSrgNames = !srgMethodNames.isEmpty() || !srgFieldNames.isEmpty()
                     || !targetSrgMethodNames.isEmpty() || !targetSrgFieldNames.isEmpty();
             if (!classRedirects.isEmpty() || hasIntermediaryNames || hasSrgNames
-                    || !mojangMethodRenames.isEmpty()) {
+                    || !mojangMethodRenames.isEmpty() || !functionalInterfaceRenames.isEmpty()) {
                 synchronized (this) {
                     classRemapper = cachedRemapper; // re-check under lock
                     if (classRemapper == null) {
@@ -2308,6 +2352,19 @@ public class RetromodTransformer implements ClassFileTransformer {
                                             || name.startsWith("func_"))) {
                                     String mojang = srgMethodNames.get(name);
                                     if (mojang != null) return mojang;
+                                }
+                                // The descriptor returns the functional interface being built.
+                                int close = descriptor.lastIndexOf(')');
+                                if (!functionalInterfaceRenames.isEmpty() && close >= 0
+                                        && descriptor.startsWith("L", close + 1)) {
+                                    String iface = descriptor.substring(close + 2,
+                                            descriptor.length() - 1);
+                                    String renamed = functionalInterfaceRenames.get(iface + "#" + name);
+                                    if (renamed == null) {
+                                        renamed = functionalInterfaceRenames.get(
+                                                map(iface) + "#" + name);
+                                    }
+                                    if (renamed != null) return renamed;
                                 }
                                 return name;
                             }

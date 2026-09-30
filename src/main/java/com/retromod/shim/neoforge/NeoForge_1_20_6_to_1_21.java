@@ -17,6 +17,8 @@ public class NeoForge_1_20_6_to_1_21 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // Vanilla item bases removed in 1.21, rebased only on hosts that lost them.
+        com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21");
         // ResourceLocation(namespace, path) ctor went private in 1.21; point it at the static factory (#92)
         transformer.registerConstructorRedirect(
             "net/minecraft/resources/ResourceLocation",

@@ -38,7 +38,7 @@ public final class LegacyPatchouliGsonRepair {
             for (AbstractInsnNode instruction : method.instructions.toArray()) {
                 if (!(instruction instanceof MethodInsnNode call)
                         || call.getOpcode() != Opcodes.INVOKEVIRTUAL
-                        || !"com/google/gson/GsonBuilder".equals(call.owner)
+                        || !com.retromod.util.HostLibraryNames.GSON_BUILDER.equals(call.owner)
                         || !"registerTypeAdapter".equals(call.name)) {
                     continue;
                 }

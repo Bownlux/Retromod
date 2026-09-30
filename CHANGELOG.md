@@ -2,6 +2,45 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
+## [1.3.2] - 2026-09-30
+
+Patch release. Adds Forge 26.3, follows 26.3's new key numbering, and fixes several bugs found in reports and in the published jars.
+
+### Added
+
+- Builds Retromod for Forge 26.3 (Forge 66). Carries the Forge API members 66 renamed without changing their meaning: `EntityTeleportEvent.EnderEntity` to `EntityRandom` and the `ModifiableBiomeInfo.BiomeInfo.Builder` getters.
+- Translates key codes on 26.3, which moved input from GLFW to SDL and renumbered every key and mouse button. Keybind defaults, and literal codes passed to `isKeyDown` and `InputConstants.Type.getOrCreate`, become the host's code for the same key. A code the mod reads at runtime is already the host's and is left alone. `Type.KEYSYM`, which 26.3 replaced with `KEYBOARD`, and `isKeyDown(Window, int)`, which lost its window parameter, no longer crash.
+- Keeps item tooltips from mods built before 1.21.5. `appendHoverText` moved to a `TooltipDisplay` and a `Consumer` at 1.21.5, so an old override was never called; a bridge now collects its lines and forwards them.
+- Carries the authlib 10 renames on 26.3, including `MinecraftSessionService` to `SessionService` and the profile types from `yggdrasil` to `services`.
+- Renames `DataPackRegistryEvent.NewRegistry` to `NewDatapackRegistryEvent` on NeoForge 26.3 builds that removed it. The change landed inside the 26.3 betas, so Retromod checks the running NeoForge rather than the Minecraft version.
+
+### Fixed
+
+- Stops a polyfill for the pre-1.20 `GuiComponent` from capturing modern `GuiGraphics.drawString` calls. Its key named a signature the old class never had, and the 1.20 class redirect turned it into the modern method, which returns `void` from 1.21.6. A 1.21.6 to 1.21.11 Fabric mod that drew text on a 26.x host failed at startup with `VerifyError`.
+- Starts Retromod on NeoForge 1.21.1 again. Gson pulled `error_prone_annotations` into the release jar, NeoForge 1.21.1 ships the same package as a module, and the split package stopped the game before it wrote a log. The dependency is excluded, and `build-all.sh` now refuses a jar that bundles classes outside Retromod's own packages or a `module-info.class`.
+- Reads `FMLEnvironment.dist` as a field on NeoForge before 1.21.9. The Forge to NeoForge bridge always called `getDist()`, which arrived at 1.21.9, so a Forge mod checking its side failed on 1.21.1 with `NoSuchMethodError`.
+- Marks an old dependency declared only with `mandatory` as `type = "optional"`. NeoForge has ignored `mandatory` since 1.20.2 and treats a dependency without a `type` as required, so a mod's optional companion stopped it from loading.
+- Remaps SRG names in Forge refmaps that carry no owner, which is how Forge stores accessor, invoker, and shadow targets. They stayed SRG on Mojang-named hosts, so an `@Accessor` failed with `No candidates were found matching f_20888_`. An SRG-named Forge host keeps them, because the owner is needed to find its own SRG name.
+- Redirects `new Identifier(String)` to `Identifier.parse` for Fabric mods on 1.21 and newer. Only the two-argument constructor was redirected, and discovery declined because 1.21 has three static `(String)` factories, so the call failed with `NoSuchMethodError`. Discovery now leaves a constructor alone on hosts where it is still public.
+- Renames six Fabric API interface methods that 26.1 renamed, including `HudElement.render` to `extractRenderState` and `ItemVariant.withComponentChanges` to `withComponents`. A lambda is bound by method name at runtime, so a HUD registered as a lambda threw `AbstractMethodError` on its first frame.
+- Stops the release jar's Gson relocation from rewriting Retromod's references to the mods' Gson. Every published 1.3.x jar named Retromod's private copy there, which broke the reload-listener bridge with a `VerifyError` and silently disabled the Patchouli Gson repair. A test now fails if such a literal comes back.
+- Stamps the registry id for NeoForge mods that register through `DeferredRegister.createBlocks(...)` or `createItems(...)`. Their typed `register` overloads never matched the bridge, so the standard 1.21 idiom still failed with `Block id not set`.
+- Fixes custom swords, tools, and armor on 1.21.5 and newer. An older class redirect sent `SwordItem` and its siblings to `Item` before the removed-base rebase could act, so the class extended `Item` and called a constructor that does not exist. Every reference to a removed item base, including `instanceof` checks and parameter types, now names its generated stand-in. `AxeItem`, `ShovelItem`, and `HoeItem` are no longer redirected on hosts that still have them.
+- Rebases each removed item base on every host that removed it, not only from 26.1. A 1.20.1 music disc mod failed on 1.21.1 with `NoClassDefFoundError: RecordItem`.
+- Rebuilds NeoForge keybinds that pass an `IKeyConflictContext` and a text category. NeoForge removed those constructors at 1.21.9, and they failed with `NoSuchMethodError` on 26.x.
+- Lists a mod's keybinds under the mod's own category again. The bridge called `Identifier.of`, which 26.x does not have, so every mod category fell back to Miscellaneous.
+- Calls `Component.literal` as an interface method in the pre-1.19.3 creative tab bridge, which failed with `IncompatibleClassChangeError`.
+- Relaxes a sibling mod's version range on every host, not only on 26.x. An optional dependency is still range-checked, and Farmer's Delight 1.3.4 sorts below a range written as `1.20.1-1.2.4`. An `incompatible` or `discouraged` dependency keeps its range, which lists the versions to avoid.
+- Relaxes a bounded `loaderVersion` such as `[47,48)` on Forge as well as NeoForge, and in offline transforms.
+- Corrects the Windows build's expected artifact counts, which still described the release before 26.3.
+
+### Changed
+
+- Documents the 500 MB unpacked jar limit, which leaves a very large mod untransformed.
+- Truncates crash logs pasted into compatibility reports to 400 characters in the published entry. The card links the full issue.
+
+A mod that compares raw key codes itself, for example in `keyPressed`, still sees SDL numbers on 26.3 and needs a port. So do `ToggleKeyMapping`, a `KeyMapping` subclass's own constructor, and Forge's conflict-context keybind constructors, whose defaults keep their GLFW numbers. The creative tab bridge still uses Mojang member names, so it does not work on Forge hosts that run SRG names, 1.19.3 through 1.20.4. A custom tool tier that implements `Tier` still fails, because `Tier` became the `ToolMaterial` record at 1.21.2. A method one mod exposes to another with a removed item base in its signature no longer links across the two, because each mod carries its own stand-in. A NeoForge mod transformed in place keeps the datapack registry event its NeoForge build had, so updating NeoForge across that change needs the mod transformed again. `neighborChanged` overrides are not bridged.
+
 ## [1.3.1] - 2026-09-16
 
 Patch release. Fixes the reason most Fabric mods could not be used on 26.x, plus two smaller gaps found after 1.3.0 shipped.

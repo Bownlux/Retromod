@@ -41,8 +41,10 @@ public final class Mc26_2To26_3CoreMoves {
     public static void register(RetromodTransformer t) {
         registerRenderLibraryRepackage(t);
         registerVanillaMoves(t);
-            registerRemovedToolBases(t);
-}
+        registerAuthlibMoves(t);
+        registerSdlInputBridges(t);
+        registerRemovedToolBases(t);
+    }
 
     /** {@code com/mojang/blaze3d} became {@code com/mojang/renderpearl} (182 classes). */
     private static void registerRenderLibraryRepackage(RetromodTransformer t) {
@@ -413,6 +415,76 @@ public final class Mc26_2To26_3CoreMoves {
     }
 
     /** Moves and renames outside the rendering library (45 classes). */
+    /**
+     * 26.3 ships authlib 10, which renamed the session service and moved the profile types from
+     * {@code yggdrasil} to {@code services}. Each pair was checked member by member against
+     * authlib 9.0.75 and 10.0.77 and is identical apart from the package, and 26.3's
+     * {@code Services.sessionService()} returns the new type. Found on Head Index (#292), whose
+     * {@code /head player} command looks profiles up through it. The Yggdrasil implementation
+     * classes are gone with no same-name successor and are left unmapped.
+     */
+    /**
+     * 26.3 moved input from GLFW to SDL. Every key and mouse button was renumbered, and a mod
+     * built earlier inlined the GLFW numbers, so its keybinds landed on unrelated keys. Two changes
+     * also crash outright: {@code InputConstants.Type} lost {@code KEYSYM} and {@code SCANCODE}
+     * for {@code KEYBOARD}, and {@code isKeyDown} lost its {@code Window} parameter. Keybind
+     * constructors and literal codes passed to {@code isKeyDown} and {@code getOrCreate} are
+     * translated by constant name through {@code RetroKeyMapping}; a GLFW host is left alone.
+     * Not covered: {@code ToggleKeyMapping}, a {@code KeyMapping} subclass's {@code super(...)},
+     * and Forge's own conflict-context constructors.
+     */
+    private static void registerSdlInputBridges(RetromodTransformer t) {
+        String poly = "com/retromod/polyfill/minecraft/RetroKeyMapping";
+        Common_1_21_11_to_26_1_ClassMoves.ensureSyntheticRegistered(t, poly);
+        String constants = "com/mojang/blaze3d/platform/InputConstants";
+        String type = constants + "$Type";
+        String typeDesc = "L" + type + ";";
+        // KEYSYM only. SCANCODE is left alone: a switch over Type compiles to a $SwitchMap whose
+        // initializer already ignores a missing constant, while mapping both onto KEYBOARD would
+        // send every keyboard key down the SCANCODE branch.
+        t.registerFieldRedirect(type, "KEYSYM", typeDesc, type, "KEYBOARD", typeDesc);
+
+        // The window parameter is gone. This form passes the code through; LegacyKeyCodeAdapter
+        // switches a call with a literal GLFW code to the translating one, because a code read at
+        // runtime is already numbered by the host. getOrCreate(int) still exists, so only its
+        // literal calls are rerouted, by the same adapter.
+        t.registerMethodRedirect(constants, "isKeyDown",
+                "(Lcom/mojang/blaze3d/platform/Window;I)Z", poly, "isKeyDownUntranslated",
+                "(Ljava/lang/Object;I)Z");
+
+        // 1.21.9 to 26.2 mods already pass a Category; route them through the translation too.
+        String category = "Lnet/minecraft/client/KeyMapping$Category;";
+        String context = "Lnet/neoforged/neoforge/client/settings/IKeyConflictContext;";
+        String modifier = "Lnet/neoforged/neoforge/client/settings/KeyModifier;";
+        String name = "Ljava/lang/String;";
+        String obj = "Ljava/lang/Object;";
+        String[][] categoryForms = {
+            {"(" + name + "I" + category + ")V", "createWithCategory", "(" + name + "I" + obj + ")"},
+            {"(" + name + typeDesc + "I" + category + ")V", "createTypedWithCategory",
+                "(" + name + obj + "I" + obj + ")"},
+            {"(" + name + typeDesc + "I" + category + "I)V", "createTypedWithCategoryOrder",
+                "(" + name + obj + "I" + obj + "I)"},
+            {"(" + name + context + typeDesc + "I" + category + ")V", "createConflictWithCategory",
+                "(" + name + obj + obj + "I" + obj + ")"},
+            {"(" + name + context + modifier + typeDesc + "I" + category + ")V",
+                "createConflictModifierWithCategory", "(" + name + obj + obj + obj + "I" + obj + ")"},
+        };
+        for (String[] form : categoryForms) {
+            t.registerConstructorRedirect("net/minecraft/client/KeyMapping", form[0], poly, form[1],
+                    form[2] + obj);
+        }
+    }
+
+    private static void registerAuthlibMoves(RetromodTransformer t) {
+        String authlib = "com/mojang/authlib/";
+        t.registerClassRedirect(authlib + "minecraft/MinecraftSessionService",
+                authlib + "minecraft/SessionService");
+        for (String moved : new String[]{"ProfileResult", "ProfileActionType",
+                "ProfileNotFoundException"}) {
+            t.registerClassRedirect(authlib + "yggdrasil/" + moved, authlib + "services/" + moved);
+        }
+    }
+
     private static void registerVanillaMoves(RetromodTransformer t) {
         t.registerClassRedirect("com/mojang/realmsclient/RealmsMainScreen$NotificationButton",
                 "com/mojang/realmsclient/gui/RealmsHeader$NotificationButton");

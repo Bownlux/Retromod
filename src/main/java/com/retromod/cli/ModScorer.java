@@ -74,8 +74,8 @@ public class ModScorer {
     // Packages shipped by MC/JVM/loaders: references to them are never missing, so skip them.
     private static final String[] LIBRARY_PREFIXES = {
         "java/", "javax/", "jdk/", "sun/",
-        "com/google/gson/", "com/google/common/",
-        "org/slf4j/", "org/apache/logging/",
+        com.retromod.util.HostLibraryNames.GSON_PACKAGE + "/", "com/google/common/",
+        com.retromod.util.HostLibraryNames.SLF4J_PACKAGE + "/", "org/apache/logging/",
         "org/apache/commons/", "org/apache/maven/",
         "org/objectweb/asm/", "org/lwjgl/",
         "io/netty/", "com/mojang/logging/",

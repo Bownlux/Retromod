@@ -4,7 +4,7 @@
 #
 # Builds Retromod for each supported host:
 #   - Fabric (1.20 through 26.3)
-#   - Forge (1.20 through 26.2)
+#   - Forge (1.20 through 26.3)
 #   - NeoForge (1.20.1 through 26.3)
 #   - Standalone CLI
 # Older mods are translated at runtime and do not need separate host jars.
@@ -12,7 +12,7 @@
 # Keep building after one target fails so the final report can list every failure.
 # set -e
 
-VERSION="1.3.1"
+VERSION="1.3.2"
 # Older mods are translated at runtime, so only 1.20 and newer need host jars.
 # Security-only updates for versions before 26.1.
 MC_VERSIONS=("1.20" "1.20.1" "1.20.2" "1.20.3" "1.20.4" "1.20.5" "1.20.6" "1.21" "1.21.1" "1.21.2" "1.21.3" "1.21.4" "1.21.5" "1.21.6" "1.21.7" "1.21.8" "1.21.9" "1.21.10" "1.21.11" "26.1" "26.1.1" "26.1.2" "26.2" "26.3")
@@ -90,7 +90,7 @@ if [ "$SKIP_BUILD" = false ]; then
     # Build the base JAR first
     echo "[Step 1/4] Building base JAR with Maven..."
     # The exec plugin calls this script with --skip-build to create dist/. Skipping it here avoids
-    # running the entire 71-jar distribution phase once inside Maven and then again below.
+    # running the entire 72-jar distribution phase once inside Maven and then again below.
     if ! mvn clean package -DskipTests -Dexec.skip=true; then
         echo "ERROR: Maven failed while building the base JAR."
         exit 1
@@ -111,6 +111,22 @@ if [ ! -f "$SHADED_JAR" ]; then
 fi
 
 echo "  Shaded JAR: $SHADED_JAR (with bundled dependencies)"
+
+# A dependency's own package shipped unrelocated can split a package the loader already
+# provides as a module. Gson 2.11+ brought com.google.errorprone along, and NeoForge 1.21.1
+# then refused to boot before writing any log. Only Retromod's packages, the relocated libraries,
+# ASM, and the legacy API stubs may appear at the top level.
+LEAKED=$(unzip -Z1 "$SHADED_JAR" | grep -E '\.class$' | grep -vE '^(com/retromod/|org/objectweb/asm/|javax/annotation/|mcp/mobius/waila/|cofh/api/|codechicken/nei/|baubles/api/|net/minecraft/|net/minecraftforge/|net/neoforged/|net/fabricmc/|org/spongepowered/)' | head -5)
+if [ -n "$LEAKED" ]; then
+    echo "ERROR: The shaded JAR contains unrelocated dependency classes:"
+    echo "$LEAKED"
+    echo "Relocate the library in pom.xml or exclude it from the shade."
+    exit 1
+fi
+if unzip -Z1 "$SHADED_JAR" | grep -qE '(^|/)module-info\.class$'; then
+    echo "ERROR: The shaded JAR contains a module-info.class from a dependency."
+    exit 1
+fi
 
 POM_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
 if [ "$POM_VERSION" != "$VERSION" ]; then
@@ -291,13 +307,8 @@ loader_supports_version() {
             esac
             ;;
         forge)
-            # Forge 26.2 shipped (forge 65.x). Forge has published nothing for 26.3 yet, and a jar
-            # declaring a Forge version that does not exist is worse than no jar, so 26.3 is left
-            # out of the Forge matrix until a build appears. Fabric and NeoForge both have one.
-            case $ver in
-                26.3*) return 1 ;;
-                *) return 0 ;;
-            esac
+            # Forge covers every version in the matrix since Forge 26.3 (66.x) shipped.
+            return 0
             ;;
         *) return 0 ;;
     esac
@@ -598,6 +609,7 @@ create_mod_jar() {
         1.21.6)                 FORGE_LV="56" ;;
         1.21.7|1.21.8)          FORGE_LV="57" ;;
         1.21.9|1.21.10|1.21.11) FORGE_LV="58" ;;
+        26.3*)                  FORGE_LV="66" ;;   # Forge 26.3 → 66.x
         26.2*)                  FORGE_LV="65" ;;   # Forge 26.2 → 65.x
         26.*)                   FORGE_LV="64" ;;   # Forge 26.1.2 → 64.x
         *)                      FORGE_LV="40" ;;  # Permissive fallback
@@ -918,7 +930,7 @@ echo "Build complete"
 echo
 echo "Output structure:"
 echo "  dist/Fabric/     hosts 1.20 through 26.3"
-echo "  dist/Forge/      hosts 1.20 through 26.2 (Forge has no 26.3 build yet)"
+echo "  dist/Forge/      hosts 1.20 through 26.3"
 echo "  dist/NeoForge/   hosts 1.20.1 through 26.3"
 echo "  dist/CLI/        retromod-${VERSION}-cli.jar"
 echo ""
@@ -937,10 +949,10 @@ fi
 
 # A successful command can still omit a target, so require the complete release matrix.
 EXPECTED_FABRIC=24
-EXPECTED_FORGE=23
+EXPECTED_FORGE=24
 EXPECTED_NEOFORGE=23
 EXPECTED_CLI=1
-EXPECTED_TOTAL=71
+EXPECTED_TOTAL=72
 RELEASE_OK=1
 for triple in \
         "Fabric:${FABRIC_COUNT}:${EXPECTED_FABRIC}" \

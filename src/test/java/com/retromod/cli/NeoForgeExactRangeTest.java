@@ -32,4 +32,50 @@ class NeoForgeExactRangeTest {
 
         assertTrue(patched.contains("versionRange=\"[1.21.1,)\""), patched);
     }
+    @Test
+    @DisplayName("#273: a sibling mod's range and a bounded loaderVersion are relaxed")
+    void siblingRangeAndLoaderVersionAreRelaxed() throws Exception {
+        String toml = """
+                modLoader="javafml"
+                loaderVersion="[47,48)"
+                [[dependencies.refinedstoragedelight]]
+                modId="farmersdelight"
+                type="required"
+                versionRange="[1.20.1-1.2.4,)"
+                [[dependencies.refinedstoragedelight]]
+                modId="minecraft"
+                type="required"
+                versionRange="[1.20.1,1.21)"
+                """;
+        Method relax = RetromodCli.class.getDeclaredMethod(
+                "relaxNeoForgeDependencies", byte[].class);
+        relax.setAccessible(true);
+        String patched = new String((byte[]) relax.invoke(null,
+                (Object) toml.getBytes(StandardCharsets.UTF_8)), StandardCharsets.UTF_8);
+
+        // Farmer's Delight 1.3.4 sorts below "1.20.1-1.2.4", and optional deps are still checked.
+        assertTrue(patched.contains("versionRange=\"[0,)\""), patched);
+        assertTrue(patched.contains("loaderVersion=\"[1,)\""), patched);
+        assertTrue(patched.contains("versionRange=\"[1.20.1,)\""),
+                "the minecraft floor is kept: " + patched);
+    }
+
+    @Test
+    @DisplayName("an incompatible dependency keeps the range of versions it rejects")
+    void incompatibleRangeIsKept() throws Exception {
+        String toml = """
+                [[dependencies.mymod]]
+                modId="embeddium"
+                versionRange="[,0.3.20)"
+                type="incompatible"
+                """;
+        Method relax = RetromodCli.class.getDeclaredMethod(
+                "relaxNeoForgeDependencies", byte[].class);
+        relax.setAccessible(true);
+        String patched = new String((byte[]) relax.invoke(null,
+                (Object) toml.getBytes(StandardCharsets.UTF_8)), StandardCharsets.UTF_8);
+
+        // "[0,)" here would declare every Embeddium incompatible, not just the old ones.
+        assertTrue(patched.contains("versionRange=\"[,0.3.20)\""), patched);
+    }
 }
