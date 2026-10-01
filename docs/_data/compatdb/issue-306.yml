@@ -1,0 +1,14 @@
+name: "Lycanites Mobs"
+badge: borked
+mod_version: "Latest + MC version 1.12.2, 1.16.5, 1.20.1"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "retromod-1.3.2+26.3.jar"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/lycanites-mobs"
+summary: "Does not load"
+details: "I tried all Lycanites Mobs versions. Including the udpated 1.20.1 NeoForge version. None of them load. Forge versions: Always java.lang.NoClassDefFoundError for many things. 1.20.1 Neoforge version: Same as forge versions, except now there's mixin errors.  EXAMPLES: [01Oct2026 18:13:54.494] [main/WARN] [mixin/]: Error loading class: net/minecraftforge/common/CreativeModeTabRegistry ... full log in the linked issue."
+reporter: "VIBBRI"
+date: "2026-10-01"
+issue: 306
+
