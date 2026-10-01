@@ -1,0 +1,14 @@
+name: "VIC'S Modern Warfare"
+badge: borked
+mod_version: "mw_2.0-0.4.6.2_mc1.12.2"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.3.2"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/vics-modern-warfare-mod/files/all?page=1&pageSize=20&showAlphaFiles=hide"
+summary: "item group broke"
+details: "Modern Warfare 2.0 Contagion (mw)) has failed to load correctly ava.lang.NoClassDefFoundError: net/minecraft/item/ ItemGroup"
+reporter: "GRYFFlN"
+date: "2026-10-01"
+issue: 299
+
