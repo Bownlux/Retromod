@@ -1,0 +1,15 @@
+name: "Polished Planks"
+badge: gold
+mod_version: "1.0.0"
+source_mc: "1.21.1"
+host_mc: "26.3"
+loader: "neoforge"
+retromod: "1.3.2"
+links:
+  modrinth: "https://modrinth.com/mod/polished-planks"
+summary: "Blocks can be crafted and placed, doors duplicate when breaking them"
+details: "I can join a world with it, and the blocks register, are craftable and placeable. I haven't found any graphical artifacts neither with the OpenGL nor with the Vulkan renderer. The doors duplicate whenever I break them unlike 26.1.2, and is the reason why I am only giving it a gold rating instead of diamond for the 26.1.2 retest in #314."
+reporter: "ttaute"
+date: "2026-10-04"
+issue: 316
+
