@@ -26,6 +26,7 @@ These need a manual port from the mod author.
 | Custom tools, beds, and signs on Minecraft 26.3 | 26.3 removed `AxeItem`, `HoeItem`, `ShovelItem`, `BedItem`, and `SignItem`, finishing the move to data-driven items |
 | Create and Flywheel | Custom rendering, contraption internals, and deep loader integration |
 | OptiFine | Proprietary coremod and renderer replacement |
+| VIC's Modern Warfare 1.12.2 | An FML core plugin rewrites the 1.12.2 camera, player model, and held-item renderers. Modern loaders never run core plugins, and those renderer classes no longer exist |
 | Veil and Veil-based mods | Custom rendering and post-processing pipeline |
 | Sodium, Iris, Embeddium | Version-specific renderer mixins. Partial loading may still happen |
 | Chat Bubbles 1.0.1 | Replaces the deleted player renderer and injects into a removed chat listener. It can reach the menu, but bubbles need a manual renderer port |
@@ -55,9 +56,9 @@ point the old name at.
 
 ## Large Version Jumps
 
-Minecraft 1.13's flattening replaced major block, item, command, and registry APIs. Forge 1.12.2 mods may transform far enough to be discovered, but many still require a real port.
+Minecraft 1.13's flattening replaced major block, item, command, and registry APIs. Retromod runs the lifecycle and event bus of 1.12.2 Forge mods and registers their blocks and items, so some simple content mods load. 1.12 world generation, commands, GUIs, fluids, and networking are inactive stand-ins, so most larger 1.12.2 mods still need a real port.
 
-Old Forge mods on modern NeoForge face another large API migration. Retromod now bridges several common 1.20.1 Forge registration, event-bus, networking, and removed-class paths. This is partial compatibility, not a complete Forge runtime. Registry lifecycle, packet delivery, data generation, or other deep Forge internals can still need a manual port. Use a Forge host when a mod depends heavily on those systems.
+Old Forge mods on modern NeoForge face another large API migration. Retromod bridges common 1.20.1 Forge registration, event-bus, networking, config, menu, capability, and custom registry paths. This is partial compatibility, not a complete Forge runtime. Data generation, rendering internals, or other deep Forge internals can still need a manual port. Use a Forge host when a mod depends heavily on those systems.
 
 Forge 1.21 also uses Mojang member names at runtime. Retromod can decode older SRG references and bridge the earlier networking surface, but Minecraft 1.21's data-driven enchantment system is not a member rename. A mod that subclasses the old `Enchantment` class or eagerly registers enchantment objects needs its data and behavior ported together.
 
@@ -67,7 +68,7 @@ Fabric mods use intermediary names. On 26.1 and newer hosts, Retromod maps that 
 
 A mixin can survive a class or method rename. With an exact target Minecraft jar, Retromod can also repair a uniquely proven method change when parameters were only added in a safe shape. It can repair selected zero-capture injections and exact-prefix captures without guessing.
 
-Retromod refuses ambiguous overloads, constructors, return-type changes, reordered or removed parameters, semantic local captures, unsafe parameter annotations, and `remap = false` scopes. A target whose body or local-variable layout was redesigned normally needs a manual port.
+Retromod also accepts a host change the handler never observes: a trailing parameter it does not read that was added or removed, a gained return value, or a target that became static. It refuses ambiguous overloads, constructors, reordered parameters, removed parameters the handler reads, return-type changes it depends on, semantic local captures, unsafe parameter annotations, and `remap = false` scopes. A target whose body or local-variable layout was redesigned normally needs a manual port.
 
 Retromod may disable one known-broken handler so the rest of a mod can load. That means the mod is usable with a missing feature, not fully compatible.
 

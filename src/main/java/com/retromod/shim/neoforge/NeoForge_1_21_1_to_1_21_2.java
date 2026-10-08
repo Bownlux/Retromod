@@ -18,6 +18,8 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
     public void registerRedirects(RetromodTransformer transformer) {
         // Vanilla item bases removed in 1.21.2, rebased only on hosts that lost them.
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21.2");
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerRegistryValueGetterRename(
+                transformer, "net/minecraft/resources/ResourceLocation");
         // 1.21.2 pathfinding refactor renamed the PathType constants.
         String pathType = "net/minecraft/world/level/pathfinder/PathType";
         transformer.registerFieldRedirect(pathType, "DAMAGE_FIRE", pathType, "FIRE");
@@ -40,6 +42,10 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
 
         // updateShape/getOcclusionShape signatures and the BlockItem description id changed.
         com.retromod.shim.common.LegacyBlockApiSynthetic.register(transformer);
+        com.retromod.shim.common.LegacyBlockMethodBridge.register(transformer);
+        com.retromod.shim.common.LegacyChestBlockBridge.register(transformer);
+        com.retromod.shim.common.LegacyFoodConsumableBridge.register(transformer);
+        com.retromod.shim.common.LegacyItemConstructorBridge.register(transformer);
 
         transformer.registerMethodRedirect(
             "net/minecraft/core/RegistryAccess", "registryOrThrow",

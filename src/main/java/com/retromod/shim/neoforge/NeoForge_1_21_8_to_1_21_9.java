@@ -59,6 +59,8 @@ public class NeoForge_1_21_8_to_1_21_9 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // authlib 7 made GameProfile a record; vanilla, so every loader needs it.
+        com.retromod.shim.common.LegacyGameProfileBridge.register(transformer);
 
         // The Transfer API rework left IItemHandler alone. Checked against the loader jars:
         // getSlots, getStackInSlot, insertItem, extractItem, getSlotLimit and isItemValid have the

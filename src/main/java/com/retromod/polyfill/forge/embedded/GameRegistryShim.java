@@ -29,6 +29,13 @@ public class GameRegistryShim {
             "class: " + clazz.getName() + ", name: " + name);
     }
 
+    /** 1.12 world generators and fuel handlers have no modern hook; accept and ignore them. */
+    public static void registerWorldGenerator(Object generator, int weight) {
+    }
+
+    public static void registerFuelHandler(Object handler) {
+    }
+
     public static void addSmelting(Object input, Object output, float xp) {
         // Smelting recipes are data-driven in modern MC, so this is a no-op
     }

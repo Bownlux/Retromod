@@ -38,6 +38,7 @@ class Forge1122LifecycleTest {
     void reset() {
         RetromodTransformer.getInstance().clearRedirectsForTesting();
         Forge1122LifecycleSynthetics.resetForTesting();
+        Forge1122EventBridge.resetForTesting();
     }
 
     /** A 1.12.2 mod main class: old @Mod attributes + a preInit @Mod.EventHandler. */
@@ -168,15 +169,15 @@ class Forge1122LifecycleTest {
 
         MethodNode init = cn.methods.stream().filter(m -> m.name.equals("<init>"))
                 .findFirst().orElseThrow();
-        boolean fires = false;
+        boolean attaches = false;
         for (AbstractInsnNode in : init.instructions.toArray()) {
             if (in instanceof MethodInsnNode mi
-                    && mi.owner.equals(Forge1122LifecycleSynthetics.BRIDGE)
-                    && mi.name.equals("fire")) {
-                fires = true;
+                    && mi.owner.equals(Forge1122EventBridge.EVENTS)
+                    && mi.name.equals("attach")) {
+                attaches = true;
             }
         }
-        assertTrue(fires, "ctor must call the lifecycle bridge");
+        assertTrue(attaches, "ctor must attach the mod to the 1.12 bridge");
 
         // the handler's parameter type must now be the embedded stand-in
         MethodNode pre = cn.methods.stream().filter(m -> m.name.equals("preInit"))

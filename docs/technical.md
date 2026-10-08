@@ -50,7 +50,7 @@ Fabric 26.1 and newer uses the full intermediary-to-Mojang pass. Pre-26.1 Fabric
 
 NeoForge is Mojang-named. Forge source names are decoded through SRG mappings. When the host is Forge 1.20.1, a second owner-and-descriptor-qualified table emits the exact target SRG names. Other pre-26 Forge hosts currently keep unsupported source members unchanged instead of guessing.
 
-Forge-to-NeoForge support combines metadata promotion, mappings, and per-mod synthetic classes for selected common APIs. It does not recreate every Forge registry, networking, data-generation, or event subsystem.
+Forge-to-NeoForge support combines metadata promotion, mappings, and per-mod synthetic classes for selected common APIs: `SimpleChannel` networking as NeoForge payloads, configs, menus, capabilities, custom registries, and client extensions. It does not recreate every Forge registry, data-generation, rendering, or event subsystem.
 
 ## API Shim Version Domains
 

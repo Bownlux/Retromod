@@ -22,6 +22,30 @@ public final class RetroParticleCompat {
     private static volatile java.lang.reflect.Method spriteSetGet;
     private static volatile Object randomSource;
 
+    private static final java.util.Map<String, Object> RENDER_TYPES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * A 26.1 {@code ParticleRenderType} record standing in for a mod's own implementation of the
+     * pre-26.1 interface, named after its {@code toString()}. One record per name, so the engine's
+     * map lookups see a stable key. Called by the code that
+     * {@code LegacyParticleRenderTypeAdapter} rewrites.
+     */
+    public static Object renderTypeFor(Object legacy) {
+        String name = legacy == null ? "retromod_legacy_render_type" : legacy.toString();
+        return RENDER_TYPES.computeIfAbsent(name, RetroParticleCompat::newRenderType);
+    }
+
+    private static Object newRenderType(String name) {
+        try {
+            return Class.forName("net.minecraft.client.particle.ParticleRenderType")
+                    .getConstructor(String.class).newInstance(name);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Retromod could not create the particle render type "
+                    + name + " for a pre-26.1 mod: " + e, e);
+        }
+    }
+
     /** Replacement for {@code TextureSheetParticle.pickSprite(SpriteSet)} (receiver as arg 0). */
     public static void pickSprite(Object particle, Object spriteSet) {
         try {

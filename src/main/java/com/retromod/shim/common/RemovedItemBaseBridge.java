@@ -53,7 +53,9 @@ public final class RemovedItemBaseBridge {
      * {@code jukebox_playable} component.
      */
     private static final java.util.Map<String, String> REMOVED_IN = java.util.Map.ofEntries(
+        java.util.Map.entry("SimpleFoiledItem", "1.20.5"),
         java.util.Map.entry("RecordItem", "1.21"),
+        java.util.Map.entry("BowlFoodItem", "1.21"),
         java.util.Map.entry("EnchantedBookItem", "1.21.2"),
         java.util.Map.entry("TieredItem", "1.21.2"),
         java.util.Map.entry("ElytraItem", "1.21.2"),

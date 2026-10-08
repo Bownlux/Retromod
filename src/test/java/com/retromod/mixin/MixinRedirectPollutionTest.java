@@ -106,4 +106,38 @@ class MixinRedirectPollutionTest {
         assertEquals("uniquelyRenamedTarget", invokerValue(out),
                 "an intermediary method_XXXX @Invoker target must still be remapped by name");
     }
+
+    @Test
+    @DisplayName("A redirect into a Retromod adapter does not rename a mixin target after the adapter")
+    void adapterRedirectDoesNotRenameMixinTargets() {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        // The shape of the attribute modifier getId() bridge: the mod's calls go to a static
+        // helper, which Minecraft never calls and the target class does not declare.
+        t.registerMethodRedirect(
+                "net/minecraft/class_99999002", "method_99999002", "()Ljava/util/UUID;",
+                "com/retromod/generated/LegacyTestHelper", "getId",
+                "(Lnet/minecraft/class_99999002;)Ljava/util/UUID;", false);
+
+        var mt = new MixinCompatibilityTransformer(t);
+        byte[] out = mt.transformMixinClass(invokerMixin("test/AdapterInvoker", "method_99999002"));
+
+        assertEquals("method_99999002", invokerValue(out),
+                "a mixin target must keep the Minecraft name, not the adapter's method name");
+    }
+
+    @Test
+    @DisplayName("A redirect into a Retromod stand-in for a replaced class still renames mixin targets")
+    void standInRedirectStillRenamesMixinTargets() {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.registerClassRedirect("net/minecraft/class_99999003", "com/retromod/generated/LegacyTestStandIn");
+        t.registerMethodRedirect(
+                "net/minecraft/class_99999003", "method_99999003", "()V",
+                "com/retromod/generated/LegacyTestStandIn", "standInMethod", "()V", false);
+
+        var mt = new MixinCompatibilityTransformer(t);
+        byte[] out = mt.transformMixinClass(invokerMixin("test/StandInInvoker", "method_99999003"));
+
+        assertEquals("standInMethod", invokerValue(out),
+                "a mixin follows a class Retromod replaced with its own stand-in");
+    }
 }

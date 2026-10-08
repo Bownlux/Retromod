@@ -245,6 +245,32 @@ public class ClientStructureBridge26xTest {
     }
 
     @Test
+    @DisplayName("Minecraft.getToastManager() reaches 26.2's gui.toastManager() through a generated forwarder")
+    void toastManagerHopsThroughTheGui() {
+        Mc26_1To26_2CoreMoves.register(transformer);
+        String forwarder = "com/retromod/generated/LegacyToastManager";
+        String toasts = "Lnet/minecraft/client/gui/components/toasts/ToastManager;";
+        assertTrue(transformer.getSyntheticClasses().containsKey(forwarder),
+                "the forwarder synthetic must be registered for per-mod embedding");
+
+        List<AbstractInsnNode> body = transformBody("(L" + MC + ";)" + toasts, mv -> {
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitMethodInsn(INVOKEVIRTUAL, MC, "getToastManager", "()" + toasts, false);
+            mv.visitInsn(ARETURN);
+        });
+        MethodInsnNode call = firstCall(body, forwarder, "getToastManager");
+        assertNotNull(call, "getToastManager must retarget to the forwarder");
+        assertEquals(INVOKESTATIC, call.getOpcode(), "the receiver becomes the first argument");
+
+        org.objectweb.asm.tree.ClassNode generated = new org.objectweb.asm.tree.ClassNode();
+        new org.objectweb.asm.ClassReader(transformer.getSyntheticClasses().get(forwarder))
+                .accept(generated, 0);
+        List<AbstractInsnNode> forward = List.of(generated.methods.get(0).instructions.toArray());
+        assertNotNull(firstCall(forward, GUI, "toastManager"),
+                "the forwarder must read the toast manager from Minecraft.gui");
+    }
+
+    @Test
     @DisplayName("Gui->Hud family: INVOKEVIRTUAL Gui.getChat/setTitle route through the generated GuiToHudHop forwarder")
     void guiToHudFamilyHops() {
         Mc26_1To26_2CoreMoves.register(transformer);
@@ -291,6 +317,55 @@ public class ClientStructureBridge26xTest {
                     && mi.name.equals("setTimes")) callsHud = true;
         }
         assertTrue(getsHud && callsHud, "forwarder body must be g.hud.setTimes(...)");
+    }
+
+    @Test
+    @DisplayName("A 1.21.x gui.render(graphics, delta) call reaches Hud.extractRenderState on 26.2")
+    void directHudRenderCallReachesHud() {
+        Common_1_21_11_to_26_1_ClassMoves.registerLegacyGuiCalls26x(transformer);
+        Mc26_1To26_2CoreMoves.register(transformer);
+        String hop = "com/retromod/generated/GuiToHudHop";
+        String graphics = "Lnet/minecraft/client/gui/GuiGraphicsExtractor;";
+        String delta = "Lnet/minecraft/client/DeltaTracker;";
+
+        List<AbstractInsnNode> body = transformBody("(L" + GUI + ";" + graphics + delta + ")V", mv -> {
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitVarInsn(ALOAD, 2);
+            mv.visitMethodInsn(INVOKEVIRTUAL, GUI, "render", "(" + graphics + delta + ")V", false);
+            mv.visitInsn(RETURN);
+        });
+        MethodInsnNode call = firstCall(body, hop, "extractRenderState");
+        assertNotNull(call, "the old HUD entry point must end on the Gui-to-Hud forwarder, not on "
+                + "26.2 Gui.extractRenderState, whose descriptor changed");
+        assertEquals(INVOKESTATIC, call.getOpcode());
+        assertEquals("(L" + GUI + ";" + graphics + delta + ")V", call.desc);
+
+        ClassNode cn = new ClassNode();
+        new ClassReader(transformer.getSyntheticClasses().get(hop)).accept(cn, 0);
+        MethodNode forwarder = cn.methods.stream()
+                .filter(m -> m.name.equals("extractRenderState")).findFirst().orElseThrow();
+        assertNotNull(firstCall(List.of(forwarder.instructions.toArray()),
+                "net/minecraft/client/gui/Hud", "extractRenderState"),
+                "the forwarder must call gui.hud.extractRenderState(graphics, delta)");
+    }
+
+    @Test
+    @DisplayName("26.2's own Gui.extractRenderState(DeltaTracker, boolean, boolean) is left alone")
+    void nativeGuiExtractCallIsUntouched() {
+        Mc26_1To26_2CoreMoves.register(transformer);
+        String desc = "(Lnet/minecraft/client/DeltaTracker;ZZ)V";
+        List<AbstractInsnNode> body = transformBody("(L" + GUI + ";Lnet/minecraft/client/DeltaTracker;)V", mv -> {
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitInsn(ICONST_0);
+            mv.visitInsn(ICONST_0);
+            mv.visitMethodInsn(INVOKEVIRTUAL, GUI, "extractRenderState", desc, false);
+            mv.visitInsn(RETURN);
+        });
+        MethodInsnNode call = firstCall(body, GUI, "extractRenderState");
+        assertNotNull(call, "a native 26.2 call must keep its Gui owner");
+        assertEquals(desc, call.desc);
     }
 
     @Test
@@ -367,7 +442,7 @@ public class ClientStructureBridge26xTest {
     }
 
     @Test
-    @DisplayName("26.2 blend-factor teardown: enum blendFunc neutralized + enum GETSTATIC nulled")
+    @DisplayName("26.2 blend factors: enum blendFunc neutralized, enum constants read from BlendFactor")
     void blendFactorTeardown26_2() {
         Mc26_1To26_2CoreMoves.register(transformer);
         RemovedRenderStateNeutralize.register(transformer);
@@ -380,7 +455,10 @@ public class ClientStructureBridge26xTest {
                     "blendFunc", "(L" + src + ";L" + dst + ";)V", false);
             mv.visitInsn(RETURN);
         });
-        assertNull(firstField(insns, "SRC_ALPHA"), "the enum GETSTATIC must be nulled, not kept");
+        FieldInsnNode srcAlpha = firstField(insns, "SRC_ALPHA");
+        assertNotNull(srcAlpha, "the enum constant must stay a real read, not a pushed null");
+        assertEquals("com/mojang/blaze3d/platform/BlendFactor", srcAlpha.owner,
+                "26.2 merged SourceFactor and DestFactor into BlendFactor");
         assertNull(firstCall(insns, "com/mojang/blaze3d/systems/RenderSystem", "blendFunc"),
                 "the enum blendFunc overload must be neutralized");
     }

@@ -150,11 +150,29 @@ public final class ModDataMigrator {
             normalized = migrateRecipeUnlockedConditions(normalized);
         }
 
+        // 26.3 rewrote loot condition and function syntax and ignores the old keys, so an old
+        // door dropped from both halves and old drops lost their counts and bonuses.
+        if (!RetromodVersion.mcVersionExceeds("26.3", targetMcVersion)
+                && LegacyLootConditionMigrator.mayContainOldConditions(entryName, probe,
+                        com.retromod.util.McReflect.isNeoForge())) {
+            normalized = LegacyLootConditionMigrator.migrate(normalized,
+                    LegacyLootConditionMigrator.isLootFile(entryName));
+        }
+
         // 1.21.2 replaced ingredient objects ({"item": ...}, {"tag": ...}) with a bare id or
         // "#tag" string. 26.2 skipped such recipes; 26.3 loads recipes with the registries, so one
         // old recipe stopped the world from loading.
         if (isRecipeFile(entryName) && (probe.contains("\"item\"") || probe.contains("\"tag\""))) {
             normalized = migrateRecipeIngredients(normalized);
+        }
+
+        // 26.1 deleted the random_patch and flower features, and one stale configured feature
+        // fails the whole worldgen registry load.
+        if (LegacyRandomPatchMigrator.mayContainPatch(entryName, probe)) {
+            normalized = LegacyRandomPatchMigrator.migrate(normalized);
+        }
+        if (LegacyDiskStateProviderMigrator.mayContainDisk(entryName, probe)) {
+            normalized = LegacyDiskStateProviderMigrator.migrate(normalized);
         }
 
         String in = new String(normalized, StandardCharsets.UTF_8);

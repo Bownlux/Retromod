@@ -6,6 +6,7 @@ package com.retromod.shim.forge;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
+import com.retromod.util.McReflect;
 
 /** The Flattening: 1.13 rewrote the block/item ID, registry, and command systems. */
 public class Forge_1_12_2_to_1_13_2 implements VersionShim {
@@ -201,10 +202,6 @@ public class Forge_1_12_2_to_1_13_2 implements VersionShim {
             "net/minecraftforge/fml/common/Mod"
         );
         transformer.registerClassRedirect(
-            "net/minecraftforge/fml/common/Mod$EventHandler",
-            "net/minecraftforge/fml/common/Mod$EventBusSubscriber"
-        );
-        transformer.registerClassRedirect(
             "net/minecraftforge/fml/common/event/FMLInitializationEvent",
             "net/minecraftforge/fml/event/lifecycle/FMLCommonSetupEvent"
         );
@@ -254,6 +251,13 @@ public class Forge_1_12_2_to_1_13_2 implements VersionShim {
         // FML*InitializationEvent stand-ins. Without it the mod is scanned (mcmod.info toml
         // generation) but modern FML finds no mod id and never calls its setup.
         Forge1122LifecycleSynthetics.register(transformer);
+
+        // The 1.12 event bus, @SubscribeEvent, @SidedProxy, @Mod.Instance and setRegistryName.
+        // Registered last so its annotation and bus redirects win over the 1.13 names above.
+        Forge1122EventBridge.register(transformer);
+        Forge1122ServiceStubs.register(transformer);
+        Forge1122BlockStateBridge.register(transformer);
+        Forge1122WorldgenBridge.register(transformer);
     }
 
     /**
@@ -300,12 +304,30 @@ public class Forge_1_12_2_to_1_13_2 implements VersionShim {
         if (eventBase != null) {
             String base = eventBase.getName().replace('.', '/');
             boolean isInterface = eventBase.isInterface();
+            // From 1.13 to 1.18.2 RegistryEvent was a mod-bus event, and a 1.18.2 mod subscribes to
+            // it from a MOD-bus subscriber. The mod bus rejects a parameter that is not an
+            // IModBusEvent, which failed the whole mod's construction (#311). Forge's EventBus 6
+            // game bus accepts any Event, so the marker is harmless for a 1.12.2 mod that registers
+            // it there. NeoForge's game bus rejects IModBusEvent types, and EventBus 7 routes them
+            // differently, so both keep the plain stub.
+            String modBusMarker = McReflect.isNeoForge() || isInterface
+                    ? null : resolveModBusEventMarker();
             stubEventClass(transformer, "net/minecraftforge/event/RegistryEvent",
-                    "com/retromod/generated/forge1122/RegistryEvent", base, isInterface);
+                    "com/retromod/generated/forge1122/RegistryEvent", base, isInterface, modBusMarker);
             stubEventClass(transformer, "net/minecraftforge/event/RegistryEvent$Register",
-                    "com/retromod/generated/forge1122/RegistryEvent$Register", base, isInterface);
+                    "com/retromod/generated/forge1122/RegistryEvent$Register", base, isInterface,
+                    modBusMarker);
+            // The bridge's Register replaces the inert stub above and keeps the same marker, so a
+            // 1.18.2 MOD-bus subscriber still constructs while a 1.12.2 handler gets its registrar.
+            Forge1122EventBridge.registerRegisterEvent(transformer, base, isInterface, modBusMarker);
+            if (!isInterface) {
+                // Mod-defined 1.12 events extend the old base; the host bus posts only its own.
+                transformer.registerClassRedirect(
+                        "net/minecraftforge/fml/common/eventhandler/Event", base);
+            }
             stubEventClass(transformer, "net/minecraftforge/event/RegistryEvent$MissingMappings",
-                    "com/retromod/generated/forge1122/RegistryEvent$MissingMappings", base, isInterface);
+                    "com/retromod/generated/forge1122/RegistryEvent$MissingMappings", base, isInterface,
+                    modBusMarker);
             // ModelRegistryEvent: the pre-1.17 client model-registration event (removed when models
             // went data-driven). Same @SubscribeEvent-parameter situation as RegistryEvent, so the same
             // Event-subtype class stub. Surfaced in-game as the domino after the RegistryEvent stub (#134).
@@ -340,8 +362,25 @@ public class Forge_1_12_2_to_1_13_2 implements VersionShim {
     /** Register a synthetic Event-subtype CLASS and redirect a removed event onto it. */
     private static void stubEventClass(RetromodTransformer transformer, String removed, String stub,
                                        String base, boolean baseIsInterface) {
-        transformer.registerSyntheticClass(stub, eventClassBytes(stub, base, baseIsInterface));
+        stubEventClass(transformer, removed, stub, base, baseIsInterface, null);
+    }
+
+    /** As above, also implementing {@code marker} when it is non-null. */
+    private static void stubEventClass(RetromodTransformer transformer, String removed, String stub,
+                                       String base, boolean baseIsInterface, String marker) {
+        transformer.registerSyntheticClass(stub, eventClassBytes(stub, base, baseIsInterface, marker));
         transformer.registerClassRedirect(removed, stub);
+    }
+
+    /** Forge's mod-bus marker interface, or null when it is not on the classpath. */
+    private static String resolveModBusEventMarker() {
+        String marker = "net.minecraftforge.fml.event.IModBusEvent";
+        try {
+            Class.forName(marker, false, Forge_1_12_2_to_1_13_2.class.getClassLoader());
+            return marker.replace('.', '/');
+        } catch (ClassNotFoundException | LinkageError absent) {
+            return null;
+        }
     }
 
     /**
@@ -350,9 +389,18 @@ public class Forge_1_12_2_to_1_13_2 implements VersionShim {
      * cannot extend an interface.
      */
     static byte[] eventClassBytes(String internalName, String base, boolean baseIsInterface) {
+        return eventClassBytes(internalName, base, baseIsInterface, null);
+    }
+
+    /** As above, also implementing {@code marker} when it is non-null. */
+    static byte[] eventClassBytes(String internalName, String base, boolean baseIsInterface,
+                                  String marker) {
         org.objectweb.asm.ClassWriter cw = new org.objectweb.asm.ClassWriter(0);
         String superName = baseIsInterface ? "java/lang/Object" : base;
-        String[] ifaces = baseIsInterface ? new String[]{base} : null;
+        java.util.List<String> interfaceList = new java.util.ArrayList<>();
+        if (baseIsInterface) interfaceList.add(base);
+        if (marker != null) interfaceList.add(marker);
+        String[] ifaces = interfaceList.isEmpty() ? null : interfaceList.toArray(new String[0]);
         cw.visit(org.objectweb.asm.Opcodes.V17,
                 org.objectweb.asm.Opcodes.ACC_PUBLIC | org.objectweb.asm.Opcodes.ACC_SUPER,
                 internalName, null, superName, ifaces);
@@ -394,9 +442,10 @@ public class Forge_1_12_2_to_1_13_2 implements VersionShim {
      * 26.1-target table (every target validated against the 26.1 jar at harvest time), on a
      * 1.20.x host the 1.20.x-target variant (validated against Mojang's official 1.20.1
      * mappings; it also carries the families 26.1 removed but 1.20.x still has, e.g.
-     * {@code ItemSword -> SwordItem}, {@code EnumAction -> UseAnim}). 1.21.x hosts get
-     * neither for now: no table has been validated against those jars, and a wrong redirect
-     * is worse than none. Additive and soft-failing either way: if the resource is missing
+     * {@code ItemSword -> SwordItem}, {@code EnumAction -> UseAnim}). 1.21 and 1.21.1 hosts
+     * get the same table, whose targets all exist there. 1.21.2 - 1.21.11 hosts get neither
+     * for now: no table has been validated against those jars, and a wrong redirect is worse
+     * than none. Additive and soft-failing either way: if the resource is missing
      * or a line is malformed, the hardcoded chain redirects still apply.
      */
     void loadDirectClassMoves(RetromodTransformer transformer) {
@@ -404,12 +453,13 @@ public class Forge_1_12_2_to_1_13_2 implements VersionShim {
         String resource;
         if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(host)) {
             resource = CLASS_MOVES_RESOURCE;
-        } else if (!com.retromod.core.RetromodVersion.mcVersionExceeds(host, "1.20.6")) {
-            // 1.20 - 1.20.6 host (Retromod hosts start at 1.20): the reported 1.12.2 hosts
-            // (#103/#108/#117 all ran 1.20.1)
+        } else if (!com.retromod.core.RetromodVersion.mcVersionExceeds(host, "1.21.1")) {
+            // 1.20 - 1.21.1 host (Retromod hosts start at 1.20): the reported 1.12.2 hosts
+            // (#103/#108/#117 ran 1.20.1). Every target also exists in 1.21.1 (#299, #304); the
+            // half-mapped 1.13 names left by the chain alone, such as ItemGroup, cannot load.
             resource = CLASS_MOVES_1201_RESOURCE;
         } else {
-            return; // 1.21.x host: no validated table yet
+            return; // 1.21.2 - 1.21.11 host: the table has not been checked against those jars
         }
         try (java.io.InputStream is = getClass().getResourceAsStream(resource)) {
             if (is == null) return;

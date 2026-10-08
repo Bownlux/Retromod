@@ -197,6 +197,13 @@ public class ModVersionDetector {
             version = version.split(" ")[0];
         }
 
+        // A trailing hyphen ("~1.21.11-") is Fabric's marker for "prereleases included". Kept,
+        // it made the version unknown to the shim registry, so the CLI and AOT paths applied no
+        // version chain at all (#281, Hold My Items).
+        while (version.endsWith("-")) {
+            version = version.substring(0, version.length() - 1);
+        }
+
         return version;
     }
 

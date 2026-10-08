@@ -95,7 +95,7 @@ If a transformed jar name contains spaces or unusual punctuation, update Retromo
 
 ## Old Forge Mod on NeoForge
 
-Forge 1.20.1 and modern NeoForge use substantially different APIs. Retromod bridges selected metadata, registration, event-bus, networking, and removed-class paths, but some mods still need a Forge host. If a mod fails during registry lifecycle, packet delivery, data generation, rendering, or another deep Forge subsystem, try the matching Forge build and include the NeoForge log in a report.
+Forge 1.20.1 and modern NeoForge use substantially different APIs. Retromod bridges selected metadata, registration, event-bus, networking, config, menu, and capability paths, but some mods still need a Forge host. If a mod fails in data generation, rendering, enchantments, or another deep Forge subsystem, try the matching Forge build and include the NeoForge log in a report.
 
 ## A Very Large Mod Is Skipped
 

@@ -130,6 +130,8 @@ public class AotCompiler {
         }
 
         boolean sourceVersionUnknown = isUnknownSourceVersion(modInfo.targetMcVersion());
+        // A Forge mod's SRG ids mean what they meant in its own version.
+        transformer.setSrgSourceVersion(sourceVersionUnknown ? null : modInfo.targetMcVersion());
         List<VersionShim> apiShims = shimRegistry.findApiShimsForLoader(
                 modInfo.modLoaderType(), targetMcVersion);
         boolean explicitApiTransform = explicitTransform && !apiShims.isEmpty();
@@ -663,6 +665,10 @@ public class AotCompiler {
                         createAotMetadata(modInfo, obfuscatedClasses));
             }
 
+            // Pre-1.20 structure and smithing data, which the runtime Forge path migrates as a tree.
+            com.retromod.resources.LegacyDataMigrations.migrateArchive(
+                    stagedOutput, isUnknownSourceVersion(modInfo.targetMcVersion())
+                            ? null : modInfo.targetMcVersion(), targetMcVersion);
             try (JarFile ignored = new JarFile(stagedOutput.toFile())) {
                 // Opening the completed archive validates its central directory before replacement.
             }
@@ -983,10 +989,11 @@ public class AotCompiler {
                 return jarData;
             }
             boolean changed = modified || embedding.embeddedCount() > 0;
-            return changed
+            byte[] nested = changed
                     ? JarSignatureSanitizer.sanitizeJarBytes(
                             embedding.jarBytes(), MAX_NESTED_OUTPUT_BYTES)
                     : embedding.jarBytes();
+            return com.retromod.resources.LegacyDataMigrations.migrateArchive(nested, targetMcVersion);
         } catch (IOException ex) {
             throw ex;
         } catch (Exception ex) {

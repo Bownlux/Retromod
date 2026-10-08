@@ -620,6 +620,40 @@ class AutomaticMixinTranslatorTest {
     }
 
     @Test
+    @DisplayName("A bare @Inject name shared by overloads is pinned to the one its handler captures")
+    void bareNameIsPinnedToTheCapturedOverload() {
+        // Minepathy's ItemEntity.merge: an intermediary id that became an overloaded Mojang name.
+        String handler = "(ILjava/lang/String;" + CALLBACK_INFO + ")V";
+
+        byte[] output = translator.translate(injectMixin("BareOverloadMixin", "ambiguous",
+                handler, false));
+
+        assertEquals("ambiguous(ILjava/lang/String;)V", injectSelector(output),
+                "Mixin binds a bare name to the first overload, which this handler does not fit");
+        assertEquals(handler, handler(output).desc, "only the selector may change");
+    }
+
+    @Test
+    @DisplayName("A bare @Inject name that only one method uses is left alone")
+    void bareNameWithoutOverloadsIsUnchanged() {
+        byte[] input = injectMixin("BareUniqueMixin", "append",
+                "(Ljava/lang/String;I" + CALLBACK_INFO + ")V", false);
+
+        assertArrayEquals(input, translator.translate(input),
+                "a name with one declaration already resolves to the right method");
+    }
+
+    @Test
+    @DisplayName("A bare @Inject name whose handler captures nothing is not pinned")
+    void zeroCaptureBareNameIsNotPinned() {
+        byte[] input = injectMixin("BareZeroCaptureMixin", "ambiguous",
+                "(" + CALLBACK_INFO + ")V", false);
+
+        assertArrayEquals(input, translator.translate(input),
+                "without captured arguments nothing proves which overload the mod meant");
+    }
+
+    @Test
     @DisplayName("Two compatible overloads make parameter insertion ambiguous and are refused")
     void ambiguousOverloadsAreRefused() {
         String selector = "ambiguous(Ljava/lang/String;)V";

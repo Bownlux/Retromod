@@ -191,6 +191,26 @@ public class RenderApiBridge26xTest {
     }
 
     @Test
+    @DisplayName("ItemBlockRenderTypes.setRenderLayer from a mod's client setup reaches the polyfill")
+    void setRenderLayerIsBridged() {
+        String ibrt = "net/minecraft/client/renderer/ItemBlockRenderTypes";
+        String poly = "com/retromod/polyfill/minecraft/RetroItemBlockRenderTypes";
+        String block = "Lnet/minecraft/world/level/block/Block;";
+        for (String layer : new String[]{"L" + RT + ";", "Ljava/util/function/Predicate;"}) {
+            List<AbstractInsnNode> insns = transformBody("(" + block + layer + ")V", mv -> {
+                mv.visitVarInsn(ALOAD, 0); mv.visitVarInsn(ALOAD, 1);
+                mv.visitMethodInsn(INVOKESTATIC, ibrt, "setRenderLayer", "(" + block + layer + ")V", false);
+                mv.visitInsn(RETURN);
+            });
+            assertNotNull(firstCall(insns, poly, "setRenderLayer"),
+                    "setRenderLayer" + layer + " must not keep a call to the deleted class");
+            assertNull(firstCall(insns, ibrt, "setRenderLayer"));
+        }
+        assertDoesNotThrow(() ->
+                com.retromod.polyfill.minecraft.RetroItemBlockRenderTypes.setRenderLayer(new Object(), null));
+    }
+
+    @Test
     @DisplayName("class_9062 (ItemInteractionResult): class merged, constants + methods bridged")
     void itemInteractionResultBridged() {
         String poly = "com/retromod/polyfill/minecraft/RetroItemInteractionResult";

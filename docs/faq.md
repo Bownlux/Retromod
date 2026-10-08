@@ -46,7 +46,7 @@ Retromod relaxes stale version ranges when it knows the dependency can be bridge
 
 ## Can I run an old Forge mod on NeoForge?
 
-Sometimes. Retromod bridges selected common 1.20.1 Forge metadata, registration, event-bus, networking, and removed-class paths. It is not a complete Forge runtime. Mods with deep registry lifecycle, packet delivery, data generation, rendering, or other Forge internals are still safer on a matching Forge host.
+Sometimes. Retromod bridges common 1.20.1 Forge registration, event-bus, config, menu, capability, and custom registry paths, and it carries `SimpleChannel` messages as NeoForge payloads. It is not a complete Forge runtime. Mods that rely on data generation, rendering internals, code-registered enchantments, or other deep Forge systems are still safer on a matching Forge host.
 
 ## Can Retromod repair Mixins automatically?
 

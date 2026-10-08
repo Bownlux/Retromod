@@ -18,5 +18,8 @@
   "net/minecraftforge/fml/event/lifecycle/InterModEnqueueEvent": "net/neoforged/fml/event/lifecycle/InterModEnqueueEvent",
   "net/minecraftforge/fml/event/lifecycle/InterModProcessEvent": "net/neoforged/fml/event/lifecycle/InterModProcessEvent",
   "net/minecraftforge/fml/event/lifecycle/ModLifecycleEvent": "net/neoforged/fml/event/lifecycle/ModLifecycleEvent",
-  "net/minecraftforge/fml/event/lifecycle/ParallelDispatchEvent": "net/neoforged/fml/event/lifecycle/ParallelDispatchEvent"
+  "net/minecraftforge/fml/event/lifecycle/ParallelDispatchEvent": "net/neoforged/fml/event/lifecycle/ParallelDispatchEvent",
+  "net/minecraftforge/fml/loading/FMLLoader": "net/neoforged/fml/loading/FMLLoader",
+  "net/minecraftforge/fml/loading/LoadingModList": "net/neoforged/fml/loading/LoadingModList",
+  "net/minecraftforge/fml/loading/moddiscovery/ModFileInfo": "net/neoforged/fml/loading/moddiscovery/ModFileInfo"
 }

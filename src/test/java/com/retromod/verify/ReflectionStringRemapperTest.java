@@ -121,7 +121,103 @@ class ReflectionStringRemapperTest {
         assertEquals(0, remapper.getSuspiciousUnmapped());
     }
 
+    @Test
+    @DisplayName("An intermediary name handed to MappingResolver.mapClassName is translated")
+    void rewritesMappingResolverClassName() {
+        ReflectionStringRemapper unobfuscated = new ReflectionStringRemapper(
+                Map.of("net/minecraft/class_2960", "net/minecraft/resources/Identifier"),
+                Map.of(), Map.of(), LoaderApiRenames.forTesting(Map.of(), Map.of(), Set.of()));
+        byte[] classBytes = classWithMapClassNameCall("net.minecraft.class_2960");
+
+        byte[] remapped = unobfuscated.remap(classBytes);
+
+        assertTrue(containsStringConstant(remapped, "net.minecraft.resources.Identifier"),
+                "a 26.1+ runtime has no intermediary namespace and returns the name unchanged");
+        assertTrue(containsStringConstant(remapped, "intermediary"),
+                "the namespace argument is not a class name and stays");
+    }
+
+    @Test
+    @DisplayName("an intermediary method name passed to MappingResolver.mapMethodName is translated")
+    void rewritesMappingResolverMethodName() {
+        ReflectionStringRemapper unobfuscated = new ReflectionStringRemapper(Map.of(),
+                Map.of("method_6032", "getHealth"), Map.of(),
+                LoaderApiRenames.forTesting(Map.of(), Map.of(), Set.of()));
+        byte[] classBytes = classWithMapMemberNameCall("mapMethodName", "method_6032", "()F");
+
+        byte[] remapped = unobfuscated.remap(classBytes);
+
+        assertTrue(containsStringConstant(remapped, "getHealth"),
+                "a 26.1+ runtime returns the name unchanged, so the literal must be the Mojang name");
+        assertTrue(containsStringConstant(remapped, "()F"), "the descriptor argument stays");
+    }
+
+    @Test
+    @DisplayName("an intermediary field name passed to MappingResolver.mapFieldName is translated")
+    void rewritesMappingResolverFieldName() {
+        ReflectionStringRemapper unobfuscated = new ReflectionStringRemapper(Map.of(),
+                Map.of(), Map.of("field_6012", "lastHurt"),
+                LoaderApiRenames.forTesting(Map.of(), Map.of(), Set.of()));
+        byte[] classBytes = classWithMapMemberNameCall("mapFieldName", "field_6012", "F");
+
+        byte[] remapped = unobfuscated.remap(classBytes);
+
+        assertTrue(containsStringConstant(remapped, "lastHurt"),
+                "a 26.1+ runtime returns the name unchanged, so the literal must be the Mojang name");
+        assertFalse(containsStringConstant(remapped, "field_6012"));
+    }
+
     // Builds test classes with specific LDC and invocation patterns.
+
+    /** {@code resolver.mapMethodName("intermediary", owner, name, desc)} or {@code mapFieldName}. */
+    private static byte[] classWithMapMemberNameCall(String sink, String name, String desc) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "test/reflect/MemberHelper",
+                null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+        mv.visitCode();
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, "net/fabricmc/loader/api/MappingResolver");
+        mv.visitLdcInsn("intermediary");
+        mv.visitLdcInsn("net.minecraft.class_1309");
+        mv.visitLdcInsn(name);
+        mv.visitLdcInsn(desc);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "net/fabricmc/loader/api/MappingResolver", sink,
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)"
+                        + "Ljava/lang/String;", true);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /**
+     * {@code FabricLoader.getInstance().getMappingResolver().mapClassName("intermediary", fqn)},
+     * the shape Cardinal Components uses in a static initializer.
+     */
+    private static byte[] classWithMapClassNameCall(String fqn) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "test/reflect/AsmHelper",
+                null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+        mv.visitCode();
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "net/fabricmc/loader/api/FabricLoader",
+                "getInstance", "()Lnet/fabricmc/loader/api/FabricLoader;", true);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "net/fabricmc/loader/api/FabricLoader",
+                "getMappingResolver", "()Lnet/fabricmc/loader/api/MappingResolver;", true);
+        mv.visitLdcInsn("intermediary");
+        mv.visitLdcInsn(fqn);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "net/fabricmc/loader/api/MappingResolver",
+                "mapClassName", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", true);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
 
     /**
      * Generate a class whose only method body is:

@@ -39,6 +39,8 @@ public class Fabric_1_21_8_to_1_21_9 implements VersionShim {
     
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // authlib 7 made GameProfile a record; vanilla, so every loader needs it.
+        com.retromod.shim.common.LegacyGameProfileBridge.register(transformer);
 
         // Entity#getWorld -> getEntityWorld, including common named subclasses.
         transformer.registerMethodRedirect(

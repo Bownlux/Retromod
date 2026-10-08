@@ -119,6 +119,54 @@ class ForgeModTransformerTest {
     }
 
     @Test
+    @DisplayName("#308: a bundled Forge MixinExtras is removed from jar-in-jar, other libraries stay")
+    void stripsBundledForgeMixinExtras(@TempDir Path dir) throws Exception {
+        Files.createDirectories(dir.resolve("META-INF/jarjar"));
+        Files.createDirectories(dir.resolve("META-INF/jars"));
+        Files.writeString(dir.resolve("META-INF/jars/mixinextras-forge-0.4.1.jar"), "jar");
+        Files.writeString(dir.resolve("META-INF/jarjar/geckolib-4.8.jar"), "jar");
+        Files.writeString(dir.resolve("outside.jar"), "keep");
+        Files.writeString(dir.resolve("META-INF/jarjar/metadata.json"), """
+                {"jars": [
+                  {"identifier": {"group": "io.github.llamalad7", "artifact": "mixinextras-forge"},
+                   "version": {"range": "[0.4.1,)", "artifactVersion": "0.4.1"},
+                   "path": "META-INF/jars/mixinextras-forge-0.4.1.jar"},
+                  {"identifier": {"group": "software.bernie.geckolib", "artifact": "geckolib"},
+                   "version": {"range": "[4.8,)", "artifactVersion": "4.8"},
+                   "path": "META-INF/jarjar/geckolib-4.8.jar"}
+                ]}
+                """);
+
+        int removed = ForgeModTransformer.stripJarInJarArtifact(
+                dir, "io.github.llamalad7", "mixinextras-forge");
+
+        assertEquals(1, removed);
+        assertFalse(Files.exists(dir.resolve("META-INF/jars/mixinextras-forge-0.4.1.jar")),
+                "the jar the entry named must be deleted, even outside META-INF/jarjar/");
+        assertTrue(Files.exists(dir.resolve("META-INF/jarjar/geckolib-4.8.jar")));
+        String metadata = Files.readString(dir.resolve("META-INF/jarjar/metadata.json"));
+        assertFalse(metadata.contains("mixinextras"), metadata);
+        assertTrue(metadata.contains("geckolib"), "other bundled libraries must stay: " + metadata);
+        assertTrue(Files.exists(dir.resolve("outside.jar")));
+    }
+
+    @Test
+    @DisplayName("#308: a jar-in-jar path that escapes the mod is not deleted")
+    void jarInJarPathCannotEscape(@TempDir Path root) throws Exception {
+        Path dir = Files.createDirectories(root.resolve("mod"));
+        Files.createDirectories(dir.resolve("META-INF/jarjar"));
+        Path victim = Files.writeString(root.resolve("victim.jar"), "keep");
+        Files.writeString(dir.resolve("META-INF/jarjar/metadata.json"), """
+                {"jars": [{"identifier": {"group": "io.github.llamalad7", "artifact": "mixinextras-forge"},
+                           "path": "../victim.jar"}]}
+                """);
+
+        assertEquals(1, ForgeModTransformer.stripJarInJarArtifact(
+                dir, "io.github.llamalad7", "mixinextras-forge"));
+        assertTrue(Files.exists(victim), "a path outside the extracted mod must never be deleted");
+    }
+
+    @Test
     @DisplayName("an incompatible dependency keeps its range whichever line comes first")
     void transformModKeepsIncompatibleRange(@TempDir Path tmp) throws Exception {
         Path src = tmp.resolve("incompatible-fixture.jar");
@@ -176,6 +224,70 @@ class ForgeModTransformerTest {
         assertEquals(
                 "public net.minecraft.world.level.storage.loot.LootContext # nested\n",
                 readEntry(nestedPath, "META-INF/accesstransformer.cfg"));
+    }
+
+    @Test
+    @DisplayName("runtime transform embeds generated helpers into a Jar-in-Jar under its parent path")
+    void transformModEmbedsSyntheticsIntoNestedJarUnderParentKey(@TempDir Path tmp) throws Exception {
+        String oldHelper = "legacy/api/Helper";
+        String synthetic = "com/retromod/generated/forge/Helper";
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        try {
+            transformer.registerClassRedirect(oldHelper, synthetic);
+            transformer.registerSyntheticClass(synthetic, emptyClass(synthetic));
+            java.io.ByteArrayOutputStream nested = new java.io.ByteArrayOutputStream();
+            try (JarOutputStream output = new JarOutputStream(nested)) {
+                output.putNextEntry(new JarEntry("lib/UsesHelper.class"));
+                output.write(classWithFieldOf("lib/UsesHelper", oldHelper));
+                output.closeEntry();
+            }
+            Path src = tmp.resolve("outer-with-nested-lib.jar");
+            try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(src))) {
+                writeEntry(output, "META-INF/mods.toml",
+                        "modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\nlicense=\"MIT\"\n"
+                      + "[[mods]]\nmodId=\"outer_fixture\"\n"
+                      + "[[dependencies.outer_fixture]]\nmodId=\"minecraft\"\n"
+                      + "versionRange=\"[1.20.1,1.21)\"\n");
+                output.putNextEntry(new JarEntry("META-INF/jarjar/library.jar"));
+                output.write(nested.toByteArray());
+                output.closeEntry();
+            }
+
+            Path transformed = new ForgeModTransformer("26.1")
+                    .transformMod(src, Files.createDirectory(tmp.resolve("out")));
+
+            Path nestedPath = tmp.resolve("nested-output.jar");
+            try (JarFile outer = new JarFile(transformed.toFile());
+                 var input = outer.getInputStream(outer.getJarEntry("META-INF/jarjar/library.jar"))) {
+                Files.write(nestedPath, input.readAllBytes());
+            }
+            String relocated = SyntheticEmbedder.embeddedBase(
+                    "outer-with-nested-lib.jar!/META-INF/jarjar/library.jar") + synthetic;
+            try (JarFile library = new JarFile(nestedPath.toFile())) {
+                assertNotNull(library.getJarEntry(relocated + ".class"),
+                        "a bundled library loads as its own module, so it needs its own helper copy "
+                                + "under a package keyed by its parent path");
+                assertNull(library.getJarEntry(synthetic + ".class"),
+                        "the shared helper name must not leak into the nested jar");
+            }
+        } finally {
+            transformer.clearRedirectsForTesting();
+        }
+    }
+
+    private static byte[] classWithFieldOf(String name, String fieldType) {
+        org.objectweb.asm.ClassWriter writer = new org.objectweb.asm.ClassWriter(0);
+        writer.visit(org.objectweb.asm.Opcodes.V17, org.objectweb.asm.Opcodes.ACC_PUBLIC,
+                name, null, "java/lang/Object", null);
+        writer.visitField(org.objectweb.asm.Opcodes.ACC_PRIVATE, "helper", "L" + fieldType + ";",
+                null, null).visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
+    private static byte[] emptyClass(String name) {
+        return classWithFieldOf(name, "java/lang/Object");
     }
 
     @Test

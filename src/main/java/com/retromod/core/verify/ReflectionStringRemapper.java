@@ -88,7 +88,12 @@ public final class ReflectionStringRemapper {
     private static final java.util.Set<String> SINKS_TAKING_CLASS_FQN = java.util.Set.of(
             "java/lang/Class#forName",
             "java/lang/ClassLoader#loadClass",
-            "java/lang/ClassLoader#findClass"
+            "java/lang/ClassLoader#findClass",
+            // Fabric mods built for intermediary runtimes ask the loader to translate a
+            // hardcoded intermediary name, as Cardinal Components does for Identifier when it
+            // generates component classes. A 26.1+ runtime has no intermediary namespace and
+            // hands the name back unchanged, so the generated class names a missing class.
+            "net/fabricmc/loader/api/MappingResolver#mapClassName"
     );
 
     private static final java.util.Set<String> SINKS_TAKING_MEMBER_NAME = java.util.Set.of(
@@ -102,6 +107,14 @@ public final class ReflectionStringRemapper {
             "java/lang/invoke/MethodHandles$Lookup#findGetter",
             "java/lang/invoke/MethodHandles$Lookup#findSetter"
     );
+
+    /**
+     * Loader calls whose name argument is an intermediary member name. On a 26.1+ runtime the
+     * resolver has no intermediary namespace and returns that name unchanged, so the literal itself
+     * has to be translated. The owner and descriptor arguments do not affect the returned name.
+     */
+    private static final String MAP_METHOD_NAME = "net/fabricmc/loader/api/MappingResolver#mapMethodName";
+    private static final String MAP_FIELD_NAME = "net/fabricmc/loader/api/MappingResolver#mapFieldName";
 
     /** Class-rename table in dotted form (converted from slash-form for string matching). */
     private final Map<String, String> classRedirectsDotted;
@@ -242,6 +255,21 @@ public final class ReflectionStringRemapper {
                             // Shape recognized but unmapped: feeds the gap report.
                             suspiciousUnmapped.incrementAndGet();
                         }
+                    }
+                } else if (MAP_METHOD_NAME.equals(sinkKey) || MAP_FIELD_NAME.equals(sinkKey)) {
+                    wasSink = true;
+                    boolean methodName = MAP_METHOD_NAME.equals(sinkKey);
+                    Pattern namePattern = methodName
+                            ? INTERMEDIARY_METHOD_PATTERN : INTERMEDIARY_FIELD_PATTERN;
+                    Map<String, String> names = methodName
+                            ? intermediaryMethodNames : intermediaryFieldNames;
+                    LdcInsnNode target = findLastStringLdc(window, windowEnd,
+                            s -> namePattern.matcher(s).matches());
+                    String mapped = target == null ? null : names.get((String) target.cst);
+                    if (mapped != null) {
+                        target.cst = mapped;
+                        stringsRemapped.incrementAndGet();
+                        modified = true;
                     }
                 } else if (SINKS_TAKING_MEMBER_NAME.contains(sinkKey)) {
                     wasSink = true;

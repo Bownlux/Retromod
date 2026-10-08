@@ -15,10 +15,16 @@ public class Forge_1_21_1_to_1_21_2 implements VersionShim {
     @Override public void registerRedirects(RetromodTransformer transformer) {
         // Vanilla item bases removed in 1.21.2, rebased only on hosts that lost them.
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21.2");
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerRegistryValueGetterRename(
+                transformer, "net/minecraft/resources/ResourceLocation");
         // Same vanilla 1.21.2 changes as the NeoForge shim; Forge mods use the same Mojang names.
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
             .registerMojangItemInteractionResultBridge(transformer);
         com.retromod.shim.common.LegacyBlockApiSynthetic.register(transformer);
+        com.retromod.shim.common.LegacyBlockMethodBridge.register(transformer);
+        com.retromod.shim.common.LegacyChestBlockBridge.register(transformer);
+        com.retromod.shim.common.LegacyFoodConsumableBridge.register(transformer);
+        com.retromod.shim.common.LegacyItemConstructorBridge.register(transformer);
     }
     @Override public String[] getShimClasses() { return new String[0]; }
 }

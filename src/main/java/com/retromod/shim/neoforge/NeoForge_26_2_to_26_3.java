@@ -41,6 +41,7 @@ public class NeoForge_26_2_to_26_3 implements VersionShim {
         if (hasNewDatapackRegistryEvent()) {
             registerDatapackRegistryEventRename(transformer);
         }
+        LegacyItemAbilitiesBridge.register(transformer);
     }
 
     private static final String REGISTRIES = "net/neoforged/neoforge/registries/";

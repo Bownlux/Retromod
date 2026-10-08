@@ -502,6 +502,18 @@ public final class Mc26_2To26_3CoreMoves {
                 "net/minecraft/client/renderer/DynamicGpuData$Transform");
         t.registerClassRedirect("net/minecraft/client/renderer/ItemInHandRenderer$1",
                 "net/minecraft/client/renderer/FirstPersonHandsAndItemsRenderer$1");
+        // PoseStack.mulPose(Quaternionfc) became rotate(Quaternionfc); the Matrix4fc and
+        // Transformation overloads kept the old name. The concrete Quaternionf spelling that
+        // 1.21.x mods carry is mapped straight to the new name as well.
+        String poseStack = "com/mojang/blaze3d/vertex/PoseStack";
+        t.registerMethodRedirect(poseStack, "mulPose", "(Lorg/joml/Quaternionfc;)V",
+                poseStack, "rotate", "(Lorg/joml/Quaternionfc;)V");
+        t.registerMethodRedirect(poseStack, "mulPose", "(Lorg/joml/Quaternionf;)V",
+                poseStack, "rotate", "(Lorg/joml/Quaternionfc;)V");
+        // The hand-selection enum moved into the new first-person render state with the same
+        // constants, renderMainHand/renderOffHand fields, and (boolean, boolean) constructor.
+        t.registerClassRedirect("net/minecraft/client/renderer/ItemInHandRenderer$HandRenderSelection",
+                "net/minecraft/client/renderer/state/level/FirstPersonHandsAndItemsRenderState$HandRenderSelection");
         t.registerClassRedirect("net/minecraft/client/renderer/ShaderManager$CompilationCache",
                 "net/minecraft/client/renderer/ShaderManager$PostChainCache");
         t.registerClassRedirect("net/minecraft/core/RegistryCodecs",

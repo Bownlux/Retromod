@@ -58,6 +58,14 @@ public final class MixinCompatibilityTransformer {
         for (var entry : transformer.getMethodRedirects().entrySet()) {
             var key = entry.getKey();
             var target = entry.getValue();
+            // A redirect into one of Retromod's static adapters rewrites the mod's call sites.
+            // Minecraft code never calls the adapter and the target class has no member by its
+            // name, so a selector or @Shadow renamed after it could never resolve. A class that
+            // was itself replaced by a Retromod stand-in is different: mixins follow it there.
+            if (target.owner().startsWith("com/retromod/")
+                    && !target.owner().equals(transformer.getClassRedirects().get(key.owner()))) {
+                continue;
+            }
 
             String oldRef = key.name();
             String newRef = target.name();
@@ -233,6 +241,16 @@ public final class MixinCompatibilityTransformer {
         }
     }
 
+    /**
+     * Whether a surviving intermediary name means the reference is stale. A pre-26.1 Fabric host
+     * runs on intermediary names, so there the same name is the working one and its Mixin must
+     * stay.
+     */
+    private static boolean intermediaryNamesAreStale() {
+        return com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION);
+    }
+
     /** Returns whether the host includes the 1.21.5 entity and ValueIO refactor. */
     private boolean has1215Refactor() {
         return com.retromod.core.RetromodVersion.compareMcVersions(
@@ -313,9 +331,40 @@ public final class MixinCompatibilityTransformer {
             byte[] classBytes, MixinRefmapRepairIndex refmapRepairs) {
         AutomaticMixinTranslator automatic =
                 new AutomaticMixinTranslator(transformer.getFuzzyResolver());
-        byte[] translated = automatic.translate(classBytes, refmapRepairs);
+        byte[] migrated = migrateRemovedFieldAccessors(classBytes);
+        byte[] translated = automatic.translate(migrated, refmapRepairs);
+        // Curated bridges run before the generic host-drift repair, so an exact, verified repair
+        // (such as the Double Hotbar HUD mixin) keeps its shape and the generic pass only fills in
+        // what no curated bridge claims.
         byte[] bridged = applyLegacyMemberBridges(translated);
+        bridged = new MixinHostDriftRepair(transformer.getFuzzyResolver(),
+                transformer.getMethodRedirects(), transformer.getClassRedirects()).apply(bridged);
         return adaptValueIoHandlers(bridged);
+    }
+
+    /**
+     * Removes accessors for fields the host removed. Their callers are pointed at runtime bridges
+     * by {@link MixinAccessorFieldMigration#rewriteCallSites}. The rules match Mojang names, so
+     * this runs after the remap like the other descriptor-sensitive repairs.
+     */
+    public byte[] migrateRemovedFieldAccessors(byte[] classBytes) {
+        String host = com.retromod.core.RetromodVersion.TARGET_MC_VERSION;
+        if (classBytes == null || !MixinAccessorFieldMigration.appliesOn(host)) return classBytes;
+        ClassNode classNode = new ClassNode();
+        new ClassReader(classBytes).accept(classNode, 0);
+        if (!isMixinClass(classNode)) return classBytes;
+        List<MixinAccessorFieldMigration.FieldMigration> migrated = isInterfaceMixin(classNode)
+                ? MixinAccessorFieldMigration.removeMigratedAccessors(classNode, host)
+                : MixinAccessorFieldMigration.bridgeClassMixinAccessors(classNode, host);
+        if (migrated.isEmpty()) return classBytes;
+        // A class mixin now calls the bridge itself, so the bridge travels with the mod.
+        for (MixinAccessorFieldMigration.FieldMigration rule : migrated) {
+            rule.bridgeClasses().forEach(bridge -> com.retromod.core.SyntheticEmbedder.registerClassResource(
+                    transformer, bridge, RetromodTransformer.class));
+        }
+        ClassWriter cw = new ClassWriter(0);
+        classNode.accept(cw);
+        return cw.toByteArray();
     }
 
     /**
@@ -334,10 +383,16 @@ public final class MixinCompatibilityTransformer {
         if (!isMixinClass(classNode)) return classBytes;
 
         boolean modified = MixinLegacyMemberBridge.apply(classNode);
+        modified |= MixinShadowRenames.apply(classNode,
+                com.retromod.shim.common.LegacyMemberRenames::hostRenamed);
         modified |= MixinCommandParserBridge.apply(classNode, transformer.getFuzzyResolver());
         if (MixinShadowFieldDemotion.handles(classNode.name)) {
             modified |= MixinShadowFieldDemotion.apply(classNode);
         }
+        // Both prove the host member's new type from the indexed jar, so a Mixin built for the
+        // host is left alone.
+        modified |= MixinInvokerNarrowingRepair.apply(classNode, transformer.getFuzzyResolver());
+        modified |= MixinContainerItemsAdapter.apply(classNode, transformer.getFuzzyResolver());
         if (!modified) return classBytes;
 
         // The repairs carry their own stack maps, so the class is written back as-is.
@@ -479,15 +534,41 @@ public final class MixinCompatibilityTransformer {
             // Resolve through whatever Retromod would rewrite this to (a class redirect or
             // the intermediary->Mojang map); the host probe is the authority, redirects just
             // give the better name to ask.
-            String resolved = transformer.getClassRedirects().getOrDefault(target, target);
-            boolean resolvedExists = hostHasClass.test(resolved.replace('/', '.'));
-            boolean origExists = resolved.equals(target) ? resolvedExists
-                    : hostHasClass.test(target.replace('/', '.'));
-            if (!resolvedExists && !origExists) {
+            List<String> chain = redirectChain(target);
+            boolean exists = false;
+            for (String name : chain) {
+                if (hostHasClass.test(name.replace('/', '.'))) {
+                    exists = true;
+                    break;
+                }
+            }
+            String resolved = chain.get(chain.size() - 1);
+            if (!exists && !MixinFirstPersonRendererAdapter.movesAfterRemap(resolved, hostHasClass)) {
                 return target; // removed: neutralize this mixin
             }
         }
         return null;
+    }
+
+    /**
+     * The target followed through every class redirect, starting with the target itself. An
+     * intermediary name maps to its Mojang name, which a later version may move again (26.3's
+     * {@code ItemInHandRenderer$HandRenderSelection}), so a single lookup judged a moved class as
+     * removed. Any name in the chain that exists on the host keeps the mixin, as the single
+     * lookup did, so following further can only keep more mixins, never strip one it kept.
+     */
+    private List<String> redirectChain(String target) {
+        Map<String, String> redirects = transformer.getClassRedirects();
+        List<String> chain = new ArrayList<>();
+        chain.add(target);
+        String resolved = target;
+        for (int hop = 0; hop < 8; hop++) {
+            String next = redirects.get(resolved);
+            if (next == null || chain.contains(next)) break;
+            chain.add(next);
+            resolved = next;
+        }
+        return chain;
     }
 
     /**
@@ -638,10 +719,67 @@ public final class MixinCompatibilityTransformer {
                     modified |= transformShadowAnnotation(annotation, method);
                 } else if (ACCESSOR_DESC.equals(desc) || INVOKER_DESC.equals(desc)) {
                     modified |= transformAccessorAnnotation(annotation, method);
+                } else if (EXPRESSION_DEFINITIONS_DESC.equals(desc)
+                        || EXPRESSION_DEFINITION_DESC.equals(desc)) {
+                    modified |= transformExpressionDefinitions(annotation);
                 }
             }
         }
 
+        return modified;
+    }
+
+    private static final String EXPRESSION_DEFINITION_DESC =
+            "Lcom/llamalad7/mixinextras/expression/Definition;";
+    private static final String EXPRESSION_DEFINITIONS_DESC =
+            "Lcom/llamalad7/mixinextras/expression/Definitions;";
+
+    /**
+     * Remaps the member selectors of MixinExtras expression {@code @Definition}s. An expression
+     * injector names its target call or field there, not in {@code @At}, so a stale
+     * {@code method = "Lclass_1309;method_6032()F"} leaves the expression unmatched. These
+     * injectors usually carry {@code require = 0}, so the mod's feature disappears without an
+     * error (Minepathy's poison mixin).
+     */
+    private boolean transformExpressionDefinitions(AnnotationNode annotation) {
+        if (annotation.values == null) return false;
+        if (EXPRESSION_DEFINITIONS_DESC.equals(annotation.desc)) {
+            boolean modified = false;
+            for (int i = 0; i + 1 < annotation.values.size(); i += 2) {
+                if ("value".equals(annotation.values.get(i))
+                        && annotation.values.get(i + 1) instanceof List<?> definitions) {
+                    for (Object definition : definitions) {
+                        if (definition instanceof AnnotationNode node) {
+                            modified |= transformExpressionDefinitions(node);
+                        }
+                    }
+                }
+            }
+            return modified;
+        }
+        boolean modified = false;
+        for (int i = 0; i + 1 < annotation.values.size(); i += 2) {
+            Object key = annotation.values.get(i);
+            if (!("method".equals(key) || "field".equals(key))
+                    || !(annotation.values.get(i + 1) instanceof List<?> selectors)) {
+                continue;
+            }
+            List<Object> remapped = new ArrayList<>(selectors.size());
+            boolean changed = false;
+            for (Object selector : selectors) {
+                if (selector instanceof String s) {
+                    String redirected = redirectMethodTarget(s);
+                    changed |= !s.equals(redirected);
+                    remapped.add(redirected);
+                } else {
+                    remapped.add(selector);
+                }
+            }
+            if (changed) {
+                annotation.values.set(i + 1, remapped);
+                modified = true;
+            }
+        }
         return modified;
     }
     
@@ -656,6 +794,7 @@ public final class MixinCompatibilityTransformer {
         }
 
         boolean hasRequire = false;
+        int explicitRequireIndex = -1;
 
         for (int i = 0; i < annotation.values.size(); i += 2) {
             String key = (String) annotation.values.get(i);
@@ -663,6 +802,7 @@ public final class MixinCompatibilityTransformer {
 
             if ("require".equals(key)) {
                 hasRequire = true;
+                if (value instanceof Integer count && count > 0) explicitRequireIndex = i + 1;
             }
 
             if ("method".equals(key)) {
@@ -784,6 +924,13 @@ public final class MixinCompatibilityTransformer {
         if (!hasRequire && (!mixinExtras || modified)) {
             annotation.values.add("require");
             annotation.values.add(0);
+            modified = true;
+        }
+        // An explicit require=1 asserts a match against the mod's original Minecraft version.
+        // On a newer host a missed constant or call site then aborts Mixin with a fatal
+        // InjectionError, which the non-fatal config cannot override.
+        if (explicitRequireIndex >= 0 && (!mixinExtras || modified)) {
+            annotation.values.set(explicitRequireIndex, 0);
             modified = true;
         }
 
@@ -1294,15 +1441,21 @@ public final class MixinCompatibilityTransformer {
         if (targetOwners.size() != 1) {
             return Optional.empty();
         }
-        Map<String, String> renames = ownerScopedRenames.get(targetOwners.iterator().next());
-        if (renames == null) {
+        String owner = targetOwners.iterator().next();
+        Map<String, String> renames = ownerScopedRenames.get(owner);
+        String renamed = renames == null ? null : renames.get(name);
+        if (AMBIGUOUS_RENAME.equals(renamed)) {
             return Optional.empty();
         }
-        String renamed = renames.get(name);
-        if (renamed == null || AMBIGUOUS_RENAME.equals(renamed)) {
-            return Optional.empty();
+        if (renamed == null && intermediaryNamesAreStale()) {
+            // A name-only rename, such as 26.2's LevelRenderer.renderLevel to render, has no
+            // descriptor-keyed redirect, so it reaches bare selectors only through this table.
+            // Only on 26.1 and newer hosts, which resolve the selector by its Mojang name. On an
+            // SRG or intermediary host the refmap is keyed by the old name, so a renamed selector
+            // would miss its entry and name a method the runtime does not have.
+            renamed = transformer.registeredMethodRename(owner, name);
         }
-        return Optional.of(renamed);
+        return Optional.ofNullable(renamed);
     }
 
     /**
@@ -1338,8 +1491,9 @@ public final class MixinCompatibilityTransformer {
         }
 
         // Multiple-target mixins do not provide enough ownership information for a field
-        // redirect, but an intermediary short name is still globally identifiable here.
-        if (fieldName.startsWith("field_")) {
+        // redirect, but an intermediary short name is still globally identifiable here. Record
+        // component fields carry comp_ names instead of field_ ones.
+        if (fieldName.startsWith("field_") || fieldName.startsWith("comp_")) {
             String mojang = transformer.getIntermediaryFieldNames().get(fieldName);
             if (mojang != null) return mojang;
         }
@@ -1665,7 +1819,8 @@ public final class MixinCompatibilityTransformer {
                     if (isKnownRemovedMethod("." + method.name)) return true;
                 }
                 if (SHADOW_DESC.equals(ann.desc)) {
-                    if (method.name.startsWith("method_") || method.name.startsWith("field_")) {
+                    if (intermediaryNamesAreStale()
+                            && (method.name.startsWith("method_") || method.name.startsWith("field_"))) {
                         return true;
                     }
                 }
@@ -1673,14 +1828,16 @@ public final class MixinCompatibilityTransformer {
                     if (ann.values != null) {
                         for (int ai = 0; ai < ann.values.size(); ai += 2) {
                             if ("value".equals(ann.values.get(ai)) && ann.values.get(ai + 1) instanceof String val) {
-                                if (val.startsWith("method_") || val.startsWith("field_")) {
+                                if (intermediaryNamesAreStale()
+                                        && (val.startsWith("method_") || val.startsWith("field_"))) {
                                     return true;
                                 }
                             }
                         }
                     }
                     // return type referencing a removed class
-                    if (method.desc != null && method.desc.contains("class_")) {
+                    if (intermediaryNamesAreStale()
+                            && method.desc != null && method.desc.contains("class_")) {
                         return true;
                     }
                     // a polyfill type in the descriptor means the original type changed,
@@ -1721,7 +1878,9 @@ public final class MixinCompatibilityTransformer {
                 for (AnnotationNode ann : annotations) {
                     if (SHADOW_DESC.equals(ann.desc)) {
                         if (isKnownRemovedField("." + field.name)) return true;
-                        if (field.name.startsWith("field_")) return true; // unresolved intermediary
+                        if (intermediaryNamesAreStale() && field.name.startsWith("field_")) {
+                            return true; // unresolved intermediary
+                        }
                         if (field.desc != null && field.desc.startsWith("L") && field.desc.endsWith(";")) {
                             String fieldType = field.desc.substring(1, field.desc.length() - 1);
                             if (isKnownRemovedClass(fieldType)) return true;
@@ -2036,7 +2195,7 @@ public final class MixinCompatibilityTransformer {
      * reference is broken.
      */
     private boolean hasUnresolvedIntermediaryName(String target) {
-        if (target == null) return false;
+        if (target == null || !intermediaryNamesAreStale()) return false;
         if (target.contains("class_")) return true;
         int descIdx = target.indexOf('(');
         String methodPart;

@@ -162,6 +162,23 @@ class MixinHandlerResignatureTest {
     }
 
     @Test
+    @DisplayName("a 1.21.5+ Fabric handler that already takes an intermediary ServerLevel gets no second one")
+    void intermediaryServerLevelHandlerIsCurrent() {
+        // Minepathy's MobEntityMixin: dropFromLootTable(class_3218, class_1282, boolean) on 1.21.11,
+        // matched after its selector was remapped but before its parameter types were.
+        MethodNode h = new MethodNode(ACC_PRIVATE, "minepathy$dropChemistryDrops",
+                "(Lnet/minecraft/class_3218;Lnet/minecraft/class_1282;Z"
+                        + "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V", null, null);
+        org.objectweb.asm.tree.AnnotationNode inject =
+                new org.objectweb.asm.tree.AnnotationNode("Lorg/spongepowered/asm/mixin/injection/Inject;");
+        inject.values = new java.util.ArrayList<>(List.of("method", List.of("dropFromLootTable")));
+        h.invisibleAnnotations = new java.util.ArrayList<>(List.of(inject));
+
+        assertNull(MixinHandlerResignature.injectSignatureChange(h),
+                "the handler already has the ServerLevel that 1.21.5 added");
+    }
+
+    @Test
     @DisplayName("A handler capturing no target params is left untouched")
     void noCapturedParamsSkipped() {
         ClassNode cn = injectShapedClass("(" + CIR + ")V");

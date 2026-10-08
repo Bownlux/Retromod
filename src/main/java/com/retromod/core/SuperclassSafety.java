@@ -70,7 +70,12 @@ public final class SuperclassSafety {
             // An indexed jar is the target host, so a name it covers and does not have is absent
             // there. Do not fall through to the class loader for those: that would answer for
             // Retromod's own classpath, which is a different Minecraft version.
-            if (isIndexedScope(internalName)) return Verdict.ABSENT;
+            if (isIndexedScope(internalName)) {
+                // Only a package the jar ships proves absence. A dedicated server jar has no
+                // net/minecraft/client classes, and com/mojang/serialization comes from a library
+                // jar, so a missing name there says nothing about the host the mod will meet.
+                return jarShipsPackage(resolver, internalName) ? Verdict.ABSENT : Verdict.UNKNOWN;
+            }
         }
 
         ClassNode node = ClassResourceInspector.read(internalName);
@@ -105,6 +110,18 @@ public final class SuperclassSafety {
         if ((access & Opcodes.ACC_INTERFACE) != 0) return Verdict.INTERFACE;
         if ((access & Opcodes.ACC_FINAL) != 0) return Verdict.FINAL_CLASS;
         return Verdict.CLASS;
+    }
+
+    private static boolean jarShipsPackage(FuzzyMethodResolver resolver, String internalName) {
+        int slash = internalName.lastIndexOf('/');
+        if (slash < 0) return false;
+        String packagePrefix = internalName.substring(0, slash + 1);
+        for (String indexed : resolver.getIndexedClassNames()) {
+            if (indexed.startsWith(packagePrefix) && indexed.indexOf('/', slash + 1) < 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Whether the indexed jar is expected to carry this name. It indexes only these two roots. */

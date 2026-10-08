@@ -316,6 +316,38 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 } catch (Exception e) {
                     LOGGER.warn("Could not register pre-1.18.2 Biome.Category bridge: {}", e.getMessage());
                 }
+
+                // 1.20.2 to 1.20.5 reshaped APIs a 1.20.1 mod calls while registering content:
+                // particle deserializers, block and FolderRepositorySource constructors, the
+                // Attribute and MobEffect overloads that now take a Holder, UUID-keyed attribute
+                // modifiers, ArmorMaterial, pack suppliers and resources, JSON text helpers, and
+                // Fabric API's screen handler, networking, resource condition and loot table event
+                // calls, the Gson loot serializers, the EntitySelector constructor, and item stack NBT.
+                // Each probes the host, so it no-ops where the old shape still exists. They are
+                // independent, so one failing to register must not cost the others.
+                java.util.List<java.util.function.Consumer<RetromodTransformer>> contentBridges = java.util.List.of(
+                        com.retromod.shim.fabric.Pre1_20_5ParticleTypeBridge::register,
+                        com.retromod.shim.fabric.Pre1_20_3BlockConstructorBridge::register,
+                        com.retromod.shim.fabric.Pre1_20_5PackApiBridge::register,
+                        com.retromod.shim.fabric.Pre1_20_5RegistryHolderBridge::register,
+                        com.retromod.shim.fabric.Pre1_20_5ArmorMaterialBridge::register,
+                        com.retromod.shim.fabric.FabricModNioResourcePackBridge::register,
+                        com.retromod.shim.fabric.Pre1_20_5ScreenHandlerBridge::register,
+                        com.retromod.shim.fabric.Pre1_20_5ServerNetworkingBridge::register,
+                        com.retromod.shim.fabric.Pre1_20_5AttributeModifierBridge::register,
+                        com.retromod.shim.fabric.Pre1_20_5ComponentJsonBridge::register,
+                        com.retromod.shim.fabric.Pre1_20_5ResourceConditionBridge::register,
+                        com.retromod.shim.fabric.Pre1_20_5LootTableEventsBridge::register,
+                        com.retromod.shim.fabric.Pre1_20_5LootDeserializersBridge::register,
+                        com.retromod.shim.fabric.Pre1_20_5EntitySelectorBridge::register,
+                        com.retromod.shim.fabric.Pre1_20_5ItemStackTagBridge::register);
+                for (java.util.function.Consumer<RetromodTransformer> bridge : contentBridges) {
+                    try {
+                        bridge.accept(transformer);
+                    } catch (Exception e) {
+                        LOGGER.warn("Could not register a pre-1.20.5 content API bridge: {}", e.getMessage());
+                    }
+                }
             }
 
             // 26.1+ only: MC 26.1 dropped obfuscation. Before it the Fabric runtime

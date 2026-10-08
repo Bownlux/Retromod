@@ -462,6 +462,8 @@ public final class AutomaticMixinTranslator {
 
         if (selector == null) {
             if (INJECT.equals(injector.desc) && isBareMethodName(selectorText)) {
+                String exact = exactOverloadForBareInject(owner, selectorText, handler);
+                if (exact != null) return new SelectorDecision(exact, List.of());
                 List<MixinHandlerResignature.ParamInsert> inserts =
                         inferBareInjectInserts(owner, selectorText, handler);
                 if (inserts != null && !inserts.isEmpty()) {
@@ -875,6 +877,47 @@ public final class AutomaticMixinTranslator {
                     callback, targetArgs[i].getDescriptor()));
         }
         return inserts;
+    }
+
+    /**
+     * Pins a bare {@code @Inject} name to the one host overload its handler was written for.
+     *
+     * <p>A Fabric mod without a refmap names its target by intermediary id alone, which is unique
+     * per overload. After the remap that id becomes a Mojang name that several overloads can share,
+     * and Mixin resolves a bare name to the first declaration. Minepathy's {@code method_18006} is
+     * the four-argument {@code ItemEntity.merge}; as plain {@code merge} it bound to
+     * {@code merge(ItemStack, ItemStack, int)} and failed with an invalid handler descriptor.
+     *
+     * <p>The handler's captured arguments and callback type are the target's exact parameters and
+     * return kind, so the descriptor is appended only when the name is overloaded on the host and
+     * exactly one overload matches them, with the same staticness.
+     */
+    private String exactOverloadForBareInject(String owner, String name, MethodNode handler) {
+        Type[] handlerArgs = safeArgumentTypes(handler.desc);
+        if (handlerArgs == null) return null;
+        int callback = MixinHandlerResignature.callbackIndex(handlerArgs);
+        if (callback <= 0) return null; // a zero-capture handler fits any overload
+        List<Type> captured = Arrays.asList(Arrays.copyOf(handlerArgs, callback));
+
+        Set<String> overloads = new HashSet<>();
+        String match = null;
+        int matches = 0;
+        for (FuzzyMethodResolver.MethodInfo candidate : targetMethods.getDeclaredMethods(owner)) {
+            if (!candidate.name().equals(name) || !overloads.add(candidate.descriptor())) continue;
+            Type[] targetArgs = safeArgumentTypes(candidate.descriptor());
+            if (targetArgs == null || !captured.equals(Arrays.asList(targetArgs))) continue;
+            if (!callbackMatchesReturn(handlerArgs[callback],
+                    returnDescriptor(candidate.descriptor()))) {
+                continue;
+            }
+            if (candidate.access() >= 0
+                    && staticness(candidate.access()) != staticness(handler.access)) {
+                continue;
+            }
+            match = candidate.descriptor();
+            matches++;
+        }
+        return overloads.size() > 1 && matches == 1 ? name + match : null;
     }
 
     private List<MixinHandlerResignature.ParamInsert> inferBareInjectInserts(

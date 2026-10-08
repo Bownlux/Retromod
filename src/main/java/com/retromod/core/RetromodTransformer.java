@@ -56,6 +56,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     // oldOwner.oldName(oldDesc) -> newOwner.newName(newDesc). Checked manually in
     // visitMethodInsn since matching needs owner+name+descriptor, not just name.
     private final Map<MethodKey, MethodTarget> methodRedirects = new ConcurrentHashMap<>(256);
+    /** Redirects to a helper that wraps a host method which still exists; super calls keep it. */
+    private final Set<MethodKey> wrappingMethodRedirects = ConcurrentHashMap.newKeySet();
 
     // Exact method aliases that also apply when javac writes the CALLER'S subclass as the
     // constant-pool owner of an inherited invocation. The ordinary redirect table cannot match
@@ -71,6 +73,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     // GpuDevice/RenderPipeline refactor have no redirect target. Exact owner+name+desc match,
     // so a live overload is untouched; owners tracked separately for an O(1) skip.
     private final Set<MethodKey> neutralizedMethods = ConcurrentHashMap.newKeySet();
+    // Implemented-interface rewrites: interface -> replacement, or "" to drop it from the list.
+    private final Map<String, String> implementedInterfaceRewrites = new ConcurrentHashMap<>();
     private final Set<String> neutralizedMethodOwners = ConcurrentHashMap.newKeySet();
 
     // Like methodRedirects, but the new method dropped one or more TRAILING parameters the call
@@ -129,6 +133,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     // oldOwner.oldName -> newOwner.newName. When newDesc starts with "(" this is a
     // field-to-method redirect (the field was removed and replaced with a method).
     private final Map<FieldKey, FieldTarget> fieldRedirects = new ConcurrentHashMap<>(64);
+    /** Field redirects that leave an access with any other descriptor alone. */
+    private final Set<FieldKey> exactDescriptorFieldRedirects = ConcurrentHashMap.newKeySet();
 
     // A moved accessor setter may target a field that is final on the host. Shims opt exact
     // destinations into Mixin's @Mutable handling instead of weakening every moved setter.
@@ -171,6 +177,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     private final Map<String, String> mojangMethodRenames = new ConcurrentHashMap<>(16);
     /** {@code interface#oldName} to the new abstract method name, for lambdas implementing it. */
     private final Map<String, String> functionalInterfaceRenames = new ConcurrentHashMap<>(16);
+    /** {@code interface#samName#oldSamDescriptor} to the adapter for lambdas written against it. */
+    private final Map<String, LambdaAdapter> lambdaAdapters = new ConcurrentHashMap<>(8);
 
     // Class-to-interface migrations: when a class becomes an interface in newer MC,
     // mods extending it get their superclass changed to a bridge plus the interface added.
@@ -237,10 +245,20 @@ public class RetromodTransformer implements ClassFileTransformer {
         return provider != null ? provider.apply(internalName) : null;
     }
 
-    /** Find one uniquely proven inherited redirect for an instance call. */
+    /** Prove from jar-local bytes and the host hierarchy that one class extends another. */
+    public static boolean currentJarClassInheritsFrom(String child, String ancestor) {
+        return INSTANCE.inheritsFrom(child, ancestor);
+    }
+
+    /**
+     * Find one uniquely proven inherited redirect for an instance call, or for a static call that
+     * names a subclass, as {@code blit(...)} inside a mod's screen does.
+     */
     private MethodTarget inheritedMethodTarget(
             int opcode, String owner, String name, String descriptor) {
-        if (opcode != Opcodes.INVOKEVIRTUAL && opcode != Opcodes.INVOKEINTERFACE) {
+        boolean superCall = opcode == Opcodes.INVOKESPECIAL && !name.startsWith("<");
+        boolean staticCall = opcode == Opcodes.INVOKESTATIC;
+        if (opcode != Opcodes.INVOKEVIRTUAL && opcode != Opcodes.INVOKEINTERFACE && !superCall && !staticCall) {
             return null;
         }
         Set<InheritedMethodRedirect> candidates =
@@ -251,7 +269,18 @@ public class RetromodTransformer implements ClassFileTransformer {
 
         MethodTarget match = null;
         for (InheritedMethodRedirect candidate : candidates) {
+            // A static call has no receiver to move, so only a static-to-static redirect fits it.
+            if (staticCall && (candidate.target().devirtualize()
+                    || !candidate.target().desc().equals(descriptor))) {
+                continue;
+            }
             if (!inheritsFrom(owner, candidate.oldOwner())) {
+                continue;
+            }
+            // A super call can only become a static helper call; an instance target would need a
+            // receiver type the INVOKESPECIAL rules do not allow.
+            if (superCall && (!takesReceiverAsFirstArgument(candidate.target(), descriptor)
+                    || !superCallReaches(owner, candidate.oldOwner(), name, descriptor))) {
                 continue;
             }
             if (match != null && !match.equals(candidate.target())) {
@@ -262,6 +291,48 @@ public class RetromodTransformer implements ClassFileTransformer {
             match = candidate.target();
         }
         return match;
+    }
+
+    private static boolean takesReceiverAsFirstArgument(MethodTarget target, String descriptor) {
+        return target.devirtualize() || Type.getArgumentTypes(target.desc()).length
+                == Type.getArgumentTypes(descriptor).length + 1;
+    }
+
+    /**
+     * A {@code super.m()} call names the direct superclass, which is often a mod base class that
+     * never declared {@code m}. The call then reached the removed method on {@code ancestor}, and
+     * only then may it take that method's redirect. Any class on the way that declares the method
+     * keeps the call, since that override is what it runs. A class that cannot be read stops the
+     * walk: a Minecraft class there cannot declare the removed method, anything else is unproven.
+     */
+    private boolean superCallReaches(String owner, String ancestor, String name, String descriptor) {
+        Function<String, byte[]> provider = currentJarClassBytesProvider();
+        String current = owner;
+        for (int depth = 0; current != null && !current.equals(ancestor) && depth < 64; depth++) {
+            byte[] bytes = readClassBytes(current, provider);
+            if (bytes == null) return current.startsWith("net/minecraft/");
+            ClassReader reader;
+            try {
+                reader = new ClassReader(bytes);
+            } catch (RuntimeException e) {
+                return false;
+            }
+            boolean[] declares = {false};
+            reader.accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(int access, String method, String desc,
+                        String signature, String[] exceptions) {
+                    if (method.equals(name) && (desc.equals(descriptor)
+                            || resolveDescriptor(desc).equals(descriptor))) {
+                        declares[0] = true;
+                    }
+                    return null;
+                }
+            }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            if (declares[0]) return false;
+            current = reader.getSuperName();
+        }
+        return ancestor.equals(current);
     }
 
     /**
@@ -460,10 +531,20 @@ public class RetromodTransformer implements ClassFileTransformer {
     /** Instance field whose state moved somewhere the receiver can't reach: GETFIELD/PUTFIELD become
      *  INVOKESTATIC bridge calls that consume the receiver as an ignored arg (26.2 Options.hideGui). */
     private final Map<FieldKey, FieldStaticBridge> fieldStaticBridges = new ConcurrentHashMap<>(8);
+    /** Globally unique (SRG) instance field names read through a public getter, any owner. */
+    private final Map<String, MethodTarget> uniqueFieldGetters = new ConcurrentHashMap<>(4);
+    /** Static fields that kept their name but changed type, read through a converter call. */
+    private final List<StaticFieldTypeDrift> staticFieldTypeDrifts = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     // Super constructor descriptor changes: a parent ctor gained required params in newer
     // MC; pushes extra args before INVOKESPECIAL (e.g. Button gained CreateNarration).
     private final Map<ConstructorKey, SuperCtorRedirect> superCtorRedirects = new ConcurrentHashMap<>(8);
+    /** Argument shuffles for super-constructor changes that reorder parameters, keyed like above. */
+    private final Map<ConstructorKey, java.util.function.Consumer<MethodVisitor>> superCtorStackAdapters =
+            new ConcurrentHashMap<>(4);
+    private static final String STACK_ADAPTER_MODE = "__STACK_ADAPTER__";
+    /** Field renames that apply to one descriptor only, keyed {@code owner.name:desc}. */
+    private final Map<String, String> typedFieldRenames = new ConcurrentHashMap<>(16);
 
     // Owners of removed classes whose static-field reads (e.g. 1.12.2 Material.IRON) become a
     // pushed default instead of faulting on the missing class. See registerStaticFieldNuller.
@@ -499,6 +580,12 @@ public class RetromodTransformer implements ClassFileTransformer {
 
     /** Guards the one-time phantom-target sweep (see dropPhantomComRetromodTargets). */
     private final AtomicBoolean targetsValidated = new AtomicBoolean(false);
+    /** Held by the thread running the phantom sweep (see ensureTargetsValidated). */
+    private final java.util.concurrent.locks.ReentrantLock sweepLock =
+            new java.util.concurrent.locks.ReentrantLock();
+    /** True while this thread is inside the Java agent's class-load callback. */
+    private static final ThreadLocal<Boolean> IN_CLASS_LOAD_CALLBACK =
+            ThreadLocal.withInitial(() -> Boolean.FALSE);
 
     // Owners that have method redirects. visitMethodInsn skips the methodRedirects lookup
     // when the call's owner isn't here.
@@ -640,6 +727,17 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
+     * The pattern rules describe 26.1 renames. On an older host the original call is the correct
+     * one, and a rule such as displayClientMessage to sendSystemMessage turns a working call into a
+     * VerifyError (#306), so the transform pass applies them only where the host is 26.1 or newer.
+     * {@link AutoFixEngine} keeps the ungated rules: it acts only on a logged missing-member error.
+     */
+    PatternHeuristics patternHeuristicsForHost() {
+        return RetromodVersion.isUnobfuscatedTarget(RetromodVersion.TARGET_MC_VERSION)
+                ? patternHeuristics : null;
+    }
+
+    /**
      * Register a method redirect: oldOwner.oldName(oldDesc) -> newOwner.newName(newDesc).
      */
     public void registerMethodRedirect(
@@ -658,6 +756,19 @@ public class RetromodTransformer implements ClassFileTransformer {
         
         LOGGER.debug("Registered method redirect: {}.{}{} -> {}.{}{}",
                 oldOwner, oldName, oldDesc, newOwner, newName, newDesc);
+    }
+
+    /**
+     * Register a redirect to a static helper that wraps a host method which still exists, taking
+     * the receiver as its first argument. A {@code super.m()} call in a mod's override of that
+     * method keeps its {@code INVOKESPECIAL}: the helper reaches the method by virtual dispatch,
+     * which would run the override again and recurse until the stack overflows.
+     */
+    public void registerWrappingMethodRedirect(
+            String oldOwner, String oldName, String oldDesc,
+            String newOwner, String newName, String newDesc) {
+        registerMethodRedirect(oldOwner, oldName, oldDesc, newOwner, newName, newDesc, true);
+        wrappingMethodRedirects.add(new MethodKey(oldOwner, oldName, oldDesc));
     }
 
     /**
@@ -889,6 +1000,15 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
+     * The name {@link #registerMethodRename} gives {@code owner.name}, or null when none is
+     * registered. A bare Mixin selector names no descriptor, so this name-only table is the one
+     * rename source that can answer for it.
+     */
+    public String registeredMethodRename(String owner, String name) {
+        return mojangMethodRenames.get(owner + "#" + name);
+    }
+
+    /**
      * Rename an interface's single abstract method, for callers and for implementations written
      * as a lambda or method reference. A lambda names the method it implements in its
      * {@code invokedynamic}, and {@code LambdaMetafactory} binds that name against the runtime
@@ -900,6 +1020,41 @@ public class RetromodTransformer implements ClassFileTransformer {
     public void registerInterfaceMethodRename(String iface, String name, String newName) {
         registerMethodRename(iface, name, newName);
         functionalInterfaceRenames.put(iface + "#" + name, newName);
+    }
+
+    /**
+     * A lambda adapter for a functional interface whose abstract method changed shape.
+     * {@code adapterIface}, {@code adapterName} and {@code adapterSamDesc} describe what the
+     * rewritten {@code invokedynamic} builds. When {@code wrapOwner} is null the lambda keeps its
+     * interface and only its erased method type changes. Otherwise the built object is passed to
+     * the static {@code wrapOwner.wrapName(wrapDesc)}, which returns the original interface type.
+     */
+    public record LambdaAdapter(String adapterIface, String adapterName, String adapterSamDesc,
+            String wrapOwner, String wrapName, String wrapDesc) {}
+
+    /**
+     * Retypes lambdas whose interface became generic. {@code LambdaMetafactory} implements the
+     * method type the {@code invokedynamic} names, so a lambda compiled against
+     * {@code create(int, Inventory, FriendlyByteBuf)} never implements the host's erased
+     * {@code create(int, Inventory, Object)} and throws {@code AbstractMethodError} when called.
+     * The lambda's instantiated type is kept, so the metafactory still casts the argument.
+     * Keyed on the old method type, so a lambda written for the new interface is untouched.
+     */
+    public void registerLambdaSamRetype(String iface, String samName, String oldSamDesc,
+            String newSamDesc) {
+        lambdaAdapters.put(iface + "#" + samName + "#" + oldSamDesc,
+                new LambdaAdapter(iface, samName, newSamDesc, null, null, null));
+    }
+
+    /**
+     * Rebuilds lambdas for an interface whose abstract method was replaced by differently named
+     * or shaped methods. The lambda is built as {@code adapterIface} instead and handed to a
+     * static wrapper that implements the modern interface on top of it. A class that implements
+     * the old interface directly is not covered.
+     */
+    public void registerLambdaAdapter(String iface, String samName, String oldSamDesc,
+            LambdaAdapter adapter) {
+        lambdaAdapters.put(iface + "#" + samName + "#" + oldSamDesc, adapter);
     }
 
     /**
@@ -932,6 +1087,26 @@ public class RetromodTransformer implements ClassFileTransformer {
         neutralizedMethods.add(new MethodKey(owner, name, desc));
         neutralizedMethodOwners.add(owner);
         LOGGER.debug("Registered removed-method neutralize: {}.{}{}", owner, name, desc);
+    }
+
+    /**
+     * Drop an interface from the {@code implements} list of every transformed class.
+     *
+     * <p>For an API interface the host turned into a class: the mod class still declares the
+     * methods, but claiming the type fails class definition with
+     * {@code IncompatibleClassChangeError}. Callers then adapt the object where it reaches the API.
+     */
+    public void registerDroppedInterface(String iface) {
+        implementedInterfaceRewrites.put(iface, "");
+    }
+
+    /**
+     * Replace an interface in the {@code implements} list of every transformed class, for example
+     * with a generated subinterface that implements a changed abstract method on top of the old
+     * one. Unlike a class redirect, references to the interface elsewhere stay unchanged.
+     */
+    public void registerInterfaceReplacement(String iface, String replacement) {
+        implementedInterfaceRewrites.put(iface, replacement);
     }
 
     /**
@@ -976,6 +1151,26 @@ public class RetromodTransformer implements ClassFileTransformer {
         }
         redirectProviderPackages.add(normalized);
         LOGGER.debug("Registered redirect provider package: {}", normalized);
+    }
+
+    /** The registered adapter for a {@code LambdaMetafactory.metafactory} lambda, or null. */
+    private LambdaAdapter lambdaAdapterFor(String name, String descriptor,
+            Handle bootstrap, Object[] arguments) {
+        if (lambdaAdapters.isEmpty() || arguments == null || arguments.length < 3
+                || !"java/lang/invoke/LambdaMetafactory".equals(bootstrap.getOwner())
+                || !"metafactory".equals(bootstrap.getName())
+                || !(arguments[0] instanceof Type samType)) {
+            return null;
+        }
+        Type built = Type.getReturnType(descriptor);
+        if (built.getSort() != Type.OBJECT) return null;
+        String iface = built.getInternalName();
+        String suffix = "#" + name + "#" + samType.getDescriptor();
+        LambdaAdapter adapter = lambdaAdapters.get(iface + suffix);
+        if (adapter == null) {
+            adapter = lambdaAdapters.get(classRedirects.getOrDefault(iface, iface) + suffix);
+        }
+        return adapter;
     }
 
     private boolean preservesProviderReference(String className, String referencedOwner) {
@@ -1123,6 +1318,24 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
+     * Register a super-constructor change that reorders the old arguments, which the append and
+     * replace modes above cannot express because they keep or discard the old values in place.
+     *
+     * <p>At the {@code super(oldDesc)} call the old arguments sit on the stack above the
+     * uninitialized receiver, which cannot be passed to a helper method. {@code rewriteArguments}
+     * therefore emits stack instructions (swaps, static reads) that turn the old argument list into
+     * the new one, and the call is then made with {@code newDesc}. Modern calls with any other
+     * descriptor pass through untouched.
+     */
+    public void registerSuperConstructorAdapter(String className, String oldDesc, String newDesc,
+            java.util.function.Consumer<MethodVisitor> rewriteArguments) {
+        ConstructorKey key = new ConstructorKey(className, oldDesc);
+        superCtorStackAdapters.put(key, rewriteArguments);
+        superCtorRedirects.put(key, new SuperCtorRedirect(newDesc, STACK_ADAPTER_MODE, "", ""));
+        LOGGER.debug("Registered super ctor adapter: {}.{} -> {}", className, oldDesc, newDesc);
+    }
+
+    /**
      * Register intermediary method and field name mappings for bytecode remapping.
      * These are used by the Remapper to translate method_XXXX and field_XXXX names
      * in method calls, field accesses, @Shadow annotations, etc.
@@ -1195,6 +1408,78 @@ public class RetromodTransformer implements ClassFileTransformer {
      * <p>Both maps are merged into the global SRG dictionary; later calls
      * override earlier entries for the same name.
      */
+    /** One Mojang name an SRG id had over a range of Minecraft versions. */
+    public record SrgDrift(String firstVersion, String lastVersion, String mojangName) {}
+
+    private final Map<String, List<SrgDrift>> srgDrift = new ConcurrentHashMap<>();
+    private volatile String srgSourceVersion;
+
+    /**
+     * Register the names an SRG id had in different versions. Forge kept some ids while the member
+     * behind them changed, so the one name in the main table is wrong for a mod from the other side
+     * of the change: {@code m_7366_} is {@code getDurabilityForSlot} to 1.19.2 and
+     * {@code getDefenseForType} from 1.19.4.
+     */
+    public void registerSrgVersionDrift(String kind, String srgName, List<SrgDrift> ranges) {
+        srgDrift.put(kind + ' ' + srgName, List.copyOf(ranges));
+        cachedRemapper = null;
+    }
+
+    /** The Minecraft version the mod being transformed was built for, or null when unknown. */
+    public void setSrgSourceVersion(String version) {
+        srgSourceVersion = version;
+        inheritedTargetSrgNames.clear();
+    }
+
+    private String srgMethodName(String srgName) {
+        String drifted = driftedSrgName("METHOD", srgName);
+        return drifted != null ? drifted : srgMethodNames.get(srgName);
+    }
+
+    /**
+     * The Mojang name of a record accessor that an SRG mod calls by its component field's id.
+     * Forge's SRG names a record accessor after the component field, so an old
+     * {@code tagKey.f_203868_()} call carries an {@code f_} id where every other method carries an
+     * {@code m_} id. On a Mojang-named host the accessor shares the component field's Mojang name,
+     * so the field table resolves it; otherwise the call keeps the id and fails with
+     * {@code NoSuchMethodError}.
+     */
+    private String srgRecordAccessorName(String name, String descriptor) {
+        if (srgFieldNames.isEmpty() || descriptor == null || !descriptor.startsWith("()")
+                || name.length() <= 3 || !name.startsWith("f_") || !name.endsWith("_")) {
+            return null;
+        }
+        return srgFieldName(name);
+    }
+
+    private String srgFieldName(String srgName) {
+        String drifted = driftedSrgName("FIELD", srgName);
+        return drifted != null ? drifted : srgFieldNames.get(srgName);
+    }
+
+    /**
+     * The name an SRG id had in the mod's own version: the range that contains it, else the latest
+     * range that starts before it. Null when the id never drifted or the version is unknown.
+     */
+    private String driftedSrgName(String kind, String srgName) {
+        String version = srgSourceVersion;
+        if (version == null || srgDrift.isEmpty()) return null;
+        List<SrgDrift> ranges = srgDrift.get(kind + ' ' + srgName);
+        if (ranges == null) return null;
+        SrgDrift preceding = null;
+        for (SrgDrift range : ranges) {
+            if (RetromodVersion.compareMcVersions(version, range.firstVersion()) < 0) continue;
+            if (RetromodVersion.compareMcVersions(version, range.lastVersion()) <= 0) {
+                return range.mojangName();
+            }
+            if (preceding == null || RetromodVersion.compareMcVersions(
+                    range.firstVersion(), preceding.firstVersion()) > 0) {
+                preceding = range;
+            }
+        }
+        return preceding != null ? preceding.mojangName() : null;
+    }
+
     public void registerSrgNameMappings(
             Map<String, String> methodNames, Map<String, String> fieldNames) {
         srgMethodNames.putAll(methodNames);
@@ -1209,7 +1494,10 @@ public class RetromodTransformer implements ClassFileTransformer {
             Map<String, String> methodNames, Map<String, String> fieldNames) {
         targetSrgMethodNames.putAll(methodNames);
         targetSrgFieldNames.putAll(fieldNames);
+        targetSrgSamIndex = null;
+        targetSrgMethodIds = null;
         cachedRemapper = null;
+        inheritedTargetSrgNames.clear();
         LOGGER.info("Registered {} target SRG methods and {} target SRG fields",
                 methodNames.size(), fieldNames.size());
     }
@@ -1219,7 +1507,11 @@ public class RetromodTransformer implements ClassFileTransformer {
      * Mixin annotation. The owner and descriptor make the target SRG lookup unambiguous.
      */
     public String remapQualifiedMethodName(String owner, String name, String descriptor) {
-        String mappedName = srgMethodNames.getOrDefault(name, name);
+        String srg = srgMethodName(name);
+        // An SRG host still names the accessor by its field id, and this path has no field-table
+        // way back to that id, so only a Mojang-named host takes the component name.
+        if (srg == null && targetSrgFieldNames.isEmpty()) srg = srgRecordAccessorName(name, descriptor);
+        String mappedName = srg != null ? srg : name;
         String mappedOwner = classRedirects.getOrDefault(owner, owner);
         mappedName = mojangMethodRenames.getOrDefault(
                 mappedOwner + "#" + mappedName, mappedName);
@@ -1231,19 +1523,190 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
+     * The target SRG name of a record component accessor. On an SRG host the accessor carries the
+     * component field's SRG name, and the target table lists only that field. 1.19.3 turned
+     * classes such as {@code LevelStem} into records, so an old {@code stem.generator()} call
+     * otherwise keeps its Mojang name and fails with {@code NoSuchMethodError}.
+     */
+    private String recordAccessorTargetSrgName(String owner, String name, String descriptor) {
+        if (descriptor == null || !descriptor.startsWith("()") || name.startsWith("<")) return null;
+        return targetSrgFieldNames.get(com.retromod.mapping.TargetSrgMapper.memberKey(
+                owner, name, descriptor.substring(2)));
+    }
+
+    /** Owner, descriptor and SRG id of every target method, for {@link #isLiveTargetSrgMethod}. */
+    private volatile Set<String> targetSrgMethodIds;
+
+    /**
+     * Whether a source SRG method id still names this method on the host. Mojang sometimes
+     * renames a method without changing it, and the SRG id then survives: 1.19.2
+     * {@code Entity.getLevel} and 1.20.1 {@code Entity.level} are both {@code m_9236_}. The Mojang
+     * hop alone lands on the old name, which the host lacks, so a call the host could still
+     * resolve fails with {@code NoSuchMethodError} (#290). The id is kept only when the owner, or
+     * a supertype, declares it with the same descriptor, so a mod's own override keeps the Mojang
+     * name the other bridges match on.
+     */
+    private boolean isLiveTargetSrgMethod(String owner, String srgName, String descriptor) {
+        if (targetSrgMethodNames.isEmpty() || !srgName.startsWith("m_")) return false;
+        Set<String> ids = targetSrgMethodIds;
+        if (ids == null) {
+            ids = new HashSet<>();
+            for (Map.Entry<String, String> entry : targetSrgMethodNames.entrySet()) {
+                String key = entry.getKey();
+                int ownerEnd = key.indexOf('\0');
+                int nameEnd = ownerEnd < 0 ? -1 : key.indexOf('\0', ownerEnd + 1);
+                if (nameEnd < 0) continue;
+                ids.add(key.substring(0, ownerEnd) + '\0' + key.substring(nameEnd + 1)
+                        + '\0' + entry.getValue());
+            }
+            targetSrgMethodIds = ids;
+        }
+        Function<String, byte[]> provider = currentJarClassBytesProvider();
+        Set<String> visited = new HashSet<>();
+        Deque<String> pending = new ArrayDeque<>(List.of(owner));
+        while (!pending.isEmpty() && visited.size() < 64) {
+            String type = pending.poll();
+            if (!visited.add(type)) continue;
+            if (ids.contains(type + '\0' + descriptor + '\0' + srgName)) return true;
+            pending.addAll(directSupertypes(type, provider));
+        }
+        return false;
+    }
+
+    /** Target SRG method names by owner and Mojang name, or "" when the name is overloaded. */
+    private volatile Map<String, String> targetSrgSamIndex;
+
+    /**
+     * The name a lambda's invokedynamic must use for a Minecraft functional interface. A Forge
+     * mod's lambda names the interface method in SRG, which is translated to Mojang with the rest
+     * of the class. On an SRG host the interface still declares the SRG name, so a lambda left
+     * on the Mojang name links but throws {@code AbstractMethodError} when called (#264: every
+     * MCreator {@code EntityType.Builder.of(Entity::new, ...)} factory). The invokedynamic
+     * descriptor carries the interface but not the method descriptor, so the lookup is by owner
+     * and name and is skipped when that name is overloaded.
+     */
+    private String targetSrgSamName(String indyDescriptor, String mojangName) {
+        if (targetSrgMethodNames.isEmpty()) return mojangName;
+        int close = indyDescriptor.lastIndexOf(')');
+        if (close < 0 || !indyDescriptor.startsWith("L", close + 1)) return mojangName;
+        String iface = indyDescriptor.substring(close + 2, indyDescriptor.length() - 1);
+        Map<String, String> index = targetSrgSamIndex;
+        if (index == null) {
+            index = new HashMap<>();
+            for (Map.Entry<String, String> entry : targetSrgMethodNames.entrySet()) {
+                String[] parts = entry.getKey().split("\0", 3);
+                if (parts.length < 2) continue;
+                index.merge(parts[0] + '#' + parts[1], entry.getValue(),
+                        (first, second) -> first.equals(second) ? first : "");
+            }
+            targetSrgSamIndex = index;
+        }
+        String target = index.get(classRedirects.getOrDefault(iface, iface) + '#' + mojangName);
+        return target == null || target.isEmpty() ? mojangName : target;
+    }
+
+    /** Inherited target SRG lookups, keyed by table, jar, owner, name, and descriptor. */
+    private final Map<String, Optional<String>> inheritedTargetSrgNames = new ConcurrentHashMap<>();
+
+    /**
+     * The target SRG name of a member that {@code owner} inherits rather than declares.
+     *
+     * <p>The target table is keyed by the declaring class. A mod class overriding
+     * {@code getDrops}, or reading an inherited field such as {@code level}, names itself as the
+     * owner, so the exact lookup missed and the member kept its Mojang name. On an SRG host such
+     * an override was never called and such a field read failed. The walk follows the mod's own
+     * classes, Retromod's generated bases, and the host's classes, through class moves and
+     * superclass rebases, and stops at the first declaring class the table knows.
+     */
+    private String inheritedTargetSrgName(Map<String, String> table, String owner, String name,
+            String descriptor) {
+        Function<String, byte[]> provider = currentJarClassBytesProvider();
+        String key = System.identityHashCode(table) + "\0" + System.identityHashCode(provider)
+                + "\0" + owner + "\0" + name + "\0" + descriptor;
+        return inheritedTargetSrgNames.computeIfAbsent(key, ignored -> {
+            Set<String> visited = new HashSet<>();
+            List<String> start = directSupertypes(owner, provider);
+            String moved = hostSupertypeName(owner);
+            if (start.isEmpty() && !moved.equals(owner)) start = directSupertypes(moved, provider);
+            Deque<String> pending = new ArrayDeque<>(start);
+            while (!pending.isEmpty() && visited.size() < 64) {
+                String type = pending.poll();
+                if (!visited.add(type)) continue;
+                String target = table.get(com.retromod.mapping.TargetSrgMapper.memberKey(
+                        type, name, descriptor));
+                if (target != null) return Optional.of(target);
+                pending.addAll(directSupertypes(type, provider));
+            }
+            return Optional.empty();
+        }).orElse(null);
+    }
+
+    /** A class's superclass and interfaces, after the class moves and rebases this host applies. */
+    private List<String> directSupertypes(String type, Function<String, byte[]> provider) {
+        List<String> parents = new ArrayList<>();
+        byte[] bytes = syntheticClasses.get(type);
+        if (bytes == null) bytes = readClassBytes(type, provider);
+        if (bytes != null) {
+            try {
+                ClassReader reader = new ClassReader(bytes);
+                if (reader.getSuperName() != null) parents.add(reader.getSuperName());
+                parents.addAll(Arrays.asList(reader.getInterfaces()));
+            } catch (RuntimeException unreadable) {
+                return List.of();
+            }
+        } else {
+            FuzzyMethodResolver resolver = fuzzyResolver;
+            if (resolver != null) parents.addAll(resolver.directSupertypes(type));
+        }
+        List<String> resolved = new ArrayList<>(parents.size());
+        for (String parent : parents) {
+            String host = hostSupertypeName(parent);
+            // A rebase base such as LegacyDoorBlock extends the very class it replaces. Rebasing
+            // its own parent would point the walk back at itself and hide every inherited member,
+            // so a mod's super.getDrops() kept its Mojang name on an SRG host.
+            if (host.equals(type)) host = classRedirects.getOrDefault(parent, parent);
+            resolved.add(host);
+        }
+        return resolved;
+    }
+
+    private String hostSupertypeName(String type) {
+        SuperclassRedirect rebase = superclassRedirects.get(type);
+        if (rebase != null) return rebase.newSuperclass();
+        String moved = classRedirects.getOrDefault(type, type);
+        rebase = superclassRedirects.get(moved);
+        return rebase != null ? rebase.newSuperclass() : moved;
+    }
+
+    /** Whether the host runs target SRG member names, as Forge 1.20.1 and older Forge hosts do. */
+    public boolean hasTargetSrgMappings() {
+        return !targetSrgMethodNames.isEmpty() || !targetSrgFieldNames.isEmpty();
+    }
+
+    /**
      * Resolve an SRG member name that a Forge refmap stores without its owner. SRG names are
      * unique, so the Mojang name is safe on a host that runs Mojang names. A pre-26 Forge host
      * needs the owner to find its own SRG name, so the old name stays there.
      */
     public String remapOwnerlessSrgName(String name, boolean field) {
         if (!targetSrgMethodNames.isEmpty() || !targetSrgFieldNames.isEmpty()) return name;
-        return (field ? srgFieldNames : srgMethodNames).getOrDefault(name, name);
+        String mapped = field ? srgFieldName(name) : srgMethodName(name);
+        return mapped != null ? mapped : name;
+    }
+
+    /**
+     * Whether {@code name} is an intermediary field name. Record components are named
+     * {@code comp_N} instead of {@code field_N}, and a mixin without a refmap shadows them by
+     * that name (Minepathy's {@code Consumable} and {@code Equippable} mixins).
+     */
+    private static boolean isIntermediaryFieldName(String name) {
+        return name.startsWith("field_") || name.startsWith("comp_");
     }
 
     /** Resolve a field selector stored outside ordinary bytecode instructions. */
     public String remapQualifiedFieldName(String owner, String name, String descriptor) {
         String mappedName = name;
-        if (!intermediaryFieldNames.isEmpty() && name.startsWith("field_")) {
+        if (!intermediaryFieldNames.isEmpty() && isIntermediaryFieldName(name)) {
             String mojang = null;
             if (descriptor != null && ambiguousIntermediaryFieldNames.contains(name)) {
                 mojang = intermediaryFieldNamesByDesc.get(memberDescKey(name, descriptor));
@@ -1251,7 +1714,8 @@ public class RetromodTransformer implements ClassFileTransformer {
             if (mojang == null) mojang = intermediaryFieldNames.get(name);
             if (mojang != null) mappedName = mojang;
         }
-        mappedName = srgFieldNames.getOrDefault(mappedName, mappedName);
+        String srgField = srgFieldName(mappedName);
+        if (srgField != null) mappedName = srgField;
         String mappedOwner = classRedirects.getOrDefault(owner, owner);
         String mappedDescriptor = remapDescriptorClasses(descriptor);
 
@@ -1302,8 +1766,12 @@ public class RetromodTransformer implements ClassFileTransformer {
     public void clearSrgNameMappings() {
         srgMethodNames.clear();
         srgFieldNames.clear();
+        srgDrift.clear();
+        srgSourceVersion = null;
         targetSrgMethodNames.clear();
         targetSrgFieldNames.clear();
+        targetSrgSamIndex = null;
+        targetSrgMethodIds = null;
         cachedRemapper = null;
     }
 
@@ -1345,6 +1813,31 @@ public class RetromodTransformer implements ClassFileTransformer {
         
         LOGGER.debug("Registered field redirect: {}.{} {} -> {}.{} {}",
                 oldOwner, oldName, oldDesc, newOwner, newName, newDesc);
+    }
+
+    /**
+     * Register a field redirect that applies only to an access with {@code oldDesc}. A field that
+     * kept its name but changed type, such as {@code Attributes.MAX_HEALTH} becoming a
+     * {@code Holder} in 1.20.5, needs this: a newer mod that reads the field with its current type
+     * must keep the plain read.
+     */
+    public void registerExactFieldRedirect(
+            String oldOwner, String oldName, String oldDesc,
+            String newOwner, String newName, String newDesc) {
+        registerFieldRedirect(oldOwner, oldName, oldDesc, newOwner, newName, newDesc);
+        exactDescriptorFieldRedirects.add(new FieldKey(oldOwner, oldName));
+    }
+
+    /**
+     * Rename a field only where it is read or written with {@code descriptor}. Use this when the
+     * same owner and name already carry a redirect written for an older type of the field, as
+     * {@code MobEffects.DIG_SPEED} does: its pre-1.20.5 {@code MobEffect} read goes through a
+     * lookup, while the {@code Holder} read of a 1.20.5 to 1.21.4 mod needs the 1.21.5 name
+     * {@code HASTE}.
+     */
+    public void registerFieldRenameForType(String owner, String name, String descriptor,
+            String newName) {
+        typedFieldRenames.put(owner + "." + name + ":" + descriptor, newName);
     }
 
     /** Mark one exact moved field as requiring {@code @Mutable} on generated accessor setters. */
@@ -1465,6 +1958,42 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
+     * Register a static field that kept its name but changed type. A {@code GETSTATIC} under
+     * {@code ownerPrefix} that still asks for {@code oldDesc} reads the field at {@code newDesc}
+     * and passes the value through {@code converterOwner.converterName}, which must take the new
+     * type and return the old one. 1.19.3 turned every vanilla worldgen constant such as
+     * {@code VegetationFeatures.PATCH_GRASS} from a {@code Holder} into a {@code ResourceKey}, so
+     * an old mod's read fails with {@code NoSuchFieldError} unless the key is wrapped back into a
+     * holder. Matching by package prefix covers the hundreds of constants without listing them.
+     */
+    public void registerStaticFieldTypeDrift(String ownerPrefix, String oldDesc, String newDesc,
+            String converterOwner, String converterName, String converterDesc) {
+        staticFieldTypeDrifts.add(new StaticFieldTypeDrift(
+                ownerPrefix, oldDesc, newDesc, converterOwner, converterName, converterDesc));
+    }
+
+    /**
+     * Register a getter for an instance field that became private, matched by name and
+     * descriptor whatever class the read names as owner. Only safe for a name that identifies one
+     * member everywhere, which an SRG field id does: {@code f_19853_} is {@code Entity.level},
+     * and a mod reads it through {@code Entity}, {@code Player} and its own entity classes alike.
+     */
+    public void registerUniqueFieldGetter(String fieldName, String fieldDesc,
+            String getterOwner, String getterName, String getterDesc) {
+        uniqueFieldGetters.put(fieldName + ':' + fieldDesc,
+                new MethodTarget(getterOwner, getterName, getterDesc));
+    }
+
+    private StaticFieldTypeDrift staticFieldTypeDrift(String owner, String descriptor) {
+        for (StaticFieldTypeDrift drift : staticFieldTypeDrifts) {
+            if (owner.startsWith(drift.ownerPrefix()) && drift.oldDesc().equals(descriptor)) {
+                return drift;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Owners of removed classes whose static-field reads should become a pushed default (null / 0)
      * rather than fault on the missing class. Used by the 1.12.2 Block bridge: {@code super(Material.IRON)}
      * reads {@code Material.IRON} before the super call, but Material was removed in 26.1, so the
@@ -1506,6 +2035,15 @@ public class RetromodTransformer implements ClassFileTransformer {
         } catch (ClassNotFoundException | LinkageError e) {
             LOGGER.debug("Could not inspect redirect target kind for {}", internalName, e);
         }
+    }
+
+    /**
+     * Record a host class that replaces an old interface, such as NeoForge's final {@code Lazy}
+     * class for Forge's {@code Lazy} interface. A plain class redirect keeps the old
+     * InterfaceMethodref, which the JVM rejects with {@code IncompatibleClassChangeError}.
+     */
+    public void registerClassOwner(String internalName) {
+        classShimTargets.add(internalName);
     }
 
     /**
@@ -1733,8 +2271,21 @@ public class RetromodTransformer implements ClassFileTransformer {
         clearRegisteredState();
     }
 
+    /** Gates outside this class that belong to the current registration set. */
+    private final List<Runnable> registrationResetHooks = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * Runs {@code hook} once when the current registrations are cleared. A bridge that keeps a
+     * static gate registers one here, so an offline batch does not apply one input's bridge to
+     * the next input after its redirects and synthetics are gone.
+     */
+    public void onRegistrationReset(Runnable hook) {
+        registrationResetHooks.add(hook);
+    }
+
     private synchronized void clearRegisteredState() {
         methodRedirects.clear();
+        wrappingMethodRedirects.clear();
         inheritedMethodRedirects.clear();
         interfaceSyntheticTargets.clear();
         classShimTargets.clear();
@@ -1747,6 +2298,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         staticFieldNullers.clear();
         mojangMethodRenames.clear();
         functionalInterfaceRenames.clear();
+        lambdaAdapters.clear();
         // These member-name maps drive the remap gate (hasIntermediaryNames); leaving them
         // populated lets a prior test's applyTo() / registerSrgNameMappings() leak into the next.
         intermediaryMethodNames.clear();
@@ -1757,13 +2309,19 @@ public class RetromodTransformer implements ClassFileTransformer {
         ambiguousIntermediaryFieldNames.clear();
         srgMethodNames.clear();
         srgFieldNames.clear();
+        srgDrift.clear();
+        srgSourceVersion = null;
         targetSrgMethodNames.clear();
         targetSrgFieldNames.clear();
+        targetSrgSamIndex = null;
+        targetSrgMethodIds = null;
         classRedirects.clear();
         redirectProviderPackages.clear();
         fieldRedirects.clear();
+        exactDescriptorFieldRedirects.clear();
         mutableAccessorDestinations.clear();
         superclassRedirects.clear();
+        inheritedTargetSrgNames.clear();
         superclassVerdicts.clear();
         interfaceKinds.clear();
         generatedLegacyBases.clear();
@@ -1774,12 +2332,17 @@ public class RetromodTransformer implements ClassFileTransformer {
         staticFieldAccessors.clear();
         fieldHopAccessors.clear();
         fieldStaticBridges.clear();
+        staticFieldTypeDrifts.clear();
+        uniqueFieldGetters.clear();
         superCtorRedirects.clear();
+        superCtorStackAdapters.clear();
+        typedFieldRenames.clear();
         syntheticClasses.clear();
         embeddedShimClasses.clear();
         methodRedirectOwners.clear();
         neutralizedMethods.clear();
         neutralizedMethodOwners.clear();
+        implementedInterfaceRewrites.clear();
         indyTypedRewrites.clear();
         indyTypedOwners.clear();
         classRedirectsVersion.incrementAndGet();
@@ -1788,6 +2351,9 @@ public class RetromodTransformer implements ClassFileTransformer {
         // A fresh redirect set must be re-validated for phantom targets on the next transform
         // (the sweep is otherwise once per transformer lifetime).
         targetsValidated.set(false);
+        List<Runnable> hooks = new ArrayList<>(registrationResetHooks);
+        registrationResetHooks.clear();
+        hooks.forEach(Runnable::run);
     }
 
     @Override
@@ -1806,6 +2372,8 @@ public class RetromodTransformer implements ClassFileTransformer {
         
         // Use the hybrid engine which prefers AOT, falls back to JIT
         // This also handles performance monitoring automatically
+        boolean outerCallback = !IN_CLASS_LOAD_CALLBACK.get();
+        IN_CLASS_LOAD_CALLBACK.set(Boolean.TRUE);
         try {
             HybridTransformationEngine hybrid = HybridTransformationEngine.getInstance();
             String modId = guessModFromClass(className);
@@ -1813,6 +2381,8 @@ public class RetromodTransformer implements ClassFileTransformer {
         } catch (Exception e) {
             LOGGER.error("Failed to transform class: {}", className, e);
             return null;
+        } finally {
+            if (outerCallback) IN_CLASS_LOAD_CALLBACK.remove();
         }
     }
     
@@ -1950,6 +2520,44 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
+     * Runs the phantom sweep once, and makes parallel transform workers wait until it has finished.
+     *
+     * <p>Mod classes are transformed in parallel, and the first worker to arrive runs the sweep.
+     * Letting the other workers proceed meanwhile made the output depend on timing: a class
+     * transformed mid-sweep could still be rewritten to a phantom target, and the owner-set
+     * rebuild at the end of the sweep briefly empties {@code constructorRedirectOwners}, so a
+     * class caught in that window kept some {@code new X(...)} calls unredirected. Constructor
+     * redirects only run in pass 1, so later passes never repaired them.
+     *
+     * <p>The Java agent path cannot wait. The sweep loads candidate classes, and the agent
+     * transforms {@code com/retromod/shim/} classes as they load. On the sweeping thread that
+     * callback re-enters here, and a nested sweep would load the same class again mid-definition
+     * and drop a valid target as phantom, so a re-entry returns at once. On another thread the
+     * callback holds that class's loading lock, which the sweep may need next, so waiting there
+     * deadlocks. A class-load callback therefore runs the sweep itself when the lock is free and
+     * otherwise continues without it, as it did before.
+     */
+    private void ensureTargetsValidated() {
+        if (targetsValidated.get()) return;
+        if (IN_CLASS_LOAD_CALLBACK.get()) {
+            if (!sweepLock.tryLock()) return;
+        } else {
+            sweepLock.lock();
+        }
+        try {
+            if (targetsValidated.get() || sweepLock.getHoldCount() > 1) return;
+            try {
+                dropPhantomComRetromodTargets();
+            } finally {
+                // As before, a failed sweep is not retried on every later class.
+                targetsValidated.set(true);
+            }
+        } finally {
+            sweepLock.unlock();
+        }
+    }
+
+    /**
      * Read-only counterpart of {@link #dropPhantomComRetromodTargets}: returns every currently
      * registered redirect target under {@code com/retromod/} that is neither a registered
      * synthetic nor loadable, without removing anything. The runtime guard makes these fail-safe;
@@ -2019,9 +2627,7 @@ public class RetromodTransformer implements ClassFileTransformer {
     public byte[] transformClass(byte[] originalBytes, String className) {
         // One-time safety sweep: drop any redirect whose target is a com/retromod/* class
         // that will never resolve at runtime (see dropPhantomComRetromodTargets).
-        if (targetsValidated.compareAndSet(false, true)) {
-            dropPhantomComRetromodTargets();
-        }
+        ensureTargetsValidated();
 
         // No redirects registered: no pass would do anything, skip the loop.
         // constructorRedirects + fieldAccessorRedirects are included here too, or a
@@ -2031,9 +2637,12 @@ public class RetromodTransformer implements ClassFileTransformer {
                 neutralizedMethods.isEmpty() && staticFieldAccessors.isEmpty() &&
                 mojangMethodRenames.isEmpty() && argDropRedirects.isEmpty() &&
                 constructorRedirects.isEmpty() && fieldAccessorRedirects.isEmpty() &&
+                superCtorRedirects.isEmpty() && typedFieldRenames.isEmpty() &&
                 fieldHopAccessors.isEmpty() && fieldStaticBridges.isEmpty() &&
                 intermediaryMethodNames.isEmpty() && intermediaryFieldNames.isEmpty() &&
-                srgMethodNames.isEmpty() && srgFieldNames.isEmpty()) {
+                srgMethodNames.isEmpty() && srgFieldNames.isEmpty() &&
+                targetSrgMethodNames.isEmpty() && targetSrgFieldNames.isEmpty() &&
+                lambdaAdapters.isEmpty()) {
             return com.retromod.shim.common.LegacyInputEventCallAdapter.apply(originalBytes);
         }
 
@@ -2047,7 +2656,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         // two consecutive passes produce byte-identical output, or MAX_TRANSFORM_ITERATIONS
         // (possible redirect cycle) is reached. Byte-equality is the stability signal rather
         // than a threaded "dirty" flag: ASM is deterministic, so same input = same output.
-        byte[] current = originalBytes;
+        byte[] current = legacyMaterialPrePass(originalBytes);
         for (int pass = 1; pass <= MAX_TRANSFORM_ITERATIONS; pass++) {
             // Constructor rewrites are resolved against the fully remapped owner during the
             // first pass. Re-running the constructor pre-pass is both unnecessary and harmful:
@@ -2066,9 +2675,9 @@ public class RetromodTransformer implements ClassFileTransformer {
                 // Compare pass 1 against an identity re-serialization: byte-equal means nothing
                 // semantically changed, so ship the ORIGINAL bytes - bit-perfect frames included.
                 // Cost-neutral: this replaces the pass-2 stability check for untouched classes.
-                byte[] baseline = identityReserialize(originalBytes, className);
+                byte[] baseline = identityReserialize(current, className);
                 if (baseline != null && Arrays.equals(next, baseline)) {
-                    return postProcess(originalBytes, className);
+                    return postProcess(current, className);
                 }
             }
 
@@ -2097,6 +2706,35 @@ public class RetromodTransformer implements ClassFileTransformer {
         return postProcess(current, className);
     }
 
+    private static final byte[] MATERIAL_CLASS_NAME = "net/minecraft/world/level/material/Material"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+    /**
+     * 1.20 removed {@code Material}. An SRG-named Forge mod's material queries are moved onto the
+     * block state before the remap, which would otherwise null the {@code Material.AIR} it
+     * compares against. Only classes that name {@code Material} are parsed.
+     */
+    private byte[] legacyMaterialPrePass(byte[] classBytes) {
+        if (srgMethodNames.isEmpty()
+                || RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20") < 0
+                || !containsBytes(classBytes, MATERIAL_CLASS_NAME)) {
+            return classBytes;
+        }
+        return com.retromod.shim.common.LegacyMaterialAdapter.apply(classBytes,
+                this::srgMethodName, this::srgFieldName);
+    }
+
+    private static boolean containsBytes(byte[] haystack, byte[] needle) {
+        outer:
+        for (int i = 0; i <= haystack.length - needle.length; i++) {
+            for (int j = 0; j < needle.length; j++) {
+                if (haystack[i + j] != needle[j]) continue outer;
+            }
+            return true;
+        }
+        return false;
+    }
+
     /**
      * Run post-loop transforms (reflection remapping) on the stabilized bytecode.
      *
@@ -2122,6 +2760,10 @@ public class RetromodTransformer implements ClassFileTransformer {
                 com.retromod.shim.common.LegacyBlockApiSynthetic.INTERNAL)) {
             repaired = com.retromod.shim.common.LegacyBlockApiAdapter.apply(repaired);
         }
+        // Only when the 1.19.4 shim registered the armor base, so newer mods are untouched.
+        if (syntheticClasses.containsKey(com.retromod.shim.common.LegacyArmorBridge.ARMOR_ITEM_BASE)) {
+            repaired = com.retromod.shim.common.LegacyArmorBridge.adaptMaterial(repaired, this);
+        }
         // Only when a 1.21.4 to 1.21.5 shim registered the helper, so newer mods are untouched.
         if (syntheticClasses.containsKey(
                 com.retromod.shim.common.LegacyTooltipSynthetic.INTERNAL)) {
@@ -2131,9 +2773,92 @@ public class RetromodTransformer implements ClassFileTransformer {
         if (syntheticClasses.containsKey(com.retromod.shim.common.LegacyKeyCodeAdapter.POLY)) {
             repaired = com.retromod.shim.common.LegacyKeyCodeAdapter.apply(repaired);
         }
+        // Only where the 26.1 particle bridge registered its polyfill, so older hosts are untouched.
+        if (syntheticClasses.containsKey(
+                com.retromod.shim.common.LegacyParticleRenderTypeAdapter.POLY)) {
+            repaired = com.retromod.shim.common.LegacyParticleRenderTypeAdapter.apply(repaired);
+        }
+        // Only where the Forge capability bridge is registered, which is the Forge-on-NeoForge path.
+        if (com.retromod.shim.forge.capability.LegacyCapabilitySynthetics.isRegistered(this)) {
+            repaired = com.retromod.shim.forge.capability.LegacyCapabilityCallAdapter.apply(repaired);
+            repaired = com.retromod.shim.forge.LegacyEventCancelAdapter.apply(repaired);
+            repaired = com.retromod.shim.forge.LegacyLivingTickAdapter.apply(repaired);
+            repaired = com.retromod.shim.forge.LegacyLazyLambdaAdapter.apply(repaired);
+        }
+        // Only where the Forge event API shim embedded the result stand-in, which is NeoForge only.
+        if (syntheticClasses.containsKey(com.retromod.shim.forge.LegacyEventResultAdapter.RESULT)) {
+            repaired = com.retromod.shim.forge.LegacyEventResultAdapter.apply(repaired);
+        }
+        // Only where the Forge custom registry bridge is registered, which is the NeoForge 1.21+ path.
+        if (com.retromod.shim.forge.LegacyCustomRegistryBridge.isRegistered(this)) {
+            repaired = com.retromod.shim.forge.LegacyCustomRegistryBridge.retargetRegistryCasts(repaired);
+        }
+        // Only where the 26.1 recipe serializer bridge is registered, so older hosts are untouched.
+        if (syntheticClasses.containsKey(com.retromod.shim.common.LegacyRecipeSerializerShim.BRIDGE)) {
+            repaired = com.retromod.shim.common.LegacyRecipeSubclassAdapter.apply(repaired);
+            repaired = com.retromod.shim.common.LegacyRecipeSerializerFlowAdapter.apply(repaired);
+        }
+        // Matches Mojang member names, so it only acts after the SRG or intermediary remap.
+        repaired = com.retromod.shim.common.LegacySynchedEntityDataMixinRepair.apply(repaired);
         // GUI override repair matches Mojang descriptors and proven post-remap base classes.
         repaired = com.retromod.shim.common.LegacyGuiOverrideAdapter.apply(repaired);
         repaired = com.retromod.shim.common.LegacyEntityRendererAdapter.apply(repaired);
+        repaired = com.retromod.shim.common.FinalOverrideHookAdapter.apply(repaired);
+        repaired = com.retromod.shim.common.FinalBaseConstructionAdapter.apply(repaired);
+        repaired = com.retromod.shim.common.LegacyBreathingOverrideAdapter.apply(repaired);
+        repaired = com.retromod.shim.forge.LegacySpawnDataAdapter.apply(repaired);
+        // Only when a 1.20.5+ host registered the provider helper, so newer mods are untouched.
+        if (syntheticClasses.containsKey(com.retromod.shim.common.LegacyRegistryNbtBridge.HELPER)) {
+            repaired = com.retromod.shim.common.LegacyRegistryNbtBridge.apply(repaired,
+                    RetromodTransformer::currentJarClassInheritsFrom, currentJarClassBytesProvider());
+        }
+        // Only when a NeoForge 1.21 host registered the attribute helper, so newer mods are untouched.
+        if (com.retromod.shim.common.LegacyItemAttributeOverrideAdapter.isRegistered(syntheticClasses::containsKey)) {
+            repaired = com.retromod.shim.common.LegacyItemAttributeOverrideAdapter.apply(repaired);
+        }
+        // Only when a 1.20.5+ host registered the builder helper, so newer mods are untouched.
+        if (com.retromod.shim.common.LegacySynchedDataBridge.isRegistered(syntheticClasses::containsKey)) {
+            repaired = com.retromod.shim.common.LegacySynchedDataBridge.apply(repaired);
+        }
+        // Pairs with the accessor removal in MixinCompatibilityTransformer.applyPostRemapRepairs.
+        repaired = com.retromod.mixin.MixinAccessorFieldMigration.rewriteCallSites(
+                repaired, RetromodVersion.TARGET_MC_VERSION, currentJarClassBytesProvider(),
+                bridge -> SyntheticEmbedder.registerClassResource(this, bridge, RetromodTransformer.class));
+        // Only when the Forge 1.19 bridge registered the Random view, so newer mods are untouched.
+        if (syntheticClasses.containsKey(com.retromod.shim.forge.LegacyRandomSourceAdapter.VIEW)) {
+            repaired = com.retromod.shim.forge.LegacyRandomSourceAdapter.apply(
+                    repaired, this, currentJarClassBytesProvider());
+        }
+        // 1.20 made Entity.level, maxUpStep, and onGround private; older mods use them directly.
+        if (syntheticClasses.containsKey(com.retromod.shim.forge.LegacyRandomSourceAdapter.VIEW)
+                && RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20") >= 0) {
+            repaired = com.retromod.shim.forge.LegacyEntityPrivateFieldAdapter.apply(
+                    repaired, this, currentJarClassBytesProvider());
+        }
+        // Only when the 1.20 shim registered the entity helpers, so newer mods are untouched.
+        if (com.retromod.shim.forge.LegacyEntityApi120Adapter.isRegistered(this)) {
+            repaired = com.retromod.shim.forge.LegacyEntityApi120Adapter.apply(
+                    repaired, this, currentJarClassBytesProvider());
+        }
+        if (com.retromod.shim.common.LegacyCraftingRecipeBridge.adaptsAssemble(this)) {
+            repaired = com.retromod.shim.common.LegacyCraftingRecipeBridge.apply(repaired, this);
+        }
+        if (com.retromod.shim.common.LegacyVillagerBridge.isRegistered(this)) {
+            repaired = com.retromod.shim.common.LegacyVillagerBridge.apply(repaired);
+        }
+        // Only when the 1.19.3 tab bridge is registered; the adapter also skips classes that
+        // never call the bridged Item.Properties.tab(...).
+        if (syntheticClasses.containsKey(com.retromod.shim.forge.CreativeModeTabBridge.CONTENTS)) {
+            repaired = com.retromod.shim.forge.LegacyCreativeTabClaimAdapter.apply(repaired);
+        }
+        // Only when the 1.19.4 shim registered the damage constants, so newer mods are untouched.
+        if (com.retromod.shim.common.LegacyDamageConstantBridge.isRegistered(this)) {
+            repaired = com.retromod.shim.common.LegacyDamageConstantBridge.apply(repaired);
+        }
+        // 1.20 made Entity.positionRider(Entity) final; older hosts still expect the override.
+        if (RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20") >= 0) {
+            repaired = com.retromod.shim.common.LegacyPositionRiderAdapter.apply(repaired, this);
+        }
         repaired = com.retromod.shim.fabric.LegacyFabricItemIdRepair
                 .apply(repaired, className);
         repaired = com.retromod.shim.fabric.LegacyPatchouliGsonRepair
@@ -2310,9 +3035,11 @@ public class RetromodTransformer implements ClassFileTransformer {
                                         && name.length() > 3
                                         && ((name.startsWith("m_") && name.endsWith("_"))
                                             || name.startsWith("func_"))) {
-                                    String mojang = srgMethodNames.get(name);
+                                    String mojang = srgMethodName(name);
                                     if (mojang != null) mappedName = mojang;
                                 }
+                                String srgAccessor = srgRecordAccessorName(name, descriptor);
+                                if (srgAccessor != null) mappedName = srgAccessor;
                                 // Vanilla Mojang->Mojang rename (owner-scoped), e.g.
                                 // ResourceKey.location -> identifier on 26.x. Routed through the
                                 // ClassRemapper so it also rewrites method references
@@ -2322,10 +3049,24 @@ public class RetromodTransformer implements ClassFileTransformer {
                                     if (renamed != null) mappedName = renamed;
                                 }
                                 if (!targetSrgMethodNames.isEmpty()) {
+                                    String desc = mapMethodDesc(descriptor);
                                     String target = targetSrgMethodNames.get(
                                             com.retromod.mapping.TargetSrgMapper.memberKey(
-                                                    map(owner), mappedName, mapMethodDesc(descriptor)));
+                                                    map(owner), mappedName, desc));
+                                    if (target == null && !mappedName.startsWith("<")) {
+                                        target = inheritedTargetSrgName(
+                                                targetSrgMethodNames, owner, mappedName, desc);
+                                    }
                                     if (target != null) return target;
+                                }
+                                if (!targetSrgFieldNames.isEmpty()) {
+                                    String accessor = recordAccessorTargetSrgName(
+                                            map(owner), mappedName, mapMethodDesc(descriptor));
+                                    if (accessor != null) return accessor;
+                                }
+                                if (!mappedName.equals(name)
+                                        && isLiveTargetSrgMethod(map(owner), name, mapMethodDesc(descriptor))) {
+                                    return name;
                                 }
                                 return mappedName;
                             }
@@ -2350,8 +3091,8 @@ public class RetromodTransformer implements ClassFileTransformer {
                                 if (!srgMethodNames.isEmpty() && name.length() > 3
                                         && ((name.startsWith("m_") && name.endsWith("_"))
                                             || name.startsWith("func_"))) {
-                                    String mojang = srgMethodNames.get(name);
-                                    if (mojang != null) return mojang;
+                                    String mojang = srgMethodName(name);
+                                    if (mojang != null) return targetSrgSamName(descriptor, mojang);
                                 }
                                 // The descriptor returns the functional interface being built.
                                 int close = descriptor.lastIndexOf(')');
@@ -2372,7 +3113,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                             public String mapFieldName(String owner, String name, String descriptor) {
                                 String mappedName = name;
                                 // Remap intermediary field names (field_XXXX → Mojang name)
-                                if (!intermediaryFieldNames.isEmpty() && name.startsWith("field_")) {
+                                if (!intermediaryFieldNames.isEmpty() && isIntermediaryFieldName(name)) {
                                     String mojang = null;
                                     // Ambiguous short-name: resolve by descriptor first (see the
                                     // method case above), else fall through to the flat map.
@@ -2393,13 +3134,18 @@ public class RetromodTransformer implements ClassFileTransformer {
                                         && name.length() > 3
                                         && ((name.startsWith("f_") && name.endsWith("_"))
                                             || name.startsWith("field_"))) {
-                                    String mojang = srgFieldNames.get(name);
+                                    String mojang = srgFieldName(name);
                                     if (mojang != null) mappedName = mojang;
                                 }
                                 if (!targetSrgFieldNames.isEmpty()) {
+                                    String desc = mapDesc(descriptor);
                                     String target = targetSrgFieldNames.get(
                                             com.retromod.mapping.TargetSrgMapper.memberKey(
-                                                    map(owner), mappedName, mapDesc(descriptor)));
+                                                    map(owner), mappedName, desc));
+                                    if (target == null) {
+                                        target = inheritedTargetSrgName(
+                                                targetSrgFieldNames, owner, mappedName, desc);
+                                    }
                                     if (target != null) return target;
                                 }
                                 return mappedName;
@@ -3404,6 +4150,14 @@ public class RetromodTransformer implements ClassFileTransformer {
                 }
             }
 
+            // Before the superclass rebase, which emits the header itself and returns early.
+            if (ImplementedInterfaceRewrite.applies(interfaces, implementedInterfaceRewrites)) {
+                interfaces = ImplementedInterfaceRewrite.interfaces(
+                        name, interfaces, implementedInterfaceRewrites);
+                signature = ImplementedInterfaceRewrite.signature(
+                        signature, implementedInterfaceRewrites);
+            }
+
             // Check if superclass needs to be rewritten (class-to-interface polyfill)
             if (superName != null && !superclassRedirects.isEmpty()) {
                 SuperclassRedirect redirect = superclassRedirects.get(superName);
@@ -3467,6 +4221,20 @@ public class RetromodTransformer implements ClassFileTransformer {
             // the same one, and repeating the explanation per subclass buries it.
             if (!reportedIllegalSuperclasses.add(superName)) {
                 LOGGER.debug("{} also extends the unusable base {}", className, superName);
+                return;
+            }
+
+            String finalBaseReason = verdict == SuperclassSafety.Verdict.FINAL_CLASS
+                    ? com.retromod.shim.common.FinalBaseConstructionAdapter.finalBaseReason(
+                            superName, RetromodVersion.TARGET_MC_VERSION)
+                    : null;
+            if (finalBaseReason != null) {
+                // FinalBaseConstructionAdapter keeps the classes that build such an object
+                // loadable, so only the subclass itself is lost.
+                LOGGER.warn("{} extends {}, which is final on this Minecraft version, so that class "
+                        + "cannot load. {}. Retromod keeps the rest of the mod loadable, and building "
+                        + "one of these objects reports this reason instead.",
+                        className, superName, finalBaseReason);
                 return;
             }
 
@@ -3557,11 +4325,12 @@ public class RetromodTransformer implements ClassFileTransformer {
             if (methodRedirects.isEmpty() && inheritedMethodRedirects.isEmpty()
                     && fieldRedirects.isEmpty() && constructorRedirects.isEmpty()
                     && fieldAccessorRedirects.isEmpty() && superclassRedirects.isEmpty()
-                    && superCtorRedirects.isEmpty()
+                    && superCtorRedirects.isEmpty() && typedFieldRenames.isEmpty()
                     && neutralizedMethods.isEmpty() && staticFieldAccessors.isEmpty()
                     && argDropRedirects.isEmpty()
                     && fieldHopAccessors.isEmpty() && fieldStaticBridges.isEmpty()
-                    && convertingRedirects.isEmpty() && singletonRedirects.isEmpty()) {
+                    && convertingRedirects.isEmpty() && singletonRedirects.isEmpty()
+                    && lambdaAdapters.isEmpty()) {
                 return mv;
             }
             return new RetromodMethodVisitor(api, mv, currentClassName, currentSuperName,
@@ -4108,6 +4877,16 @@ public class RetromodTransformer implements ClassFileTransformer {
         @Override
         public void visitInvokeDynamicInsn(String name, String descriptor,
                 org.objectweb.asm.Handle bootstrapMethodHandle, Object... bootstrapMethodArguments) {
+            LambdaAdapter lambdaAdapter = lambdaAdapterFor(name, descriptor,
+                    bootstrapMethodHandle, bootstrapMethodArguments);
+            if (lambdaAdapter != null) {
+                bootstrapMethodArguments[0] = Type.getMethodType(lambdaAdapter.adapterSamDesc());
+                if (lambdaAdapter.wrapOwner() != null) {
+                    name = lambdaAdapter.adapterName();
+                    descriptor = descriptor.substring(0, descriptor.lastIndexOf(')') + 1)
+                            + "L" + lambdaAdapter.adapterIface() + ";";
+                }
+            }
             if (!constructorRedirects.isEmpty() && bootstrapMethodArguments != null) {
                 for (int i = 0; i < bootstrapMethodArguments.length; i++) {
                     if (!(bootstrapMethodArguments[i] instanceof org.objectweb.asm.Handle h)) continue;
@@ -4154,7 +4933,24 @@ public class RetromodTransformer implements ClassFileTransformer {
                             h.getOwner(), h.getName(), h.getDesc(), conv.owner(), conv.name(), conv.desc());
                 }
             }
+            if (bootstrapMethodArguments != null
+                    && "java/lang/invoke/LambdaMetafactory".equals(bootstrapMethodHandle.getOwner())) {
+                for (int i = 0; i < bootstrapMethodArguments.length; i++) {
+                    if (!(bootstrapMethodArguments[i] instanceof org.objectweb.asm.Handle h)) continue;
+                    if (preservesProviderReference(classOwnName, h.getOwner())) continue;
+                    org.objectweb.asm.Handle retargeted = retargetMethodReference(h);
+                    if (retargeted == null) continue;
+                    String aligned = alignCapturedArguments(descriptor, retargeted);
+                    if (aligned == null) continue;
+                    descriptor = aligned;
+                    bootstrapMethodArguments[i] = retargeted;
+                }
+            }
             super.visitInvokeDynamicInsn(name, descriptor, bootstrapMethodHandle, bootstrapMethodArguments);
+            if (lambdaAdapter != null && lambdaAdapter.wrapOwner() != null) {
+                super.visitMethodInsn(Opcodes.INVOKESTATIC, lambdaAdapter.wrapOwner(),
+                        lambdaAdapter.wrapName(), lambdaAdapter.wrapDesc(), false);
+            }
 
             // Indy-typed rewrite arming: a LambdaMetafactory indy producing a Consumer carries the
             // event type in its instantiatedMethodType (bsm arg 2). Remember it for the call that
@@ -4171,6 +4967,86 @@ public class RetromodTransformer implements ClassFileTransformer {
                     && t.getArgumentTypes()[0].getSort() == org.objectweb.asm.Type.OBJECT) {
                 pendingIndyConsumerType = t.getArgumentTypes()[0].getInternalName();
             }
+        }
+
+        /**
+         * The method-reference form of a plain method redirect. {@code registry::register}
+         * compiles to an {@code invokedynamic} whose implementation handle names the method, so
+         * the call rewrite in {@link #visitMethodInsn} never sees it and the reference keeps
+         * linking against the removed method. LambdaMetafactory binds a captured receiver as the
+         * first argument of a static method, so an instance-to-static redirect becomes an
+         * {@code H_INVOKESTATIC} handle. A redirect that keeps the receiver applies only when it
+         * keeps the parameter types, because the metafactory casts a return value but never a
+         * parameter. Without a redirect, the handle still gets the owner kind of a class that
+         * replaced an interface. Returns null when the handle stays as it is.
+         */
+        private org.objectweb.asm.Handle retargetMethodReference(org.objectweb.asm.Handle h) {
+            int tag = h.getTag();
+            boolean instance = tag == Opcodes.H_INVOKEVIRTUAL || tag == Opcodes.H_INVOKEINTERFACE;
+            if (!instance && tag != Opcodes.H_INVOKESTATIC) return null;
+            MethodTarget target = methodRedirects.get(new MethodKey(h.getOwner(), h.getName(), h.getDesc()));
+            if (target == null && !classRedirects.isEmpty()) {
+                String resolvedDesc = resolveDescriptor(h.getDesc());
+                if (!resolvedDesc.equals(h.getDesc())) {
+                    target = methodRedirects.get(new MethodKey(h.getOwner(), h.getName(), resolvedDesc));
+                }
+            }
+            if (target == null) {
+                if (tag == Opcodes.H_INVOKEINTERFACE && classShimTargets.contains(h.getOwner())) {
+                    return new org.objectweb.asm.Handle(Opcodes.H_INVOKEVIRTUAL,
+                            h.getOwner(), h.getName(), h.getDesc(), false);
+                }
+                return null;
+            }
+            Type[] oldArgs = Type.getArgumentTypes(h.getDesc());
+            Type[] newArgs = Type.getArgumentTypes(target.desc());
+            boolean receiverBecomesArgument = instance
+                    && (target.devirtualize() || newArgs.length == oldArgs.length + 1);
+            if (receiverBecomesArgument) {
+                return new org.objectweb.asm.Handle(Opcodes.H_INVOKESTATIC,
+                        target.owner(), target.name(), target.desc(), false);
+            }
+            if (target.devirtualize() || !Arrays.equals(oldArgs, newArgs)) return null;
+            boolean targetIsInterface = !classShimTargets.contains(target.owner())
+                    && (interfaceSyntheticTargets.contains(target.owner())
+                        || isKnownInterface(target.owner())
+                        || (target.owner().equals(h.getOwner()) && h.isInterface()));
+            int newTag = !instance ? Opcodes.H_INVOKESTATIC
+                    : targetIsInterface ? Opcodes.H_INVOKEINTERFACE : Opcodes.H_INVOKEVIRTUAL;
+            return new org.objectweb.asm.Handle(newTag, target.owner(), target.name(),
+                    target.desc(), targetIsInterface);
+        }
+
+        /**
+         * The call site descriptor for a retargeted method reference. LambdaMetafactory requires
+         * each captured argument to have exactly the type of the matching implementation
+         * parameter, while a call accepts a subtype. A bound {@code registry::register} captures
+         * the registry under its own type, so after a redirect to a helper that takes
+         * {@code Object}, or to a method declared on a superclass, it fails to link with
+         * {@code LambdaConversionException}. The captured types are widened to the
+         * implementation's, which the verifier accepts exactly when it accepts the redirected
+         * direct call. Returns null when a captured primitive would have to change type.
+         */
+        private static String alignCapturedArguments(String factoryDesc, org.objectweb.asm.Handle impl) {
+            Type[] captured = Type.getArgumentTypes(factoryDesc);
+            if (captured.length == 0) return factoryDesc;
+            List<Type> implParams = new ArrayList<>();
+            if (impl.getTag() != Opcodes.H_INVOKESTATIC) implParams.add(Type.getObjectType(impl.getOwner()));
+            implParams.addAll(Arrays.asList(Type.getArgumentTypes(impl.getDesc())));
+            if (captured.length > implParams.size()) return null;
+            boolean changed = false;
+            for (int i = 0; i < captured.length; i++) {
+                Type wanted = implParams.get(i);
+                if (captured[i].equals(wanted)) continue;
+                if (!isReferenceType(captured[i]) || !isReferenceType(wanted)) return null;
+                captured[i] = wanted;
+                changed = true;
+            }
+            return changed ? Type.getMethodDescriptor(Type.getReturnType(factoryDesc), captured) : factoryDesc;
+        }
+
+        private static boolean isReferenceType(Type type) {
+            return type.getSort() == Type.OBJECT || type.getSort() == Type.ARRAY;
         }
 
         /**
@@ -4251,6 +5127,10 @@ public class RetromodTransformer implements ClassFileTransformer {
                         // Simple approach: parse parameter types from both
                         String extra = newParams.substring(oldParams.length());
                         pushDefaultsForDescriptor(extra);
+                    } else if (STACK_ADAPTER_MODE.equals(scr.extraFieldOwner())) {
+                        java.util.function.Consumer<MethodVisitor> adapter =
+                                superCtorStackAdapters.get(skey);
+                        if (adapter != null) adapter.accept(mv);
                     } else if ("__REPLACE_DEFAULTS__".equals(scr.extraFieldOwner())) {
                         // New ctor params differ in TYPE from the old (not an append): pop every old
                         // arg, then push a fresh default for each new param. 1.12.2 Block(Material) ->
@@ -4322,7 +5202,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                 boolean heuristicCandidate = name == null || !name.startsWith("<");
 
                 // Try pattern heuristics FIRST; faster and more reliable than fuzzy
-                PatternHeuristics patterns = patternHeuristics;
+                PatternHeuristics patterns = patternHeuristicsForHost();
                 if (heuristicCandidate && patterns != null) {
                     PatternHeuristics.PatternResult patternMatch = patterns.resolveMethod(owner, name, descriptor);
                     if (patternMatch != null && patternMatch.confidence() >= 0.6) {
@@ -4370,6 +5250,11 @@ public class RetromodTransformer implements ClassFileTransformer {
             // Check if this method call needs to be redirected
             MethodKey key = new MethodKey(owner, name, descriptor);
             MethodTarget target = methodRedirects.get(key);
+            if (target != null && opcode == Opcodes.INVOKESPECIAL
+                    && wrappingMethodRedirects.contains(key)) {
+                emitMethodInsn(opcode, owner, name, descriptor, isInterface);
+                return;
+            }
 
             // If not found, try resolving the descriptor through classRedirects
             // (bytecode has intermediary names like class_437 in descriptors,
@@ -4469,7 +5354,8 @@ public class RetromodTransformer implements ClassFileTransformer {
                 // recomputes frames). Deciding at emit time fixes them all at once.
                 boolean devirt = target.devirtualize();
                 if (!devirt
-                        && (opcode == Opcodes.INVOKEVIRTUAL || opcode == Opcodes.INVOKEINTERFACE)
+                        && (opcode == Opcodes.INVOKEVIRTUAL || opcode == Opcodes.INVOKEINTERFACE
+                                || (opcode == Opcodes.INVOKESPECIAL && !name.startsWith("<")))
                         && org.objectweb.asm.Type.getArgumentTypes(target.desc()).length
                            == org.objectweb.asm.Type.getArgumentTypes(descriptor).length + 1) {
                     LOGGER.debug("Auto-devirtualizing redirect {}.{}{} -> {}.{}{} (receiver-as-arg0 shape)",
@@ -4518,7 +5404,7 @@ public class RetromodTransformer implements ClassFileTransformer {
 
                 // Pattern heuristics: deterministic naming convention rules (e.g., render* -> extract*)
                 boolean heuristicCandidate = name == null || !name.startsWith("<");
-                PatternHeuristics patterns = patternHeuristics;
+                PatternHeuristics patterns = patternHeuristicsForHost();
                 if (heuristicCandidate && patterns != null) {
                     PatternHeuristics.PatternResult patternMatch = patterns.resolveMethod(owner, name, descriptor);
                     if (patternMatch != null && patternMatch.confidence() >= 0.6) {
@@ -4635,6 +5521,16 @@ public class RetromodTransformer implements ClassFileTransformer {
                             owner, name, sfa.collectionOwner(), sfa.collectionField(), sfa.methodName());
                     return;
                 }
+                StaticFieldTypeDrift drift = staticFieldTypeDrift(owner, descriptor);
+                if (drift != null) {
+                    // The read arrives after the remap, so the new-typed field still needs its
+                    // own host name: an SRG host keys member names by descriptor.
+                    super.visitFieldInsn(Opcodes.GETSTATIC, owner,
+                            remapQualifiedFieldName(owner, name, drift.newDesc()), drift.newDesc());
+                    super.visitMethodInsn(Opcodes.INVOKESTATIC, drift.converterOwner(),
+                            drift.converterName(), drift.converterDesc(), false);
+                    return;
+                }
                 // Removed class's static constant -> push the field type's default (no class ref).
                 // 1.12.2 super(Material.IRON): Material is gone in 26.1; the super-ctor replace bridge
                 // pops this default and substitutes a real Properties.
@@ -4647,6 +5543,15 @@ public class RetromodTransformer implements ClassFileTransformer {
                         default -> super.visitInsn(Opcodes.ACONST_NULL); // object or array
                     }
                     LOGGER.trace("Static-field nuller: GETSTATIC {}.{} -> default", owner, name);
+                    return;
+                }
+            }
+
+            if (opcode == Opcodes.GETFIELD && !uniqueFieldGetters.isEmpty()) {
+                MethodTarget getter = uniqueFieldGetters.get(name + ':' + descriptor);
+                if (getter != null) {
+                    super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, getter.owner(), getter.name(),
+                            getter.desc(), false);
                     return;
                 }
             }
@@ -4731,7 +5636,27 @@ public class RetromodTransformer implements ClassFileTransformer {
             }
 
             // Check if this field access needs to be redirected
+            String typedRename = typedFieldRenames.isEmpty() ? null
+                    : typedFieldRenames.get(owner + "." + name + ":" + descriptor);
+            if (typedRename != null) {
+                super.visitFieldInsn(opcode, owner, typedRename, descriptor);
+                return;
+            }
+
             FieldTarget target = fieldRedirects.get(key);
+            if (target != null && target.oldDesc != null && !target.oldDesc.equals(descriptor)
+                    && exactDescriptorFieldRedirects.contains(key)) {
+                target = null;
+            }
+            if (target != null && fieldTypeChangedSinceRedirect(target, descriptor)) {
+                // The redirect was written for an older type of this field. A newer mod reads the
+                // same name with its current type: 1.20.5 turned MobEffects constants from
+                // MobEffect into Holder, and the lookup's MobEffect cast to Holder threw
+                // ClassCastException in Bountiful Fares' block registration. The field still
+                // exists with that type, so the read stays as written.
+                super.visitFieldInsn(opcode, owner, name, descriptor);
+                return;
+            }
 
             if (target != null) {
                 // Check if this is a field-to-method redirect
@@ -4785,6 +5710,21 @@ public class RetromodTransformer implements ClassFileTransformer {
         }
     }
     
+    /**
+     * Whether a field-to-method redirect registered for one field type meets a read of a
+     * different object type. Only field-to-method redirects are checked, because their helper
+     * returns a value of the registered type and the inserted cast to the read type then fails.
+     */
+    private boolean fieldTypeChangedSinceRedirect(FieldTarget target, String descriptor) {
+        if (target.oldDesc() == null || target.newDesc() == null
+                || !target.newDesc().startsWith("(") || descriptor == null) {
+            return false;
+        }
+        if (!target.oldDesc().startsWith("L") || !descriptor.startsWith("L")) return false;
+        return !descriptor.equals(target.oldDesc())
+                && !resolveDescriptor(descriptor).equals(resolveDescriptor(target.oldDesc()));
+    }
+
     // Key/target records for redirect lookups; records give equals()/hashCode() for free,
     // which matters since these are looked up on every method/field instruction.
 
@@ -4853,6 +5793,11 @@ public class RetromodTransformer implements ClassFileTransformer {
         String hopField, String hopDesc, String hopClass,
         String getterName, String getterDesc,
         String setterName, String setterDesc
+    ) {}
+    /** A static field whose type changed under a package; see registerStaticFieldTypeDrift. */
+    public record StaticFieldTypeDrift(
+        String ownerPrefix, String oldDesc, String newDesc,
+        String converterOwner, String converterName, String converterDesc
     ) {}
     /**
      * Target of a field static bridge: GETFIELD becomes INVOKESTATIC getter, PUTFIELD becomes

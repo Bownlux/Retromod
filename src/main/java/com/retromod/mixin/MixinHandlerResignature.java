@@ -184,9 +184,22 @@ public final class MixinHandlerResignature {
         if (cb <= 0) return true;
         Type first = args[0];
         if (first.getSort() != Type.OBJECT) return true;
-        String desc = first.getDescriptor();
+        String desc = mojangDescriptor(first.getDescriptor());
         if (!isMojangMcType(desc)) return true;
         return acceptable.contains(desc);
+    }
+
+    /**
+     * The Mojang form of an intermediary class descriptor. A Fabric handler still has intermediary
+     * parameter types when its remapped selector is matched here, so a 1.21.11 handler that already
+     * takes {@code class_3218} (ServerLevel) first would otherwise pass the old-signature check and
+     * get a second ServerLevel. An unmapped name comes back unchanged and is not checked.
+     */
+    private static String mojangDescriptor(String descriptor) {
+        if (!descriptor.startsWith("Lnet/minecraft/class_")) return descriptor;
+        String internal = descriptor.substring(1, descriptor.length() - 1);
+        String mapped = com.retromod.mapping.IntermediaryToMojangMapper.getInstance().mapClass(internal);
+        return "L" + mapped + ";";
     }
 
     /** Returns whether a descriptor uses a Mojang Minecraft class name. */

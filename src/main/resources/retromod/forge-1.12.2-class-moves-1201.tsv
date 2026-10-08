@@ -139,3 +139,16 @@ net/minecraft/world/biome/Biome	net/minecraft/world/level/biome/Biome
 net/minecraft/world/chunk/Chunk	net/minecraft/world/level/chunk/LevelChunk
 net/minecraft/world/server/ServerWorld	net/minecraft/server/level/ServerLevel
 net/minecraft/world/storage/WorldSavedData	net/minecraft/world/level/saveddata/SavedData
+# Families the harvest missed; each target checked against the NeoForge 1.21.1 and Forge 1.20.1 runtimes.
+net/minecraft/state/EnumProperty	net/minecraft/world/level/block/state/properties/EnumProperty
+net/minecraft/state/DirectionProperty	net/minecraft/world/level/block/state/properties/DirectionProperty
+net/minecraft/network/NetHandlerPlayServer	net/minecraft/server/network/ServerGamePacketListenerImpl
+net/minecraft/entity/player/InventoryPlayer	net/minecraft/world/entity/player/Inventory
+net/minecraft/util/ActionResult	net/minecraft/world/InteractionResultHolder
+net/minecraft/network/play/server/SPacketUpdateTileEntity	net/minecraft/network/protocol/game/ClientboundBlockEntityDataPacket
+net/minecraft/util/EnumBlockRenderType	net/minecraft/world/level/block/RenderShape
+net/minecraft/item/EnumDyeColor	net/minecraft/world/item/DyeColor
+net/minecraft/block/BlockDirectional	net/minecraft/world/level/block/DirectionalBlock
+net/minecraft/block/BlockBasePressurePlate	net/minecraft/world/level/block/BasePressurePlateBlock
+net/minecraft/item/ItemShield	net/minecraft/world/item/ShieldItem
+net/minecraft/util/IStringSerializable	net/minecraft/util/StringRepresentable

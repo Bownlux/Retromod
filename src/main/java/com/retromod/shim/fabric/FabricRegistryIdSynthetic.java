@@ -28,6 +28,13 @@ import static org.objectweb.asm.Opcodes.*;
  *
  * <p>This class references only Minecraft and itself, because it is embedded into a Fabric mod where
  * no loader class of any other family exists.
+ *
+ * <p>Each mod gets its own embedded copy, but the registration and the construction are not always
+ * in the same mod. A library can register on behalf of a content mod: NexusLib's
+ * {@code registerBlock(name, Supplier)} builds Bountiful Fares' blocks, and Porting Lib's
+ * {@code DeferredRegister} in a nested jar registers items that Sophisticated Core's own lambda
+ * builds (#249). Every copy therefore shares one thread local, published once under
+ * {@link #SHARED_SLOT_KEY}.
  */
 public final class FabricRegistryIdSynthetic {
 
@@ -42,6 +49,9 @@ public final class FabricRegistryIdSynthetic {
     private static final String BB = "net/minecraft/world/level/block/state/BlockBehaviour";
     private static final String BBP = BB + "$Properties";
     private static final String IP = "net/minecraft/world/item/Item$Properties";
+
+    /** Namespace of the system properties this bridge uses. */
+    public static final String SHARED_ID_PROPERTY_PREFIX = "retromod.registry-id.";
 
     private static final String L_ID = "L" + IDENTIFIER + ";";
     private static final String L_RK = "L" + RK + ";";
@@ -68,13 +78,57 @@ public final class FabricRegistryIdSynthetic {
         return cw.toByteArray();
     }
 
-    /** {@code static { CURRENT = new ThreadLocal(); }} */
+    /**
+     * System property key that holds the one id slot every embedded copy shares.
+     *
+     * <p>Each mod embeds its own relocated copy of this bridge, so a per-class field would give each
+     * mod a private slot. A library that registers on behalf of a content mod (NexusLib's
+     * {@code registerBlock(name, Supplier)} building Bountiful Fares' blocks) pushes the id into the
+     * library's copy while the block constructor runs in the content mod and reads its own copy,
+     * which is empty. The JDK's system properties are the one map both copies can reach without a
+     * shared class.
+     */
+    static final String SHARED_SLOT_KEY = SHARED_ID_PROPERTY_PREFIX + "slot";
+
+    /**
+     * {@code static { Properties p = System.getProperties(); p.putIfAbsent(KEY, new ThreadLocal());
+     * Object slot = p.get(KEY); CURRENT = slot instanceof ThreadLocal ? slot : new ThreadLocal(); }}
+     *
+     * <p>A non-ThreadLocal value under the key falls back to a private slot, which is the old
+     * per-mod behavior, rather than failing the class init of every block the mod registers.
+     */
     private static void emitClinit(ClassWriter cw) {
         MethodVisitor mv = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null);
         mv.visitCode();
+        mv.visitMethodInsn(INVOKESTATIC, "java/lang/System", "getProperties",
+                "()Ljava/util/Properties;", false);
+        mv.visitVarInsn(ASTORE, 0);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitLdcInsn(SHARED_SLOT_KEY);
         mv.visitTypeInsn(NEW, THREADLOCAL);
         mv.visitInsn(DUP);
         mv.visitMethodInsn(INVOKESPECIAL, THREADLOCAL, "<init>", "()V", false);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/util/Properties", "putIfAbsent",
+                "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", false);
+        mv.visitInsn(POP);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitLdcInsn(SHARED_SLOT_KEY);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/util/Properties", "get",
+                "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+        mv.visitVarInsn(ASTORE, 1);
+
+        Label shared = new Label();
+        mv.visitVarInsn(ALOAD, 1);
+        mv.visitTypeInsn(INSTANCEOF, THREADLOCAL);
+        mv.visitJumpInsn(IFNE, shared);
+        mv.visitTypeInsn(NEW, THREADLOCAL);
+        mv.visitInsn(DUP);
+        mv.visitMethodInsn(INVOKESPECIAL, THREADLOCAL, "<init>", "()V", false);
+        mv.visitVarInsn(ASTORE, 1);
+
+        mv.visitLabel(shared);
+        mv.visitVarInsn(ALOAD, 1);
+        mv.visitTypeInsn(CHECKCAST, THREADLOCAL);
         mv.visitFieldInsn(PUTSTATIC, INTERNAL, "CURRENT", "L" + THREADLOCAL + ";");
         mv.visitInsn(RETURN);
         mv.visitMaxs(0, 0);

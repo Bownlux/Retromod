@@ -51,6 +51,47 @@ public class ForgeEventApiShim implements MinecraftVersionedApiShim {
         return "forge";
     }
     
+    static final String LIVING_EVENTS = "net/neoforged/neoforge/event/entity/living/";
+    static final String INCOMING_DAMAGE = LIVING_EVENTS + "LivingIncomingDamageEvent";
+    static final String DAMAGE_PRE = LIVING_EVENTS + "LivingDamageEvent$Pre";
+
+    /**
+     * NeoForge 21 split Forge's damage events. Forge's cancellable {@code LivingHurtEvent} with an
+     * amount before armor became {@code LivingIncomingDamageEvent}, which has the same getters.
+     * Forge's {@code LivingDamageEvent}, the final amount, became {@code LivingDamageEvent.Pre}
+     * with renamed amount accessors. The old parent is abstract, so a listener left on it is never
+     * called. A host from before the split keeps the same-named events.
+     */
+    static void registerDamageEvents(RetromodTransformer transformer) {
+        registerDamageEvents(transformer, hostHasSplitDamageEvents());
+    }
+
+    /** Registration for a known host shape, which transform-shape tests choose directly. */
+    public static void registerDamageEvents(RetromodTransformer transformer, boolean splitDamageEvents) {
+        String forge = "net/minecraftforge/event/entity/living/";
+        if (!splitDamageEvents) {
+            transformer.registerClassRedirect(forge + "LivingHurtEvent", LIVING_EVENTS + "LivingHurtEvent");
+            transformer.registerClassRedirect(forge + "LivingDamageEvent", LIVING_EVENTS + "LivingDamageEvent");
+            return;
+        }
+        transformer.registerClassRedirect(forge + "LivingHurtEvent", INCOMING_DAMAGE);
+        transformer.registerClassRedirect(forge + "LivingDamageEvent", DAMAGE_PRE);
+        transformer.registerMethodRedirect(forge + "LivingDamageEvent", "getAmount", "()F",
+                DAMAGE_PRE, "getNewDamage", "()F");
+        transformer.registerMethodRedirect(forge + "LivingDamageEvent", "setAmount", "(F)V",
+                DAMAGE_PRE, "setNewDamage", "(F)V");
+    }
+
+    /** The host's own classes decide; offline, NeoForge 21 for 1.21 introduced the split. */
+    static boolean hostHasSplitDamageEvents() {
+        if (com.retromod.core.ClassResourceInspector.read(LIVING_EVENTS + "LivingEvent") != null) {
+            return com.retromod.core.ClassResourceInspector.exists(INCOMING_DAMAGE)
+                    && com.retromod.core.ClassResourceInspector.exists(DAMAGE_PRE);
+        }
+        return com.retromod.core.RetromodVersion.compareMcVersions(
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "1.21") >= 0;
+    }
+
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
         // These redirects map Forge names to NeoForge ones, so they only apply on a NeoForge
@@ -66,7 +107,7 @@ public class ForgeEventApiShim implements MinecraftVersionedApiShim {
                 ForgeEventApiShim.class);
 
         // Bulk package renames first; the hand-listed special cases below run after, so a rename
-        // (LivingHurtEvent -> LivingDamageEvent, world/* -> level/*) wins over a same-name bulk entry.
+        // (LivingHurtEvent -> LivingIncomingDamageEvent, world/* -> level/*) wins over a same-name bulk entry.
         loadBulkEventRenames(transformer);
         loadBulkFmlRenames(transformer);
 
@@ -105,10 +146,14 @@ public class ForgeEventApiShim implements MinecraftVersionedApiShim {
             "net/neoforged/bus/api/EventPriority"
         );
         
-        // Event.Result -> EventResult
+        // NeoForge has no shared Event.Result; each event declares its own result enum. The
+        // stand-in converts by constant name at the call, see LegacyEventResultAdapter.
+        SyntheticEmbedder.registerClassResource(transformer,
+                com.retromod.shim.forge.LegacyEventResultAdapter.RESULT,
+                com.retromod.shim.forge.embedded.LegacyEventResult.class);
         transformer.registerClassRedirect(
-            "net/minecraftforge/eventbus/api/Event$Result",
-            "net/neoforged/bus/api/EventResult"
+            com.retromod.shim.forge.LegacyEventResultAdapter.FORGE_RESULT,
+            com.retromod.shim.forge.LegacyEventResultAdapter.RESULT
         );
 
         // common events
@@ -141,15 +186,7 @@ public class ForgeEventApiShim implements MinecraftVersionedApiShim {
             "net/neoforged/neoforge/event/entity/living/LivingDeathEvent"
         );
         
-        transformer.registerClassRedirect(
-            "net/minecraftforge/event/entity/living/LivingHurtEvent",
-            "net/neoforged/neoforge/event/entity/living/LivingDamageEvent"
-        );
-        
-        transformer.registerClassRedirect(
-            "net/minecraftforge/event/entity/living/LivingDamageEvent",
-            "net/neoforged/neoforge/event/entity/living/LivingDamageEvent"
-        );
+        registerDamageEvents(transformer);
         
         transformer.registerClassRedirect(
             "net/minecraftforge/event/entity/living/LivingDropsEvent",

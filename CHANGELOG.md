@@ -2,6 +2,149 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
+## [1.3.3] - 2026-10-07
+
+Patch release, and the last of the 1.3 line before the 1.4.0 snapshots. Bridges much more of Forge for Forge mods on NeoForge, runs the lifecycle of 1.12.2 Forge mods, restores worldgen, creative tabs, and rendering math for 1.16 to 1.19 Forge mods, keeps parallel transforms deterministic, and moves every compatibility report filed against 1.3.2 forward.
+
+### Added
+
+- Delivers Forge `SimpleChannel` messages on NeoForge. Each channel registers as one NeoForge payload when NeoForge locks its network registry, and from 1.21.11 its client side registers through NeoForge's client payload event. The payload carries the Forge message id and then the mod's own encoding, so the mod's encoder, decoder, and handler run unchanged. `PacketDistributor` targets, `sendTo`, `reply`, and the handler's `NetworkEvent.Context` are bridged, and handlers run on the main thread.
+- Supplies Forge's capability API to Forge 1.20.1 mods on NeoForge: capability tokens, `LazyOptional`, attach events, and the built-in item, fluid, and energy handlers. Attached data is saved with its entity, block entity, or level on NeoForge 1.21.1.
+- Creates Forge custom registries on NeoForge 1.21 and newer through `NewRegistryEvent` and `DeferredRegister.makeRegistry`, and keeps `IForgeRegistry` lookups and registry-id packet calls working on the vanilla registry.
+- Registers Forge item, block, and mob effect client extensions through NeoForge's client extension event, so custom item renderers and armor models load.
+- Bridges MrCrayfish's Framework 0.8 message API onto Framework 0.13, including play message registration, sends, and the message context's player and task calls.
+- Runs the lifecycle of 1.12.2 Forge mods on Forge and NeoForge hosts. Pre-init runs at the start of the host's first registry event, and init and post-init run at common setup, as in 1.12.2.
+- Bridges the 1.12.2 event bus. `@SubscribeEvent` handlers, `@Mod.EventBusSubscriber` classes, and `MinecraftForge.EVENT_BUS.register` reach the host bus, and `RegistryEvent.Register` handlers register their blocks, items, sounds, and effects through the host's registry event.
+- Restores worldgen that 1.19.2 Forge mods register in code. Their configured features, placed features, and biomes are written to a generated data pack under `config/retromod/legacy-worldgen/`, so the mod's own biome modifiers and dimensions find them. The pack is offered on hosts up to 1.20.1.
+- Restores creative tabs for Forge mods built before 1.19.3. Each tab registers under the mod's namespace with its translated title and lists the mod's items that call `Item.Properties.tab(...)`.
+- Posts the old `BiomeLoadingEvent` from a generated Forge biome modifier, so the natural spawns and features that 1.16 to 1.18 Forge mods add there apply again.
+- Lets a 1.18.2 GeckoLib 3 mod run with its own GeckoLib 3 translated beside the host's GeckoLib 4, instead of rewriting GeckoLib 3 calls onto GeckoLib 4's different API.
+
+### Fixed
+
+#### Forge Mods on NeoForge
+
+- Registers a Forge mod's config on NeoForge. Forge's `IConfigSpec` maps to NeoForge's, and `ModLoadingContext.registerConfig`, which NeoForge moved to `ModContainer`, goes through the mod's own container. Forge's `COMMON` and `SERVER` types map to `LOCAL` and `SYNCED` on NeoForge builds that renamed them (FancyModLoader 12.0.8, in 26.3).
+- Builds and opens Forge menus on NeoForge. `IForgeMenuType.create` and `NetworkHooks.openScreen` are bridged, and the mod's menu factory keeps Forge's shape behind an adapter. Supplies Forge's `NetworkDirection` and the `registerMessage` overload that takes one.
+- Renames `@Mod.EventBusSubscriber` to NeoForge's `@EventBusSubscriber`, so the static handlers in a subscriber class register. A class that also declares instance handlers loses the annotation instead, because NeoForge rejects such a class at construction with "annotated with @SubscribeEvent is not static", and Forge never subscribed its instance handlers automatically.
+- Applies Forge's event-bus rules to Forge mods on NeoForge: cancellation on events NeoForge made uncancellable, `post` returning the cancel flag, static and wrong-bus handlers, and living-only tick events.
+- Converts Forge `Event.Result` calls to the result type each NeoForge event declares, and maps Forge's damage events onto NeoForge's split damage events, including their amount getters.
+- Moves `ForgeHooks`, `ForgeEventFactory`, `ModLoader.get()`, `ITeleporter` with `PortalInfo`, `MobSpawnEvent.AllowDespawn`, `addGenericListener` capability listeners, and the `TierSortingRegistry` tier check onto their NeoForge equivalents.
+- Records Forge brewing recipes and adds them to every NeoForge brewing rebuild.
+- Reads the vanilla keys in `ForgeRegistries.Keys`, such as `ITEMS`, from `Registries`, and fixes Forge registry value lookups on 1.21.2 and newer, where the lookup is `getValue`.
+- Maps more Forge 1.20.1 classes onto their NeoForge names: fluids, tool actions, biome and structure modifiers, geometry loaders, item handler wrappers, spawn placement registration, data generation, entity selectors, `FMLLoader`, `LoadingModList`, `ModFileInfo`, `IForgeLevel`, and `PartEntity`. Feeds Forge's supplier-based fluid blocks and buckets, and its reach, gravity, and step height attributes, to their NeoForge 1.21 counterparts.
+- Removes a Forge build of MixinExtras bundled inside a Forge mod when NeoForge provides its own. NeoForge loaded both copies, and the game stopped at boot with a `ResolutionException`.
+- Embeds Retromod's generated classes into bundled Jar-in-Jar libraries, so a translated Forge library constructs on NeoForge without colliding with another mod's copy.
+- Follows GeckoLib 4.5 folding its core package into the main packages, so 1.20.1 GeckoLib mods resolve on 1.21.1, and routes Architectury 9 `EventBuses` calls to Architectury 13's NeoForge hooks.
+- Translates record accessors that Forge mods call by their SRG field id, such as `TagKey.location()`.
+- Lets Forge mods that register recipe condition serializers construct. Their custom conditions are not evaluated.
+- Lets a Forge mod create a register for enchantments or painting variants on NeoForge 1.21 and newer, and drops Forge's `setCustomClientFactory`, so entity types that set one still build.
+- Reads the tool abilities that NeoForge 26.3 removed, such as `AXE_STRIP`, by name through `ItemAbility.get`, for Forge `ToolActions` and NeoForge `ItemAbilities` alike.
+- Ignores `ItemBlockRenderTypes.setRenderLayer` on 26.1 and newer, where a model's own material decides its layer, so a mod's client setup finishes instead of failing with `NoClassDefFoundError`.
+
+#### Mods Built Before 1.20.5 on Newer Hosts
+
+- Bridges the pre-1.20.5 `ArmorMaterial` interface for Forge and NeoForge mods on 1.20.5 to 1.21.1 hosts, so an armor material enum loads and its armor registers through the host's material registry. Fabric mods get the same on Fabric 1.20.5 to 1.21.1.
+- Bridges the 1.20.5 food API: renamed builder methods go to their new names, and removed getters are computed from the new food record.
+- Converts old tool constructors that took attack damage and speed into the attribute component newer tools expect, and answers NeoForge's stack attribute hook from an old `getDefaultAttributeModifiers(EquipmentSlot)` override.
+- Repairs pre-1.20.5 attribute and mob effect code: bare `Attributes` and `MobEffects` constants, attribute lookups, effect instances, and modifiers keyed by `UUID`. A fixed `UUID` always maps to the same modifier id, so removing a modifier by its `UUID` finds it.
+- Keeps old block entities and saved data saving by adding provider-taking `loadAdditional`, `saveAdditional`, and `save` overrides beside the old ones.
+- Redirects removed 1.20.5 entity, item stack, and level data members, unwraps sound event and potion constants that became registry holders, and replaces `PotionUtils` calls with the potion contents component.
+- Runs pre-1.20.5 `defineSynchedData()` overrides through the new entity data builder, and repairs mixins that shadow the `SynchedEntityData` fields and the area effect cloud and zombie villager fields that 1.20.5 removed.
+- Converts saplings built from the `AbstractTreeGrower` classes that 1.20.3 removed into a `TreeGrower`.
+- Bridges the removed particle deserializer, so custom particle types register on 1.20.5 and newer.
+- Answers NeoForge's drowning hook for aquatic mobs that override `canBreatheUnderwater()`, and moves overrides of `getDimensions` onto `getDefaultDimensions`. Both originals became final in 1.20.5.
+- Bridges the 1.20.5 `MobType` and spawn placement type removals, and answers `getMobType()` calls made through vanilla mob bases or a `super` call without looping into the mob's own override.
+- Keeps pre-1.20.3 `SandBlock` and `GravelBlock` constructors and subclasses working on the merged `ColoredFallingBlock`, and rebases items that extended `SimpleFoiledItem` or `BowlFoodItem` onto a plain item.
+- Supplies the projectile dispenser behavior that 1.21 removed, and converts `DyeColor.getTextureDiffuseColors()` to the 1.21 ARGB color.
+- Applies the attribute, entity data, tree grower, and breathing repairs in offline CLI and AOT transforms for the target versions they were checked against.
+- Stops applying 26.1 method-rename heuristics on older hosts, where they turned a working `displayClientMessage` call into a `VerifyError`.
+
+#### Older Forge Mods on Forge 1.20.1
+
+- Keeps mods' overrides of Minecraft methods working on SRG hosts such as Forge 1.20.1. The lookup now walks the mod's supertypes, because a method a class overrides, or a field it inherits, is named by the class that declares it. Without it an MCreator block's `getLightBlock` and `getDrops` overrides were never called.
+- Resolves Forge SRG names by the mod's own Minecraft version, read from its `minecraft` dependency. Forge reused 266 SRG ids for different members across 1.17 to 1.21.8.
+- Fixes the rest of Forge 1.20.1's name translation for older mods: lambdas over Minecraft interfaces keep the host's method name, record accessors such as `LevelStem.generator()` resolve, `Entity.getLevel` keeps working, and Retromod's generated classes get the host's SRG member names.
+- Bridges the 1.19.3 to 1.20 changes that stop 1.19.2 content mods: `new SoundEvent(id)`, `WoodButtonBlock` and `StoneButtonBlock`, the door, trapdoor, pressure plate, and fence gate constructors that gained a `BlockSetType` or `WoodType`, armor items and materials that used `EquipmentSlot`, `LootContext.Builder` in `getDrops`, `MaterialColor`, `LivingSetAttackTargetEvent`, and `BlockBehaviour.Properties.of(Material)`.
+- Restores the damage source constants, `new DamageSource(id)`, `EntityDamageSource`, and predicates such as `isExplosion()` that 1.19.4 removed. The constants read the running server's sources, the predicates ask the matching damage type tag, and both comparison orders and `equals` work as type checks.
+- Repairs 1.19.2 biome code: the no-argument biome generation builder, vanilla worldgen constants such as `VegetationFeatures.PATCH_GRASS`, the stone and deepslate ore targets removed from `OreFeatures`, the seagrass placement helper, `BiomeBuilder.precipitation(...)`, and registry keys such as `Registry.DIMENSION_REGISTRY`. The overworld biome splice that MCreator 1.19.2 mods run at server start no longer stops the server.
+- Lets a 1.19.2 mod register a type from a static initializer after its registry event ended, while Forge has not frozen its registries yet.
+- Repairs `new BlockPos(double, double, double)` and `new BlockPos(Position)` through `BlockPos.containing`, 1.19.2 `Level.explode` calls and explosion interaction constants, and the `RegisterParticleProvidersEvent.register` overloads.
+- Reads `Entity.level` and the other entity fields that 1.20 made private through their accessors, keeps a mob's own `flyingSpeed` and an old `double getJumpBoostPower()` override in effect, and reads limb swing through the 1.19.4 walk animation state.
+- Moves the vectors, quaternions, and matrices that 1.19.3 removed from `com.mojang.math` onto JOML for older renderers, keeping the old zero matrix, row-major fields, and additive `translate`.
+- Loads models and animations through the 1.19 resource manager for mods built before it, including GeckoLib 3.
+- Repairs pre-1.20 HUD and screen drawing that calls `blit` with a `PoseStack`, the old `getPoseStack()` on Forge GUI render events, and the three-argument `HumanoidArmorLayer` constructor, on 1.20 to 1.20.6 hosts.
+- Follows Forge 1.19's event renames for 1.18.2 mods: world to level, entity join and leave, living tick, mob effects, spawn checks, camera, fog color, key and screen opening events, `openGui` to `openScreen`, and the moved capability tokens. Adds the one-argument `TranslatableComponent` constructor.
+- Registers banner patterns made with Forge's old `BannerPattern.create`, and builds special crafting recipes from the old `SimpleRecipeSerializer` and `CustomRecipe` constructors, on 1.19.3 to 1.20.4 hosts.
+- Converts pre-1.20 `minecraft:smithing` recipes to `minecraft:smithing_transform` and 1.18.2 jigsaw structures to the 1.19 data format, in game and in the CLI, AOT, and bundled-jar paths.
+- Repairs rideable mobs that override `positionRider`, final since 1.20, and keeps an older `getControllingPassenger` override in control of the mob.
+- Wraps 1.19's `RandomSource` as `java.util.Random` for older entity, level, and explosion code, and accepts a `java.util.Random` in int providers and the loot builder.
+- Keeps villager professions and workstations from mods built before 1.19 constructible, and moves GeckoLib 3's demo package so it no longer collides with GeckoLib 4 at boot.
+- Leaves Forge's `ICapabilityProvider` and `LazyOptional` alone on a Forge host, where they still exist. Redirecting them broke a mod's capability listener with `VerifyError`.
+
+#### Forge 1.12.2 Mods
+
+- Applies the 1.12.2 class moves on 1.21 and 1.21.1 hosts as well as 1.20.x. Without them a 1.12.2 mod kept 1.13 names such as `ItemGroup`, which no host has.
+- Keeps `setRegistryName`, `getRegistryName`, `@SidedProxy`, `@Mod.Instance`, `Loader.isModLoaded`, `getAsmData()`, and `getModMetadata()` working, and generates `mods.toml` from the `@Mod` annotation for mods that ship no `mcmod.info`.
+- Strips FML `@Optional` interfaces and methods that point at another mod's 1.12 API, as FML did when that mod was absent.
+- Repairs 1.12.2 block state calls: `IBlockState` and `IProperty` calls link as class calls, `withProperty`, `cycleProperty`, and `withRotation` reach the host methods, and the properties a block declares in `createBlockState` register.
+- Repairs common 1.12.2 construction: `new ItemBlock(block)`, `new ItemStack(item, count, meta)`, `new SoundEvent(name)`, `ItemFood`, `super(Material)` on vanilla block bases, custom `Material` classes, and `Potion(isBad, color)` subclasses with their attribute modifiers.
+- Retargets method references such as `registry::register` through the same redirects as direct calls.
+- Loads 1.12.2 mods that open a network channel, read a `Configuration` file, log through `FMLLog`, use `ReflectionHelper`, define fluids, or create world generators, ores, trees, and `EnumHelper` constants in static fields.
+- Registers items that add ore dictionary names during item registration, keeps a failing 1.12.2 registry handler from aborting the server, and gives blocks built from default properties a provisional id on 1.21.2 and newer.
+
+#### Fabric Mods Before 26.1
+
+- Keeps intermediary Mixin refmap entries and intermediary `@Shadow`, `@Accessor`, and `@Invoker` members on pre-26.1 Fabric hosts, where those names are the working ones.
+- Treats an explicit `require` count on a transformed injector as soft, so an injection point that moved skips that injection instead of stopping the game.
+- Stops redirecting Fabric API's `FabricRegistryBuilder`, `FabricBlockSettings`, `FabricEntityTypeBuilder`, and `RegistryEntryRemovedCallback` when the installed Fabric API still provides them.
+- Repairs pre-1.20.5 code on Fabric 1.20.5 to 1.21.x hosts: custom particle types, `new SimpleParticleType(boolean)`, attribute and mob effect calls that now take a registry holder, attribute modifiers built from a `UUID`, armor materials and armor items, `DyeableArmorItem` and `RecordItem` subclasses, and the `EntitySelector` constructor.
+- Repairs pre-1.20.5 item stack `getTag`, `getOrCreateTag`, `setTag`, and `hasTag` calls and Mixin shadows by reading and writing the custom data component, and Mixin accessors for item attribute modifiers, stack size, durability, fire resistance, rarity, and food.
+- Repairs older calls to `DropExperienceBlock`, `AmethystClusterBlock`, `FlowerBlock`, `MobEffectInstance`, `FolderRepositorySource`, `Pack.readMetaAndCreate`, `ModNioResourcePack.create`, `Component.Serializer`, pack supplier lambdas, and `AbstractPackResources` subclasses.
+- Repairs Fabric API's extended screen handlers, channel-based server networking registration, predicate-based resource conditions, and loot table event callbacks for mods built against Fabric API for 1.20.1. The Gson loot serializers decode through the loot codecs, and a callback that reaches a removed loot API or reads an argument the event no longer supplies is skipped and reported once.
+- Keeps attributes that a mod adds to entity defaults before registering them, and repairs Mixins that shadow a replaced method Retromod already adapts, or a removed field they never use.
+- Keeps a mod loadable when one of its classes extends a Minecraft class that later became final, such as `Enchantment` on 1.21. The mod fails with an explanation only when it builds that object.
+
+#### Fabric Mods on 26.x
+
+- Keeps a mod's language adapter, such as Fabric Language Kotlin, a required dependency. Moved to suggestions with the mod's other libraries, a missing adapter stopped the game before it wrote a crash report.
+- Fixes `Block id not set` when a library mod registers blocks on behalf of a content mod.
+- Keeps pre-1.21.5 leaves blocks and custom chests from 1.21.8 and older constructible.
+- Rewrites the removed `random_patch`, `flower`, and `no_bonemeal_flower` worldgen features into a 26.1 shape with the same spread.
+- Restores `Properties.dropsLike`, the two-argument `BlockState.getOffset`, `getLightBlock`, `Direction.getNormal`, and `getMaxLightLevel`, and follows the 1.21.5 mob effect renames such as `DIG_SPEED` to `HASTE`.
+- Stops applying a lookup written for an older field type to a mod that reads the field with its current type, which crashed block registration with `ClassCastException`.
+- Bridges the old particle render types, so a mod that reads `ParticleRenderType.CUSTOM` or implements its own render type no longer crashes the client.
+- Keeps 1.21.x recipe serializers and recipe subclasses loading on 26.1, passes the running game's registries to an old `assemble(input, registries)` override, and reports a recipe whose decoder throws as one recipe error instead of stopping the data pack load.
+- Bridges 1.21.x cauldron interaction tables, `BlockEntityType.Builder`, Fabric API resource conditions, and world saved data onto 26.1.
+- Translates intermediary class names that a mod passes to Fabric's mapping resolver, maps record component names in Mixin `@Shadow` fields, and pins a bare `@Inject` target to the right overload.
+- Retypes an accessor invoker whose target narrowed a parameter, such as `Level` to `ServerLevel`, when the host proves exactly one match, and adapts Mixins that shadow the item list in `ItemContainerContents` to 26.1's template list.
+- Starts mods that registered on the 1.21.4 `WorldRenderEvents` by mapping each event to its `LevelRenderEvents` successor, and draws legacy `VertexBuffer` overlays through Fabric API's level submit event.
+- Repairs Mixin handlers whose target lost parameters, gained trailing parameters or a return value, or became static, when the handler never reads what changed.
+- Moves first-person renderer mixins onto 26.3's split first-person renderer, keeps 1.21.x HUD mixins on `Gui` applying through the `render` to `extract` renames and the move to `Hud` on 26.2, and routes a direct `Gui.render` call to the HUD on 26.2 and newer.
+- Bridges the 26.1 baked-quad rework for mods that draw their own quads: `BakedQuad.isTinted()`, `tintIndex()`, `lightEmission()`, and `sprite()` read from `materialInfo()`, and the 1.21.11 `putBulkData` shapes fill a `QuadInstance`. Held light-emitting blocks keep their emission.
+- Bridges 26.x client renames that 1.21.x mods call, including `PoseStack.mulPose` on 26.3, `lightCoordsWithEmission`, `BlockEntityRenderer.render`, GUI `drawString`, sprite blits, window-handle key polls, `Camera.getXRot()`, `Minecraft.getToastManager()`, the `ChatFormatting` getters, blend functions, `renderBuffers().bufferSource()`, and the `LevelRenderer.renderLevel` rename in Mixin selectors.
+- Follows Forge Config API Port from `neoforge.v4` to `v5`, and keeps items that implement the removed `Equipable` interface loadable.
+- Registers keybind categories that Retromod creates for old Fabric mods. An unregistered category sorts as equal to every other, so keybind lists that sort, such as Amecs, merged one mod's keys away.
+- Prevents a deadlock that could hang the first Fabric launch while Retromod transforms a mod.
+- Reads Fabric version ranges with a trailing prerelease marker, such as `~1.21.11-`, so the CLI and AOT paths apply the version chain.
+- Stops adding a 26.x button method to old button classes on hosts before 26.1, where the type it names does not exist.
+
+#### All Loaders
+
+- Converts older mods' loot tables, predicates, item modifiers, advancements, and enchantments to 26.3's condition and function format. 26.3 ignores the old keys, so a broken door dropped two doors, and old drops lost their counts, fortune bonuses, and explosion decay. On NeoForge, old global loot modifiers are converted too.
+- Keeps parallel class transforms deterministic. Every worker now waits for the one-time redirect cleanup to finish, so the same mod no longer comes out with some constructor calls unredirected on an unlucky launch. A class the Java agent loads during that cleanup no longer waits on it, which avoids a startup deadlock.
+
+### Changed
+
+- Links each Modrinth version's changelog to its entry on the docs site instead of pasting the release notes.
+- Stops reporting client and library classes as removed when a dedicated server transforms a mod.
+
+Several reported mods still stop at a later failure. Lycanites Mobs needs Forge's null-tolerant `Lazy`. Fossils and Archeology and Scorched Guns register enchantments in code, which 1.21 made data-driven and final, so their enchantment registers build but the entries never bind. Cracker's Wither Storm gets through construction and stops during registration on the pre-1.20.5 `MobEffect.addAttributeModifier` and `BlockBehaviour.Properties.copy`. AbyssalCraft stops at 1.12's `BlockSapling`, ahead of 1.12 biomes, dimensions, and commands. Alien Evolution's KubeJS 2001 bundle stops on DataFixerUpper's removed `DataResult.get()`. Bountiful Fares stops at `Ingredient.CODEC_NONEMPTY`, and Minepathy at `EitherHolder`.
+
+1.12.2 support registers content but does not run 1.12 systems: configs return the mod's defaults, packets are not sent, fluid blocks are solid placeholders, world generators generate nothing, `EnumHelper` returns null, and commands and GUIs are not bridged. Creative tabs list a mod's items in its own legacy tabs only, not in vanilla tabs such as `CreativeModeTab.TAB_MISC`, and they register through Forge's mod bus only. The legacy worldgen pack is offered on hosts up to 1.20.1, so a 1.19.2 mod's code-registered features are not restored on newer hosts. Several bridges apply only when a mod is translated in game, not in the CLI or AOT paths: the biome modifier, banner pattern tags, the pre-26.1 Fabric bridges, and the 1.12.2 post-remap pass in AOT. A Forge subscriber class that mixes static and instance handlers loses its static handlers on NeoForge.
+
+Client rendering is the least verified part of this release. Immersive Vehicles' vehicles do not draw on 26.2, because the buffer source stand-in drops the geometry it builds until 26.2's submit pipeline is bridged. Hold My Items' item-model animations and custom glint do not run on 26.2 and 26.3. Old GUI code that draws text or fills with `GuiComponent` still fails on 1.20. A Forge channel created after NeoForge locks its network registry is not registered, and bridged channels register as optional.
+
 ## [1.3.2] - 2026-09-30
 
 Patch release. Adds Forge 26.3, follows 26.3's new key numbering, and fixes several bugs found in reports and in the published jars.

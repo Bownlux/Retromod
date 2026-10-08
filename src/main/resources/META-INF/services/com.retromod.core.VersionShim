@@ -131,10 +131,13 @@ com.retromod.shim.api.fabric.ClothConfigApiShim
 com.retromod.shim.api.fabric.ReiApiShim
 com.retromod.shim.api.fabric.TrinketsApiShim
 com.retromod.shim.api.fabric.CardinalComponentsApiShim
+com.retromod.shim.api.fabric.ZineApiShim
 com.retromod.shim.api.fabric.SodiumIrisApiShim
 com.retromod.shim.api.fabric.LibGuiApiShim
 com.retromod.shim.api.fabric.EmiApiShim
 com.retromod.shim.api.fabric.ForgeConfigApiPortShim
+com.retromod.shim.api.fabric.ForgeConfigApiPortV5Shim
+com.retromod.shim.fabric.FabricLegacyRegistrationApiShim
 
 # Forge/NeoForge API shims
 com.retromod.shim.api.forge.JeiApiShim
@@ -148,6 +151,12 @@ com.retromod.shim.api.forge.ForgeRegistryApiShim
 # Cross-loader API shims (work on both Fabric and Forge/NeoForge)
 com.retromod.shim.api.common.GeckoLibApiShim
 com.retromod.shim.api.common.GeckoLib5ApiShim
+com.retromod.shim.common.LegacyEquipableShim
+com.retromod.shim.common.DedicatedServerTintGetterShim
+com.retromod.shim.common.LegacyRecipeSerializerShim
+com.retromod.shim.common.LegacyCauldronInteractionShim
+com.retromod.shim.common.LegacyMemberRenames
+com.retromod.shim.common.LegacySavedDataFactoryShim
 com.retromod.shim.api.common.ArchitecturyApiShim
 com.retromod.shim.api.common.CreateModApiShim
 # Runtime version-check spoofer for in-code version range checks such as

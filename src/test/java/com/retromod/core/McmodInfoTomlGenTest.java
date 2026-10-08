@@ -13,6 +13,10 @@ import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.objectweb.asm.AnnotationVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
 /**
  * #79 (snapshot.7): a pre-1.13 Forge mod ships only {@code mcmod.info}; modern Forge/NeoForge needs
@@ -137,5 +141,55 @@ class McmodInfoTomlGenTest {
         assertEquals("1.0.0", ForgeModTransformer.normalizeVersion("1 0"), "space rejected");
         assertEquals("1.0.0", ForgeModTransformer.normalizeVersion("beta"), "non-digit lead rejected");
         assertEquals("1.0.0", ForgeModTransformer.normalizeVersion(""), "empty rejected");
+    }
+
+    /** A value-shaped {@code @Mod} class; {@code attached} adds the 1.12.2 bridge's attach call. */
+    private static byte[] modClass(String name, String modId, boolean attached) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null);
+        AnnotationVisitor mod = cw.visitAnnotation("Lnet/neoforged/fml/common/Mod;", true);
+        mod.visit("value", modId);
+        mod.visitEnd();
+        MethodVisitor init = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+        init.visitCode();
+        init.visitVarInsn(Opcodes.ALOAD, 0);
+        init.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        if (attached) {
+            init.visitVarInsn(Opcodes.ALOAD, 0);
+            init.visitMethodInsn(Opcodes.INVOKESTATIC,
+                    "com/retromod/embedded/globalxp_1/com/retromod/shim/forge/embedded/LegacyForgeEvents",
+                    "attach", "(Ljava/lang/Object;)V", false);
+        }
+        init.visitInsn(Opcodes.RETURN);
+        init.visitMaxs(0, 0);
+        init.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    @Test
+    void generatesModsTomlFromTheModAnnotationWhenMcmodInfoIsMissing(@TempDir Path dir) throws Exception {
+        Files.createDirectories(dir.resolve("bl4ckscor3/mod/globalxp"));
+        Files.write(dir.resolve("bl4ckscor3/mod/globalxp/GlobalXP.class"),
+                modClass("bl4ckscor3/mod/globalxp/GlobalXP", "globalxp", true));
+
+        new ForgeModTransformer("1.21.1").generateTomlFromMcmodInfo(dir);
+
+        Path toml = dir.resolve("META-INF/mods.toml");
+        assertTrue(Files.exists(toml), "1.12.2 allowed a jar without mcmod.info; it still needs a toml");
+        String c = Files.readString(toml);
+        assertTrue(c.contains("modId=\"globalxp\""), "carries the @Mod id: " + c);
+        assertTrue(c.contains("[[dependencies.globalxp]]"), "has a dependencies block: " + c);
+    }
+
+    @Test
+    void leavesAModernModWithoutMetadataAlone(@TempDir Path dir) throws Exception {
+        Files.createDirectories(dir.resolve("modern"));
+        Files.write(dir.resolve("modern/Modern.class"), modClass("modern/Modern", "modern", false));
+
+        new ForgeModTransformer("1.21.1").generateTomlFromMcmodInfo(dir);
+
+        assertFalse(Files.exists(dir.resolve("META-INF/mods.toml")),
+                "only @Mod classes the 1.12.2 bridge upgraded may get a generated toml");
     }
 }

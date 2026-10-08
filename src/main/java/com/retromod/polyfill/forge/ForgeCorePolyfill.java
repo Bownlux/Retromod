@@ -50,45 +50,44 @@ public class ForgeCorePolyfill implements PolyfillProvider {
 
     @Override
     public void registerPolyfills(RetromodTransformer transformer) {
-        // Register class redirects from old Forge classes to our embedded shims
-        transformer.registerClassRedirect(
-            "net/minecraftforge/common/capabilities/ICapabilityProvider",
-            "com/retromod/shim/api/forge/embedded/CapabilityProviderShim"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraftforge/common/util/LazyOptional",
-            "com/retromod/shim/api/forge/embedded/LazyOptionalShim"
-        );
-        // MinecraftForge (the class holding the static EVENT_BUS) maps to the embedded shim only on a
-        // non-NeoForge host. On NeoForge, Forge_1_20_to_NeoForge_1_21 already maps MinecraftForge ->
-        // net/neoforged/neoforge/common/NeoForge (which HAS a real IEventBus EVENT_BUS field) plus a
-        // MinecraftForge.EVENT_BUS -> NeoForge.EVENT_BUS field redirect. This polyfill runs AFTER the
-        // migration shim and would clobber that with a redirect to ForgeCapabilitiesShim, which has NO
-        // EVENT_BUS field -> a Forge mod's `MinecraftForge.EVENT_BUS.register(this)` then dies at
-        // construct with NoSuchFieldError (Macaw's on NeoForge 26.2). So skip it on NeoForge and let
-        // the migration's correct mapping stand.
-        // Also skip when MinecraftForge EXISTS on the host (a real Forge runtime): redirecting a
-        // LIVE class to the capabilities shim breaks its real members - on Forge 26.1 the mod's
-        // MinecraftForge.EVENT_BUS read died NoSuchFieldError once RetromodForge started loading
-        // polyfills (review finding). This redirect exists for hosts where the class is absent
-        // (Fabric). Probe with initialize=false (pitfall #14: never initialize an MC class).
-        boolean minecraftForgePresent;
-        try {
-            Class.forName("net.minecraftforge.common.MinecraftForge", false,
-                    ForgeCorePolyfill.class.getClassLoader());
-            minecraftForgePresent = true;
-        } catch (Throwable t) {
-            minecraftForgePresent = false;
-        }
-        if (!McReflect.isNeoForge() && !minecraftForgePresent) {
-            transformer.registerClassRedirect(
-                "net/minecraftforge/common/MinecraftForge",
-                "com/retromod/shim/api/forge/embedded/ForgeCapabilitiesShim"
-            );
+        // Each stand-in replaces a class only where the host does not have it. Forge 1.20.1 still
+        // ships capabilities, and redirecting its live ICapabilityProvider made a mod's own
+        // provider unassignable where AttachCapabilitiesEvent expects one: a VerifyError in the
+        // mod's capability listener. MinecraftForge is the same story: on NeoForge,
+        // Forge_1_20_to_NeoForge_1_21 maps it to NeoForge (which has EVENT_BUS), and on a Forge
+        // host it is live, so this redirect exists only for hosts where the class is absent.
+        // Probes use initialize=false (pitfall #14: never initialize an MC class).
+        // On NeoForge, ForgeNeoForgeApiBridge supplies the whole capability API under Forge's names,
+        // and a redirect here would rename the mod's references before those stand-ins apply.
+        if (!McReflect.isNeoForge()) {
+            redirectWhereAbsent(transformer,
+                    "net/minecraftforge/common/capabilities/ICapabilityProvider",
+                    "com/retromod/shim/api/forge/embedded/CapabilityProviderShim");
+            redirectWhereAbsent(transformer,
+                    "net/minecraftforge/common/util/LazyOptional",
+                    "com/retromod/shim/api/forge/embedded/LazyOptionalShim");
+            redirectWhereAbsent(transformer,
+                    "net/minecraftforge/common/MinecraftForge",
+                    "com/retromod/shim/api/forge/embedded/ForgeCapabilitiesShim");
         }
 
         for (String cls : getPolyfillClasses()) {
             transformer.registerEmbeddedShim(cls);
+        }
+    }
+
+    private static void redirectWhereAbsent(RetromodTransformer transformer, String original,
+            String standIn) {
+        if (!hostHas(original)) transformer.registerClassRedirect(original, standIn);
+    }
+
+    private static boolean hostHas(String internalName) {
+        try {
+            Class.forName(internalName.replace('/', '.'), false,
+                    ForgeCorePolyfill.class.getClassLoader());
+            return true;
+        } catch (Throwable absent) {
+            return false;
         }
     }
 }

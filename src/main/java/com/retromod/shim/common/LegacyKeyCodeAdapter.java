@@ -33,6 +33,8 @@ public final class LegacyKeyCodeAdapter {
     public static final String POLY = "com/retromod/polyfill/minecraft/RetroKeyMapping";
     private static final String TYPE = "com/mojang/blaze3d/platform/InputConstants$Type";
     private static final String KEY = "com/mojang/blaze3d/platform/InputConstants$Key";
+    /** The window-handle poll {@code isKeyDown(long, int)} that 1.21.4-era mods call. */
+    private static final String GUI_CALLS = "com/retromod/polyfill/minecraft/LegacyGuiCalls";
 
     /**
      * @param classBytes the class to repair
@@ -68,6 +70,13 @@ public final class LegacyKeyCodeAdapter {
                             "getOrCreate", "(Ljava/lang/Object;I)Ljava/lang/Object;", false);
                     m.instructions.set(call, bridge);
                     m.instructions.insert(bridge, new TypeInsnNode(Opcodes.CHECKCAST, KEY));
+                    changes++;
+                } else if (call.getOpcode() == Opcodes.INVOKESTATIC && GUI_CALLS.equals(call.owner)
+                        && "isKeyDown".equals(call.name) && "(JI)Z".equals(call.desc)) {
+                    // The code is on top of the stack. Once translated, the constant no longer
+                    // precedes the call, so a second pass leaves it alone.
+                    m.instructions.insertBefore(call, new MethodInsnNode(Opcodes.INVOKESTATIC, POLY,
+                            "hostKeyCode", "(I)I", false));
                     changes++;
                 }
             }

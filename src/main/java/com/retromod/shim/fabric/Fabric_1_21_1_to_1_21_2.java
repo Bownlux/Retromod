@@ -183,6 +183,13 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
         if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
                 com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
             com.retromod.shim.common.LegacyBlockApiSynthetic.register(transformer);
+            com.retromod.shim.common.LegacyBlockMethodBridge.register(transformer);
+            com.retromod.shim.common.LegacyChestBlockBridge.register(transformer);
+            com.retromod.shim.common.LegacyFoodConsumableBridge.register(transformer);
+            // 1.21.2 turned the eat and drink sounds into holders. NeoForge and Forge register
+            // this bridge from their 1.20.5 shims; Fabric has no earlier Mojang-named shim for it.
+            com.retromod.shim.common.LegacyHolderConstantBridge.register(transformer);
+            com.retromod.shim.common.LegacyItemConstructorBridge.register(transformer);
         }
 
         // Registry getter renames

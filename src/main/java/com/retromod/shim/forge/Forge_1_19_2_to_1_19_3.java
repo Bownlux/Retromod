@@ -22,6 +22,61 @@ public class Forge_1_19_2_to_1_19_3 implements VersionShim {
         // dies on its own super(...) call (#264). Rebase it onto a generated bridge.
         CreativeModeTabBridge.register(transformer);
 
+        // 1.19.3 moved configured features, placed features and biomes into data pack
+        // registries. Rebuild what the mod registers in code as a generated data pack.
+        LegacyWorldgenBridge.register(transformer);
+        LegacyRegistryKeyMoves.register(transformer);
+        // 1.19.3 replaced com.mojang.math's vectors, quaternions and matrices with JOML.
+        com.retromod.shim.common.LegacyMojangMathBridge.register(transformer);
+        com.retromod.shim.common.LegacyOreRuleTests.register(transformer);
+        // Banner patterns became registry entries and special recipes gained a book category.
+        String host = com.retromod.core.RetromodVersion.TARGET_MC_VERSION;
+        if (com.retromod.shim.common.LegacyBannerPatternBridge.appliesTo(host)) {
+            com.retromod.shim.common.LegacyBannerPatternBridge.register(transformer);
+        }
+        if (com.retromod.shim.common.LegacyCraftingRecipeBridge.appliesTo(host)) {
+            com.retromod.shim.common.LegacyCraftingRecipeBridge.register(transformer);
+        }
+        // 1.21.2 moved explosions to ServerExplosion, and explode no longer returns one.
+        if (com.retromod.core.RetromodVersion.compareMcVersions(
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "1.21.2") < 0) {
+            com.retromod.shim.common.LegacyExplosionBridge.register(transformer);
+        }
+        if (!com.retromod.util.McReflect.isNeoForge()) {
+            // Forge now locks each registry when its own event ends, so a static-initializer
+            // register() that 1.19.2 accepted late throws "is being added too late".
+            String lateRegistration = "com/retromod/shim/forge/embedded/LateForgeRegistration";
+            com.retromod.core.SyntheticEmbedder.registerClassResource(
+                    transformer, lateRegistration, Forge_1_19_2_to_1_19_3.class);
+            for (String nameType : new String[]{"Ljava/lang/String;", "Lnet/minecraft/resources/ResourceLocation;"}) {
+                transformer.registerMethodRedirect("net/minecraftforge/registries/IForgeRegistry",
+                        "register", "(" + nameType + "Ljava/lang/Object;)V", lateRegistration,
+                        "register", "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", true);
+            }
+        }
+
+        // 1.19.3 replaced the SoundEvent constructors with static factories. MCreator registers
+        // every sound with new SoundEvent(id), so the whole sound registry failed without this.
+        String soundEvent = "net/minecraft/sounds/SoundEvent";
+        for (String resourceId : new String[]{"Lnet/minecraft/resources/ResourceLocation;",
+                "Lnet/minecraft/resources/Identifier;"}) {
+            transformer.registerConstructorRedirect(soundEvent, "(" + resourceId + ")V",
+                    soundEvent, "createVariableRangeEvent", "(" + resourceId + ")L" + soundEvent + ";");
+            transformer.registerConstructorRedirect(soundEvent, "(" + resourceId + "F)V",
+                    soundEvent, "createFixedRangeEvent", "(" + resourceId + "F)L" + soundEvent + ";");
+        }
+
+        // 1.19.3 removed the deprecated register overloads of the particle provider event.
+        String particleEvent = "net/minecraftforge/client/event/RegisterParticleProvidersEvent";
+        String spriteSetDesc = "(Lnet/minecraft/core/particles/ParticleType;"
+                + "Lnet/minecraft/client/particle/ParticleEngine$SpriteParticleRegistration;)V";
+        String providerDesc = "(Lnet/minecraft/core/particles/ParticleType;"
+                + "Lnet/minecraft/client/particle/ParticleProvider;)V";
+        transformer.registerMethodRedirect(particleEvent, "register", spriteSetDesc,
+                particleEvent, "registerSpriteSet", spriteSetDesc);
+        transformer.registerMethodRedirect(particleEvent, "register", providerDesc,
+                particleEvent, "registerSpecial", providerDesc);
+
         // No class-redirect for Registry: it still exists as a type, so renaming it would break
         // every Registry<T> use. The moved statics (BLOCK, ITEM, ...) need FieldRedirects instead.
         transformer.registerMethodRedirect(

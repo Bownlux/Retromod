@@ -20,6 +20,9 @@ public class NeoForge_1_21_4_to_1_21_5 implements VersionShim {
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21.5");
         // appendHoverText moved to TooltipDisplay + Consumer; keep old tooltip overrides called.
         com.retromod.shim.common.LegacyTooltipSynthetic.register(transformer);
+        // LeavesBlock became abstract with a (float, Properties) constructor.
+        com.retromod.shim.common.LegacyLeavesBlockBridge.register(transformer);
+        com.retromod.shim.common.LegacyMobEffectNames.register(transformer);
 
         // The tool and armour classes are not redirected to Item. Redirecting them won the extends
         // slot ahead of the removed-base rebase, so a sword became "extends Item" with a super call

@@ -67,6 +67,12 @@ public class RetromodNeoForge {
         // NeoForge shims, including Forge migration shims.
         loadNeoForgeShims(transformer);
 
+        // Forge SimpleChannel messages from transformed mods are registered as NeoForge payloads
+        // when NeoForge locks its network registry, after every mod has created its channels.
+        com.retromod.shim.forge.embedded.NetworkShim.listenForPayloadRegistration();
+        // Forge items hand out renderers through initializeClient, which NeoForge no longer calls.
+        com.retromod.shim.forge.ClientExtensionsBridge.listen();
+
         // Forge SRG -> Mojang member names. NeoForge has been Mojang-named since 1.17,
         // but a Forge SRG-baked mod (Jade, JEI Forge) migrated onto NeoForge carries
         // SRG names with it and crashes without this mapping.

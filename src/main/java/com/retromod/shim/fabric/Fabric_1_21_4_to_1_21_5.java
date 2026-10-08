@@ -20,6 +20,9 @@ public class Fabric_1_21_4_to_1_21_5 implements VersionShim {
         if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
                 com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
             com.retromod.shim.common.LegacyTooltipSynthetic.register(transformer);
+            // LeavesBlock became abstract with a (float, Properties) constructor.
+            com.retromod.shim.common.LegacyLeavesBlockBridge.register(transformer);
+            com.retromod.shim.common.LegacyMobEffectNames.register(transformer);
         }
 
         // The tool and armour classes are not redirected to Item. Redirecting them won the extends

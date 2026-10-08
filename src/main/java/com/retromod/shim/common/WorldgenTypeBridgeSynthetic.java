@@ -32,6 +32,11 @@ import static org.objectweb.asm.Opcodes.*;
  * unwrapped via {@code MapCodec.MapCodecCodec}) and registers THAT, while returning the mod's
  * ORIGINAL value so its {@code CHECKCAST StructureProcessorType} + field store still hold.
  *
+ * <p>{@code BuiltInRegistries.RECIPE_SERIALIZER} is the one exception to returning the original:
+ * {@link LegacyRecipeSerializerShim} adapts a legacy serializer into a new 26.1
+ * {@code RecipeSerializer} object, and the mod keeps that adapter because its field type is now
+ * that class.
+ *
  * <p>Generated as an INTERFACE: the mod's call site is {@code INVOKESTATIC} with the
  * InterfaceMethodref flag ({@code Registry} is an interface), and the redirect preserves that
  * flag - a static on a CLASS would die with IncompatibleClassChangeError (the LegacyEventBus
@@ -186,6 +191,15 @@ public final class WorldgenTypeBridgeSynthetic {
         m.visitMethodInsn(INVOKESTATIC, REGISTRY, "register",
                 "(" + L_REG + lKey + L_OBJ + ")" + L_OBJ, true);
         m.visitVarInsn(ASTORE, 4);
+        // A legacy recipe serializer was adapted into a new object. The mod's field is typed
+        // RecipeSerializer, which is now that class, so it must keep the registered adapter.
+        Label notRecipeSerializer = new Label();
+        m.visitFieldInsn(GETSTATIC, BUILT_IN, "RECIPE_SERIALIZER", L_REG);
+        m.visitVarInsn(ALOAD, 0);
+        m.visitJumpInsn(IF_ACMPNE, notRecipeSerializer);
+        m.visitVarInsn(ALOAD, 4);
+        m.visitInsn(ARETURN);
+        m.visitLabel(notRecipeSerializer);
         m.visitVarInsn(ALOAD, 3);
         m.visitVarInsn(ALOAD, 2);
         Label same = new Label();
@@ -219,6 +233,17 @@ public final class WorldgenTypeBridgeSynthetic {
         Label proceed = new Label();
         Label tryStart = new Label(), tryEnd = new Label(), handler = new Label(), warn = new Label();
         m.visitTryCatchBlock(tryStart, tryEnd, handler, "java/lang/Throwable");
+
+        // if (r == BuiltInRegistries.RECIPE_SERIALIZER) return LegacyRecipeSerializerBridge.adapt(v)
+        Label notRecipeSerializer = new Label();
+        m.visitFieldInsn(GETSTATIC, BUILT_IN, "RECIPE_SERIALIZER", L_REG);
+        m.visitVarInsn(ALOAD, 0);
+        m.visitJumpInsn(IF_ACMPNE, notRecipeSerializer);
+        m.visitVarInsn(ALOAD, 1);
+        m.visitMethodInsn(INVOKESTATIC, LegacyRecipeSerializerShim.BRIDGE, "adapt",
+                "(" + L_OBJ + ")" + L_OBJ, false);
+        m.visitInsn(ARETURN);
+        m.visitLabel(notRecipeSerializer);
 
         // if (r == BuiltInRegistries.A || r == B || ...) proceed; else return v
         for (String field : mapCodecRegistries) {

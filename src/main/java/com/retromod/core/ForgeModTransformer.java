@@ -85,6 +85,17 @@ public class ForgeModTransformer {
      * or null if it failed or was skipped.
      */
     public Path transformMod(Path sourceJar, Path outputDir) throws IOException {
+        // SRG ids a Forge mod carries mean what they meant in its own version (see
+        // RetromodTransformer.registerSrgVersionDrift), so the remap needs that version.
+        bytecodeTransformer.setSrgSourceVersion(extractMinecraftVersion(sourceJar));
+        try {
+            return transformModForItsVersion(sourceJar, outputDir);
+        } finally {
+            bytecodeTransformer.setSrgSourceVersion(null);
+        }
+    }
+
+    private Path transformModForItsVersion(Path sourceJar, Path outputDir) throws IOException {
         String originalName = sourceJar.getFileName().toString();
         String baseName = originalName.replace(".jar", "");
         // When a mod ships no module-info, NeoForge/Forge derive the JPMS module
@@ -147,6 +158,11 @@ public class ForgeModTransformer {
             stripAccessWideners(tempDir);
             sanitizeAccessTransformer(tempDir);
             stripMixinSyntheticPackage(tempDir);
+            stripBundledMixinExtras(tempDir);
+            GeckoLib3Coexistence.relocateDemoPackage(tempDir);
+            // Before the embed, so the injected registration call pulls the modifier in.
+            com.retromod.shim.forge.LegacyBiomeLoadingBridge.wire(tempDir, bytecodeTransformer);
+            com.retromod.shim.common.LegacyBannerPatternBridge.writeTags(tempDir);
 
             // Embed registered synthetic classes this mod references under a
             // unique-per-mod Retromod package (split-package-safe) and redirect
@@ -180,6 +196,8 @@ public class ForgeModTransformer {
             if (dataMigrated > 0) {
                 LOGGER.info("Migrated 26.x data formats in {} data file(s)", dataMigrated);
             }
+            com.retromod.resources.LegacyDataMigrations.migrateTree(
+                    tempDir, modMcVersion, targetMcVersion);
 
             // Stamp the manifest so runtime code can tell a Retromod-brought mod from a
             // native one (#14/#46). The Fabric path already stamps Retromod-Transformed.
@@ -221,6 +239,10 @@ public class ForgeModTransformer {
 
             if (entry != null) {
                 String content = readUtf8Metadata(jar, entry);
+                String declared = minecraftDependencyVersion(content);
+                if (declared != null) {
+                    return declared;
+                }
                 Pattern p = Pattern.compile("versionRange\\s*=\\s*\"\\[([0-9.]+)");
                 Matcher m = p.matcher(content);
                 // first match is usually the forge/neoforge version; keep
@@ -231,6 +253,31 @@ public class ForgeModTransformer {
                         return version;
                     }
                 }
+            }
+        }
+        return null;
+    }
+
+    private static final Pattern MINECRAFT_MOD_ID = Pattern.compile("modId\\s*=\\s*\"minecraft\"");
+    private static final Pattern RANGE_LOWER_BOUND =
+            Pattern.compile("versionRange\\s*=\\s*\"[\\[(]?\\s*([0-9][0-9.]*)");
+
+    /**
+     * The lower bound of the {@code minecraft} dependency's range, or null without one.
+     *
+     * <p>The first range in the file is often another dependency's. GeckoLib 3 declares
+     * {@code forge [40.0,)} first and Archipelago Additions declares {@code iobaddons [1.1d,)},
+     * which read as Minecraft "40.0" and "1.1". The SRG drift table then picked the wrong name for
+     * an id whose meaning changed, such as {@code m_7366_} (#311).
+     */
+    static String minecraftDependencyVersion(String toml) {
+        for (String block : toml.split("(?=\\[\\[dependencies\\.)")) {
+            if (!block.startsWith("[[dependencies.") || !MINECRAFT_MOD_ID.matcher(block).find()) {
+                continue;
+            }
+            Matcher range = RANGE_LOWER_BOUND.matcher(block);
+            if (range.find()) {
+                return range.group(1).replaceAll("\\.$", "");
             }
         }
         return null;
@@ -347,6 +394,9 @@ public class ForgeModTransformer {
 
     private int transformClasses(Path dir,
             com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs) throws IOException {
+        // Before the snapshot, so the class pass and its hierarchy see the renamed interface.
+        com.retromod.shim.fabric.Pre1_20_5MojangArmorMaterialBridge.renameInLegacyJar(bytecodeTransformer, dir);
+
         final java.util.List<Path> classFiles;
         try (var stream = Files.walk(dir)) {
             classFiles = stream
@@ -365,6 +415,7 @@ public class ForgeModTransformer {
             classSnapshot.put(className, Files.readAllBytes(classFile));
         }
         final Map<String, byte[]> originalClasses = Map.copyOf(classSnapshot);
+        final boolean preFlatteningJar = isPreFlatteningForgeJar(dir, originalClasses.values());
 
         // Classes are independent and the redirect tables are safe to read in parallel.
         final java.util.concurrent.atomic.AtomicInteger counter =
@@ -392,6 +443,10 @@ public class ForgeModTransformer {
                             com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
                         preStripped = com.retromod.shim.common.Gui2DTransformMigration.migrate(preStripped);
                     }
+                    if (preFlatteningJar) {
+                        preStripped = com.retromod.shim.forge.Forge1122FluidBridge
+                                .renameSharedFluidTypes(preStripped);
+                    }
                     byte[] transformed = bytecodeTransformer.transformClass(preStripped, className);
                     // Keep the ValueIO repair in the same post-remap position on every loader.
                     if (transformed != null) {
@@ -401,6 +456,8 @@ public class ForgeModTransformer {
                     // These helpers inspect the class and leave unrelated versions unchanged.
                     transformed = com.retromod.shim.forge.ForgeEventBusSynthetics
                             .stripLenientAutoSubscriber(transformed);
+                    transformed = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard
+                            .apply(transformed);
                     transformed = com.retromod.shim.forge.Forge1122LifecycleSynthetics
                             .upgradeLegacyModClass(transformed);
                     boolean wroteFirst = false;
@@ -410,10 +467,12 @@ public class ForgeModTransformer {
                         wroteFirst = true;
                     }
 
-                    // Inject missing abstract methods for Button subclasses.
+                    // Inject missing abstract methods for Button subclasses. The method names a
+                    // 26.x type, so only an unobfuscated host gets it, as in the CLI path.
                     byte[] current = (transformed != null && transformed != original) ? transformed : original;
-                    byte[] patched = com.retromod.shim.common.LegacyAbstractButtonBridge
-                            .apply(current);
+                    byte[] patched = com.retromod.core.RetromodVersion.isUnobfuscatedTarget(targetMcVersion)
+                            ? com.retromod.shim.common.LegacyAbstractButtonBridge.apply(current)
+                            : current;
                     if (patched != null && patched != current) {
                         Files.write(classFile, patched);
                         if (!wroteFirst) counter.incrementAndGet();
@@ -536,6 +595,15 @@ public class ForgeModTransformer {
             int classesTransformed = transformClasses(tempDir, refmapRepairs);
             int refmapsTransformed = transformRefmaps(tempDir);
             boolean accessTransformerNormalized = sanitizeAccessTransformer(tempDir);
+            // A bundled mod loads its own @Mod class and data, so it gets its own biome modifier
+            // and banner tags. The calls these add pull in synthetics, which marks the jar changed.
+            com.retromod.shim.forge.LegacyBiomeLoadingBridge.wire(tempDir, bytecodeTransformer);
+            com.retromod.shim.common.LegacyBannerPatternBridge.writeTags(tempDir);
+            // A bundled library loads as its own mod file, so it needs its own copy of every
+            // synthetic its rewritten classes now name, exactly like the outer mod. The key carries
+            // the parent path, as on the CLI and AOT paths, so two parents bundling different
+            // libraries under one file name never export the same embedded package.
+            int synthetics = SyntheticEmbedder.embed(tempDir, archiveKey, bytecodeTransformer);
 
             boolean hasForgeToml      = Files.exists(tempDir.resolve("META-INF/mods.toml"));
             boolean hasNeoForgeToml   = Files.exists(tempDir.resolve("META-INF/neoforge.mods.toml"));
@@ -550,13 +618,16 @@ public class ForgeModTransformer {
 
             int dataMigrated = com.retromod.resources.ModDataMigrator.migrateTreeChecked(
                     tempDir, targetMcVersion);
+            // A bundled library is built for whatever its own metadata says.
+            dataMigrated += com.retromod.resources.LegacyDataMigrations.migrateTree(tempDir,
+                    com.retromod.resources.LegacyDataMigrations.declaredVersion(jijJar), targetMcVersion);
 
             int nestedPatched = depth < MAX_JIJ_DEPTH
                     ? patchJarInJarMetadata(tempDir, depth + 1, budget, archiveKey)
                     : 0;
 
             boolean changed = classesTransformed > 0 || refmapsTransformed > 0
-                    || accessTransformerNormalized
+                    || accessTransformerNormalized || synthetics > 0
                     || hasForgeToml || hasNeoForgeToml
                     || dataMigrated > 0 || nestedPatched > 0;
             if (!changed) {
@@ -586,7 +657,11 @@ public class ForgeModTransformer {
         Path forgeToml = tempDir.resolve("META-INF/mods.toml");
         Path neoToml = tempDir.resolve("META-INF/neoforge.mods.toml");
         Path mcmod = tempDir.resolve("mcmod.info");
-        if (Files.exists(forgeToml) || Files.exists(neoToml) || !Files.exists(mcmod)) return;
+        if (Files.exists(forgeToml) || Files.exists(neoToml)) return;
+        if (!Files.exists(mcmod)) {
+            generateTomlFromLegacyModClasses(tempDir, forgeToml);
+            return;
+        }
 
         String json = JsonSecurity.readUtf8(mcmod, MAX_METADATA_SIZE,
                 JsonSecurity.DEFAULT_MAX_DEPTH, "mcmod.info");
@@ -640,6 +715,85 @@ public class ForgeModTransformer {
         Files.writeString(forgeToml, toml.toString());
         LOGGER.info("Generated META-INF/mods.toml from legacy mcmod.info ({} mod(s): {}, #79/#115)",
                 ids.size(), String.join(", ", ids));
+    }
+
+    /**
+     * Whether an extracted jar is a pre-1.13 Forge mod. Forge 1.13 reused some 1.12.2 class names
+     * for new classes, so a rename to the 1.12.2 stand-ins must be scoped to these jars. Every
+     * 1.13+ Forge or NeoForge mod ships a mods.toml. A 1.12.2 mod ships {@code mcmod.info} or,
+     * without one, still uses the 1.12 lifecycle events, a package Forge 1.13 deleted.
+     */
+    static boolean isPreFlatteningForgeJar(Path dir, java.util.Collection<byte[]> classes) {
+        if (Files.exists(dir.resolve("META-INF/mods.toml"))
+                || Files.exists(dir.resolve("META-INF/neoforge.mods.toml"))) return false;
+        if (Files.exists(dir.resolve("mcmod.info"))) return true;
+        for (byte[] bytes : classes) {
+            if (new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1)
+                    .contains("net/minecraftforge/fml/common/event/FML")) return true;
+        }
+        return false;
+    }
+
+    /** Marker of a 1.12.2 {@code @Mod} class the lifecycle bridge upgraded: its {@code attach} call. */
+    private static final String LEGACY_ATTACH_OWNER = "com/retromod/shim/forge/embedded/LegacyForgeEvents";
+    private static final int MAX_LEGACY_MOD_CLASS_SCAN = 50_000;
+
+    /**
+     * Synthesize a {@code META-INF/mods.toml} for a 1.12.2 mod that ships no {@code mcmod.info}.
+     * 1.12 allowed that: FML read the id from {@code @Mod} and the mod filled its metadata in code.
+     * The ids come from the {@code @Mod} classes the lifecycle bridge already upgraded, so a modern
+     * mod without a toml is never given one.
+     */
+    private void generateTomlFromLegacyModClasses(Path tempDir, Path forgeToml) throws IOException {
+        List<String> ids = new ArrayList<>();
+        try (var walk = Files.walk(tempDir)) {
+            Iterator<Path> it = walk.filter(f -> f.toString().endsWith(".class"))
+                    .limit(MAX_LEGACY_MOD_CLASS_SCAN).iterator();
+            while (it.hasNext()) {
+                String id = legacyModId(Files.readAllBytes(it.next()));
+                if (id != null && !ids.contains(id)) ids.add(id);
+            }
+        }
+        if (ids.isEmpty()) return;
+
+        StringBuilder toml = new StringBuilder()
+                .append("# Generated by Retromod from the @Mod annotation (1.12.2 mod without mcmod.info)\n")
+                .append("modLoader=\"javafml\"\n")
+                .append("loaderVersion=\"[1,)\"\n")
+                .append("license=\"All Rights Reserved\"\n");
+        for (String id : ids) appendModBlock(toml, id, null, id, "", null);
+        for (String id : ids) appendDependencyBlocks(toml, id);
+        Files.createDirectories(forgeToml.getParent());
+        Files.writeString(forgeToml, toml.toString());
+        LOGGER.info("Generated META-INF/mods.toml from @Mod for a 1.12.2 mod without mcmod.info ({})",
+                String.join(", ", ids));
+    }
+
+    /** The value-shaped {@code @Mod} id of an upgraded 1.12.2 mod class, or null. */
+    static String legacyModId(byte[] classBytes) {
+        String pool = new String(classBytes, java.nio.charset.StandardCharsets.ISO_8859_1);
+        if (!pool.contains(LEGACY_ATTACH_OWNER) || !pool.contains("fml/common/Mod;")) return null;
+        String[] id = new String[1];
+        try {
+            new ClassReader(classBytes).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public AnnotationVisitor visitAnnotation(String desc, boolean visible) {
+                    if (!desc.equals("Lnet/minecraftforge/fml/common/Mod;")
+                            && !desc.equals("Lnet/neoforged/fml/common/Mod;")) return null;
+                    return new AnnotationVisitor(Opcodes.ASM9) {
+                        @Override
+                        public void visit(String name, Object value) {
+                            if ("value".equals(name) && value instanceof String s && !s.isBlank()) {
+                                id[0] = normalizeModId(s);
+                            }
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        } catch (RuntimeException malformed) {
+            return null;
+        }
+        return id[0];
     }
 
     /** One {@code [[mods]]} block. Placeholder/blank versions fall back to 1.0.0; name/desc TOML-escaped. */
@@ -894,6 +1048,72 @@ public class ForgeModTransformer {
             LOGGER.info("Stripped org/spongepowered/asm/synthetic/ from mod jar - NeoForge's "
                     + "mixin_synthetic module owns that package (#87)");
         }
+    }
+
+    /**
+     * Drop a bundled Forge build of MixinExtras when NeoForge provides its own (#308).
+     * NeoForge never reads a Forge mod's jar-in-jar, so the copy was inert. Once the mod is
+     * promoted, NeoForge loads it beside its own MixinExtras, both export the same packages, and
+     * module resolution fails before any mod runs.
+     */
+    private void stripBundledMixinExtras(Path tempDir) throws IOException {
+        if (!com.retromod.util.McReflect.isNeoForge()) return;
+        if (RetromodVersion.mcVersionExceeds("1.20.2", targetMcVersion)) return;
+        if (!com.retromod.util.McReflect.classExists("com.llamalad7.mixinextras.MixinExtrasBootstrap")) {
+            return;
+        }
+
+        int removed = stripJarInJarArtifact(tempDir, "io.github.llamalad7", "mixinextras-forge");
+        if (removed > 0) {
+            LOGGER.info("Removed the bundled Forge MixinExtras; NeoForge provides its own (#308)");
+        }
+    }
+
+    /**
+     * Remove one artifact from {@code META-INF/jarjar/metadata.json} and delete the jar its entry
+     * names. The path can point outside {@code META-INF/jarjar/}, for example into
+     * {@code META-INF/jars/}. Returns how many entries were removed.
+     */
+    static int stripJarInJarArtifact(Path dir, String group, String artifact) throws IOException {
+        Path metadata = dir.resolve("META-INF/jarjar/metadata.json");
+        if (!Files.isRegularFile(metadata)) return 0;
+
+        String json = Files.readString(metadata);
+        JsonSecurity.validate(json, "jar-in-jar metadata");
+        com.google.gson.JsonObject root = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        if (!root.has("jars") || !root.get("jars").isJsonArray()) return 0;
+
+        com.google.gson.JsonArray kept = new com.google.gson.JsonArray();
+        int removed = 0;
+        Path base = dir.toAbsolutePath().normalize();
+        for (com.google.gson.JsonElement element : root.getAsJsonArray("jars")) {
+            if (!isJarInJarArtifact(element, group, artifact)) {
+                kept.add(element);
+                continue;
+            }
+            com.google.gson.JsonElement path = element.getAsJsonObject().get("path");
+            if (path != null && path.isJsonPrimitive()) {
+                Path jar = base.resolve(path.getAsString()).normalize();
+                if (jar.startsWith(base)) Files.deleteIfExists(jar);
+            }
+            removed++;
+        }
+        if (removed == 0) return 0;
+
+        root.add("jars", kept);
+        Files.writeString(metadata,
+                new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(root));
+        return removed;
+    }
+
+    private static boolean isJarInJarArtifact(com.google.gson.JsonElement element,
+            String group, String artifact) {
+        if (!element.isJsonObject()) return false;
+        com.google.gson.JsonElement id = element.getAsJsonObject().get("identifier");
+        if (id == null || !id.isJsonObject()) return false;
+        com.google.gson.JsonObject identifier = id.getAsJsonObject();
+        return identifier.has("group") && group.equals(identifier.get("group").getAsString())
+                && identifier.has("artifact") && artifact.equals(identifier.get("artifact").getAsString());
     }
 
     /**

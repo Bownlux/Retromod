@@ -8,6 +8,26 @@ description: "Highlights from Retromod releases."
 
 This page keeps the release history readable. The [full technical changelog](https://github.com/Bownlux/Retromod/blob/main/CHANGELOG.md) lists every fix and regression test.
 
+## 1.3.3, October 7, 2026
+
+- Delivers Forge mods' network messages between client and server on NeoForge.
+- Bridges Forge configs, menus, capabilities, custom registries, client extensions, brewing recipes, and more of Forge's events for Forge mods on NeoForge.
+- Runs the lifecycle and event bus of 1.12.2 Forge mods, so simple 1.12.2 content mods register their blocks and items.
+- Restores the worldgen, creative tabs, natural spawns, and rendering math that 1.16 to 1.19 Forge mods rely on.
+- Loads more 1.19.2 Forge content mods on 1.20.1: sounds, buttons, doors, armor, damage sources, explosions, and blocks built from `Material`.
+- Lets 1.18.2 GeckoLib 3 mods run beside GeckoLib 4 on Forge 1.20.1.
+- Keeps mods' overrides of Minecraft methods working on Forge 1.20.1, where they were silently never called.
+- Repairs mods built before 1.20.5 on newer hosts: armor materials, food, tools, attributes, mob effects, entity data, saplings, and block entity saving.
+- Repairs older Fabric mods on Fabric 1.20.5 to 1.21.x: Mixin accessors, item stack tags, particles, armor, packs, and Fabric API networking and loot callbacks.
+- Repairs 1.21.x Fabric mods on 26.x: library-registered blocks, chests, leaves, food effects, recipes, saved data, particles, world render events, baked quads, and HUD and first-person mixins.
+- Keeps parallel transforms deterministic, so a mod no longer comes out partly untranslated on an unlucky launch.
+- Fixes a boot `ResolutionException` when a Forge mod bundles its own MixinExtras on NeoForge.
+- Keeps old Fabric mods' keybinds from disappearing in sorted keybind lists on 26.x.
+- Reports a missing Fabric Language Kotlin by name instead of closing the game without a crash report.
+- Fixes doors dropping twice, and other wrong drops from older mods, on 26.3, which changed its loot format.
+
+Several large mods still stop at a later failure, including mods that register enchantments in code, which 1.21 made data-driven. 1.12.2 mods register their content, but 1.12 world generation, commands, GUIs, fluids, and networking do not run. Client rendering is the least tested part of this release, and some 26.2 renderer features, such as custom vehicle geometry, still do not draw.
+
 ## 1.3.2, September 30, 2026
 
 - Adds Forge 26.3.

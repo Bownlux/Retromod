@@ -174,6 +174,23 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
         forgeReg(transformer, "RECIPE_TYPES", "RECIPE_TYPE", REGISTRY);
         forgeReg(transformer, "ATTRIBUTES", "ATTRIBUTE", REGISTRY);
         forgeReg(transformer, "CREATIVE_MODE_TABS", "CREATIVE_MODE_TAB", REGISTRY);
+        // Worldgen and AI registries, read by mods that create their own DeferredRegister (#306).
+        // Descriptors verified against BuiltInRegistries on 1.21.1.
+        forgeReg(transformer, "FEATURES", "FEATURE", REGISTRY);
+        forgeReg(transformer, "WORLD_CARVERS", "CARVER", REGISTRY);
+        forgeReg(transformer, "BLOCK_STATE_PROVIDER_TYPES", "BLOCKSTATE_PROVIDER_TYPE", REGISTRY);
+        forgeReg(transformer, "FOLIAGE_PLACER_TYPES", "FOLIAGE_PLACER_TYPE", REGISTRY);
+        forgeReg(transformer, "TREE_DECORATOR_TYPES", "TREE_DECORATOR_TYPE", REGISTRY);
+        forgeReg(transformer, "STAT_TYPES", "STAT_TYPE", REGISTRY);
+        forgeReg(transformer, "COMMAND_ARGUMENT_TYPES", "COMMAND_ARGUMENT_TYPE", REGISTRY);
+        forgeReg(transformer, "POI_TYPES", "POINT_OF_INTEREST_TYPE", REGISTRY);
+        forgeReg(transformer, "SCHEDULES", "SCHEDULE", REGISTRY);
+        forgeReg(transformer, "ACTIVITIES", "ACTIVITY", REGISTRY);
+        forgeReg(transformer, "VILLAGER_PROFESSIONS", "VILLAGER_PROFESSION", DEFAULTED_REGISTRY);
+        forgeReg(transformer, "MEMORY_MODULE_TYPES", "MEMORY_MODULE_TYPE", DEFAULTED_REGISTRY);
+        forgeReg(transformer, "SENSOR_TYPES", "SENSOR_TYPE", DEFAULTED_REGISTRY);
+        forgeReg(transformer, "CHUNK_STATUS", "CHUNK_STATUS", DEFAULTED_REGISTRY);
+        registerDatapackRegistryStandIns(transformer);
 
         // Registry instance lookups: ForgeRegistries.X.getValue(loc), .getKey(v), ...
         // After the field redirects above, ForgeRegistries.X is a registry instance, but the call
@@ -190,16 +207,39 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
         registryLookup(transformer, "containsKey",
                 "(Lnet/minecraft/resources/ResourceLocation;)Z",
                 "containsKey", "(Lnet/minecraft/resources/ResourceLocation;)Z");
+        // Forge's entry and key views have the vanilla shapes under vanilla names (#306).
+        registryLookup(transformer, "getEntries", "()Ljava/util/Set;", "entrySet", "()Ljava/util/Set;");
+        registryLookup(transformer, "getKeys", "()Ljava/util/Set;", "keySet", "()Ljava/util/Set;");
+        String registryCalls = "com/retromod/shim/forge/embedded/LegacyRegistryCalls";
+        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, registryCalls,
+                com.retromod.shim.forge.embedded.LegacyRegistryCalls.class);
+        transformer.registerMethodRedirect("net/minecraftforge/registries/IForgeRegistry", "getValues",
+                "()Ljava/util/Collection;", registryCalls, "getValues",
+                "(Ljava/lang/Object;)Ljava/util/Collection;", true);
 
         transformer.registerClassRedirect(
             "net/minecraftforge/registries/ForgeRegistries$Keys",
             "net/neoforged/neoforge/registries/NeoForgeRegistries$Keys"
         );
+        // Forge's ForgeRegistries.Keys also held the vanilla registry keys. NeoForge kept only its
+        // own registries in NeoForgeRegistries.Keys, so a vanilla key read through the class
+        // redirect above fails with NoSuchFieldError. Send those reads to Registries, which names
+        // the same ResourceKey in singular form. Keyed on the post-ClassRemapper owner.
+        for (String[] key : VANILLA_REGISTRY_KEYS) {
+            transformer.registerFieldRedirect(
+                "net/neoforged/neoforge/registries/NeoForgeRegistries$Keys", key[0], RESOURCE_KEY,
+                "net/minecraft/core/registries/Registries", key[1], RESOURCE_KEY);
+        }
 
-        transformer.registerClassRedirect(
-            "net/minecraftforge/registries/RegistryBuilder",
-            "net/neoforged/neoforge/registries/RegistryBuilder"
-        );
+        // NeoForge 1.21 and newer get a Forge-shaped builder from LegacyCustomRegistryBridge instead.
+        // NeoForge's builder has neither the no-argument constructor nor setName, so this rename
+        // alone cannot link, and it would hide the Forge name the bridge's stand-in replaces.
+        if (!com.retromod.shim.forge.LegacyCustomRegistryBridge.handlesHost()) {
+            transformer.registerClassRedirect(
+                "net/minecraftforge/registries/RegistryBuilder",
+                "net/neoforged/neoforge/registries/RegistryBuilder"
+            );
+        }
 
         // legacy GameRegistry
         transformer.registerClassRedirect(
@@ -214,9 +254,60 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
         );
     }
 
+    private static final String RESOURCE_KEY = "Lnet/minecraft/resources/ResourceKey;";
+
+    /**
+     * Forge 1.20.1 {@code ForgeRegistries.Keys} fields that name a vanilla registry, paired with the
+     * {@code Registries} field for the same key. Forge-only keys stay on NeoForgeRegistries.Keys.
+     * {@code SCHEDULE} is absent from Registries on 1.21.11 and newer, so that read still fails there.
+     */
+    private static final String[][] VANILLA_REGISTRY_KEYS = {
+        {"ACTIVITIES", "ACTIVITY"}, {"ATTRIBUTES", "ATTRIBUTE"}, {"BIOMES", "BIOME"},
+        {"BLOCK_ENTITY_TYPES", "BLOCK_ENTITY_TYPE"},
+        {"BLOCK_STATE_PROVIDER_TYPES", "BLOCK_STATE_PROVIDER_TYPE"}, {"BLOCKS", "BLOCK"},
+        {"CHUNK_STATUS", "CHUNK_STATUS"}, {"COMMAND_ARGUMENT_TYPES", "COMMAND_ARGUMENT_TYPE"},
+        {"ENCHANTMENTS", "ENCHANTMENT"}, {"ENTITY_TYPES", "ENTITY_TYPE"}, {"FEATURES", "FEATURE"},
+        {"FLUIDS", "FLUID"}, {"FOLIAGE_PLACER_TYPES", "FOLIAGE_PLACER_TYPE"}, {"ITEMS", "ITEM"},
+        {"MEMORY_MODULE_TYPES", "MEMORY_MODULE_TYPE"}, {"MENU_TYPES", "MENU"},
+        {"MOB_EFFECTS", "MOB_EFFECT"}, {"PAINTING_VARIANTS", "PAINTING_VARIANT"},
+        {"PARTICLE_TYPES", "PARTICLE_TYPE"}, {"POI_TYPES", "POINT_OF_INTEREST_TYPE"},
+        {"POTIONS", "POTION"}, {"RECIPE_SERIALIZERS", "RECIPE_SERIALIZER"},
+        {"RECIPE_TYPES", "RECIPE_TYPE"}, {"SCHEDULES", "SCHEDULE"}, {"SENSOR_TYPES", "SENSOR_TYPE"},
+        {"SOUND_EVENTS", "SOUND_EVENT"}, {"STAT_TYPES", "STAT_TYPE"},
+        {"TREE_DECORATOR_TYPES", "TREE_DECORATOR_TYPE"},
+        {"VILLAGER_PROFESSIONS", "VILLAGER_PROFESSION"}, {"WORLD_CARVERS", "CARVER"},
+    };
+
     /** The two BuiltInRegistries field shapes on 26.1. */
     private static final String DEFAULTED_REGISTRY = "Lnet/minecraft/core/DefaultedRegistry;";
     private static final String REGISTRY = "Lnet/minecraft/core/Registry;";
+
+    /**
+     * Enchantments and painting variants became datapack registries in 1.21, so BuiltInRegistries
+     * has no field to read. A host that still has one gets the plain field redirect; a newer host
+     * gets a stand-in that only answers {@code key()}, which is all {@code DeferredRegister.create}
+     * needs. The mod's Java entries for those registries cannot bind there.
+     */
+    static void registerDatapackRegistryStandIns(RetromodTransformer transformer) {
+        String helper = "com/retromod/shim/api/forge/embedded/LegacyDatapackRegistries";
+        String[][] registries = {{"ENCHANTMENTS", "ENCHANTMENT", "enchantments"},
+                {"PAINTING_VARIANTS", "PAINTING_VARIANT", "paintingVariants"}};
+        org.objectweb.asm.tree.ClassNode builtIn =
+                com.retromod.core.ClassResourceInspector.read("net/minecraft/core/registries/BuiltInRegistries");
+        for (String[] registry : registries) {
+            boolean builtInField = builtIn != null
+                    && builtIn.fields.stream().anyMatch(field -> field.name.equals(registry[1]));
+            if (builtInField) {
+                forgeReg(transformer, registry[0], registry[1], REGISTRY);
+                continue;
+            }
+            if (builtIn == null) continue;
+            com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, helper,
+                    com.retromod.shim.api.forge.embedded.LegacyDatapackRegistries.class);
+            transformer.registerFieldRedirect("net/minecraftforge/registries/ForgeRegistries", registry[0],
+                    "Lnet/minecraftforge/registries/IForgeRegistry;", helper, registry[2], "()Ljava/lang/Object;");
+        }
+    }
 
     /**
      * ForgeRegistries.&lt;plural&gt; field read (typed IForgeRegistry, removed on NeoForge) ->

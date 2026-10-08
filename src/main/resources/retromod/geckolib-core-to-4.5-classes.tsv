@@ -1,0 +1,55 @@
+# GeckoLib 4.0-4.4 (Minecraft 1.20.1) to GeckoLib 4.5+ (Minecraft 1.20.6 to 1.21.4) class moves.
+#
+# Format: OLD_INTERNAL_NAME<TAB>NEW_INTERNAL_NAME
+#
+# GeckoLib 4.5 folded its software.bernie.geckolib.core package into the main packages, so a mod
+# built for 1.20.1 fails on a 1.21.1 host with NoClassDefFoundError:
+# software/bernie/geckolib/core/animation/AnimationController (#308).
+#
+# Derived from the core classes Fossils and Archeology 9.3.4.0 and the 4.8.4 to 5.5.2 table name,
+# matched against geckolib-neoforge-1.21.1-4.9.3: a pair is taken when dropping "core/" lands on a
+# 4.9.3 class or exactly one 4.9.3 class has that simple name. CoreGeoBone and CoreGeoModel were
+# interfaces that 4.5 merged into the GeoBone and GeoModel classes.
+software/bernie/geckolib/core/animatable/GeoAnimatable	software/bernie/geckolib/animatable/GeoAnimatable
+software/bernie/geckolib/core/animatable/instance/AnimatableInstanceCache	software/bernie/geckolib/animatable/instance/AnimatableInstanceCache
+software/bernie/geckolib/core/animatable/instance/InstancedAnimatableInstanceCache	software/bernie/geckolib/animatable/instance/InstancedAnimatableInstanceCache
+software/bernie/geckolib/core/animatable/instance/SingletonAnimatableInstanceCache	software/bernie/geckolib/animatable/instance/SingletonAnimatableInstanceCache
+software/bernie/geckolib/core/animatable/model/CoreGeoBone	software/bernie/geckolib/cache/object/GeoBone
+software/bernie/geckolib/core/animatable/model/CoreGeoModel	software/bernie/geckolib/model/GeoModel
+software/bernie/geckolib/core/animation/AnimatableManager	software/bernie/geckolib/animation/AnimatableManager
+software/bernie/geckolib/core/animation/AnimatableManager$ControllerRegistrar	software/bernie/geckolib/animation/AnimatableManager$ControllerRegistrar
+software/bernie/geckolib/core/animation/Animation	software/bernie/geckolib/animation/Animation
+software/bernie/geckolib/core/animation/Animation$Keyframes	software/bernie/geckolib/animation/Animation$Keyframes
+software/bernie/geckolib/core/animation/Animation$LoopType	software/bernie/geckolib/animation/Animation$LoopType
+software/bernie/geckolib/core/animation/AnimationController	software/bernie/geckolib/animation/AnimationController
+software/bernie/geckolib/core/animation/AnimationController$AnimationStateHandler	software/bernie/geckolib/animation/AnimationController$AnimationStateHandler
+software/bernie/geckolib/core/animation/AnimationController$ParticleKeyframeHandler	software/bernie/geckolib/animation/AnimationController$ParticleKeyframeHandler
+software/bernie/geckolib/core/animation/AnimationController$SoundKeyframeHandler	software/bernie/geckolib/animation/AnimationController$SoundKeyframeHandler
+software/bernie/geckolib/core/animation/AnimationController$CustomKeyframeHandler	software/bernie/geckolib/animation/AnimationController$CustomKeyframeHandler
+software/bernie/geckolib/core/animation/AnimationController$State	software/bernie/geckolib/animation/AnimationController$State
+software/bernie/geckolib/core/animation/AnimationProcessor	software/bernie/geckolib/animation/AnimationProcessor
+software/bernie/geckolib/core/animation/AnimationProcessor$QueuedAnimation	software/bernie/geckolib/animation/AnimationProcessor$QueuedAnimation
+software/bernie/geckolib/core/animation/AnimationState	software/bernie/geckolib/animation/AnimationState
+software/bernie/geckolib/core/animation/ContextAwareAnimatableManager	software/bernie/geckolib/animation/ContextAwareAnimatableManager
+software/bernie/geckolib/core/animation/EasingType	software/bernie/geckolib/animation/EasingType
+software/bernie/geckolib/core/animation/EasingType$CatmullRomEasing	software/bernie/geckolib/animation/EasingType$CatmullRomEasing
+software/bernie/geckolib/core/animation/RawAnimation	software/bernie/geckolib/animation/RawAnimation
+software/bernie/geckolib/core/animation/RawAnimation$Stage	software/bernie/geckolib/animation/RawAnimation$Stage
+software/bernie/geckolib/core/keyframe/AnimationPoint	software/bernie/geckolib/animation/keyframe/AnimationPoint
+software/bernie/geckolib/core/keyframe/AnimationPointQueue	software/bernie/geckolib/animation/keyframe/AnimationPointQueue
+software/bernie/geckolib/core/keyframe/BoneAnimation	software/bernie/geckolib/animation/keyframe/BoneAnimation
+software/bernie/geckolib/core/keyframe/BoneAnimationQueue	software/bernie/geckolib/animation/keyframe/BoneAnimationQueue
+software/bernie/geckolib/core/keyframe/Keyframe	software/bernie/geckolib/animation/keyframe/Keyframe
+software/bernie/geckolib/core/keyframe/KeyframeStack	software/bernie/geckolib/animation/keyframe/KeyframeStack
+software/bernie/geckolib/core/keyframe/event/KeyFrameEvent	software/bernie/geckolib/animation/keyframe/event/KeyFrameEvent
+software/bernie/geckolib/core/keyframe/event/ParticleKeyframeEvent	software/bernie/geckolib/animation/keyframe/event/ParticleKeyframeEvent
+software/bernie/geckolib/core/keyframe/event/SoundKeyframeEvent	software/bernie/geckolib/animation/keyframe/event/SoundKeyframeEvent
+software/bernie/geckolib/core/keyframe/event/data/CustomInstructionKeyframeData	software/bernie/geckolib/animation/keyframe/event/data/CustomInstructionKeyframeData
+software/bernie/geckolib/core/keyframe/event/data/KeyFrameData	software/bernie/geckolib/animation/keyframe/event/data/KeyFrameData
+software/bernie/geckolib/core/keyframe/event/data/ParticleKeyframeData	software/bernie/geckolib/animation/keyframe/event/data/ParticleKeyframeData
+software/bernie/geckolib/core/keyframe/event/data/SoundKeyframeData	software/bernie/geckolib/animation/keyframe/event/data/SoundKeyframeData
+software/bernie/geckolib/core/molang/MolangQueries	software/bernie/geckolib/loading/math/MolangQueries
+software/bernie/geckolib/core/object/Color	software/bernie/geckolib/util/Color
+software/bernie/geckolib/core/object/DataTicket	software/bernie/geckolib/constant/dataticket/DataTicket
+software/bernie/geckolib/core/object/PlayState	software/bernie/geckolib/animation/PlayState
+software/bernie/geckolib/core/state/BoneSnapshot	software/bernie/geckolib/animation/state/BoneSnapshot

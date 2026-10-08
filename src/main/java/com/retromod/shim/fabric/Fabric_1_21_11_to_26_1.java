@@ -167,10 +167,9 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
         // World -> Level renames. ClientWorldEvents, ServerEntityWorldChangeEvents and
         // ServerWorldEvents go through FabricRenamedSamBridgesShim/FabricServerWorldEventsShim
         // instead: both their SAM methods and holder fields renamed (lambda trap + NoSuchFieldError).
-        transformer.registerClassRedirect(
-            "net/fabricmc/fabric/api/client/rendering/v1/WorldRenderEvents",
-            "net/fabricmc/fabric/api/client/rendering/v1/level/LevelRenderEvents"
-        );
+        // The event holder and its callbacks were renamed member by member, so a class redirect
+        // alone left END and its End callback unresolved (#296). The bridge maps each one.
+        com.retromod.shim.api.fabric.LegacyLevelRenderBridge.register(transformer);
         transformer.registerClassRedirect(
             "net/fabricmc/fabric/api/client/rendering/v1/WorldRenderContext",
             "net/fabricmc/fabric/api/client/rendering/v1/level/LevelRenderContext"

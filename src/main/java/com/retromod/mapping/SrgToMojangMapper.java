@@ -127,7 +127,37 @@ public final class SrgToMojangMapper {
             return 0;
         }
         transformer.registerSrgNameMappings(methodMap, fieldMap);
+        registerVersionDrift(transformer);
         return methodMap.size() + fieldMap.size();
+    }
+
+    private static final String DRIFT_RESOURCE = "/retromod/srg-version-drift.tsv";
+
+    /**
+     * Loads the ids whose Mojang name changed across versions (scripts/harvest-srg-drift.py), so a
+     * mod resolves each to the name it had in the mod's own version rather than in 1.20.1.
+     */
+    private static void registerVersionDrift(RetromodTransformer transformer) {
+        Map<String, java.util.List<RetromodTransformer.SrgDrift>> ranges = new java.util.LinkedHashMap<>();
+        try (InputStream input = SrgToMojangMapper.class.getResourceAsStream(DRIFT_RESOURCE)) {
+            if (input == null) return;
+            BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isBlank() || line.startsWith("#")) continue;
+                String[] parts = line.split("\t");
+                if (parts.length != 5) continue;
+                ranges.computeIfAbsent(parts[0] + '\t' + parts[1], key -> new java.util.ArrayList<>())
+                        .add(new RetromodTransformer.SrgDrift(parts[2], parts[3], parts[4]));
+            }
+        } catch (IOException e) {
+            LOGGER.warn("Could not load SRG version drift from {}: {}", DRIFT_RESOURCE, e.toString());
+            return;
+        }
+        ranges.forEach((key, drift) -> {
+            String[] kindAndName = key.split("\t");
+            transformer.registerSrgVersionDrift(kindAndName[0], kindAndName[1], drift);
+        });
     }
 
     // Mapping data

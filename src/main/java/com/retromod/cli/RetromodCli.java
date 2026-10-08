@@ -592,6 +592,8 @@ public class RetromodCli {
         initializeMixinTargetIndex(transformer, mcJarPath);
 
         String sourceMcVersion = info.targetMcVersion();
+        // A Forge mod's SRG ids mean what they meant in its own version.
+        transformer.setSrgSourceVersion(isUnknownSourceVersion(sourceMcVersion) ? null : sourceMcVersion);
         if (isUnknownSourceVersion(sourceMcVersion)) {
             System.err.println("Retromod could not determine the source Minecraft version.");
             System.err.println("It will try every shim that applies to the target.");
@@ -1302,6 +1304,8 @@ public class RetromodCli {
                             // These helpers inspect the class and ignore unrelated versions.
                             data = com.retromod.shim.forge.ForgeEventBusSynthetics
                                     .stripLenientAutoSubscriber(data);
+                            data = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard
+                                    .apply(data);
                             data = com.retromod.shim.forge.Forge1122LifecycleSynthetics
                                     .upgradeLegacyModClass(data);
                             if (com.retromod.core.RetromodVersion
@@ -1392,6 +1396,9 @@ public class RetromodCli {
             }
 
             JarSignatureSanitizer.sanitizeJar(tempOutput);
+            // Pre-1.20 structure and smithing data, which the runtime Forge path migrates as a tree.
+            com.retromod.resources.LegacyDataMigrations.migrateArchive(
+                    tempOutput, info.targetMcVersion(), TARGET_MC_VERSION);
 
             // Opening the completed archive catches a missing central directory before it can
             // replace a good destination. The source and any existing output stay untouched on
@@ -1846,10 +1853,11 @@ public class RetromodCli {
                         + MAX_NESTED_OUTPUT_BYTES + " bytes after helper relocation");
             }
             boolean changed = modified || embedding.embeddedCount() > 0;
-            return changed
+            byte[] nested = changed
                     ? JarSignatureSanitizer.sanitizeJarBytes(
                             embedding.jarBytes(), MAX_NESTED_OUTPUT_BYTES)
                     : embedding.jarBytes();
+            return com.retromod.resources.LegacyDataMigrations.migrateArchive(nested, TARGET_MC_VERSION);
         } catch (IOException e) {
             throw e;
         } catch (Exception e) {

@@ -355,6 +355,13 @@ public class FuzzyMethodResolver {
         return access == null ? -1 : access;
     }
 
+    /** The indexed superclass and interfaces of a class, or an empty list when it is not indexed. */
+    public List<String> directSupertypes(String internalName) {
+        if (!indexed || internalName == null) return List.of();
+        List<String> parents = classHierarchy.get(internalName);
+        return parents == null ? List.of() : Collections.unmodifiableList(parents);
+    }
+
     /**
      * Whether the indexed hierarchy proves that {@code child} is {@code ancestor} or one of its
      * descendants. This is an exact relationship query. It never uses fuzzy member scoring.

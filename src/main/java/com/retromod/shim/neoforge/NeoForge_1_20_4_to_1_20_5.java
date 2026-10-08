@@ -17,6 +17,15 @@ public class NeoForge_1_20_4_to_1_20_5 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // 1.20.5 made ArmorMaterial a registered record, replaced particle deserializers with
+        // codecs, deleted PotionUtils, and folded SimpleFoiledItem into the glint component.
+        // Each bridge probes the host.
+        com.retromod.shim.fabric.Pre1_20_5MojangArmorMaterialBridge.register(transformer);
+        com.retromod.shim.fabric.Pre1_20_5MojangParticleTypeBridge.register(transformer);
+        com.retromod.shim.common.LegacyPotionUtilsBridge.register(transformer);
+        com.retromod.shim.common.LegacyHolderConstantBridge.register(transformer);
+        com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.20.5");
+
         // NBT item tags route through the component bridge
         transformer.registerMethodRedirect(
             "net/minecraft/world/item/ItemStack", "getTag",
@@ -51,18 +60,17 @@ public class NeoForge_1_20_4_to_1_20_5 implements VersionShim {
             "net/neoforged/neoforge/common/util/LazyOptional",
             "java/util/Optional"
         );
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/food/FoodProperties$Builder", "nutrition",
-            "(I)Lnet/minecraft/world/food/FoodProperties$Builder;",
-            "com/retromod/shim/neoforge/embedded/FoodPropertiesShim", "nutrition",
-            "(Ljava/lang/Object;I)Ljava/lang/Object;"
-        );
-        transformer.registerConstructorRedirect(
-            "net/minecraft/world/entity/ai/attributes/AttributeModifier",
-            "(Ljava/util/UUID;Ljava/lang/String;DLnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;)V",
-            "com/retromod/shim/neoforge/embedded/AttributeShim", "createModifier",
-            "(Ljava/util/UUID;Ljava/lang/String;DLjava/lang/Object;)Ljava/lang/Object;"
-        );
+        // Food and attributes go through the host-checked bridges. The redirects that stood here
+        // named FoodPropertiesShim and AttributeShim, which were never written, and nutrition(I)
+        // still exists, so they broke working calls with NoClassDefFoundError.
+        com.retromod.shim.common.LegacyFoodPropertiesBridge.register(transformer);
+        com.retromod.shim.common.LegacyAttributeApiBridge.register(transformer);
+        com.retromod.shim.common.LegacyItemAttributeOverrideAdapter.register(transformer);
+        com.retromod.shim.common.LegacyDispenserBridge.register(transformer);
+        com.retromod.shim.common.LegacyToolItemBridge.register(transformer);
+        com.retromod.shim.common.Legacy1205MemberBridge.register(transformer);
+        com.retromod.shim.common.LegacyCodecTypeBridge.register(transformer);
+        com.retromod.shim.common.LegacyRegistryNbtBridge.register(transformer);
     }
 
     @Override

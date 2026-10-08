@@ -38,11 +38,14 @@ public final class Mc26_1To26_2CoreMoves {
         // class load on 26.2 even if the render path never runs. Stand-ins keep them loading
         // (and their buffer-building code working); frame submission is staged.
         RenderBufferSynthetics.register(t);
+        LegacyRenderBuffersBridge.register(t);
+        LegacyChatFormattingBridge.register(t);
 
         // RenderPipeline.Builder replaced named samplers, the blend shortcut, and its combined
         // vertex-format call in 26.2. Adapt the whole builder chain so a custom pipeline does not
         // fail in its static initializer before Minecraft creates the window (#190).
         LegacyRenderPipelineBuilderBridge.register(t);
+        LegacyDepthBlendBridge.registerBlendFactors(t);
 
         // StructureProcessor itself became an INTERFACE on 26.2 (26.1: abstract class), so a
         // 1.21.x processor's `extends StructureProcessor` dies at class definition with
@@ -59,12 +62,6 @@ public final class Mc26_1To26_2CoreMoves {
         // EntityPredicate$LocationWrapper deliberately has no hop. 26.2 decomposed the single
         // record into three separate entity sub-predicates, so there is no one-to-one successor and
         // any rename would be another wrong destination. A mod using it needs a real port.
-
-        // No blend-factor redirect belongs here. 26.2 merged SourceFactor and DestFactor into
-        // BlendFactor AND changed the RenderSystem.blendFunc overload that consumed them, so a
-        // rename would leave a call to a method that no longer exists. RemovedRenderStateNeutralize
-        // already nulls the enum reads and the call, which is the conservative handling
-        // (ClientStructureBridge26xTest.blendFactorTeardown26_2 holds that shape).
 
         // 26.2 renamed the enclosing chunk-compile task, taking its nested result type with it. The
         // 26.1 table carries the outer move but stopped at this nested name, so a mod translated
@@ -423,6 +420,10 @@ public final class Mc26_1To26_2CoreMoves {
         t.registerClassRedirect("net/minecraft/client/gui/contextualbar/LocatorBarRenderer",
                 "net/minecraft/client/gui/contextualbar/LocatorBar");
 
+        // 26.2 renamed the level render entry point and dropped its ChunkSectionsToRender
+        // parameter. The rename reaches bare Mixin selectors; MixinHostDriftRepair then drops the
+        // capture from a HEAD or TAIL handler that never reads it.
+        t.registerMethodRename("net/minecraft/client/renderer/LevelRenderer", "renderLevel", "render");
         t.registerClassRedirect("net/minecraft/client/renderer/LevelRenderer$BrightnessGetter",
                 "net/minecraft/util/LightCoordsUtil$BrightnessGetter");
         t.registerClassRedirect("net/minecraft/client/renderer/SubmitNodeStorage$FlameSubmit",
@@ -563,6 +564,22 @@ public final class Mc26_1To26_2CoreMoves {
             "()Lnet/minecraft/client/Camera;"
         );
 
+        // ItemInHandRenderer's two first-person entry points became submit* in 26.2 (the render*
+        // names are on 26.1.2 and gone on 26.2, descriptors unchanged). Hold My Items redirects
+        // the arm call inside the hands call and shadows the arm method (#281).
+        String itemInHand = "net/minecraft/client/renderer/ItemInHandRenderer";
+        String handsDesc = "(FLcom/mojang/blaze3d/vertex/PoseStack;"
+                + "Lnet/minecraft/client/renderer/SubmitNodeCollector;"
+                + "Lnet/minecraft/client/player/LocalPlayer;I)V";
+        String armDesc = "(Lnet/minecraft/client/player/AbstractClientPlayer;FF"
+                + "Lnet/minecraft/world/InteractionHand;FLnet/minecraft/world/item/ItemStack;F"
+                + "Lcom/mojang/blaze3d/vertex/PoseStack;"
+                + "Lnet/minecraft/client/renderer/SubmitNodeCollector;I)V";
+        t.registerMethodRedirect(itemInHand, "renderHandsWithItems", handsDesc,
+            itemInHand, "submitHandsWithItems", handsDesc);
+        t.registerMethodRedirect(itemInHand, "renderArmWithItem", armDesc,
+            itemInHand, "submitArmWithItem", armDesc);
+
         // Minecraft.screen (the public @Nullable active-screen field, still public on
         // 26.1-snapshot-10) moved to Gui in 26.2: `private Screen screen` on net/minecraft/client/
         // gui/Gui with public accessors screen()/setScreen(Screen), reached through the public final
@@ -598,6 +615,7 @@ public final class Mc26_1To26_2CoreMoves {
         // 17 Gui members moved to Hud in 26.2 (getChat/getFont/getTabList/title API/...); the
         // receiver hop goes through the generated GuiToHudHop forwarder (see its javadoc).
         GuiToHudHopSynthetic.register(t);
+        LegacyToastManagerSynthetic.register(t);
 
         // 1.21.11-era client classes that moved sub-packages at 26.2 (verified: old path present on
         // 26.1-snapshot-10, only the new path on 26.2). Surfaced by nekomasfixed (#157), whose
@@ -613,14 +631,16 @@ public final class Mc26_1To26_2CoreMoves {
         t.registerClassRedirect("net/minecraft/client/renderer/state/CameraRenderState",
                 "net/minecraft/client/renderer/state/level/CameraRenderState");
 
-        // The promoted 26.1 blend-factor enums (SourceFactor/DestFactor) were DELETED at 26.2
-        // (verified: present on 26.1-snapshot-10, absent on 26.2). Their only mod use is feeding
-        // RenderSystem.blendFunc(Separate), which the render-state neutralizer already pops, so a
-        // GETSTATIC of an enum constant becomes a pushed null (static-field nuller) instead of a
-        // NoClassDefFoundError. The GlStateManager$class_4534/4535 hybrid spellings converge onto
-        // these names via the class-move tsv first.
-        t.registerStaticFieldNuller("com/mojang/blaze3d/platform/SourceFactor");
-        t.registerStaticFieldNuller("com/mojang/blaze3d/platform/DestFactor");
+        // 26.2 merged the 26.1 blend-factor enums (SourceFactor/DestFactor) into BlendFactor, which
+        // carries every constant of both under the same names (verified against both jars). The
+        // redirect keeps a custom pipeline's new BlendFunction(SourceFactor, DestFactor) working,
+        // since BlendFunction kept the matching (BlendFactor, BlendFactor) constructors. Nulling
+        // the constants instead fed nulls into that constructor and broke the static initializer
+        // of every class building one (#251). The imperative RenderSystem.blendFunc overloads have
+        // no 26.2 successor, so they stay neutralized under their redirected descriptors. The
+        // GlStateManager$class_4534/4535 hybrid spellings converge onto these names via the
+        // class-move tsv first. LegacyDepthBlendBridge.registerBlendFactors, called above,
+        // registers both the redirect and the neutralized overloads.
 
         // 26.2 introduced BlockItemTags (paired block+item tag ids) and DELETED the corresponding
         // per-registry constants: 17 from BlockTags and 16 from ItemTags (all still present on

@@ -150,9 +150,32 @@ public final class KeyBindingShim {
         }
 
         Object identifier = IdentifierShim.of(namespace, path);
-        Object category = categoryConstructor.newInstance(identifier);
+        Object category = registerCategory(categoryClass, categoryConstructor, identifier);
         categoryCache.put(categoryString, category);
         return category;
+    }
+
+    /**
+     * Register the category so it gets a slot in Category.SORT_ORDER. An unregistered category
+     * sorts at index -1, so KeyMapping.compareTo returns 0 against every other unregistered
+     * category, and a sorted set of keybinds drops one mod's keys as duplicates. The lookup is by
+     * shape because the method is intermediary-named in production.
+     */
+    static Object registerCategory(Class<?> categoryClass, Constructor<?> categoryConstructor,
+            Object identifier) throws Exception {
+        Class<?> idClass = categoryConstructor.getParameterTypes()[0];
+        for (Method m : categoryClass.getMethods()) {
+            if (Modifier.isStatic(m.getModifiers()) && m.getReturnType() == categoryClass
+                    && m.getParameterCount() == 1 && m.getParameterTypes()[0] == idClass) {
+                try {
+                    return m.invoke(null, identifier);
+                } catch (InvocationTargetException alreadyRegistered) {
+                    // The record compares by id, so an equal instance finds the existing slot.
+                    return categoryConstructor.newInstance(identifier);
+                }
+            }
+        }
+        return categoryConstructor.newInstance(identifier);
     }
 
     // Pre-1.21.9 hosts still have the String-category constructor.

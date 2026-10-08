@@ -130,16 +130,19 @@ class CreativeModeTabBridgeTest {
                 .filter(m -> m.name.equals("<init>") && m.desc.equals("(Ljava/lang/String;)V"))
                 .findFirst().orElseThrow();
 
-        boolean builds = false, titles = false, callsSuper = false, names = false;
+        boolean builds = false, titles = false, callsSuper = false, names = false, lists = false;
         for (AbstractInsnNode insn : ctor.instructions) {
             if (!(insn instanceof MethodInsnNode call)) continue;
             if (call.name.equals("builder") && call.owner.equals(TAB)) builds = true;
             if (call.name.equals("title")) titles = true;
-            if (call.name.equals("literal")) {
+            if (call.name.equals("displayItems")) lists = true;
+            assertNotEquals("literal", call.name,
+                    "a literal title shows the raw label; 1.19.2 translated itemGroup.<label>");
+            if (call.name.equals("translatable")) {
                 names = true;
                 // #290: Component is an interface, and a plain Methodref to it fails at link time
                 // with IncompatibleClassChangeError the moment the tab is constructed.
-                assertTrue(call.itf, "Component.literal must be called through an "
+                assertTrue(call.itf, "Component.translatable must be called through an "
                         + "InterfaceMethodref");
             }
             if (call.name.equals("<init>") && call.owner.equals(TAB)) {
@@ -152,7 +155,8 @@ class CreativeModeTabBridgeTest {
         assertTrue(builds, "the tab has to come from CreativeModeTab.builder()");
         assertTrue(titles, "the name the mod passed has to become the tab's title");
         assertTrue(callsSuper, "the bridge must actually initialise its superclass");
-        assertTrue(names, "the title must come from Component.literal, checked for its itf flag");
+        assertTrue(names, "the title must come from Component.translatable, checked for its itf flag");
+        assertTrue(lists, "the tab needs a displayItems callback, or it opens empty");
     }
 
     @Test
@@ -253,5 +257,69 @@ class CreativeModeTabBridgeTest {
                 "1.20.1-47.3.22_mapped_official_1.20.1",
                 "forge-1.20.1-47.3.22_mapped_official_1.20.1.jar");
         return Files.isRegularFile(candidate) ? candidate : null;
+    }
+
+    @Test
+    @DisplayName("#264/#277/#290: on a Forge 1.20.1 host the embedded tab uses SRG member names")
+    void embeddedTabUsesTargetSrgNames(@org.junit.jupiter.api.io.TempDir Path mod) throws Exception {
+        com.retromod.mapping.TargetSrgMapper.forVersion("1.20.1").applyTo(transformer);
+        // A mod class that extends the rebased base, so the embedder pulls the synthetic in.
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, MOD_TAB, null, GENERATED, null);
+        cw.visitEnd();
+        Files.createDirectories(mod.resolve("test/tabs"));
+        Files.write(mod.resolve(MOD_TAB + ".class"), cw.toByteArray());
+
+        // The tab, its contents callback, and the helper that remembers which item went where.
+        assertEquals(3, com.retromod.core.SyntheticEmbedder.embed(mod, "srg-tab", transformer));
+
+        Path embedded;
+        try (var walk = Files.walk(mod)) {
+            embedded = walk.filter(p -> p.toString().endsWith("LegacyCreativeModeTab.class"))
+                    .findFirst().orElseThrow();
+        }
+        ClassNode tab = new ClassNode();
+        new ClassReader(Files.readAllBytes(embedded)).accept(tab, 0);
+        List<String> declared = new ArrayList<>();
+        List<String> called = new ArrayList<>();
+        for (MethodNode method : tab.methods) {
+            declared.add(method.name);
+            for (AbstractInsnNode insn : method.instructions) {
+                if (insn instanceof MethodInsnNode call && !call.name.startsWith("<")) {
+                    called.add(call.owner + "." + call.name);
+                }
+            }
+        }
+        // builder() and the Builder constructor are Forge patches and keep their names; the
+        // vanilla members the tab uses are SRG named on a Forge 1.20.1 host.
+        assertTrue(called.contains(TAB + ".builder"), "Forge's builder() keeps its name: " + called);
+        assertTrue(called.contains(TAB + "$Builder.m_257941_"), "Builder.title must be SRG: " + called);
+        assertTrue(called.contains("net/minecraft/network/chat/Component.m_237115_"),
+                "Component.translatable must be SRG: " + called);
+        assertTrue(called.contains(TAB + "$Builder.m_257501_"), "Builder.displayItems must be SRG: " + called);
+        assertTrue(declared.contains("m_40787_"), "the getIconItem override must carry its SRG name: "
+                + declared);
+        assertFalse(declared.contains("getIconItem"), declared.toString());
+        assertTrue(declared.contains("makeIcon"), "makeIcon is Retromod's own method and keeps its name");
+
+        Path contents;
+        try (var walk = Files.walk(mod)) {
+            contents = walk.filter(p -> p.toString().endsWith("LegacyCreativeModeTabContents.class"))
+                    .findFirst().orElseThrow();
+        }
+        ClassNode callback = new ClassNode();
+        new ClassReader(Files.readAllBytes(contents)).accept(callback, 0);
+        List<String> callbackDeclared = new ArrayList<>();
+        List<String> callbackCalls = new ArrayList<>();
+        for (MethodNode method : callback.methods) {
+            callbackDeclared.add(method.name);
+            for (AbstractInsnNode insn : method.instructions) {
+                if (insn instanceof MethodInsnNode call) callbackCalls.add(call.owner + "." + call.name);
+            }
+        }
+        assertTrue(callbackDeclared.contains("m_257865_"),
+                "the host calls DisplayItemsGenerator by its SRG name: " + callbackDeclared);
+        assertTrue(callbackCalls.contains(TAB + "$Output.m_246326_"),
+                "Output.accept(ItemLike) must be SRG: " + callbackCalls);
     }
 }

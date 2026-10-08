@@ -43,79 +43,8 @@ public class ForgeCapabilitiesShim implements MinecraftVersionedApiShim {
             return;
         }
 
-        transformer.registerClassRedirect(
-            "net/minecraftforge/common/util/LazyOptional",
-            "com/retromod/shim/api/forge/embedded/LazyOptionalShim"
-        );
-
-        transformer.registerMethodRedirect(
-            "net/minecraftforge/common/util/LazyOptional",
-            "of",
-            "(Lnet/minecraftforge/common/util/NonNullSupplier;)Lnet/minecraftforge/common/util/LazyOptional;",
-            "com/retromod/shim/api/forge/embedded/LazyOptionalShim",
-            "of",
-            "(Ljava/util/function/Supplier;)Lcom/retromod/shim/api/forge/embedded/LazyOptionalShim;"
-        );
-
-        transformer.registerMethodRedirect(
-            "net/minecraftforge/common/util/LazyOptional",
-            "empty",
-            "()Lnet/minecraftforge/common/util/LazyOptional;",
-            "com/retromod/shim/api/forge/embedded/LazyOptionalShim",
-            "empty",
-            "()Lcom/retromod/shim/api/forge/embedded/LazyOptionalShim;"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraftforge/common/capabilities/ICapabilityProvider",
-            "com/retromod/shim/api/forge/embedded/CapabilityProviderShim"
-        );
-
-        transformer.registerMethodRedirect(
-            "net/minecraftforge/common/capabilities/ICapabilityProvider",
-            "getCapability",
-            "(Lnet/minecraftforge/common/capabilities/Capability;Lnet/minecraft/core/Direction;)Lnet/minecraftforge/common/util/LazyOptional;",
-            "com/retromod/shim/api/forge/embedded/CapabilityProviderShim",
-            "getCapability",
-            "(Ljava/lang/Object;Ljava/lang/Object;Lnet/minecraft/core/Direction;)Lcom/retromod/shim/api/forge/embedded/LazyOptionalShim;"
-        );
-
-        // @CapabilityInject is handled in the class transform pass, not here.
-        transformer.registerMethodRedirect(
-            "net/minecraftforge/common/capabilities/CapabilityManager",
-            "register",
-            "(Ljava/lang/Class;Lnet/minecraftforge/common/capabilities/Capability$IStorage;Ljava/util/concurrent/Callable;)V",
-            "com/retromod/shim/api/forge/embedded/CapabilityManagerShim",
-            "register",
-            "(Ljava/lang/Class;Ljava/lang/Object;Ljava/util/concurrent/Callable;)V"
-        );
-
-        transformer.registerFieldRedirect(
-            "net/minecraftforge/common/capabilities/ForgeCapabilities",
-            "ITEM_HANDLER",
-            "Lnet/minecraftforge/common/capabilities/Capability;",
-            "com/retromod/shim/api/forge/embedded/ForgeCapabilitiesShim",
-            "getItemHandler",
-            "()Ljava/lang/Object;"
-        );
-
-        transformer.registerFieldRedirect(
-            "net/minecraftforge/common/capabilities/ForgeCapabilities",
-            "FLUID_HANDLER",
-            "Lnet/minecraftforge/common/capabilities/Capability;",
-            "com/retromod/shim/api/forge/embedded/ForgeCapabilitiesShim",
-            "getFluidHandler",
-            "()Ljava/lang/Object;"
-        );
-
-        transformer.registerFieldRedirect(
-            "net/minecraftforge/common/capabilities/ForgeCapabilities",
-            "ENERGY",
-            "Lnet/minecraftforge/common/capabilities/Capability;",
-            "com/retromod/shim/api/forge/embedded/ForgeCapabilitiesShim",
-            "getEnergy",
-            "()Ljava/lang/Object;"
-        );
+        // LazyOptional, ICapabilityProvider, CapabilityManager, ForgeCapabilities and
+        // AttachCapabilitiesEvent are supplied by LegacyCapabilitySynthetics on NeoForge.
 
         transformer.registerClassRedirect(
             "net/minecraftforge/items/IItemHandler",
@@ -155,20 +84,6 @@ public class ForgeCapabilitiesShim implements MinecraftVersionedApiShim {
         transformer.registerClassRedirect(
             "net/minecraftforge/energy/EnergyStorage",
             "net/neoforged/neoforge/energy/EnergyStorage"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraftforge/event/AttachCapabilitiesEvent",
-            "com/retromod/shim/api/forge/embedded/AttachCapabilitiesEventShim"
-        );
-
-        transformer.registerMethodRedirect(
-            "net/minecraftforge/event/AttachCapabilitiesEvent",
-            "addCapability",
-            "(Lnet/minecraft/resources/ResourceLocation;Lnet/minecraftforge/common/capabilities/ICapabilityProvider;)V",
-            "com/retromod/shim/api/forge/embedded/AttachCapabilitiesEventShim",
-            "addCapability",
-            "(Ljava/lang/Object;Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V"
         );
     }
     

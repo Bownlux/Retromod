@@ -17,6 +17,8 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
 import static org.objectweb.asm.Opcodes.*;
 
@@ -237,6 +239,140 @@ class SimpleChannelBridgeTest {
     }
 
     @Test
+    @DisplayName("#267: the Optional<NetworkDirection> registerMessage also loses the deleted handler type")
+    void directionalRegisterMessageResultIsErased() {
+        String args = "(ILjava/lang/Class;Ljava/util/function/BiConsumer;"
+                + "Ljava/util/function/Function;Ljava/util/function/BiConsumer;Ljava/util/Optional;)";
+        String oldHandler = "Lnet/minecraftforge/network/simple/IndexedMessageCodec$MessageHandler;";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, ACC_PUBLIC, "test/GadNetwork", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "register",
+                "(Lnet/minecraftforge/network/simple/SimpleChannel;)V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitInsn(ICONST_0);
+        mv.visitLdcInsn(org.objectweb.asm.Type.getObjectType("java/lang/String"));
+        mv.visitInsn(ACONST_NULL);
+        mv.visitInsn(ACONST_NULL);
+        mv.visitInsn(ACONST_NULL);
+        mv.visitFieldInsn(GETSTATIC, "net/minecraftforge/network/NetworkDirection", "PLAY_TO_SERVER",
+                "Lnet/minecraftforge/network/NetworkDirection;");
+        mv.visitMethodInsn(INVOKESTATIC, "java/util/Optional", "of",
+                "(Ljava/lang/Object;)Ljava/util/Optional;", false);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "net/minecraftforge/network/simple/SimpleChannel",
+                "registerMessage", args + oldHandler, false);
+        mv.visitInsn(POP);
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        byte[] out = transformer.transformClass(cw.toByteArray(), "test/GadNetwork");
+        ClassNode cn = new ClassNode();
+        new ClassReader(out).accept(cn, 0);
+        MethodInsnNode call = null;
+        org.objectweb.asm.tree.FieldInsnNode direction = null;
+        for (var insn : cn.methods.get(0).instructions) {
+            if (insn instanceof MethodInsnNode mi && mi.name.equals("registerMessage")) call = mi;
+            if (insn instanceof org.objectweb.asm.tree.FieldInsnNode fi) direction = fi;
+        }
+        assertNotNull(call);
+        assertEquals(WRAPPER, call.owner);
+        assertEquals(args + "Ljava/lang/Object;", call.desc);
+        assertNotNull(direction);
+        assertEquals(SHIM + "$NetworkDirection", direction.owner,
+                "NeoForge has no NetworkDirection, so the constant must come from the stand-in");
+        String constant = direction.name;
+        assertDoesNotThrow(() -> com.retromod.shim.forge.embedded.NetworkShim.NetworkDirection
+                .valueOf(constant), "the stand-in must declare " + constant);
+    }
+
+    @Test
+    @DisplayName("a handler's ctx.get().getSender() reads the stand-in context and casts back")
+    void contextSenderIsCastBack() {
+        String forgeContext = "net/minecraftforge/network/NetworkEvent$Context";
+        String serverPlayer = "net/minecraft/server/level/ServerPlayer";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, ACC_PUBLIC, "test/Handler", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "handle",
+                "(Ljava/util/function/Supplier;)L" + serverPlayer + ";", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEINTERFACE, "java/util/function/Supplier", "get",
+                "()Ljava/lang/Object;", true);
+        mv.visitTypeInsn(CHECKCAST, forgeContext);
+        mv.visitMethodInsn(INVOKEVIRTUAL, forgeContext, "getSender", "()L" + serverPlayer + ";", false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        List<org.objectweb.asm.tree.AbstractInsnNode> out = instructions(
+                transformer.transformClass(cw.toByteArray(), "test/Handler"), "handle");
+        MethodInsnNode sender = out.stream().filter(MethodInsnNode.class::isInstance)
+                .map(MethodInsnNode.class::cast).filter(m -> m.name.equals("getSender"))
+                .findFirst().orElseThrow();
+        assertEquals(SHIM + "$Context", sender.owner);
+        assertEquals("()Ljava/lang/Object;", sender.desc);
+        int next = out.indexOf(sender) + 1;
+        assertTrue(out.get(next) instanceof org.objectweb.asm.tree.TypeInsnNode cast
+                && cast.getOpcode() == CHECKCAST && cast.desc.equals(serverPlayer),
+                "the Object result must be cast back to ServerPlayer for the mod's code");
+    }
+
+    @Test
+    @DisplayName("PacketDistributor targets and TargetPoint construction use the stand-ins")
+    void packetTargetsUseTheStandIns() {
+        String forgeDistributor = "net/minecraftforge/network/PacketDistributor";
+        String forgePoint = forgeDistributor + "$TargetPoint";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, ACC_PUBLIC, "test/Targets", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "targets",
+                "(Lnet/minecraft/resources/ResourceKey;)V", null, null);
+        mv.visitCode();
+        mv.visitFieldInsn(GETSTATIC, forgeDistributor, "PLAYER", "L" + forgeDistributor + ";");
+        mv.visitInsn(POP);
+        mv.visitTypeInsn(NEW, forgePoint);
+        mv.visitInsn(DUP);
+        mv.visitInsn(DCONST_0);
+        mv.visitInsn(DCONST_0);
+        mv.visitInsn(DCONST_0);
+        mv.visitLdcInsn(64.0);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKESPECIAL, forgePoint, "<init>",
+                "(DDDDLnet/minecraft/resources/ResourceKey;)V", false);
+        mv.visitInsn(POP);
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        List<org.objectweb.asm.tree.AbstractInsnNode> out = instructions(
+                transformer.transformClass(cw.toByteArray(), "test/Targets"), "targets");
+        org.objectweb.asm.tree.FieldInsnNode player = out.stream()
+                .filter(org.objectweb.asm.tree.FieldInsnNode.class::isInstance)
+                .map(org.objectweb.asm.tree.FieldInsnNode.class::cast).findFirst().orElseThrow();
+        assertEquals(SHIM + "$PacketDistributor", player.owner);
+        assertDoesNotThrow(() -> com.retromod.shim.forge.embedded.NetworkShim.PacketDistributor.class
+                .getField(player.name), "the stand-in must declare " + player.name);
+        MethodInsnNode point = out.stream().filter(MethodInsnNode.class::isInstance)
+                .map(MethodInsnNode.class::cast).findFirst().orElseThrow();
+        assertEquals(INVOKESTATIC, point.getOpcode(), "TargetPoint is built by its factory");
+        assertEquals(SHIM + "$PacketDistributor$TargetPoint", point.owner);
+        assertEquals("of", point.name);
+        assertFalse(out.stream().anyMatch(i -> i.getOpcode() == NEW), "the NEW/DUP pair is removed");
+    }
+
+    private static List<org.objectweb.asm.tree.AbstractInsnNode> instructions(byte[] bytes, String method) {
+        ClassNode cn = new ClassNode();
+        new ClassReader(bytes).accept(cn, 0);
+        List<org.objectweb.asm.tree.AbstractInsnNode> out = new java.util.ArrayList<>();
+        cn.methods.stream().filter(m -> m.name.equals(method)).findFirst().orElseThrow()
+                .instructions.forEach(out::add);
+        return out;
+    }
+
+    @Test
     @DisplayName("the shim inner classes are all listed for embedding")
     void innerClassesListed() {
         var listed = java.util.Set.of(new Forge_1_20_to_NeoForge_1_21().getShimClasses());
@@ -244,7 +380,8 @@ class SimpleChannelBridgeTest {
                 "com.retromod.shim.forge.embedded.NetworkShim",
                 "com.retromod.shim.forge.embedded.NetworkShim$SimpleChannelWrapper",
                 "com.retromod.shim.forge.embedded.NetworkShim$MessageBuilder",
-                "com.retromod.shim.forge.embedded.NetworkShim$PacketRegistration"}) {
+                "com.retromod.shim.forge.embedded.NetworkShim$PacketRegistration",
+                "com.retromod.shim.forge.embedded.NetworkShim$NetworkDirection"}) {
             assertTrue(listed.contains(required), "must embed " + required);
         }
     }

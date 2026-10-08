@@ -20,7 +20,11 @@ Environment:
   MODRINTH_PROJECT_ID  Modrinth project id OR slug (both accepted)                 (required)
 
 Usage:
-  publish-modrinth.py --version 1.1.0 --release-type release [--changelog-file CHANGELOG.md] [--dist dist] [--dry-run]
+  publish-modrinth.py --version 1.1.0 --release-type release [--changelog-file docs/changelog.md] [--dist dist] [--dry-run]
+
+Each version's changelog on Modrinth is only a link to that release's entry in the short
+docs changelog on bownlux.dev. Modrinth counts version changelogs as part of the project
+page, so the release notes stay on the docs site instead of being pasted in.
 
 ALWAYS run with --dry-run first: it hits only read-only endpoints (tags + existing versions),
 validates the token/project, and prints exactly what it WOULD upload - no files sent.
@@ -75,13 +79,51 @@ def existing_version_numbers(project, token):
     return {v.get("version_number") for v in versions}
 
 
-def extract_changelog(path):
-    """Pull the first `## [...]` section body out of a Keep-a-Changelog file."""
-    if not path or not os.path.exists(path):
-        return "See https://github.com/Bownlux/Retromod/blob/main/CHANGELOG.md"
-    text = open(path, encoding="utf-8").read()
-    m = re.search(r"^## .*?\n(.*?)(?=^## |\Z)", text, re.S | re.M)
-    return (m.group(1).strip() if m else text.strip()) or "Release."
+DOCS_CHANGELOG_URL = "https://bownlux.dev/retromod/changelog.html"
+
+
+def heading_anchor(heading):
+    """The id the docs site's Markdown renderer gives a heading, e.g. "132-september-30-2026"."""
+    kept = re.sub(r"[^a-z0-9 -]", "", heading.lower())
+    return re.sub(r" +", "-", kept.strip())
+
+
+def find_changelog_heading(version, text):
+    """The docs changelog heading for a version, or None.
+
+    A release is "## 1.3.2, September 30, 2026". A snapshot or release candidate is
+    "### Snapshot 1, October 1, 2026" inside "## 1.4.0 Snapshot Line" or "## 1.4.0 Release
+    Candidates", and every line restarts its numbering, so the search stays inside that section.
+    """
+    pre = re.fullmatch(r"(.+)-(snapshot|rc)\.(\d+)", version)
+    if not pre:
+        m = re.search(rf"^## ({re.escape(version)},[^\n]*)$", text, re.M)
+        return m.group(1) if m else None
+    base, kind, number = pre.groups()
+    section_title = "Snapshot Line" if kind == "snapshot" else "Release Candidates"
+    label = "Snapshot" if kind == "snapshot" else "Release Candidate"
+    section = re.search(rf"^## {re.escape(base)} {section_title}\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+    if not section:
+        return None
+    m = re.search(rf"^### ({label} {number},[^\n]*)$", section.group(1), re.M)
+    return m.group(1) if m else None
+
+
+def changelog_link(version, path):
+    """A one-line Modrinth changelog pointing at this version's entry on bownlux.dev.
+
+    The anchor depends on the heading's date, so it is read from the docs changelog. Without a
+    matching entry, the link opens the top of the page.
+    """
+    url = DOCS_CHANGELOG_URL
+    if path and os.path.exists(path):
+        heading = find_changelog_heading(version, open(path, encoding="utf-8").read())
+        if heading:
+            url += "#" + heading_anchor(heading)
+        else:
+            print(f"WARNING: {path} has no entry for {version}; "
+                  f"the changelog link opens the top of the page.")
+    return f"Changelog: [Retromod {version}]({url})"
 
 
 def create_version(project, token, jar, version_number, display_name, mcver,
@@ -125,7 +167,8 @@ def main():
     # as "release" tells everyone browsing the page that a development build is finished.
     ap.add_argument("--release-type", default=None, choices=["release", "beta", "alpha"],
                     help="defaults to beta for snapshot/rc versions, release otherwise")
-    ap.add_argument("--changelog-file", default="CHANGELOG.md")
+    ap.add_argument("--changelog-file", default="docs/changelog.md",
+                    help="docs changelog used to find this version's entry for the link")
     ap.add_argument("--dist", default="dist")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -156,10 +199,11 @@ def main():
 
     game_versions, loaders = load_valid_tags()
     existing = existing_version_numbers(project, token)
-    changelog = extract_changelog(args.changelog_file)
+    changelog = changelog_link(args.version, args.changelog_file)
     print(f"Modrinth knows {len(game_versions)} MC versions; loaders present: "
           f"{sorted(loaders & {'fabric', 'forge', 'neoforge'})}")
     print(f"Project '{project}' already has {len(existing)} versions.")
+    print(f"Changelog for each version: {changelog}")
     print(f"Mode: {'DRY RUN (no uploads)' if args.dry_run else 'LIVE upload'} | "
           f"version={args.version} type={args.release_type}\n")
 

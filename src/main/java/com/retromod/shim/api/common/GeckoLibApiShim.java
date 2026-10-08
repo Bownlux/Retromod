@@ -8,7 +8,17 @@ import com.retromod.core.RetromodTransformer;
 import com.retromod.core.AuxiliaryVersionShim;
 
 /**
- * Bridges GeckoLib's v3 -> v4 API rewrite. Common to Fabric and Forge/NeoForge.
+ * Keeps GeckoLib 3 references pointing at GeckoLib 3.
+ *
+ * <p>GeckoLib 4 is a rewrite, not a rename. {@code IAnimatable}, {@code AnimationData},
+ * {@code AnimationEvent}, and the 3.x renderers have no 4.x class with the same methods, so a
+ * class redirect produced bytecode that could not link. It also rewrote GeckoLib 3's own jar when
+ * that jar was translated, turning the library into a broken copy of 4.x (#311). The two versions
+ * use different mod IDs ({@code geckolib3} and {@code geckolib}) and different packages, so they
+ * load side by side. A 3.x mod works when its GeckoLib 3 jar goes through Retromod with it.
+ *
+ * <p>The GeckoLib 4 core package merge is a real move, so {@link GeckoLibCorePackageMoves} still
+ * registers from here on every loader.
  */
 public class GeckoLibApiShim implements AuxiliaryVersionShim {
     
@@ -34,154 +44,13 @@ public class GeckoLibApiShim implements AuxiliaryVersionShim {
     
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
-        // geckolib3 package -> geckolib
-        transformer.registerClassRedirect(
-            "software/bernie/geckolib3/core/IAnimatable",
-            "software/bernie/geckolib/animatable/GeoAnimatable"
-        );
-        
-        transformer.registerClassRedirect(
-            "software/bernie/geckolib3/core/manager/AnimationData",
-            "software/bernie/geckolib/animatable/instance/AnimatableInstanceCache"
-        );
-        
-        transformer.registerClassRedirect(
-            "software/bernie/geckolib3/core/manager/AnimationFactory",
-            "software/bernie/geckolib/util/GeckoLibUtil"
-        );
-        
-        // getFactory() -> getAnimatableInstanceCache()
-        transformer.registerMethodRedirect(
-            "software/bernie/geckolib3/core/IAnimatable",
-            "getFactory",
-            "()Lsoftware/bernie/geckolib3/core/manager/AnimationFactory;",
-            "software/bernie/geckolib/animatable/GeoAnimatable",
-            "getAnimatableInstanceCache",
-            "()Lsoftware/bernie/geckolib/animatable/instance/AnimatableInstanceCache;"
-        );
-
-        // registerControllers param changed AnimationData -> ControllerRegistrar
-        transformer.registerMethodRedirect(
-            "software/bernie/geckolib3/core/IAnimatable",
-            "registerControllers",
-            "(Lsoftware/bernie/geckolib3/core/manager/AnimationData;)V",
-            "com/retromod/shim/api/common/embedded/GeckoLibShim",
-            "registerControllersCompat",
-            "(Ljava/lang/Object;Ljava/lang/Object;)V"
-        );
-        
-        transformer.registerClassRedirect(
-            "software/bernie/geckolib3/core/controller/AnimationController",
-            "software/bernie/geckolib/animation/AnimationController"
-        );
-
-        transformer.registerConstructorRedirect(
-            "software/bernie/geckolib3/core/controller/AnimationController",
-            "(Lsoftware/bernie/geckolib3/core/IAnimatable;Ljava/lang/String;FLsoftware/bernie/geckolib3/core/controller/AnimationController$IAnimationPredicate;)V",
-            "com/retromod/shim/api/common/embedded/GeckoLibShim",
-            "createController",
-            "(Ljava/lang/Object;Ljava/lang/String;FLjava/lang/Object;)Ljava/lang/Object;"
-        );
-        
-        // AnimationBuilder -> RawAnimation
-        transformer.registerClassRedirect(
-            "software/bernie/geckolib3/core/builder/AnimationBuilder",
-            "software/bernie/geckolib/animation/RawAnimation"
-        );
-
-        transformer.registerMethodRedirect(
-            "software/bernie/geckolib3/core/builder/AnimationBuilder",
-            "addAnimation",
-            "(Ljava/lang/String;)Lsoftware/bernie/geckolib3/core/builder/AnimationBuilder;",
-            "com/retromod/shim/api/common/embedded/GeckoLibShim",
-            "addAnimation",
-            "(Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/Object;"
-        );
-        
-        transformer.registerMethodRedirect(
-            "software/bernie/geckolib3/core/builder/AnimationBuilder",
-            "addAnimation",
-            "(Ljava/lang/String;Z)Lsoftware/bernie/geckolib3/core/builder/AnimationBuilder;",
-            "com/retromod/shim/api/common/embedded/GeckoLibShim",
-            "addAnimationWithLoop",
-            "(Ljava/lang/Object;Ljava/lang/String;Z)Ljava/lang/Object;"
-        );
-        
-        // renderers moved geckolib3/renderers/geo -> geckolib/renderer
-        transformer.registerClassRedirect(
-            "software/bernie/geckolib3/renderers/geo/GeoEntityRenderer",
-            "software/bernie/geckolib/renderer/GeoEntityRenderer"
-        );
-        
-        transformer.registerClassRedirect(
-            "software/bernie/geckolib3/renderers/geo/GeoItemRenderer",
-            "software/bernie/geckolib/renderer/GeoItemRenderer"
-        );
-        
-        transformer.registerClassRedirect(
-            "software/bernie/geckolib3/renderers/geo/GeoArmorRenderer",
-            "software/bernie/geckolib/renderer/GeoArmorRenderer"
-        );
-        
-        transformer.registerClassRedirect(
-            "software/bernie/geckolib3/renderers/geo/GeoBlockRenderer",
-            "software/bernie/geckolib/renderer/GeoBlockRenderer"
-        );
-        
-        // AnimatedGeoModel -> GeoModel; getXxxLocation accessors renamed to getXxxResource
-        transformer.registerClassRedirect(
-            "software/bernie/geckolib3/model/AnimatedGeoModel",
-            "software/bernie/geckolib/model/GeoModel"
-        );
-
-        transformer.registerMethodRedirect(
-            "software/bernie/geckolib3/model/AnimatedGeoModel",
-            "getModelLocation",
-            "(Ljava/lang/Object;)Lnet/minecraft/resources/ResourceLocation;",
-            "software/bernie/geckolib/model/GeoModel",
-            "getModelResource",
-            "(Ljava/lang/Object;)Lnet/minecraft/resources/ResourceLocation;"
-        );
-        
-        transformer.registerMethodRedirect(
-            "software/bernie/geckolib3/model/AnimatedGeoModel",
-            "getTextureLocation",
-            "(Ljava/lang/Object;)Lnet/minecraft/resources/ResourceLocation;",
-            "software/bernie/geckolib/model/GeoModel",
-            "getTextureResource",
-            "(Ljava/lang/Object;)Lnet/minecraft/resources/ResourceLocation;"
-        );
-        
-        transformer.registerMethodRedirect(
-            "software/bernie/geckolib3/model/AnimatedGeoModel",
-            "getAnimationFileLocation",
-            "(Ljava/lang/Object;)Lnet/minecraft/resources/ResourceLocation;",
-            "software/bernie/geckolib/model/GeoModel",
-            "getAnimationResource",
-            "(Ljava/lang/Object;)Lnet/minecraft/resources/ResourceLocation;"
-        );
-        
-        // PlayState enum moved package
-        transformer.registerClassRedirect(
-            "software/bernie/geckolib3/core/PlayState",
-            "software/bernie/geckolib/animation/PlayState"
-        );
-
-        // GeckoLib.initialize() is gone in v4 (auto-init); route to a stub
-        transformer.registerMethodRedirect(
-            "software/bernie/geckolib3/GeckoLib",
-            "initialize",
-            "()V",
-            "com/retromod/shim/api/common/embedded/GeckoLibShim",
-            "initialize",
-            "()V"
-        );
+        // GeckoLib 3 names stay as they are: see the class comment. GeckoLib 4.0 to 4.4 core
+        // names do move, because 4.5 merged that package; applies only where the host's GeckoLib did.
+        GeckoLibCorePackageMoves.register(transformer);
     }
     
     @Override
     public String[] getShimClasses() {
-        return new String[] {
-            "com.retromod.shim.api.common.embedded.GeckoLibShim"
-        };
+        return new String[0];
     }
 }

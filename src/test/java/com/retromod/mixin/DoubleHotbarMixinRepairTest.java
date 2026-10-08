@@ -4,10 +4,12 @@
  */
 package com.retromod.mixin;
 
+import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
@@ -19,8 +21,13 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
+import java.lang.reflect.Constructor;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -91,6 +98,56 @@ class DoubleHotbarMixinRepairTest {
         assertFalse(hasMethod(partial, "extractSlot", SLOT_DESC));
     }
 
+    @Test
+    @DisplayName("#181: the curated Double Hotbar repair still wins over the generic HUD repair")
+    void curatedRepairRunsBeforeTheGenericHudRepair(@TempDir Path tempDir) throws Exception {
+        savedVersion = RetromodVersion.TARGET_MC_VERSION;
+        RetromodVersion.TARGET_MC_VERSION = "26.2";
+        Path host = tempDir.resolve("host.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(host))) {
+            writeHostClass(out, GUI, writer -> hostMethod(writer, "extractRenderState",
+                    "(L" + DELTA + ";ZZ)V"));
+            writeHostClass(out, HUD, writer -> {
+                hostMethod(writer, "extractItemHotbar", EXTRACT_DESC);
+                hostMethod(writer, "extractHotbarAndDecorations", EXTRACT_DESC);
+                hostMethod(writer, "extractSlot", SLOT_DESC);
+                hostMethod(writer, "getCameraPlayer", "()L" + PLAYER + ";");
+                writer.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "HOTBAR_SPRITE",
+                        "Lnet/minecraft/resources/Identifier;", null, null).visitEnd();
+            });
+        }
+        Constructor<RetromodTransformer> constructor =
+                RetromodTransformer.class.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        RetromodTransformer transformer = constructor.newInstance();
+        transformer.initFuzzyResolver(host);
+
+        ClassNode repaired = read(new MixinCompatibilityTransformer(transformer)
+                .applyPostRemapRepairs(doubleHotbarMixin(true, true)));
+
+        assertEquals(List.of(HUD), mixinTargets(repaired));
+        assertItemSelectorsRepaired(repaired);
+        assertFalse(hasShadow(repaired, "getCameraPlayer", "()L" + PLAYER + ";"),
+                "the curated bridge replaces the private camera-player shadow; the generic "
+                        + "repair would keep it, so it must not run first");
+    }
+
+    private static void writeHostClass(JarOutputStream out, String name,
+            java.util.function.Consumer<ClassWriter> members) throws Exception {
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null);
+        members.accept(writer);
+        writer.visitEnd();
+        out.putNextEntry(new JarEntry(name + ".class"));
+        out.write(writer.toByteArray());
+        out.closeEntry();
+    }
+
+    private static void hostMethod(ClassWriter writer, String name, String desc) {
+        writer.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_ABSTRACT, name, desc, null, null)
+                .visitEnd();
+    }
+
     private ClassNode repair(String version, byte[] input) {
         savedVersion = RetromodVersion.TARGET_MC_VERSION;
         RetromodVersion.TARGET_MC_VERSION = version;
@@ -100,6 +157,10 @@ class DoubleHotbarMixinRepairTest {
     }
 
     private static byte[] doubleHotbarMixin(boolean complete) {
+        return doubleHotbarMixin(complete, false);
+    }
+
+    private static byte[] doubleHotbarMixin(boolean complete, boolean cameraPlayerShadow) {
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
                 MIXIN_CLASS, null, "java/lang/Object", null);
@@ -118,6 +179,13 @@ class DoubleHotbarMixinRepairTest {
                 "renderSlot", SLOT_DESC, null, null);
         slot.visitAnnotation(SHADOW, true).visitEnd();
         slot.visitEnd();
+
+        if (cameraPlayerShadow) {
+            MethodVisitor camera = writer.visitMethod(Opcodes.ACC_PROTECTED | Opcodes.ACC_ABSTRACT,
+                    "getCameraPlayer", "()L" + PLAYER + ";", null, null);
+            camera.visitAnnotation(SHADOW, true).visitEnd();
+            camera.visitEnd();
+        }
 
         for (String name : List.of(
                 "renderHotbarFrame", "shiftHotbarSelector", "returnHotbarSelector",

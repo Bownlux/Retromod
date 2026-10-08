@@ -86,5 +86,5 @@ jobs:
           python3 scripts/publish-modrinth.py \
             --version "$VERSION" \
             $RELEASE_TYPE_ARG \
-            --changelog-file CHANGELOG.md \
+            --changelog-file docs/changelog.md \
             ${{ inputs.dry_run && '--dry-run' || '' }}

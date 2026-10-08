@@ -34,13 +34,24 @@ public class Forge_1_18_2_to_1_19 implements VersionShim {
             "(Ljava/lang/String;[Ljava/lang/Object;)Lnet/minecraft/network/chat/MutableComponent;",
             true
         );
+        // A translation key with no arguments used its own constructor, and it is the common
+        // form: one 1.18.2 mod built 103 of its 104 components this way (#311).
+        transformer.registerConstructorRedirect(
+            "net/minecraft/network/chat/TranslatableComponent",
+            "(Ljava/lang/String;)V",
+            "net/minecraft/network/chat/Component", "translatable",
+            "(Ljava/lang/String;)Lnet/minecraft/network/chat/MutableComponent;",
+            true
+        );
+        // MutableComponent, not Component: the factories return it, and append or withStyle
+        // called on the old class only exist there. Component is an interface without them.
         transformer.registerClassRedirect(
             "net/minecraft/network/chat/TextComponent",
-            "net/minecraft/network/chat/Component"
+            "net/minecraft/network/chat/MutableComponent"
         );
         transformer.registerClassRedirect(
             "net/minecraft/network/chat/TranslatableComponent",
-            "net/minecraft/network/chat/Component"
+            "net/minecraft/network/chat/MutableComponent"
         );
         transformer.registerMethodRedirect(
             "net/minecraft/server/level/ServerPlayer", "sendMessage",
@@ -48,6 +59,9 @@ public class Forge_1_18_2_to_1_19 implements VersionShim {
             "com/retromod/shim/forge/embedded/ChatShim", "sendMessage",
             "(Ljava/lang/Object;Ljava/lang/Object;Z)V"
         );
+        LegacyForge119Bridge.register(transformer);
+        com.retromod.shim.common.LegacyMinecraft119Bridge.register(transformer);
+        com.retromod.shim.common.LegacyResourceApiBridge.register(transformer);
     }
 
     @Override

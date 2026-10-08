@@ -517,6 +517,9 @@ public class FabricModTransformer {
 
         final Set<String> mixinClasses = findMixinClasses(dir);
 
+        // Before the snapshot, so the class pass and its hierarchy see the renamed interface.
+        com.retromod.shim.fabric.Pre1_20_5ArmorMaterialBridge.renameInLegacyJar(bytecodeTransformer, dir);
+
         final java.util.List<Path> classFiles;
         try (var stream = Files.walk(dir)) {
             classFiles = stream
@@ -542,6 +545,9 @@ public class FabricModTransformer {
 
         // ASM needs the mod's own class hierarchy before those classes are on the classpath.
         bytecodeTransformer.setJarClassBytesProvider(originalClasses::get);
+        // Workers and Mixin both load ASM lazily under Knot; load it here so they cannot deadlock.
+        com.retromod.core.parallel.SharedLibraryPreloader.preload(
+                FabricModTransformer.class.getClassLoader());
         try {
             com.retromod.core.parallel.RetromodExecutors.parallelForEach(classFiles, classFile -> {
                 try {
@@ -589,10 +595,12 @@ public class FabricModTransformer {
                         wroteFirst = true;
                     }
 
-                    // Inject missing abstract methods for Button subclasses.
+                    // Inject missing abstract methods for Button subclasses. The method names a
+                    // 26.x type, so only an unobfuscated host gets it, as in the CLI path.
                     byte[] current = (transformed != null && transformed != original) ? transformed : original;
-                    byte[] patched = com.retromod.shim.common.LegacyAbstractButtonBridge
-                            .apply(current);
+                    byte[] patched = com.retromod.core.RetromodVersion.isUnobfuscatedTarget(targetMcVersion)
+                            ? com.retromod.shim.common.LegacyAbstractButtonBridge.apply(current)
+                            : current;
                     if (patched != null && patched != current) {
                         Files.write(classFile, patched);
                         if (!wroteFirst) counter.incrementAndGet();
@@ -1277,11 +1285,63 @@ public class FabricModTransformer {
         // "classTweakers"/"accessWidener" name files whose namespace header (intermediary
         // vs official) can mismatch the runtime and throw ClassTweakerFormatException at
         // launch. remapAccessWidener only covers one direction, so for the rest we drop
-        // the declaration: the mod loses class-opening but loads.
-        updated = stripClassTweakers(updated);
+        // the declaration: the mod loses class-opening but loads. A file whose header
+        // already names the runtime namespace is kept, because a mod that subclasses or
+        // calls a widened member fails with IllegalAccessError without it (#249).
+        if (!declaredTweakersMatchRuntime(updated, dir)) {
+            updated = stripClassTweakers(updated);
+        }
 
         Files.writeString(modJson, updated);
         LOGGER.info("Updated fabric.mod.json: {} → {}", originalMcVersion, targetMcVersion);
+    }
+
+    /**
+     * Whether every access widener or class tweaker the metadata declares exists and names the
+     * namespace this host runs in. False when nothing is declared, so the caller's strip stays a
+     * no-op for those mods.
+     */
+    private boolean declaredTweakersMatchRuntime(String json, Path dir) {
+        List<String> declared = new ArrayList<>();
+        Matcher single = Pattern.compile("\"accessWidener\"\\s*:\\s*\"([^\"]*)\"").matcher(json);
+        if (single.find()) declared.add(single.group(1));
+        Matcher array = Pattern.compile("(?s)\"classTweakers\"\\s*:\\s*\\[([^\\]]*)\\]").matcher(json);
+        if (array.find()) {
+            Matcher entry = Pattern.compile("\"([^\"]+)\"").matcher(array.group(1));
+            while (entry.find()) declared.add(entry.group(1));
+        }
+        if (declared.isEmpty()) return false;
+        String runtimeNamespace = RetromodPreLaunch.isUnobfuscatedTarget(targetMcVersion)
+                ? "official" : "intermediary";
+        for (String relative : declared) {
+            if (!tweakerHeaderNamespace(dir, relative).equals(runtimeNamespace)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * The namespace from a widener or tweaker header such as {@code accessWidener v2 official},
+     * or an empty string when the file is missing, outside the mod, or has no such header.
+     */
+    static String tweakerHeaderNamespace(Path dir, String relative) {
+        Path root = dir.toAbsolutePath().normalize();
+        Path file = root.resolve(relative).normalize();
+        if (!file.startsWith(root) || !Files.isRegularFile(file)) return "";
+        try (java.io.BufferedReader reader = Files.newBufferedReader(file,
+                java.nio.charset.StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String header = line.trim();
+                if (header.isEmpty() || header.startsWith("#")) continue;
+                String[] parts = header.split("\\s+");
+                boolean knownHeader = parts.length == 3
+                        && (parts[0].equals("accessWidener") || parts[0].equals("classTweaker"));
+                return knownHeader ? parts[2] : "";
+            }
+        } catch (IOException | RuntimeException e) {
+            return "";
+        }
+        return "";
     }
 
     /**
@@ -1518,7 +1578,7 @@ public class FabricModTransformer {
     /**
      * Move every non-core dependency from "depends" to "suggests" (via Gson), so a
      * missing or mismatched optional API doesn't block launch. Only minecraft,
-     * fabricloader, and java stay in "depends".
+     * fabricloader, java, and language adapters stay in "depends".
      */
     private String moveNonCoreDepsToSuggests(String json) {
         try {
@@ -1539,7 +1599,7 @@ public class FabricModTransformer {
 
             List<String> toMove = new ArrayList<>();
             for (String key : depends.keySet()) {
-                if (!coreDeps.contains(key)) {
+                if (!coreDeps.contains(key) && !isLanguageAdapter(key)) {
                     toMove.add(key);
                 }
             }
@@ -1569,6 +1629,16 @@ public class FabricModTransformer {
             LOGGER.warn("Could not restructure dependencies (regex fallback): {}", e.getMessage());
             return json;
         }
+    }
+
+    /**
+     * A language adapter constructs the mod's entrypoints, so without it the mod cannot start.
+     * Left in "suggests", a missing adapter stops Fabric with "Could not find adapter" before the
+     * game opens and before any crash report is written. Kept in "depends", Fabric names the
+     * missing mod instead.
+     */
+    private static boolean isLanguageAdapter(String modId) {
+        return modId.startsWith("fabric-language-");
     }
 
     /** Repackage the extracted directory back into a JAR. */
@@ -1754,6 +1824,10 @@ public class FabricModTransformer {
      * (class_/method_/field_), recording the mixin classes that used them.
      */
     private void stripBrokenRefmapEntries(Path sourceDir, Path refmapFile) throws IOException {
+        // A pre-26.1 Fabric runtime resolves Mixin targets by intermediary name, so an
+        // intermediary refmap entry is the working one there. Stripping it left every
+        // accessor and injector without a target.
+        if (!RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) return;
         String content = readJsonFile(refmapFile, "Mixin refmap JSON");
         com.google.gson.JsonObject root = com.google.gson.JsonParser.parseString(content).getAsJsonObject();
 
@@ -1896,10 +1970,14 @@ public class FabricModTransformer {
                 var nestedMixins = new com.retromod.mixin.MixinCompatibilityTransformer(
                         bytecodeTransformer);
 
+                com.retromod.shim.fabric.Pre1_20_5ArmorMaterialBridge.renameInLegacyJar(
+                        bytecodeTransformer, tempDir);
+
                 // Transform class files (intermediary→Mojang remapping)
                 Map<String, byte[]> hierarchyClassLookup = buildClassLookup(tempDir);
-                try (var hierarchyScope = bytecodeTransformer
-                            .pushJarClassBytesProvider(hierarchyClassLookup::get);
+                // The lookup is keyed by entry path, but the transformer asks by internal name.
+                try (var hierarchyScope = bytecodeTransformer.pushJarClassBytesProvider(
+                            internalName -> hierarchyClassLookup.get(internalName + ".class"));
                      var classStream = Files.walk(tempDir)) {
                     for (Path file : classStream.filter(f -> f.toString().endsWith(".class")).toList()) {
                         try {

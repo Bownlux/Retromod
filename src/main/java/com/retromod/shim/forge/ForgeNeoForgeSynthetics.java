@@ -76,6 +76,7 @@ public final class ForgeNeoForgeSynthetics {
         registerIfAbsent(t, DE_SAFE_RUNNABLE, () -> markerInterface(DE_SAFE_RUNNABLE, "java/lang/Runnable"));
         registerIfAbsent(t, DE_SAFE_CALLABLE, () -> markerInterface(DE_SAFE_CALLABLE, "java/util/concurrent/Callable"));
         registerIfAbsent(t, DE_SAFE_SUPPLIER, () -> markerInterface(DE_SAFE_SUPPLIER, SUPPLIER));
+        ForgeRecipeConditionSynthetics.generateAll().forEach((name, bytes) -> registerIfAbsent(t, name, () -> bytes));
     }
 
     /**
@@ -93,6 +94,7 @@ public final class ForgeNeoForgeSynthetics {
             t.registerSyntheticClass(DE_SAFE_RUNNABLE, markerInterface(DE_SAFE_RUNNABLE, "java/lang/Runnable"));
             t.registerSyntheticClass(DE_SAFE_CALLABLE, markerInterface(DE_SAFE_CALLABLE, "java/util/concurrent/Callable"));
             t.registerSyntheticClass(DE_SAFE_SUPPLIER, markerInterface(DE_SAFE_SUPPLIER, SUPPLIER));
+            ForgeRecipeConditionSynthetics.generateAll().forEach(t::registerSyntheticClass);
         } catch (Throwable e) {
             LOGGER.warn("Could not register Forge/NeoForge synthetics (offline): {}", e.toString());
         }

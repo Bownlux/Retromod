@@ -47,7 +47,7 @@ public final class GuiToHudHopSynthetic {
     private static final String HUD = "net/minecraft/client/gui/Hud";
     private static final String HUD_DESC = "L" + HUD + ";";
 
-    /** The 16 moved INSTANCE methods: name -> descriptor (identical on 26.1 Gui and 26.2 Hud). */
+    /** The moved INSTANCE methods: name -> descriptor (identical on 26.1 Gui and 26.2 Hud). */
     private static final String[][] MOVED_INSTANCE = {
         {"getBossOverlay", "()Lnet/minecraft/client/gui/components/BossHealthOverlay;"},
         {"getChat", "()Lnet/minecraft/client/gui/components/ChatComponent;"},
@@ -65,6 +65,10 @@ public final class GuiToHudHopSynthetic {
         {"setSubtitle", "(Lnet/minecraft/network/chat/Component;)V"},
         {"setTimes", "(III)V"},
         {"setTitle", "(Lnet/minecraft/network/chat/Component;)V"},
+        // The HUD entry point. 26.2 Gui keeps the name for its whole-GUI pass, but with a
+        // (DeltaTracker, boolean, boolean) descriptor, so a mod that drew the HUD itself through
+        // gui.render(graphics, delta) has to reach Hud.
+        {"extractRenderState", "(Lnet/minecraft/client/gui/GuiGraphicsExtractor;Lnet/minecraft/client/DeltaTracker;)V"},
     };
 
     /** ClassWriter whose frame computation never needs the (absent) MC hierarchy. */
@@ -108,7 +112,7 @@ public final class GuiToHudHopSynthetic {
         return cw.toByteArray();
     }
 
-    /** Register the synthetic + all 17 redirects (16 forwarders + the static owner-move). */
+    /** Register the synthetic, one forwarder redirect per moved method, and the static owner-move. */
     public static void register(RetromodTransformer t) {
         if (!t.getSyntheticClasses().containsKey(INTERNAL)) {
             t.registerSyntheticClass(INTERNAL, generate());

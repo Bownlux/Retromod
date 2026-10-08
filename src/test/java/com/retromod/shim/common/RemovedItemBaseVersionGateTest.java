@@ -57,9 +57,14 @@ class RemovedItemBaseVersionGateTest {
     @ParameterizedTest(name = "{0} on a {1} host: rebased = {2}")
     @DisplayName("a base is rebased on the host that removed it and left alone before that")
     @CsvSource({
+        "SimpleFoiledItem,  1.20.4, false",
+        "SimpleFoiledItem,  1.20.5, true",
+        "SimpleFoiledItem,  1.21.1, true",
         "RecordItem,        1.20.6, false",
         "RecordItem,        1.21,   true",
         "RecordItem,        1.21.1, true",
+        "BowlFoodItem,      1.20.6, false",
+        "BowlFoodItem,      1.21.1, true",
         "EnchantedBookItem, 1.21.1, false",
         "EnchantedBookItem, 1.21.2, true",
         "SwordItem,         1.21.4, false",
@@ -148,7 +153,7 @@ class RemovedItemBaseVersionGateTest {
 
     @ParameterizedTest(name = "{0}")
     @DisplayName("every base has a removal version")
-    @CsvSource({"RecordItem", "EnchantedBookItem", "TieredItem", "SwordItem", "ArmorItem"})
+    @CsvSource({"SimpleFoiledItem", "RecordItem", "BowlFoodItem", "EnchantedBookItem", "TieredItem", "SwordItem", "ArmorItem"})
     void everyBaseHasARemovalVersion(String base) {
         assertNotNull(RemovedItemBaseBridge.removedIn(base));
     }

@@ -5,6 +5,7 @@
 package com.retromod.mixin;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -104,6 +105,37 @@ class MixinSelectorRemapRegressionTest {
         mv.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    @Test
+    @DisplayName("MixinExtras expression @Definition method and field selectors are remapped")
+    void expressionDefinitionsRemapped() {
+        String definitions = "Lcom/llamalad7/mixinextras/expression/Definitions;";
+        String definition = "Lcom/llamalad7/mixinextras/expression/Definition;";
+        byte[] in = mixinWith(definitions, av -> {
+            AnnotationVisitor list = av.visitArray("value");
+            AnnotationVisitor call = list.visitAnnotation(null, definition);
+            call.visit("id", "orient");
+            AnnotationVisitor methods = call.visitArray("method");
+            methods.visit(null, "Lnet/minecraft/class_3341;method_14667()V");
+            methods.visitEnd();
+            call.visitEnd();
+            AnnotationVisitor read = list.visitAnnotation(null, definition);
+            read.visit("id", "heavyCore");
+            AnnotationVisitor fields = read.visitArray("field");
+            fields.visit(null, "Lnet/minecraft/class_2246;field_46283:Lnet/minecraft/class_2248;");
+            fields.visitEnd();
+            read.visitEnd();
+            list.visitEnd();
+        });
+        byte[] out = new MixinCompatibilityTransformer(transformer).transformMixinClass(in);
+        List<?> defs = (List<?>) annVal(handlerAnnotation(out, definitions), "value");
+        assertEquals(List.of("Lnet/minecraft/world/level/levelgen/structure/BoundingBox;orientBox()V"),
+                annVal((AnnotationNode) defs.get(0), "method"),
+                "an expression names its call here, not in @At");
+        assertEquals(List.of("Lnet/minecraft/world/level/block/Blocks;HEAVY_CORE:"
+                        + "Lnet/minecraft/world/level/block/Block;"),
+                annVal((AnnotationNode) defs.get(1), "field"));
     }
 
     @Test
@@ -275,5 +307,45 @@ class MixinSelectorRemapRegressionTest {
                 injectMixin(new String[]{"net/minecraft/world/entity/player/Player"}, "setPickedItem" + PICK_DESC));
         assertEquals("setPickedItem" + PICK_DESC, injectSelector(out),
                 "a selector on a class with no such rename must not be rewritten");
+    }
+
+    private static final String LEVEL_RENDERER = "net/minecraft/client/renderer/LevelRenderer";
+
+    @Test
+    @DisplayName("#251: a name-only rename reaches a bare selector on its single target")
+    void nameOnlyRenameReachesBareSelector() {
+        String savedHost = RetromodVersion.TARGET_MC_VERSION;
+        try {
+            RetromodVersion.TARGET_MC_VERSION = "26.2";
+            transformer.registerMethodRename(LEVEL_RENDERER, "renderLevel", "render");
+            byte[] out = new MixinCompatibilityTransformer(transformer).transformMixinClass(
+                    injectMixin(new String[]{LEVEL_RENDERER}, "renderLevel"));
+            assertEquals("render", injectSelector(out),
+                    "26.2 renamed renderLevel; the bare selector must follow it");
+
+            byte[] other = new MixinCompatibilityTransformer(transformer).transformMixinClass(
+                    injectMixin(new String[]{"net/minecraft/client/renderer/GameRenderer"}, "renderLevel"));
+            assertEquals("renderLevel", injectSelector(other),
+                    "the rename belongs to LevelRenderer only");
+        } finally {
+            RetromodVersion.TARGET_MC_VERSION = savedHost;
+        }
+    }
+
+    @Test
+    @DisplayName("a name-only rename leaves bare selectors alone on an SRG host")
+    void nameOnlyRenameSkipsRefmapKeyedHosts() {
+        String properties = "net/minecraft/world/level/block/state/BlockBehaviour$Properties";
+        String savedHost = RetromodVersion.TARGET_MC_VERSION;
+        try {
+            RetromodVersion.TARGET_MC_VERSION = "1.20.1";
+            transformer.registerMethodRename(properties, "noDrops", "noLootTable");
+            byte[] out = new MixinCompatibilityTransformer(transformer).transformMixinClass(
+                    injectMixin(new String[]{properties}, "noDrops"));
+            assertEquals("noDrops", injectSelector(out),
+                    "Forge 1.20.1 resolves the selector through a refmap keyed by the old name");
+        } finally {
+            RetromodVersion.TARGET_MC_VERSION = savedHost;
+        }
     }
 }

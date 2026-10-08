@@ -35,8 +35,51 @@ public class RetromodTestModForge {
     private static final Logger LOG = LoggerFactory.getLogger("Retromod-Test-Forge");
     private static final String PREFIX = "[Retromod-Test-Forge]";
 
+    /** A message the server sends a joining player and the client answers. */
+    record PingMessage(String text) {}
+
+    /**
+     * Round trip through a Forge SimpleChannel: the server sends "ping" when a player joins, the
+     * client logs it and answers "pong", and the server logs the answer. On NeoForge this proves
+     * Retromod delivers Forge messages through NeoForge payloads in both directions. Only a real
+     * client and server exercise it, so the result is in the log rather than the summary.
+     */
+    private static final net.minecraftforge.network.simple.SimpleChannel PING =
+            net.minecraftforge.network.NetworkRegistry.newSimpleChannel(
+                    new ResourceLocation("retromod_test_mod_forge", "ping"),
+                    () -> "1", "1"::equals, "1"::equals);
+
     public RetromodTestModForge() {
         runTests();
+        PING.registerMessage(0, PingMessage.class,
+                (message, buffer) -> buffer.writeUtf(message.text()),
+                buffer -> new PingMessage(buffer.readUtf()),
+                RetromodTestModForge::handlePing);
+        net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener(this::sendPingOnLogin);
+    }
+
+    private void sendPingOnLogin(
+            net.minecraftforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent event) {
+        if (event.getEntity() instanceof net.minecraft.server.level.ServerPlayer player) {
+            PING.send(net.minecraftforge.network.PacketDistributor.PLAYER.with(() -> player),
+                    new PingMessage("ping"));
+        }
+    }
+
+    private static void handlePing(PingMessage message,
+            java.util.function.Supplier<net.minecraftforge.network.NetworkEvent.Context> supplier) {
+        net.minecraftforge.network.NetworkEvent.Context context = supplier.get();
+        net.minecraft.server.level.ServerPlayer sender = context.getSender();
+        context.enqueueWork(() -> {
+            if (sender == null) {
+                LOG.info("{} packet round trip: client received {}", PREFIX, message.text());
+                PING.sendToServer(new PingMessage("pong"));
+            } else {
+                LOG.info("{} packet round trip: server received {} from {}", PREFIX,
+                        message.text(), sender.getGameProfile().getName());
+            }
+        });
+        context.setPacketHandled(true);
     }
 
     private void runTests() {
@@ -116,6 +159,57 @@ public class RetromodTestModForge {
             linksWithoutInheritanceError(LegacyDisc::new));
         n++; passed += check(n, "#260 removed item base EnchantedBookItem", () ->
             linksWithoutInheritanceError(LegacyBook::new));
+
+        // #267/#302: NeoForge moved registerConfig to ModContainer and replaced Forge's generic
+        // IConfigSpec, so this exact MDK line failed in the constructor.
+        n++; passed += check(n, "#267 ModLoadingContext.registerConfig", () -> {
+            net.minecraftforge.common.ForgeConfigSpec.Builder builder =
+                    new net.minecraftforge.common.ForgeConfigSpec.Builder();
+            builder.define("retromod_test_value", true);
+            net.minecraftforge.fml.ModLoadingContext.get().registerConfig(
+                    net.minecraftforge.fml.config.ModConfig.Type.COMMON, builder.build());
+            return true;
+        });
+        // #267: menu types built from a FriendlyByteBuf factory, which NeoForge reads as a
+        // RegistryFriendlyByteBuf. Building the type proves the adapter links.
+        n++; passed += check(n, "#267 IForgeMenuType.create", () ->
+            net.minecraftforge.common.extensions.IForgeMenuType.create((id, inventory, buf) -> null) != null);
+        // #306: ForgeRegistries.Keys also held the vanilla keys, which NeoForge only exposes
+        // through Registries.
+        n++; passed += check(n, "#306 ForgeRegistries.Keys.ITEMS", () ->
+            net.minecraftforge.registries.ForgeRegistries.Keys.ITEMS != null);
+
+        // #267: a SimpleChannel with a directional message. NeoForge deleted the whole API, so
+        // this links only through Retromod's channel stand-in, which registers it as a payload.
+        n++; passed += check(n, "#267 SimpleChannel registerMessage", () -> {
+            net.minecraftforge.network.simple.SimpleChannel channel =
+                    net.minecraftforge.network.NetworkRegistry.newSimpleChannel(
+                            new ResourceLocation("retromod_test_mod_forge", "main"),
+                            () -> "1", "1"::equals, "1"::equals);
+            channel.registerMessage(0, String.class,
+                    (message, buffer) -> buffer.writeUtf(message),
+                    buffer -> buffer.readUtf(),
+                    (message, context) -> context.get().setPacketHandled(true),
+                    java.util.Optional.of(net.minecraftforge.network.NetworkDirection.PLAY_TO_SERVER));
+            return true;
+        });
+
+        // #306/#308: NeoForge deleted Forge's capability API; Retromod supplies it under the same
+        // names. One token type must name one capability, and orEmpty answers only for it.
+        n++; passed += check(n, "#306/#308 Forge capability token and LazyOptional", () -> {
+            net.minecraftforge.common.capabilities.Capability<String> cap =
+                    net.minecraftforge.common.capabilities.CapabilityManager.get(
+                            new net.minecraftforge.common.capabilities.CapabilityToken<String>() {});
+            net.minecraftforge.common.capabilities.Capability<String> again =
+                    net.minecraftforge.common.capabilities.CapabilityManager.get(
+                            new net.minecraftforge.common.capabilities.CapabilityToken<String>() {});
+            net.minecraftforge.common.util.LazyOptional<String> value =
+                    net.minecraftforge.common.util.LazyOptional.of(() -> "stored");
+            return cap == again && "stored".equals(cap.orEmpty(cap, value).orElse(null));
+        });
+        // #306: ToolActions were renamed ItemAbilities on NeoForge with the same constants.
+        n++; passed += check(n, "#306 ToolActions.AXE_STRIP", () ->
+            net.minecraftforge.common.ToolActions.AXE_STRIP != null);
 
         LOG.info("{} SUMMARY: {}/{} passed", PREFIX, passed, n);
     }

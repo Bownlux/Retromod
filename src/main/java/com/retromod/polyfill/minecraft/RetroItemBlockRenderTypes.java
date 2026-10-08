@@ -73,6 +73,15 @@ public final class RetroItemBlockRenderTypes {
         return layerToken("TRANSLUCENT");
     }
 
+    /**
+     * Old {@code setRenderLayer(Block or Fluid, RenderType or Predicate)}, which Forge and NeoForge
+     * mods call from client setup. From 26.1 the layer comes from the model's own material, so there
+     * is no table left to write. Ignoring the call keeps client setup running; a model that never
+     * declared its layer draws solid.
+     */
+    public static void setRenderLayer(Object blockOrFluid, Object layer) {
+    }
+
     // Layer selection
 
     private static String blockLayerName(Object state) {

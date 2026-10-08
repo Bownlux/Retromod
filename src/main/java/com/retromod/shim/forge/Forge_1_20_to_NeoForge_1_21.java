@@ -52,6 +52,26 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
 
         // Vanilla, so it applies on Forge too: RecordItem was removed in 1.21.
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21");
+        com.retromod.shim.common.LegacySpawnPlacementTypeBridge.register(transformer);
+        com.retromod.shim.common.LegacyMobTypeBridge.register(transformer);
+        com.retromod.shim.common.LegacyAttributeApiBridge.register(transformer);
+        com.retromod.shim.common.LegacyItemAttributeOverrideAdapter.register(transformer);
+        com.retromod.shim.common.LegacyDispenserBridge.register(transformer);
+        com.retromod.shim.common.LegacyDyeColorBridge.register(transformer);
+        com.retromod.shim.common.LegacyFoodPropertiesBridge.register(transformer);
+        com.retromod.shim.common.LegacyToolItemBridge.register(transformer);
+        com.retromod.shim.common.Legacy1205MemberBridge.register(transformer);
+        com.retromod.shim.common.LegacyCodecTypeBridge.register(transformer);
+        com.retromod.shim.common.LegacyRegistryNbtBridge.register(transformer);
+        com.retromod.shim.common.LegacyTreeGrowerBridge.register(transformer);
+        com.retromod.shim.common.LegacySynchedDataBridge.register(transformer);
+        com.retromod.shim.common.LegacyFallingBlockBridge.register(transformer);
+        com.retromod.shim.fabric.Pre1_20_5MojangArmorMaterialBridge.register(transformer);
+        com.retromod.shim.fabric.Pre1_20_5MojangParticleTypeBridge.register(transformer);
+        com.retromod.shim.api.common.LegacyFrameworkNetworkBridge.register(transformer);
+        com.retromod.shim.common.LegacyPotionUtilsBridge.register(transformer);
+        com.retromod.shim.common.LegacyHolderConstantBridge.register(transformer);
+        com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.20.5");
 
         // These only apply on a NeoForge runtime; on Forge they break @Mod lookup (see class javadoc).
         if (!McReflect.isNeoForge()) {
@@ -59,6 +79,12 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             return;
         }
 
+        ForgeNeoForgeSameShapeMoves.register(transformer);
+        LegacyBrewingRegistryBridge.register(transformer);
+        LegacyForgeEventFactoryBridge.register(transformer, com.retromod.core.ClassResourceInspector::exists);
+        LegacyModLoaderBridge.register(transformer, com.retromod.core.ClassResourceInspector::exists);
+        LegacyTeleporterBridge.register(transformer, com.retromod.core.ClassResourceInspector::exists);
+        LegacyDespawnEventBridge.register(transformer, com.retromod.core.ClassResourceInspector::exists);
         transformer.registerClassRedirect(
             "net/minecraftforge/common/MinecraftForge",
             "net/neoforged/neoforge/common/NeoForge"
@@ -110,19 +136,8 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "java/lang/annotation/Retention"
         );
 
-        // capabilities
-        transformer.registerClassRedirect(
-            "net/minecraftforge/common/capabilities/Capability",
-            "net/neoforged/neoforge/capabilities/BlockCapability"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraftforge/common/capabilities/CapabilityManager",
-            "net/neoforged/neoforge/capabilities/Capabilities"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraftforge/common/util/LazyOptional",
-            "java/util/Optional"
-        );
+        // Capabilities are supplied whole by LegacyCapabilitySynthetics (ForgeNeoForgeApiBridge).
+        // A class redirect here would rename the mod's references before those synthetics apply.
         
         // ForgeConfigSpec renamed to ModConfigSpec
         transformer.registerClassRedirect(
@@ -205,6 +220,9 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         // (ServiceLoader), so the redirect lives there, not here, to keep the two paths consistent.
 
         registerNetworkBridge(transformer);
+        ForgeMenuBridge.register(transformer);
+        ForgeNeoForgeApiBridge.register(transformer);
+        com.retromod.shim.forge.capability.LegacyGenericListenerBridge.register(transformer);
         
         // client events
         transformer.registerClassRedirect(
@@ -258,6 +276,16 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         transformer.registerClassRedirect(
             "net/minecraftforge/common/extensions/IForgeBlockEntity",
             "net/neoforged/neoforge/common/extensions/IBlockEntityExtension"
+        );
+        // A level mixin implements IForgeLevel to hand out multipart entities (#308, More
+        // Hitboxes). Both keep their shape on NeoForge 1.21.1 through 26.3.
+        transformer.registerClassRedirect(
+            "net/minecraftforge/common/extensions/IForgeLevel",
+            "net/neoforged/neoforge/common/extensions/ILevelExtension"
+        );
+        transformer.registerClassRedirect(
+            "net/minecraftforge/entity/PartEntity",
+            "net/neoforged/neoforge/entity/PartEntity"
         );
 
         transformer.registerFieldRedirect(
@@ -342,9 +370,8 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         // -> IPayloadHandler) were actively harmful: NeoForge's PayloadRegistrar has never had
         // newSimpleChannel, so every MCreator-style 1.20.1 mod died NoSuchMethodError in <clinit>
         // (#156, Wonderland). Route the whole SimpleChannel surface onto the embedded NetworkShim
-        // instead: the mod LOADS and its packet registrations are collected (soft-fail: cross-side
-        // sync is inert until the replay bridge lands; tracked as 1.3.0 Forge-to-NeoForge work,
-        // together with NetworkHooks/ITeleporter/LivingTickEvent from the same family).
+        // instead: the mod loads, its registrations are collected, and NetworkShim registers each
+        // channel as a NeoForge payload when NeoForge locks its network registry.
         String netShim = "com/retromod/shim/forge/embedded/NetworkShim";
         String wrapper = netShim + "$SimpleChannelWrapper";
         String builder = netShim + "$MessageBuilder";
@@ -352,6 +379,8 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         transformer.registerClassRedirect("net/minecraftforge/network/simple/SimpleChannel", wrapper);
         transformer.registerClassRedirect(
             "net/minecraftforge/network/simple/SimpleChannel$MessageBuilder", builder);
+        transformer.registerClassRedirect(
+            "net/minecraftforge/network/NetworkDirection", netShim + "$NetworkDirection");
         // newSimpleChannel: the mod's Forge-typed descriptor must erase to the shim's Object form
         // (keyed on both the pre- and post-class-redirect spellings; the return CHECKCASTs back).
         // Class remapping runs first on 26.1, so register both spellings of the resource ID.
@@ -381,24 +410,83 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
                 wrapper, "messageBuilder",
                 "(Ljava/lang/Class;ILjava/lang/Object;)L" + builder + ";");
         }
-        // send(PacketTarget, msg): the target erases to Object (delivery is best-effort/no-op
-        // until the replay bridge lands; the call must not throw).
-        transformer.registerMethodRedirect(
-            wrapper, "send",
-            "(Lnet/minecraftforge/network/PacketDistributor$PacketTarget;Ljava/lang/Object;)V",
-            wrapper, "send", "(Ljava/lang/Object;Ljava/lang/Object;)V");
+        registerNetworkDeliveryBridge(transformer, netShim, wrapper);
 
         // Forge 47 returns an IndexedMessageCodec.MessageHandler even when callers only discard
         // it. That class no longer exists on NeoForge. Retype the call to the wrapper's erased
         // Object result so the registration is collected without retaining the deleted class.
-        String registrationArgs = "(ILjava/lang/Class;Ljava/util/function/BiConsumer;"
-                + "Ljava/util/function/Function;Ljava/util/function/BiConsumer;)";
+        String handlerArgs = "ILjava/lang/Class;Ljava/util/function/BiConsumer;"
+                + "Ljava/util/function/Function;Ljava/util/function/BiConsumer;";
         String oldHandler = "Lnet/minecraftforge/network/simple/IndexedMessageCodec$MessageHandler;";
-        for (String owner : new String[]{
-                "net/minecraftforge/network/simple/SimpleChannel", wrapper}) {
-            transformer.registerConvertingRedirect(
-                    owner, "registerMessage", registrationArgs + oldHandler,
-                    wrapper, "registerMessage", registrationArgs + "Ljava/lang/Object;", 0, 0);
+        // The second form adds an Optional<NetworkDirection>, which erases to Optional.
+        for (String registrationArgs : new String[]{
+                "(" + handlerArgs + ")", "(" + handlerArgs + "Ljava/util/Optional;)"}) {
+            for (String owner : new String[]{
+                    "net/minecraftforge/network/simple/SimpleChannel", wrapper}) {
+                transformer.registerConvertingRedirect(
+                        owner, "registerMessage", registrationArgs + oldHandler,
+                        wrapper, "registerMessage", registrationArgs + "Ljava/lang/Object;", 0, 0);
+            }
+        }
+    }
+
+    /**
+     * The parts of Forge's networking surface that NetworkShim delivers through NeoForge payloads:
+     * the handler context, the packet targets, and the send variants that name Minecraft types.
+     * Retromod cannot name those types, so each is erased to Object here and cast back at the
+     * mod's call site.
+     */
+    private static void registerNetworkDeliveryBridge(RetromodTransformer transformer,
+            String netShim, String wrapper) {
+        String forgeContext = "net/minecraftforge/network/NetworkEvent$Context";
+        String context = netShim + "$Context";
+        String forgeDistributor = "net/minecraftforge/network/PacketDistributor";
+        String distributor = netShim + "$PacketDistributor";
+        String forgeTargetPoint = forgeDistributor + "$TargetPoint";
+        String targetPoint = distributor + "$TargetPoint";
+        String forgeTarget = "Lnet/minecraftforge/network/PacketDistributor$PacketTarget;";
+        String forgeDirection = "Lnet/minecraftforge/network/NetworkDirection;";
+        String direction = "L" + netShim + "$NetworkDirection;";
+        String resourceKey = "Lnet/minecraft/resources/ResourceKey;";
+
+        transformer.registerClassRedirect(forgeContext, context);
+        transformer.registerClassRedirect(forgeDistributor, distributor);
+        transformer.registerClassRedirect(forgeDistributor + "$PacketTarget", distributor + "$PacketTarget");
+        transformer.registerClassRedirect(forgeTargetPoint, targetPoint);
+
+        for (String owner : new String[]{forgeContext, context}) {
+            transformer.registerMethodRedirect(owner, "getSender",
+                    "()Lnet/minecraft/server/level/ServerPlayer;", context, "getSender", "()Ljava/lang/Object;");
+            transformer.registerMethodRedirect(owner, "getNetworkManager",
+                    "()Lnet/minecraft/network/Connection;", context, "getNetworkManager", "()Ljava/lang/Object;");
+        }
+
+        for (String owner : new String[]{"net/minecraftforge/network/simple/SimpleChannel", wrapper}) {
+            for (String target : new String[]{forgeTarget, "L" + distributor + "$PacketTarget;"}) {
+                transformer.registerMethodRedirect(owner, "send",
+                        "(" + target + "Ljava/lang/Object;)V",
+                        wrapper, "send", "(Ljava/lang/Object;Ljava/lang/Object;)V");
+            }
+            for (String sendDirection : new String[]{forgeDirection, direction}) {
+                transformer.registerMethodRedirect(owner, "sendTo",
+                        "(Ljava/lang/Object;Lnet/minecraft/network/Connection;" + sendDirection + ")V",
+                        wrapper, "sendTo", "(Ljava/lang/Object;Ljava/lang/Object;" + direction + ")V");
+            }
+            transformer.registerMethodRedirect(owner, "isRemotePresent",
+                    "(Lnet/minecraft/network/Connection;)Z", wrapper, "isRemotePresent", "(Ljava/lang/Object;)Z");
+        }
+
+        String pointFactory = "(Ljava/lang/Object;DDDDLjava/lang/Object;)L" + targetPoint + ";";
+        String pointFactoryNoExclusion = "(DDDDLjava/lang/Object;)L" + targetPoint + ";";
+        for (String owner : new String[]{forgeTargetPoint, targetPoint}) {
+            transformer.registerConstructorRedirect(owner,
+                    "(Lnet/minecraft/server/level/ServerPlayer;DDDD" + resourceKey + ")V",
+                    targetPoint, "of", pointFactory);
+            transformer.registerConstructorRedirect(owner, "(DDDD" + resourceKey + ")V",
+                    targetPoint, "of", pointFactoryNoExclusion);
+            transformer.registerMethodRedirect(owner, "p",
+                    "(DDDD" + resourceKey + ")Ljava/util/function/Supplier;",
+                    targetPoint, "p", "(DDDDLjava/lang/Object;)Ljava/util/function/Supplier;");
         }
     }
 
@@ -417,9 +505,15 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "com.retromod.shim.forge.embedded.NetworkShim$SimpleChannelWrapper",
             "com.retromod.shim.forge.embedded.NetworkShim$MessageBuilder",
             "com.retromod.shim.forge.embedded.NetworkShim$PacketRegistration",
-            "com.retromod.shim.forge.embedded.NetworkShim$PayloadWrapper",
             "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor",
-            "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor$PacketTarget"
+            "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor$PacketTarget",
+            "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor$TargetPoint",
+            "com.retromod.shim.forge.embedded.NetworkShim$NetworkDirection",
+            "com.retromod.shim.forge.embedded.NetworkShim$Context",
+            "com.retromod.shim.forge.embedded.NetworkShim$PayloadBridge",
+            "com.retromod.shim.forge.embedded.NetworkShim$Payload",
+            "com.retromod.shim.forge.embedded.NetworkShim$CodecHandler",
+            "com.retromod.shim.forge.embedded.NetworkShim$HandlerHandler"
         };
     }
 }

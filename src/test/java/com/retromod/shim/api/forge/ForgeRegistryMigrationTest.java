@@ -154,6 +154,32 @@ class ForgeRegistryMigrationTest {
                 "RegistryObject must redirect to DeferredHolder");
     }
 
+    @Test
+    @DisplayName("#306: a vanilla key in ForgeRegistries.Keys reads Registries; a Forge-only key stays")
+    void registryKeysSplitBetweenVanillaAndNeoForge() {
+        assertKeyRead("ITEMS", "net/minecraft/core/registries/Registries", "ITEM");
+        assertKeyRead("POI_TYPES", "net/minecraft/core/registries/Registries", "POINT_OF_INTEREST_TYPE");
+        assertKeyRead("FLUID_TYPES", NEO_REGS + "$Keys", "FLUID_TYPES");
+    }
+
+    private static void assertKeyRead(String forgeKey, String owner, String name) {
+        String resourceKey = "Lnet/minecraft/resources/ResourceKey;";
+        ClassWriter cw = fixture();
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "go", "()V", null, null);
+        mv.visitCode();
+        mv.visitFieldInsn(Opcodes.GETSTATIC, FORGE_REGS + "$Keys", forgeKey, resourceKey);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        FieldInsnNode field = first(go(transform(cw.toByteArray())), FieldInsnNode.class);
+        assertEquals(owner + "." + name, field.owner + "." + field.name,
+                "ForgeRegistries.Keys." + forgeKey + " must read the host's own key");
+        assertEquals(resourceKey, field.desc);
+    }
+
     private static byte[] transform(byte[] in) {
         return RetromodTransformer.getInstance().transformClass(in, "test/RegFixture");
     }

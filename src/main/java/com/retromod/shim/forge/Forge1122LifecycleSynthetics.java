@@ -46,9 +46,8 @@ import static org.objectweb.asm.Opcodes.*;
  *       register statics in 1.12.2), which ride the existing event-bus bridges.</li>
  *   <li>Event stand-ins (embedded per-mod) with the commonly used 1.12.2 surface:
  *       {@code getModConfigurationDirectory()}, {@code getSuggestedConfigurationFile()},
- *       {@code getSourceFile()}, {@code getModLog()}. Rarely used members that would drag in
- *       other deleted FML types ({@code getModMetadata()}, {@code getAsmData()}) are omitted;
- *       calling them fails exactly as visibly as before this bridge existed.</li>
+ *       {@code getSourceFile()}, {@code getModLog()}, plus {@code getModMetadata()} and
+ *       {@code getAsmData()} on the stand-ins in {@link Forge1122ServiceStubs}.</li>
  *   <li>{@code LegacyFmlLifecycle} (embedded): reflectively finds the handler methods by their
  *       (redirected) event parameter type and invokes them in pre/init/post order, soft-failing
  *       per handler so one broken handler does not kill construction.</li>
@@ -74,6 +73,8 @@ public final class Forge1122LifecycleSynthetics {
             "net/minecraftforge/fml/common/event/FMLPostInitializationEvent";
 
     private static final String MOD_ANNOTATION_DESC = "Lnet/minecraftforge/fml/common/Mod;";
+    private static final String ATTACH_DESC =
+            "(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/Class;Ljava/lang/Class;Ljava/lang/Class;)V";
 
     /** Set when the 1.12.2 chain registered; gates {@link #upgradeLegacyModClass}. */
     private static volatile boolean active;
@@ -83,9 +84,15 @@ public final class Forge1122LifecycleSynthetics {
         active = false;
     }
 
+    /** Whether the 1.12.2 lifecycle bridge owns the FML event names on this host. */
+    public static boolean isActive() {
+        return active;
+    }
+
     /** Register the synthetics + the event class redirects, and arm the upgrade pass. */
     public static void register(RetromodTransformer t) {
         active = true;
+        t.onRegistrationReset(() -> active = false);
         t.registerSyntheticClass(BRIDGE, generateBridge());
         t.registerSyntheticClass(PRE_EVENT, generateEvent(PRE_EVENT, true));
         t.registerSyntheticClass(INIT_EVENT, generateEvent(INIT_EVENT, false));
@@ -178,6 +185,22 @@ public final class Forge1122LifecycleSynthetics {
             l.visitInsn(ARETURN);
             l.visitMaxs(0, 0);
             l.visitEnd();
+
+            // ASMDataTable getAsmData() and ModMetadata getModMetadata(), both built on the modid.
+            String[][] perMod = {{"getAsmData", Forge1122ServiceStubs.ASM_DATA_TABLE},
+                    {"getModMetadata", Forge1122ServiceStubs.MOD_METADATA}};
+            for (String[] getter : perMod) {
+                MethodVisitor g = cw.visitMethod(ACC_PUBLIC, getter[0], "()L" + getter[1] + ";", null, null);
+                g.visitCode();
+                g.visitTypeInsn(NEW, getter[1]);
+                g.visitInsn(DUP);
+                g.visitVarInsn(ALOAD, 0);
+                g.visitFieldInsn(GETFIELD, internal, "modid", "Ljava/lang/String;");
+                g.visitMethodInsn(INVOKESPECIAL, getter[1], "<init>", "(Ljava/lang/String;)V", false);
+                g.visitInsn(ARETURN);
+                g.visitMaxs(0, 0);
+                g.visitEnd();
+            }
         }
 
         cw.visitEnd();
@@ -306,6 +329,11 @@ public final class Forge1122LifecycleSynthetics {
      */
     public static byte[] upgradeLegacyModClass(byte[] classBytes) {
         if (!active || classBytes == null) return classBytes;
+        classBytes = Forge1122EventBridge.rewriteLegacyCalls(classBytes);
+        classBytes = Forge1122BlockStateBridge.upgradeBlockClass(classBytes,
+                com.retromod.core.RetromodTransformer.getInstance().remapQualifiedMethodName(
+                        Forge1122BlockStateBridge.BLOCK, "createBlockStateDefinition",
+                        Forge1122BlockStateBridge.DEFINITION_DESC));
         // cheap pre-filter before a full parse. BOTH spellings: depending on pass ordering the
         // class may already be remapped to the NeoForge annotation before this runs, and matching
         // only the Forge spelling silently skipped the value-shape upgrade, so the mod was scanned
@@ -338,29 +366,21 @@ public final class Forge1122LifecycleSynthetics {
 
             modAnn.values = new ArrayList<>(List.of("value", modid));
 
-            boolean hasHandlers = false;
+            // Every legacy @Mod class attaches, not only those with lifecycle handlers: attach
+            // also wires the mod's event subscribers, proxies and registry handlers. Pre-init
+            // runs here; init and post-init wait for common setup, after the registry events.
             for (MethodNode m : cn.methods) {
-                Type[] args = Type.getArgumentTypes(m.desc);
-                if (args.length != 1) continue;
-                String a = args[0].getInternalName();
-                if (a.equals(PRE_EVENT) || a.equals(INIT_EVENT) || a.equals(POST_EVENT)
-                        || a.equals(OLD_PRE) || a.equals(OLD_INIT) || a.equals(OLD_POST)) {
-                    hasHandlers = true;
-                    break;
-                }
-            }
-
-            if (hasHandlers) {
-                for (MethodNode m : cn.methods) {
-                    if (!m.name.equals("<init>")) continue;
-                    if (delegatesToThis(cn, m)) continue;
-                    for (AbstractInsnNode in : m.instructions.toArray()) {
-                        if (in.getOpcode() == RETURN) {
-                            m.instructions.insertBefore(in, new VarInsnNode(ALOAD, 0));
-                            m.instructions.insertBefore(in, new LdcInsnNode(modid));
-                            m.instructions.insertBefore(in, new MethodInsnNode(INVOKESTATIC,
-                                    BRIDGE, "fire", "(Ljava/lang/Object;Ljava/lang/String;)V", false));
-                        }
+                if (!m.name.equals("<init>")) continue;
+                if (delegatesToThis(cn, m)) continue;
+                for (AbstractInsnNode in : m.instructions.toArray()) {
+                    if (in.getOpcode() == RETURN) {
+                        m.instructions.insertBefore(in, new VarInsnNode(ALOAD, 0));
+                        m.instructions.insertBefore(in, new LdcInsnNode(modid));
+                        m.instructions.insertBefore(in, new LdcInsnNode(Type.getObjectType(PRE_EVENT)));
+                        m.instructions.insertBefore(in, new LdcInsnNode(Type.getObjectType(INIT_EVENT)));
+                        m.instructions.insertBefore(in, new LdcInsnNode(Type.getObjectType(POST_EVENT)));
+                        m.instructions.insertBefore(in, new MethodInsnNode(INVOKESTATIC,
+                                Forge1122EventBridge.EVENTS, "attach", ATTACH_DESC, false));
                     }
                 }
             }

@@ -63,27 +63,15 @@ public class ForgeRegistryPolyfill implements PolyfillProvider {
             "com/retromod/polyfill/forge/embedded/GameRegistryShim"
         );
 
-        // FML lifecycle events to no-op stubs
-        transformer.registerClassRedirect(
-            "net/minecraftforge/fml/common/event/FMLPreInitializationEvent",
-            "com/retromod/polyfill/forge/embedded/FMLEventShim$PreInit"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraftforge/fml/common/event/FMLInitializationEvent",
-            "com/retromod/polyfill/forge/embedded/FMLEventShim$Init"
-        );
-        transformer.registerClassRedirect(
-            "net/minecraftforge/fml/common/event/FMLPostInitializationEvent",
-            "com/retromod/polyfill/forge/embedded/FMLEventShim$PostInit"
-        );
+        // On Forge and NeoForge hosts the 1.12.2 shim bridges the lifecycle events and
+        // @SidedProxy itself. These inert stand-ins, registered after the shims, used to replace
+        // its bridges, so @Mod.EventHandler methods and proxies never ran.
+        if (!com.retromod.shim.forge.Forge1122LifecycleSynthetics.isActive()) {
+            registerInertLifecycle(transformer);
+        }
         transformer.registerClassRedirect(
             "net/minecraftforge/fml/common/event/FMLServerStartingEvent",
             "com/retromod/polyfill/forge/embedded/FMLEventShim$ServerStarting"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraftforge/fml/common/SidedProxy",
-            "com/retromod/polyfill/forge/embedded/GameRegistryShim"
         );
 
         // OreDictionary, now tag-based
@@ -116,5 +104,25 @@ public class ForgeRegistryPolyfill implements PolyfillProvider {
         for (String cls : getPolyfillClasses()) {
             transformer.registerEmbeddedShim(cls);
         }
+    }
+
+    private static void registerInertLifecycle(RetromodTransformer transformer) {
+        transformer.registerClassRedirect(
+            "net/minecraftforge/fml/common/event/FMLPreInitializationEvent",
+            "com/retromod/polyfill/forge/embedded/FMLEventShim$PreInit"
+        );
+        transformer.registerClassRedirect(
+            "net/minecraftforge/fml/common/event/FMLInitializationEvent",
+            "com/retromod/polyfill/forge/embedded/FMLEventShim$Init"
+        );
+        transformer.registerClassRedirect(
+            "net/minecraftforge/fml/common/event/FMLPostInitializationEvent",
+            "com/retromod/polyfill/forge/embedded/FMLEventShim$PostInit"
+        );
+
+        transformer.registerClassRedirect(
+            "net/minecraftforge/fml/common/SidedProxy",
+            "com/retromod/polyfill/forge/embedded/GameRegistryShim"
+        );
     }
 }

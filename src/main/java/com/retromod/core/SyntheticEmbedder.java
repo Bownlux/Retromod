@@ -139,10 +139,11 @@ public final class SyntheticEmbedder {
             String base = embeddedBase(uniqueKey);
             Map<String, String> rename = relocationMap(base, referenced);
             Remapper remapper = new SimpleRemapper(syntheticRemapping(rename, transformer));
+            Remapper syntheticRemapper = memberAware(remapper, synthetics, transformer);
 
             Map<Path, byte[]> embeddedOutputs = new HashMap<>();
             for (String n : referenced) {
-                byte[] renamed = remap(synthetics.get(n), remapper);
+                byte[] renamed = remap(synthetics.get(n), syntheticRemapper);
                 Path target = ZipSecurity.safeResolve(modDir, rename.get(n) + ".class");
                 if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                     throw new IOException("synthetic output collides with an existing mod class: "
@@ -257,6 +258,7 @@ public final class SyntheticEmbedder {
             String base = embeddedBase(uniqueKey);
             Map<String, String> rename = relocationMap(base, referenced);
             Remapper remapper = new SimpleRemapper(syntheticRemapping(rename, transformer));
+            Remapper syntheticRemapper = memberAware(remapper, synthetics, transformer);
 
             java.util.LinkedHashMap<String, byte[]> out = new java.util.LinkedHashMap<>();
             for (var en : entries.entrySet()) {
@@ -273,7 +275,7 @@ public final class SyntheticEmbedder {
                     throw new IOException("synthetic output collides with an existing jar entry: "
                             + generatedName);
                 }
-                out.put(generatedName, remap(synthetics.get(n), remapper));
+                out.put(generatedName, remap(synthetics.get(n), syntheticRemapper));
             }
             JarSignatureSanitizer.sanitizeEntries(out);
 
@@ -393,6 +395,7 @@ public final class SyntheticEmbedder {
         String base = embeddedBase(uniqueKey);
         Map<String, String> rename = relocationMap(base, referenced);
         Remapper remapper = new SimpleRemapper(syntheticRemapping(rename, transformer));
+        Remapper syntheticRemapper = memberAware(remapper, synthetics, transformer);
         java.util.LinkedHashMap<String, byte[]> outputEntries = new java.util.LinkedHashMap<>();
         for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
             byte[] data = entry.getValue();
@@ -408,7 +411,7 @@ public final class SyntheticEmbedder {
                 throw new IOException("synthetic output collides with an existing nested JAR entry: "
                         + generatedName);
             }
-            outputEntries.put(generatedName, remap(synthetics.get(internalName), remapper));
+            outputEntries.put(generatedName, remap(synthetics.get(internalName), syntheticRemapper));
         }
         JarSignatureSanitizer.sanitizeEntries(outputEntries);
 
@@ -439,6 +442,63 @@ public final class SyntheticEmbedder {
         } catch (Exception ignored) {
         }
         return refs;
+    }
+
+    /**
+     * The class remapper, plus the host's member names when the host runs target SRG names.
+     *
+     * <p>Synthetics are written with Mojang member names. Forge 1.20.1 and other pre-26 Forge hosts
+     * run SRG names, so a synthetic that called {@code CreativeModeTab.builder()} or overrode
+     * {@code getIconItem} by its Mojang name failed there with {@code NoSuchMethodError} or never
+     * overrode anything. Mod classes already carry target SRG names, so this applies to synthetic
+     * bytes only. A method a synthetic declares is looked up through its supertypes, because that
+     * is where an override's name is defined.
+     */
+    static Remapper memberAware(Remapper classes, Map<String, byte[]> synthetics,
+            RetromodTransformer transformer) {
+        if (!transformer.hasTargetSrgMappings()) return classes;
+        return new Remapper() {
+            @Override
+            public String map(String internalName) {
+                return classes.map(internalName);
+            }
+
+            @Override
+            public String mapMethodName(String owner, String name, String descriptor) {
+                if (name.startsWith("<")) return name;
+                for (String type : ownerAndSupertypes(owner, synthetics)) {
+                    String mapped = transformer.remapQualifiedMethodName(type, name, descriptor);
+                    if (!mapped.equals(name)) return mapped;
+                }
+                return name;
+            }
+
+            @Override
+            public String mapFieldName(String owner, String name, String descriptor) {
+                for (String type : ownerAndSupertypes(owner, synthetics)) {
+                    String mapped = transformer.remapQualifiedFieldName(type, name, descriptor);
+                    if (!mapped.equals(name)) return mapped;
+                }
+                return name;
+            }
+        };
+    }
+
+    /** The owner, then, for a synthetic, its supertypes up to the first host class. */
+    private static List<String> ownerAndSupertypes(String owner, Map<String, byte[]> synthetics) {
+        List<String> types = new java.util.ArrayList<>();
+        java.util.ArrayDeque<String> pending = new java.util.ArrayDeque<>(List.of(owner));
+        while (!pending.isEmpty() && types.size() < 16) {
+            String type = pending.poll();
+            if (types.contains(type)) continue;
+            types.add(type);
+            byte[] synthetic = synthetics.get(type);
+            if (synthetic == null) continue;
+            ClassReader reader = new ClassReader(synthetic);
+            if (reader.getSuperName() != null) pending.add(reader.getSuperName());
+            pending.addAll(Arrays.asList(reader.getInterfaces()));
+        }
+        return types;
     }
 
     private static byte[] remap(byte[] classBytes, Remapper remapper) {

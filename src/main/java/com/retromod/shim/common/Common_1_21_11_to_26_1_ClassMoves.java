@@ -97,6 +97,17 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         registerRegistryValueGetterRename(transformer);
         registerClientAccessorRenames26_1(transformer);
         registerCorpus26xDescriptorAdaptations(transformer);
+        LegacyGuiDrawBridge.register(transformer);
+        LegacyDepthBlendBridge.registerDepthState(transformer);
+
+        // BlockState.getBlockHolder() took the TypedInstance spelling typeHolder() in 26.1 (same
+        // Holder return; getBlockHolder is absent on 26.1.2, 26.2 and 26.3). The fuzzy resolver
+        // only reached 60% on it, so Hold My Items' block queries died NoSuchMethodError.
+        for (String owner : new String[]{"net/minecraft/world/level/block/state/BlockState",
+                "net/minecraft/world/level/block/state/BlockBehaviour$BlockStateBase"}) {
+            transformer.registerMethodRedirect(owner, "getBlockHolder", "()Lnet/minecraft/core/Holder;",
+                    owner, "typeHolder", "()Lnet/minecraft/core/Holder;");
+        }
     
         // Every loader needs this: the old RULE_* spelling is the pre-26.1 Mojang name, so a
         // NeoForge or Forge mod from 1.20 or 1.21 carries it just as a Fabric one does.
@@ -253,6 +264,29 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         transformer.registerMethodRedirect(
                 "net/minecraft/client/Camera", "getPosition", "()Lnet/minecraft/world/phys/Vec3;",
                 "net/minecraft/client/Camera", "position", "()Lnet/minecraft/world/phys/Vec3;");
+        // The pitch and yaw accessors took the same record-style names. Left to the fuzzy
+        // resolver, both scored getFov()F at 90, so a camera-aligned overlay rotated by the
+        // field of view instead of the view angle (#296, Phantom Shapes).
+        transformer.registerMethodRedirect(
+                "net/minecraft/client/Camera", "getXRot", "()F",
+                "net/minecraft/client/Camera", "xRot", "()F");
+        transformer.registerMethodRedirect(
+                "net/minecraft/client/Camera", "getYRot", "()F",
+                "net/minecraft/client/Camera", "yRot", "()F");
+        String cameraCalls = "com/retromod/polyfill/minecraft/LegacyWorldRenderContext";
+        ensureSyntheticRegistered(transformer, cameraCalls);
+        transformer.registerMethodRedirect(
+                "net/minecraft/client/Camera", "getNearPlane", "()Lnet/minecraft/client/Camera$NearPlane;",
+                cameraCalls, "nearPlane", "(Ljava/lang/Object;)Ljava/lang/Object;");
+        // A 1.21.9+ block-entity renderer already takes a render state; 26.1 only renamed the
+        // call render to submit (same parameters). This fixes callers, such as Hold My Items
+        // drawing a held bell. A renderer that still declares render needs a real port.
+        String blockEntityRenderer = "net/minecraft/client/renderer/blockentity/BlockEntityRenderer";
+        String submitDesc = "(Lnet/minecraft/client/renderer/blockentity/state/BlockEntityRenderState;"
+                + "Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;"
+                + "Lnet/minecraft/client/renderer/state/level/CameraRenderState;)V";
+        transformer.registerMethodRedirect(blockEntityRenderer, "render", submitDesc,
+                blockEntityRenderer, "submit", submitDesc);
 
         // JOML const-interface widening: the vertex API's Matrix4f parameter became the immutable
         // Matrix4fc interface by 26.1 (verified present on 26.1+26.2). A 1.21.1 mod links against the
@@ -455,6 +489,13 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         t.registerMethodRedirect(
                 graphics, "extractTooltip", "(" + font + component + "II)V",
                 graphics, "setTooltipForNextFrame", "(" + font + component + "II)V");
+
+        // The in-game HUD entry point took the same extract name. This is how a HUD mixin's
+        // render selector reaches the 26.1 method; on 26.2 MixinHostDriftRepair follows it onto
+        // Hud, where the method moved with the same descriptor.
+        String hudDesc = "(L" + graphics + ";Lnet/minecraft/client/DeltaTracker;)V";
+        t.registerMethodRedirect("net/minecraft/client/gui/Gui", "render", hudDesc,
+                "net/minecraft/client/gui/Gui", "extractRenderState", hudDesc);
     }
 
     /**
@@ -522,6 +563,7 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         String poly = "com/retromod/polyfill/minecraft/RetroParticleCompat";
         ensureSyntheticRegistered(t, poly);
         t.registerSuperclassRebase(oldBase, newBase);
+        LegacyParticleRenderTypeAdapter.register(t);
         // Non-extends references (instanceof, method descs, provider generics).
         t.registerClassRedirect(oldBase, newBase);
         String level = "Lnet/minecraft/client/multiplayer/ClientLevel;";
@@ -653,6 +695,8 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
             t.registerMethodRedirect(owner, "pack", "(II)I", coords, "pack", "(II)I");
             t.registerMethodRedirect(owner, "block", "(I)I", coords, "block", "(I)I");
             t.registerMethodRedirect(owner, "sky", "(I)I", coords, "sky", "(I)I");
+            t.registerMethodRedirect(owner, "lightCoordsWithEmission", "(II)I",
+                    coords, "lightCoordsWithEmission", "(II)I");
             t.registerRemovedMethodNeutralize(owner, "turnOnLightLayer", "()V");
             t.registerRemovedMethodNeutralize(owner, "turnOffLightLayer", "()V");
         }
@@ -714,7 +758,16 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                     poly, "getRenderTypeBlock", objBoolRet);
             t.registerMethodRedirect(ibrt, "getRenderType", "(" + stack + "Z)" + rtd,
                     poly, "getRenderTypeItem", objBoolRet);
+            // Forge's and NeoForge's setters, called from client setup by most block mods.
+            for (String target : new String[]{"Lnet/minecraft/world/level/block/Block;",
+                                              "Lnet/minecraft/world/level/material/Fluid;"}) {
+                t.registerMethodRedirect(ibrt, "setRenderLayer", "(" + target + rtd + ")V",
+                        poly, "setRenderLayer", "(Ljava/lang/Object;Ljava/lang/Object;)V");
+            }
         }
+        t.registerMethodRedirect(ibrt, "setRenderLayer",
+                "(Lnet/minecraft/world/level/block/Block;Ljava/util/function/Predicate;)V",
+                poly, "setRenderLayer", "(Ljava/lang/Object;Ljava/lang/Object;)V");
     }
 
     /**
@@ -797,6 +850,8 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                     "com/retromod/polyfill/minecraft/RetroKeyMapping", form[1],
                     form[2] + "Ljava/lang/Object;");
         }
+        // Quad loops a mod wrote itself: material accessors and putBulkData (see the synthetic).
+        LegacyBakedQuadSynthetic.register(t);
     }
 
     /**
@@ -879,7 +934,17 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
     }
 
     public static void registerRegistryValueGetterRename(RetromodTransformer transformer) {
-        String getIdDesc = "(Lnet/minecraft/resources/Identifier;)Ljava/lang/Object;";
+        registerRegistryValueGetterRename(transformer, "net/minecraft/resources/Identifier");
+    }
+
+    /**
+     * 1.21.2 made {@code get(id)} return the holder {@code Optional} and named the value lookup
+     * {@code getValue}. Only the old {@code Object}-returning shape is moved, so a newer mod's
+     * Optional call is left alone. Hosts from 1.21.2 to 1.21.10 still call the id class
+     * {@code ResourceLocation}.
+     */
+    public static void registerRegistryValueGetterRename(RetromodTransformer transformer, String idClass) {
+        String getIdDesc = "(L" + idClass + ";)Ljava/lang/Object;";
         for (String owner : new String[]{
                 "net/minecraft/core/Registry",
                 "net/minecraft/core/DefaultedRegistry",
