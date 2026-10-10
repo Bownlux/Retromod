@@ -8,6 +8,18 @@ description: "Highlights from Retromod releases."
 
 This page keeps the release history readable. The [full technical changelog](https://github.com/Bownlux/Retromod/blob/main/CHANGELOG.md) lists every fix and regression test.
 
+## 1.3.4, October 9, 2026
+
+- Opens Forge mods' menu screens on NeoForge clients, which stopped loading with `IllegalAccessError`.
+- Brings the 26.1 render, text, keybind, and GUI bridges to Forge 1.21.x mods on Forge 26.x.
+- Fixes `NoSuchFieldError` for Forge mods that read the tool actions Forge removed on 26.3.
+- Converts old Forge global loot modifiers to 26.3's format.
+- Keeps older food code from crashing on 1.21.2 and newer.
+- Fixes Fabric mods that bundle Porting Lib on 26.2 and 26.3, where `Holder` became sealed.
+- Follows 26.3's renamed piston behaviors and its new resource listing filter.
+
+The armor, tool, GUI, and worldgen bridges for older Forge mods still stop before the newest Minecraft versions. Carrying them to 26.3 is planned for 1.4.0. On 26.3, a few of Porting Lib's loot mixins still fail to apply, because 26.3 rebuilt those loot internals.
+
 ## 1.3.3, October 7, 2026
 
 - Delivers Forge mods' network messages between client and server on NeoForge.

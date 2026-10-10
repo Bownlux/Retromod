@@ -48,6 +48,10 @@ public class Forge_26_2_to_26_3 implements VersionShim {
             return;
         }
 
+        // 66 removed the axe, hoe, pickaxe, shovel, sword and shield ToolActions with 26.3's
+        // data-driven tools; NeoForge 26.3 did the same to ItemAbilities.
+        com.retromod.shim.neoforge.LegacyItemAbilitiesBridge.registerForge(transformer);
+
         // The ender teleport event was generalised; constructor, BUS and getEntityLiving match.
         transformer.registerClassRedirect(
                 "net/minecraftforge/event/entity/EntityTeleportEvent$EnderEntity",

@@ -4,6 +4,14 @@ Retromod transforms older Minecraft mod bytecode so old mods work on newer MC ve
 
 **Repository:** https://github.com/Bownlux/Retromod.git
 
+## Carry Every Fix Forward and Across Loaders
+
+Apply this to every fix and feature, right after the security embargo in importance.
+
+- **Forward to the newest Minecraft.** When something starts working on an older host, such as a mod fixed on 1.21.1 or 26.1.2, make it work on the newest Minecraft version Retromod builds for too (the last version in `build-all.sh`, 26.3 today). Follow the shim chain and every host gate up to that version, cover the newest host's shape in the unit test, and run it there when a server or client for it can run. Most users are on the newest version, and a fix that stops at an older host comes back as "works on 26.1.2 but not 26.3" (#316: Polished Planks doors dropped twice on 26.3, which changed the loot format, while 26.1.2 was fine). If the newest version removed the system outright, say so in the changelog limitations rather than leaving the gap silent.
+- **Across loaders.** If the change touches something every loader shares (vanilla classes and data formats, mixins on Minecraft code, the transformer core), make it work on Fabric, Quilt, Forge, and NeoForge alike, through each loader's shim chain and transform path. Quilt runs the Fabric artifact, so a Fabric fix covers it. If only Forge and NeoForge share it (FML, `mods.toml`, Forge-family APIs, SRG), fix both of them and leave Fabric and Quilt alone. If it belongs to one loader, keep it there.
+- **Still gate by host** (pitfall #9). Carrying a fix forward means registering it for every host that needs it, never applying it to a host that still has the old API.
+
 ## Writing style
 
 **Do not use em-dashes (the long dash, Unicode U+2014) anywhere:** not in chat replies, not in code comments, docs, CHANGELOG/ROADMAP entries, or commit messages. Also avoid en-dashes (U+2013). They are annoying to copy out of responses. Use a comma, parentheses, a colon, or two separate sentences instead. (Ordinary hyphens `-`, e.g. in version ranges like `1.20-26.2`, are fine.)
@@ -139,12 +147,12 @@ mvn package -P lite -DskipTests -Dexec.skip=true
 mvn exec:java -Dexec.mainClass="com.retromod.cli.RetromodCli" -Dexec.args="<command>" -q
 
 # Run the executable release CLI (dependencies bundled)
-java -jar dist/CLI/retromod-1.3.3-cli.jar <command>
+java -jar dist/CLI/retromod-1.3.4-cli.jar <command>
 ```
 
 **Important:** Always pass `-Dexec.skip=true` during build to prevent Maven from running the CLI entrypoint.
 
-Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 71 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.3.3-cli.jar`.
+Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 71 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.3.4-cli.jar`.
 
 ## Release integrity (self-hash)
 
@@ -153,7 +161,7 @@ Official builds embed a SHA-256 of the executable release surface in `SignatureV
 **Embed the hash as the LAST release step** (any covered code, provider, or transformation-data change shifts it):
 ```bash
 mvn clean package -Dexec.skip=true                          # build the final jars
-python3 scripts/compute-self-hash.py target/retromod-1.3.3-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.3.4-all.jar
 # embed the 64-hex result into SignatureVerifier.EXPECTED_SELF_HASH PROGRAMMATICALLY
 # (sed/python - never hand-typed), rebuild, then re-run the compute script and
 # compare against the embedded value (closed-loop verify)
@@ -167,7 +175,7 @@ After embedding and rebuilding, run `bash build-all.sh --skip-build --require-se
 ## Deploy to Minecraft
 
 ```bash
-cp dist/Fabric/26.1/retromod-1.3.3+26.1.jar ~/Library/Application\ Support/minecraft/mods/
+cp dist/Fabric/26.1/retromod-1.3.4+26.1.jar ~/Library/Application\ Support/minecraft/mods/
 ```
 
 Game directory (macOS): `~/Library/Application Support/minecraft/`

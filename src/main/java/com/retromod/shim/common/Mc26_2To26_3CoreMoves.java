@@ -39,6 +39,8 @@ public final class Mc26_2To26_3CoreMoves {
     private Mc26_2To26_3CoreMoves() {}
 
     public static void register(RetromodTransformer t) {
+        registerPushReactionRenames(t);
+        LegacyResourceSelectorBridge.register(t);
         registerRenderLibraryRepackage(t);
         registerVanillaMoves(t);
         registerAuthlibMoves(t);
@@ -622,6 +624,23 @@ public final class Mc26_2To26_3CoreMoves {
                     "com/retromod/generated/Legacy" + removed,
                     "net/minecraft/world/item/Item",
                     "(Lnet/minecraft/world/item/Item$Properties;)V");
+        }
+    }
+
+    /**
+     * 26.3 renamed every {@code PushReaction} constant. Vanilla's own blocks map one to one (201
+     * {@code DESTROY} uses became {@code POPPED}, {@code BLOCK} became {@code IMMOVEABLE}, and the
+     * entity default {@code NORMAL} became {@code PUSH_PULL}), so a block mod that sets its piston
+     * behavior failed with {@code NoSuchFieldError} on 26.3.
+     */
+    static void registerPushReactionRenames(RetromodTransformer t) {
+        String owner = "net/minecraft/world/level/material/PushReaction";
+        String[][] renames = {
+            {"NORMAL", "PUSH_PULL"}, {"DESTROY", "POPPED"}, {"BLOCK", "IMMOVEABLE"},
+            {"IGNORE", "IGNORE_ENTITY"}, {"PUSH_ONLY", "PUSH"},
+        };
+        for (String[] rename : renames) {
+            t.registerFieldRedirect(owner, rename[0], owner, rename[1]);
         }
     }
 }

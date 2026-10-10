@@ -134,4 +134,26 @@ class LegacyFoodPropertiesBridgeTest {
         new ClassReader(bytes).accept(node, 0);
         return node;
     }
+
+    @Test
+    void newerHostsAnswerFromTheFoodRecordAlone() {
+        // 1.21.2 moved eating time and effects to the consumable component, so the helper must
+        // not call eatSeconds() or effects(), which would throw NoSuchMethodError there.
+        List<Rewrite> rewrites = candidates().stream()
+                .filter(r -> r.oldName().equals("isFastFood") || r.oldName().equals("getEffects"))
+                .toList();
+        ClassNode helper = node(generateHelper(rewrites, false));
+        for (MethodNode method : helper.methods) {
+            for (AbstractInsnNode insn : method.instructions) {
+                if (insn instanceof MethodInsnNode call) {
+                    assertFalse(call.name.equals("eatSeconds") || call.name.equals("effects"),
+                            method.name + " still calls " + call.name);
+                }
+            }
+        }
+        MethodNode effects = helper.methods.stream().filter(m -> m.name.equals("getEffects")).findFirst().orElseThrow();
+        assertTrue(java.util.Arrays.stream(effects.instructions.toArray())
+                .anyMatch(i -> i instanceof MethodInsnNode call && call.owner.equals("java/util/List")
+                        && call.name.equals("of")), "getEffects answers an empty list");
+    }
 }

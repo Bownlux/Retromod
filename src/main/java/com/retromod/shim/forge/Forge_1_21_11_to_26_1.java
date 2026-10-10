@@ -58,6 +58,11 @@ public class Forge_1_21_11_to_26_1 implements VersionShim {
             .registerOfficialEntityTypeBuildBridge(transformer);
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
             .registerLegacyContainerInput(transformer);
+        // The 26.1 vanilla descriptor changes and client bridges (render types, ItemBlockRenderTypes,
+        // text events, key mappings, NBT, reload listeners, GUI calls, particles) name only vanilla
+        // classes, so Forge mods built for 1.21.x need them as much as Fabric and NeoForge mods do.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
+            .registerCorpus26xDescriptorAdaptations(transformer);
 
         // Vanilla class moves/renames the corpus scan surfaced (Forge doesn't run the Common
         // class-moves path, so these mirror Common_1_21_11_to_26_1_ClassMoves for Forge hosts):

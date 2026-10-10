@@ -96,14 +96,19 @@ public final class LegacyFoodPropertiesBridge {
         for (Rewrite rewrite : candidates()) {
             if (replacedOnHost(rewrite)) rewrites.add(rewrite);
         }
-        registerRedirects(transformer, rewrites);
+        registerRedirects(transformer, rewrites, hostFoodHasEffects());
         LOGGER.info("Bridged {} removed food members", rewrites.size());
     }
 
     /** Unconditional registration for transform-shape tests. */
     static void registerRedirects(RetromodTransformer transformer, List<Rewrite> rewrites) {
+        registerRedirects(transformer, rewrites, true);
+    }
+
+    static void registerRedirects(RetromodTransformer transformer, List<Rewrite> rewrites,
+                                  boolean foodHasEffects) {
         if (rewrites.stream().anyMatch(Rewrite::viaHelper)) {
-            transformer.registerSyntheticClass(HELPER, generateHelper(rewrites));
+            transformer.registerSyntheticClass(HELPER, generateHelper(rewrites, foodHasEffects));
         }
         for (Rewrite rewrite : rewrites) {
             if (rewrite.viaHelper()) {
@@ -124,6 +129,19 @@ public final class LegacyFoodPropertiesBridge {
         return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, RECORD_FOOD_VERSION) >= 0;
     }
 
+    /**
+     * 1.21.2 moved eating time and effects from {@code FoodProperties} to the item's consumable
+     * component, so from then on the food record alone cannot answer {@code isFastFood} or
+     * {@code getEffects}.
+     */
+    static boolean hostFoodHasEffects() {
+        ClassNode food = ClassResourceInspector.read(FOOD);
+        if (food != null) {
+            return hasMethod(food, "eatSeconds", "()F") && hasMethod(food, "effects", "()Ljava/util/List;");
+        }
+        return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21.2") < 0;
+    }
+
     private static boolean replacedOnHost(Rewrite rewrite) {
         ClassNode owner = ClassResourceInspector.read(rewrite.owner());
         if (owner == null) return true; // offline: hostHasRecordFood already checked the version
@@ -139,6 +157,14 @@ public final class LegacyFoodPropertiesBridge {
     }
 
     static byte[] generateHelper(List<Rewrite> rewrites) {
+        return generateHelper(rewrites, true);
+    }
+
+    /**
+     * Without eating time and effects on the food record (1.21.2 and newer), the old getters
+     * report normal food with no effects, which is what a food with no consumable effects has.
+     */
+    static byte[] generateHelper(List<Rewrite> rewrites, boolean foodHasEffects) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
             @Override
             protected String getCommonSuperClass(String first, String second) {
@@ -163,8 +189,22 @@ public final class LegacyFoodPropertiesBridge {
                     mv.visitInsn(Opcodes.ICONST_0);
                     mv.visitInsn(Opcodes.IRETURN);
                 }
-                case "isFastFood" -> emitIsFastFood(mv);
-                case "getEffects" -> emitEffects(mv);
+                case "isFastFood" -> {
+                    if (foodHasEffects) {
+                        emitIsFastFood(mv);
+                    } else {
+                        mv.visitInsn(Opcodes.ICONST_0);
+                        mv.visitInsn(Opcodes.IRETURN);
+                    }
+                }
+                case "getEffects" -> {
+                    if (foodHasEffects) {
+                        emitEffects(mv);
+                    } else {
+                        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/List", "of", "()Ljava/util/List;", true);
+                        mv.visitInsn(Opcodes.ARETURN);
+                    }
+                }
                 case "getFoodProperties" -> emitItemFood(mv, false);
                 case "isEdible" -> emitItemFood(mv, true);
                 default -> throw new IllegalArgumentException("No helper for " + rewrite.oldName());

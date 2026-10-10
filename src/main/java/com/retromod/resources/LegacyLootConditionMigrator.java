@@ -42,28 +42,53 @@ final class LegacyLootConditionMigrator {
                 || entryName.contains("/item_modifier/") || entryName.contains("/item_modifiers/");
     }
 
+    /** A Forge-family global loot modifier, which carries its own conditions. */
+    static boolean isLootModifier(String entryName) {
+        return entryName.contains("/loot_modifiers/");
+    }
+
     /**
      * Whether the entry is a kind of file that holds loot conditions and still names one the old
-     * way. Forge-family global loot modifiers count only on NeoForge, whose 26.3 codec is known to
-     * read one {@code "condition"}.
+     * way. Global loot modifiers count only on a Forge-family host, which reads them.
      */
-    static boolean mayContainOldConditions(String entryName, String content, boolean neoForgeHost) {
+    static boolean mayContainOldConditions(String entryName, String content, boolean forgeFamilyHost) {
         if (!content.contains("\"condition\"") && !content.contains("\"function\"")) return false;
         return isLootFile(entryName)
                 || entryName.contains("/predicate/") || entryName.contains("/predicates/")
                 || entryName.contains("/advancement/") || entryName.contains("/advancements/")
                 || entryName.contains("/enchantment/")
-                || (neoForgeHost && entryName.contains("/loot_modifiers/"));
+                || (forgeFamilyHost && isLootModifier(entryName));
     }
 
     /** Returns the input bytes when nothing was in the old format. */
     static byte[] migrate(byte[] json, boolean lootFile) {
+        return migrate(json, lootFile, false);
+    }
+
+    /**
+     * {@code keepConditionList} is for a global loot modifier on Forge, whose 26.3 codec still
+     * reads a {@code "conditions"} list (NeoForge's reads one {@code "condition"}): the conditions
+     * inside it take the new format and the list stays.
+     */
+    static byte[] migrate(byte[] json, boolean lootFile, boolean keepConditionList) {
         try {
-            JsonElement root = JsonParser.parseString(new String(json, StandardCharsets.UTF_8));
-            JsonElement migrated = isOldConditionList(root)
-                    ? collapse(root.getAsJsonArray(), lootFile)
-                    : convert(root, lootFile);
-            return migrated.equals(root) ? json : migrated.toString().getBytes(StandardCharsets.UTF_8);
+            JsonElement original = JsonParser.parseString(new String(json, StandardCharsets.UTF_8));
+            JsonElement migrated;
+            if (keepConditionList && original.isJsonObject()
+                    && isOldConditionList(original.getAsJsonObject().get("conditions"))) {
+                JsonObject modifier = original.getAsJsonObject().deepCopy();
+                JsonArray converted = new JsonArray();
+                for (JsonElement condition : modifier.getAsJsonArray("conditions")) {
+                    converted.add(convertCondition(condition.getAsJsonObject(), lootFile));
+                }
+                modifier.add("conditions", converted);
+                migrated = convert(modifier, lootFile);
+            } else if (isOldConditionList(original)) {
+                migrated = collapse(original.getAsJsonArray(), lootFile);
+            } else {
+                migrated = convert(original, lootFile);
+            }
+            return migrated.equals(original) ? json : migrated.toString().getBytes(StandardCharsets.UTF_8);
         } catch (RuntimeException malformed) {
             return json;
         }

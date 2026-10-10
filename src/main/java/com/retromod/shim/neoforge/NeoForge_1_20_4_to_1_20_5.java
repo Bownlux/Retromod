@@ -64,6 +64,8 @@ public class NeoForge_1_20_4_to_1_20_5 implements VersionShim {
         // named FoodPropertiesShim and AttributeShim, which were never written, and nutrition(I)
         // still exists, so they broke working calls with NoClassDefFoundError.
         com.retromod.shim.common.LegacyFoodPropertiesBridge.register(transformer);
+        // NeoForge stopped opening MenuScreens.register; mods from before still call it.
+        com.retromod.shim.forge.LegacyMenuScreensBridge.register(transformer);
         com.retromod.shim.common.LegacyAttributeApiBridge.register(transformer);
         com.retromod.shim.common.LegacyItemAttributeOverrideAdapter.register(transformer);
         com.retromod.shim.common.LegacyDispenserBridge.register(transformer);

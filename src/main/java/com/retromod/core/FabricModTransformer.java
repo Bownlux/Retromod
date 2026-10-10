@@ -982,7 +982,22 @@ public class FabricModTransformer {
         if (remappedFiles > 0) {
             LOGGER.info("Remapped intermediary→Mojang in {} metadata files", remappedFiles);
         }
+        unsealSealedSupertypes(dir);
         return true;
+    }
+
+    /**
+     * Adds access widener entries for Minecraft types the host sealed after the jar was built, so
+     * its classes that extend or implement them still load. Only official-namespace hosts.
+     */
+    private boolean unsealSealedSupertypes(Path jarRoot) {
+        if (!RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) return false;
+        try {
+            return !SealedSupertypeUnsealer.unseal(jarRoot, ClassResourceInspector::read).isEmpty();
+        } catch (IOException | RuntimeException e) {
+            LOGGER.warn("Could not unseal Minecraft types for {}: {}", jarRoot.getFileName(), e.getMessage());
+            return false;
+        }
     }
 
     /** Remap an access widener from the intermediary namespace to official. */
@@ -1157,6 +1172,7 @@ public class FabricModTransformer {
                     String after = Files.readString(nestedModJson);
                     metadataChanged = !before.equals(after);
                 }
+                if (unsealSealedSupertypes(tempDir)) metadataChanged = true;
 
                 // Migrate data-pack JSON inside the JIJ too; counts toward repackage.
                 int nestedDataMigrated =

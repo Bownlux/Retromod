@@ -2,6 +2,23 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
+## [1.3.4] - 2026-10-09
+
+Patch release, and the last of the 1.3 line before the 1.4.0 snapshots. Carries 1.3.3's fixes across to Forge and forward to the newest Minecraft versions.
+
+### Fixed
+
+- Opens Forge mods' menu screens on NeoForge. Forge's access transformer made `MenuScreens.register` public, so Forge mods call it from client setup. NeoForge keeps it private, and the client stopped while loading with `IllegalAccessError`. Dedicated servers never run that code, which is why server checks missed it.
+- Gives Forge 1.21.x mods on Forge 26.x the 26.1 vanilla bridges that Fabric and NeoForge mods already had: render types and `ItemBlockRenderTypes`, including `setRenderLayer`, text events, key mappings, NBT, reload listeners, GUI calls, and particles.
+- Reads the tool actions that Forge 66 removed for 26.3, such as `AXE_STRIP`, by name through `ToolAction.get`, as 1.3.3 does for NeoForge's item abilities.
+- Converts old global loot modifiers to 26.3's condition format on Forge as well as NeoForge. Forge 66 keeps the `conditions` list, so only the conditions inside it change.
+- Keeps pre-1.20.5 food code from crashing on 1.21.2 and newer. `isFastFood` and `getEffects` no longer call members that 1.21.2 moved to the consumable component, and report normal food with no effects there.
+- Lets Fabric mods keep implementing Minecraft types that 26.2 sealed, such as `Holder`, by unsealing them in the mod's own access widener. Porting Lib's `DeferredHolder` failed to load from 26.2, so mods that bundle Porting Lib, such as Sophisticated Backpacks, lost their entrypoints on 26.2 and 26.3.
+- Follows 26.3's renamed `PushReaction` constants, such as `DESTROY` to `POPPED` and `BLOCK` to `IMMOVEABLE`, which block mods use to set piston behavior.
+- Wraps an old `Predicate` filter in 26.3's `ResourceManager.Selector` for `listResources` and `listResourceStacks`, whose old calls stopped data pack loading.
+
+Several 1.3.3 bridges for older Forge mods still stop before the newest hosts: armor materials, tools, and the teleporter bridge at 1.21.1, GUI drawing and the armor layer at 1.20.6, and the legacy worldgen pack at 1.20.1. Carrying them to 26.3 is 1.4.0 work. Creative tabs for pre-1.19.3 mods still register through Forge's mod bus only. On 26.3, Porting Lib's accessors for loot entry conditions, composite and inverted conditions, and `LootContext.getParamOrNull` still fail to apply, because 26.3 rebuilt those loot internals.
+
 ## [1.3.3] - 2026-10-07
 
 Patch release, and the last of the 1.3 line before the 1.4.0 snapshots. Bridges much more of Forge for Forge mods on NeoForge, runs the lifecycle of 1.12.2 Forge mods, restores worldgen, creative tabs, and rendering math for 1.16 to 1.19 Forge mods, keeps parallel transforms deterministic, and moves every compatibility report filed against 1.3.2 forward.

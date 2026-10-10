@@ -111,6 +111,28 @@ class LegacyItemAbilitiesBridgeTest {
         assertEquals(List.of("shovel_dig", "shovel_flatten", "shovel_douse"), names);
     }
 
+    @Test
+    @DisplayName("Forge 66 removed the same ToolActions, and a Forge mod reads them through ToolAction.get")
+    void forgeToolActionsAreReadByName() {
+        transformer.clearRedirectsForTesting();
+        LegacyItemAbilitiesBridge.register(transformer, LegacyItemAbilitiesBridge.FORGE, Set.of(
+                "SHEARS_DIG", "SWORD_SWEEP", "SHEARS_HARVEST", "SHEARS_CARVE", "SHEARS_DISARM",
+                "FISHING_ROD_CAST", "DEFAULT_SHEARS_ACTIONS", "DEFAULT_FISHING_ROD_ACTIONS"));
+
+        MethodNode read = onlyMethod(transformer.transformClass(
+                modReading("net/minecraftforge/common/ToolActions", "AXE_STRIP",
+                        "Lnet/minecraftforge/common/ToolAction;"), "test/ForgeStrip"));
+        MethodInsnNode call = first(read, MethodInsnNode.class);
+        assertEquals("AXE_STRIP", call.name);
+        assertTrue(call.owner.endsWith("LegacyToolActions"), call.owner);
+
+        MethodNode helper = helperMethod(LegacyItemAbilitiesBridge.generateHelper(LegacyItemAbilitiesBridge.FORGE,
+                List.<String[]>of(new String[]{"AXE_STRIP", "axe_strip"}), List.of()), "AXE_STRIP");
+        MethodInsnNode get = first(helper, MethodInsnNode.class);
+        assertEquals("net/minecraftforge/common/ToolAction", get.owner);
+        assertEquals("get", get.name);
+    }
+
     private static byte[] modReading(String owner, String field, String desc) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(V17, ACC_PUBLIC, "test/Reader", null, "java/lang/Object", null);

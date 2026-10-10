@@ -152,11 +152,14 @@ public final class ModDataMigrator {
 
         // 26.3 rewrote loot condition and function syntax and ignores the old keys, so an old
         // door dropped from both halves and old drops lost their counts and bonuses.
+        boolean neoForgeHost = com.retromod.util.McReflect.isNeoForge();
+        boolean forgeHost = !neoForgeHost && com.retromod.util.McReflect.isForge();
         if (!RetromodVersion.mcVersionExceeds("26.3", targetMcVersion)
                 && LegacyLootConditionMigrator.mayContainOldConditions(entryName, probe,
-                        com.retromod.util.McReflect.isNeoForge())) {
+                        neoForgeHost || forgeHost)) {
             normalized = LegacyLootConditionMigrator.migrate(normalized,
-                    LegacyLootConditionMigrator.isLootFile(entryName));
+                    LegacyLootConditionMigrator.isLootFile(entryName),
+                    forgeHost && LegacyLootConditionMigrator.isLootModifier(entryName));
         }
 
         // 1.21.2 replaced ingredient objects ({"item": ...}, {"tag": ...}) with a bare id or

@@ -175,6 +175,12 @@ biome modifier. The pack is offered on hosts up to 1.20.1; newer hosts need pack
 against each newer Pack API. Old GUI drawing such as `drawString` and `fill`, and the client
 registration events 1.19 replaced, are the next client-side gaps.
 
+1.4.0 also carries the 1.3.x bridges for older Forge mods forward to the newest hosts. The armor
+material and tool bridges stop at 1.21.1, where armor and tools became item components, the
+teleporter bridge stops at 1.21.1, GUI drawing and the armor layer at 1.20.6, and the legacy
+worldgen pack at 1.20.1. Creative tabs for pre-1.19.3 mods register through Forge's mod bus only,
+so NeoForge never sees them.
+
 The target is simple to moderate content mods. Coremods, custom renderers, and projects tied to deleted internals will still need manual ports.
 
 ### Leads From Compatibility Reports

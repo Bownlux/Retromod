@@ -221,6 +221,7 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
 
         registerNetworkBridge(transformer);
         ForgeMenuBridge.register(transformer);
+        LegacyMenuScreensBridge.register(transformer);
         ForgeNeoForgeApiBridge.register(transformer);
         com.retromod.shim.forge.capability.LegacyGenericListenerBridge.register(transformer);
         

@@ -142,6 +142,23 @@ class LegacyLootConditionMigratorTest {
         assertEquals(old, new String(ModDataMigrator.migrate(DOOR, in, "26.2"), StandardCharsets.UTF_8));
     }
 
+    @Test
+    @DisplayName("a global loot modifier gets one condition on NeoForge and keeps its list on Forge")
+    void globalLootModifiers() {
+        String old = """
+                {"type":"examplemod:add_item","item":"minecraft:diamond","conditions":[
+                  {"condition":"minecraft:random_chance","chance":0.5},
+                  {"condition":"minecraft:killed_by_player"}]}""";
+        assertJson("""
+                {"type":"examplemod:add_item","item":"minecraft:diamond","condition":{"type":"minecraft:all_of",
+                  "terms":[{"type":"minecraft:random_chance","chance":0.5},{"type":"minecraft:killed_by_player"}]}}""",
+                LegacyLootConditionMigrator.migrate(bytes(old), false, false));
+        assertJson("""
+                {"type":"examplemod:add_item","item":"minecraft:diamond","conditions":[
+                  {"type":"minecraft:random_chance","chance":0.5},{"type":"minecraft:killed_by_player"}]}""",
+                LegacyLootConditionMigrator.migrate(bytes(old), false, true));
+    }
+
     private static byte[] bytes(String json) {
         return json.getBytes(StandardCharsets.UTF_8);
     }
