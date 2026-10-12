@@ -1,0 +1,13 @@
+name: "Horizontal Glass Panes"
+badge: diamond
+mod_version: "26.2"
+host_mc: "26.3"
+loader: "fabric"
+retromod: "1.3.4"
+links:
+  modrinth: "https://modrinth.com/mod/horizontal-glass-panes"
+summary: "No difference in functioning"
+reporter: "staarchild97"
+date: "2026-10-12"
+issue: 342
+
