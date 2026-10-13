@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "www",
+    "ccc"
+  ],
+  "key": {
+    "w": {
+      "item": "minecraft:red_wool"
+    },
+    "c": {
+      "item": "minecraft:red_carpet"
+    }
+  },
+  "result": {
+    "item": "futonsmod:red_futon"
+  }
+}

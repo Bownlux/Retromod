@@ -234,8 +234,8 @@ public class ForgeModTransformer {
     private String extractMinecraftVersion(Path jarPath) throws IOException {
         validateArchiveInput(jarPath);
         try (JarFile jar = new JarFile(jarPath.toFile())) {
-            ZipEntry entry = jar.getEntry("META-INF/neoforge.mods.toml");
-            if (entry == null) entry = jar.getEntry("META-INF/mods.toml");
+            String metadata = ForgeTomlChoice.metadataEntry(jar);
+            ZipEntry entry = metadata == null ? null : jar.getEntry(metadata);
 
             if (entry != null) {
                 String content = readUtf8Metadata(jar, entry);
@@ -396,6 +396,8 @@ public class ForgeModTransformer {
             com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs) throws IOException {
         // Before the snapshot, so the class pass and its hierarchy see the renamed interface.
         com.retromod.shim.fabric.Pre1_20_5MojangArmorMaterialBridge.renameInLegacyJar(bytecodeTransformer, dir);
+        com.retromod.shim.common.LegacyEquipmentBridge.renameInLegacyJar(bytecodeTransformer, dir);
+        com.retromod.shim.common.LegacyEnchantmentBridge.renameInLegacyJar(bytecodeTransformer, dir);
 
         final java.util.List<Path> classFiles;
         try (var stream = Files.walk(dir)) {
@@ -416,6 +418,9 @@ public class ForgeModTransformer {
         }
         final Map<String, byte[]> originalClasses = Map.copyOf(classSnapshot);
         final boolean preFlatteningJar = isPreFlatteningForgeJar(dir, originalClasses.values());
+        // NeoForge has no dist cleaner, so a dedicated server removes @OnlyIn(CLIENT) members itself.
+        final boolean stripClientOnly = com.retromod.util.McReflect.isNeoForge()
+                && EnvironmentDetector.isDedicatedServer();
 
         // Classes are independent and the redirect tables are safe to read in parallel.
         final java.util.concurrent.atomic.AtomicInteger counter =
@@ -436,7 +441,8 @@ public class ForgeModTransformer {
 
                     // Mixin selectors are annotation text. Repair them before the ordinary class
                     // remap, then apply descriptor-sensitive repairs after Mojang names exist.
-                    byte[] preMixin = mixinTransformer.transformMixinClass(original);
+                    byte[] preMixin = mixinTransformer.transformMixinClass(stripClientOnly
+                            ? com.retromod.shim.forge.ForgeDistCleaner.stripClientOnly(original) : original);
                     byte[] preStripped = mixinTransformer.stripBlocklistedHandlers(preMixin);
                     // GUI migration needs the old GuiGraphics owner, before the class redirect.
                     if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
@@ -457,7 +463,9 @@ public class ForgeModTransformer {
                     transformed = com.retromod.shim.forge.ForgeEventBusSynthetics
                             .stripLenientAutoSubscriber(transformed);
                     transformed = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard
-                            .apply(transformed);
+                            .apply(transformed, bytecodeTransformer.getSyntheticClasses()::containsKey);
+                    transformed = com.retromod.shim.forge.LegacyTradeBridge.watchHandlers(transformed);
+                    transformed = com.retromod.shim.forge.LegacyWorldgenBridge.guardOverworldInjection(transformed);
                     transformed = com.retromod.shim.forge.Forge1122LifecycleSynthetics
                             .upgradeLegacyModClass(transformed);
                     boolean wroteFirst = false;
@@ -1013,7 +1021,8 @@ public class ForgeModTransformer {
 
         Path forgeToml = tempDir.resolve("META-INF/mods.toml");
         Path neoToml = tempDir.resolve("META-INF/neoforge.mods.toml");
-        if (!Files.exists(forgeToml) || Files.exists(neoToml)) return;
+        // A leftover neoforge.mods.toml beside the Forge metadata is replaced by the real one.
+        if (!Files.exists(forgeToml) || (Files.exists(neoToml) && !ForgeTomlChoice.hasStaleNeoForgeToml(tempDir))) return;
 
         String content = promoteTomlContentForNeoForge(Files.readString(forgeToml));
         Files.writeString(neoToml, content);

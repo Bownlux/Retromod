@@ -46,6 +46,7 @@ public final class Mc26_2To26_3CoreMoves {
         registerAuthlibMoves(t);
         registerSdlInputBridges(t);
         registerRemovedToolBases(t);
+        LegacyFeatureBridge.register(t);
     }
 
     /** {@code com/mojang/blaze3d} became {@code com/mojang/renderpearl} (182 classes). */
@@ -568,6 +569,30 @@ public final class Mc26_2To26_3CoreMoves {
                 "net/minecraft/world/level/levelgen/densityfunction/DensityFunctions$HolderHolder");
         t.registerClassRedirect("net/minecraft/world/level/levelgen/DensityFunctions$Spline$Coordinate",
                 "net/minecraft/world/level/levelgen/densityfunction/op/SplineFunction$Coordinate");
+        // 26.3 renamed surface rules to material rules with the same factories and records, so
+        // code that builds them, such as MCreator's overworld biome splice, keeps loading.
+        String surface = "net/minecraft/world/level/levelgen/SurfaceRules";
+        String material = "net/minecraft/world/level/levelgen/material/";
+        String[][] surfaceRules = {
+            {"", "MaterialRules"}, {"$RuleSource", "rule/MaterialRule"},
+            {"$ConditionSource", "condition/MaterialCondition"}, {"$SequenceRuleSource", "rule/SequenceRule"},
+            {"$TestRuleSource", "rule/ConditionRule"}, {"$BlockRuleSource", "rule/BlockRule"},
+            {"$Bandlands", "rule/BandlandsRule"}, {"$NotConditionSource", "condition/NotCondition"},
+            {"$BiomeConditionSource", "condition/BiomeCondition"}, {"$Hole", "condition/HoleCondition"},
+            {"$Steep", "condition/SteepCondition"}, {"$Temperature", "condition/TemperatureCondition"},
+            {"$AbovePreliminarySurface", "condition/AbovePreliminarySurfaceCondition"},
+        };
+        for (String[] rule : surfaceRules) {
+            t.registerClassRedirect(surface + rule[0], material + rule[1]);
+        }
+        // isBiome now takes the biome lookup, which the old call never passed.
+        com.retromod.core.SyntheticEmbedder.registerClassResource(t,
+                "com/retromod/shim/common/embedded/LegacyMaterialRules",
+                com.retromod.shim.common.embedded.LegacyMaterialRules.class);
+        t.registerMethodRedirect(material + "MaterialRules", "isBiome",
+                "([Lnet/minecraft/resources/ResourceKey;)L" + material + "condition/MaterialCondition;",
+                "com/retromod/shim/common/embedded/LegacyMaterialRules", "isBiome",
+                "([Ljava/lang/Object;)Ljava/lang/Object;");
         t.registerClassRedirect("net/minecraft/world/level/levelgen/SurfaceRules$NoiseThresholdConditionSource",
                 "net/minecraft/world/level/levelgen/material/condition/NoiseThresholdCondition");
         t.registerClassRedirect("net/minecraft/world/level/levelgen/SurfaceRules$StoneDepthCheck",
@@ -614,8 +639,8 @@ public final class Mc26_2To26_3CoreMoves {
      * A rebase does not check whether the host still has the class, so registering these from the
      * 26.1 bridge would take a mod off a class that works on the host it is running on.
      *
-     * <p>Their material and mining arguments are components now, so the generated base drops them.
-     * The tool registers and behaves as a plain item until its mod sets those components.
+     * <p>Their material and mining arguments are components now. {@link LegacyEquipmentBridge} turns
+     * them back into the axe, shovel, or hoe component.
      */
     private static void registerRemovedToolBases(RetromodTransformer t) {
         for (String removed : new String[]{"AxeItem", "ShovelItem", "HoeItem"}) {
@@ -625,6 +650,7 @@ public final class Mc26_2To26_3CoreMoves {
                     "net/minecraft/world/item/Item",
                     "(Lnet/minecraft/world/item/Item$Properties;)V");
         }
+        LegacyEquipmentBridge.register(t);
     }
 
     /**

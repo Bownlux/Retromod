@@ -37,6 +37,8 @@ import com.retromod.testmod.tests.Test15InheritedEntityWorld;
 import com.retromod.testmod.tests.Test16SingleFabricApiProvider;
 import com.retromod.testmod.tests.Test17BlockRandomTicksAccessor;
 import com.retromod.testmod.tests.Test18GameRulesField;
+import com.retromod.testmod.tests.Test20BlockUseOverride;
+import com.retromod.testmod.tests.Test21KeyCategoryName;
 import com.retromod.testmod.tests.Test19RemovedItemBase;
 import com.retromod.testmod.tests.TextTests;
 import org.slf4j.Logger;
@@ -95,6 +97,8 @@ public final class TestRunner {
         all.add(new Test16SingleFabricApiProvider());
         all.add(new Test17BlockRandomTicksAccessor());
         all.add(new Test18GameRulesField());
+        all.add(new Test20BlockUseOverride());
+        all.add(new Test21KeyCategoryName());
         return List.copyOf(all);
     }
 

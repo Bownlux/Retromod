@@ -394,6 +394,8 @@ public class FullAotCompiler {
             List<Future<?>> futures = new ArrayList<>();
             final Path finalStagingDir = stagingDir;
             List<Map.Entry<String, byte[]>> classEntryList = new ArrayList<>(classEntries.entrySet());
+            Map<String, String> equipmentRenames = com.retromod.shim.common.LegacyEquipmentBridge
+                    .legacyRenames(transformer, classEntries.values());
             java.util.concurrent.atomic.AtomicReference<IOException> fatalFailure =
                     new java.util.concurrent.atomic.AtomicReference<>();
             
@@ -419,8 +421,9 @@ public class FullAotCompiler {
                         try {
                             byte[] original = entry.getValue();
 
-                            byte[] preparedMixin = AotMixinRepair.applyPreRemap(
-                                    mixinTransformer, original, className);
+                            byte[] preparedMixin = AotMixinRepair.applyPreRemap(mixinTransformer,
+                                    com.retromod.shim.common.LegacyEquipmentBridge.rename(original, equipmentRenames),
+                                    className);
                             byte[] transformed = transformer.transformClass(
                                     preparedMixin, className);
                             transformed = AotMixinRepair.apply(

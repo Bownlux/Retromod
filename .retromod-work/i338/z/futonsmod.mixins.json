@@ -1,0 +1,12 @@
+{
+  "required": false,
+  "package": "com.utami.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "mixins": [
+    "FutonsmodMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  },
+  "refmap": "futonsmod-refmap.json"
+}

@@ -214,6 +214,42 @@ class Pre1_20_5MojangArmorMaterialBridgeTest {
         return node;
     }
 
+    /**
+     * Useful Slime and More Armor, 1.12.2 mods on NeoForge 1.21.1: their armor took a material,
+     * a render index, and a slot, so the constructor failed and every armor item with it.
+     */
+    @Test
+    @DisplayName("1.12.2 armor: the old material type and constructor reach the bridge")
+    void armorFrom1122IsBridged() {
+        Pre1_20_5MojangArmorMaterialBridge.registerRedirects(transformer, true);
+        String oldMaterial = "Lnet/minecraft/item/ItemArmor$ArmorMaterial;";
+        String slot = "Lnet/minecraft/world/entity/EquipmentSlot;";
+        byte[] fixture = staticMethod("mod/Armor1122", "make", "(" + oldMaterial + slot + ")V", mv -> {
+            mv.visitTypeInsn(NEW, ARMOR_ITEM);
+            mv.visitInsn(DUP);
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitInsn(ICONST_0);
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitMethodInsn(INVOKESPECIAL, ARMOR_ITEM, "<init>", "(" + oldMaterial + "I" + slot + ")V", false);
+            mv.visitInsn(POP);
+            mv.visitInsn(RETURN);
+        });
+
+        ClassNode out = read(transformer.transformClass(fixture, "mod/Armor1122.class"));
+
+        assertEquals("(L" + Pre1_20_5ArmorMaterialBridge.LEGACY_MATERIAL + ";" + slot + ")V", out.methods.stream()
+                .filter(m -> m.name.equals("make")).findFirst().orElseThrow().desc,
+                "the 1.12.2 material becomes the bridge's old-style material");
+        assertTrue(calls(out).stream().anyMatch(c -> c.owner.equals(Pre1_20_5ArmorMaterialBridge.LEGACY_ARMOR_ITEM)
+                        && c.name.equals("of1122")), "new ItemArmor(material, index, slot) builds the generated item");
+
+        ClassNode item = read(transformer.getSyntheticClasses().get(Pre1_20_5ArmorMaterialBridge.LEGACY_ARMOR_ITEM));
+        assertTrue(hasMethod(item, "<init>", Pre1_20_5MojangArmorMaterialBridge.CTOR_1122),
+                "a mod armor class that extends it calls the 1.12.2 constructor");
+        assertDoesNotThrow(() -> new ClassReader(transformer.getSyntheticClasses()
+                .get(Pre1_20_5ArmorMaterialBridge.LEGACY_ARMOR_ITEM)).accept(new CheckClassAdapter(new ClassWriter(0), false), 0));
+    }
+
     private static byte[] staticMethod(String owner, String name, String desc, Consumer<MethodVisitor> body) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(V17, ACC_PUBLIC | ACC_SUPER, owner, null, "java/lang/Object", null);

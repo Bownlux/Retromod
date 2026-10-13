@@ -1252,6 +1252,17 @@ public class RetromodCli {
                             return null;
                         }
                     }, TARGET_MC_VERSION);
+            // Decided for the whole jar before any class is written, as the runtime paths do.
+            java.util.List<byte[]> classBytesForEquipment = new java.util.ArrayList<>();
+            for (String name : inputEntryNames) {
+                if (!name.endsWith(".class")) continue;
+                try (var in = inJar.getInputStream(inJar.getJarEntry(name))) {
+                    classBytesForEquipment.add(com.retromod.util.ZipSecurity.safeReadAllBytes(in));
+                }
+            }
+            Map<String, String> equipmentRenames = com.retromod.shim.common.LegacyEquipmentBridge
+                    .legacyRenames(transformer, classBytesForEquipment);
+            classBytesForEquipment = null;
             while (entries.hasMoreElements()) {
                 var entry = entries.nextElement();
                 if (danglingAdvancements.contains(entry.getName())) continue;
@@ -1262,7 +1273,10 @@ public class RetromodCli {
 
                 // Decide the output entry name up front so a promoted mods.toml lands under its
                 // NeoForge filename. safeEntryName throws on path-traversal patterns.
-                String outName = entry.getName();
+                String outName = com.retromod.resources.ModDataMigrator.migratedEntryName(
+                        entry.getName(), TARGET_MC_VERSION);
+                // A jar that already ships the moved entry keeps its own copy.
+                if (!outName.equals(entry.getName()) && inJar.getJarEntry(outName) != null) continue;
                 if (promoteToml && "META-INF/mods.toml".equals(entry.getName())) {
                     outName = "META-INF/neoforge.mods.toml";
                 }
@@ -1285,6 +1299,7 @@ public class RetromodCli {
                         }
 
                         if (entry.getName().endsWith(".class")) {
+                            data = com.retromod.shim.common.LegacyEquipmentBridge.rename(data, equipmentRenames);
                             data = mixinStripper.transformMixinClass(data);
                             if (shouldTransformClass(entry.getName(), info)) {
                                 // Mojang-named jars need GUI migration before the owner redirect.
@@ -1306,6 +1321,8 @@ public class RetromodCli {
                                     .stripLenientAutoSubscriber(data);
                             data = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard
                                     .apply(data);
+                            data = com.retromod.shim.forge.LegacyTradeBridge.watchHandlers(data);
+                            data = com.retromod.shim.forge.LegacyWorldgenBridge.guardOverworldInjection(data);
                             data = com.retromod.shim.forge.Forge1122LifecycleSynthetics
                                     .upgradeLegacyModClass(data);
                             if (com.retromod.core.RetromodVersion
@@ -1379,13 +1396,32 @@ public class RetromodCli {
             java.util.Set<String> entryNames = new java.util.HashSet<>();
             var nameScan = inJar.entries();
             while (nameScan.hasMoreElements()) entryNames.add(nameScan.nextElement().getName());
-            for (var def : com.retromod.resources.ModDataMigrator
-                    .synthesizeItemDefinitionEntries(entryNames, TARGET_MC_VERSION).entrySet()) {
+            java.util.Map<String, byte[]> generatedAssets = new java.util.LinkedHashMap<>(
+                    com.retromod.resources.ModDataMigrator.synthesizeItemDefinitionEntries(entryNames, TARGET_MC_VERSION));
+            if (com.retromod.resources.LegacyKeyCategoryNames.appliesTo(TARGET_MC_VERSION)) {
+                generatedAssets.putAll(com.retromod.resources.LegacyKeyCategoryNames.entries(entryNames, name -> {
+                    try (var in = inJar.getInputStream(inJar.getJarEntry(name))) {
+                        return com.retromod.util.ZipSecurity.safeReadAllBytes(in);
+                    } catch (IOException unreadable) {
+                        return null;
+                    }
+                }));
+            }
+            if (com.retromod.shim.common.LegacyEquipmentBridge.isRegistered(transformer)) {
+                generatedAssets.putAll(com.retromod.shim.common.LegacyEquipmentBridge.armorAssetEntries(entryNames, name -> {
+                    try (var in = inJar.getInputStream(inJar.getJarEntry(name))) {
+                        return com.retromod.util.ZipSecurity.safeReadAllBytes(in);
+                    } catch (IOException unreadable) {
+                        return null;
+                    }
+                }));
+            }
+            for (var def : generatedAssets.entrySet()) {
                 String outputName = com.retromod.util.ZipSecurity.safeEntryName(def.getKey());
                 String canonicalName = com.retromod.util.ZipSecurity
                         .canonicalEntryName(outputName);
                 if (!outputEntryNames.add(canonicalName)) {
-                    throw new IOException("generated item definition collides with an existing "
+                    throw new IOException("generated asset collides with an existing "
                             + "output path: " + outputName);
                 }
                 outJar.putNextEntry(new java.util.jar.JarEntry(outputName));
@@ -1735,6 +1771,8 @@ public class RetromodCli {
             ArchiveRefmapPlan refmapPlan = prepareRefmapPlan(
                     jarData, nestedMixins, forgeRefmaps, official, budget, syntheticKey);
 
+            Map<String, String> equipmentRenames = com.retromod.shim.common.LegacyEquipmentBridge
+                    .legacyRenames(transformer, classBytes.values());
             try (var hierarchyScope = transformer.pushJarClassBytesProvider(classBytes::get);
                  var jis = new java.util.zip.ZipInputStream(bais);
                  var jos = new java.util.jar.JarOutputStream(boundedOutput)) {
@@ -1764,6 +1802,7 @@ public class RetromodCli {
                     if (name.endsWith(".class")) {
                             String className = name.substring(0, name.length() - ".class".length());
                             try {
+                                data = com.retromod.shim.common.LegacyEquipmentBridge.rename(data, equipmentRenames);
                                 byte[] preparedMixin = nestedMixins.transformMixinClass(data);
                                 if (preparedMixin != data) {
                                     data = preparedMixin;
@@ -1836,7 +1875,8 @@ public class RetromodCli {
                                 + com.retromod.util.ZipSecurity.DEFAULT_MAX_ENTRY_SIZE
                                 + " bytes: " + name);
                     }
-                    jos.putNextEntry(new java.util.jar.JarEntry(name));
+                    jos.putNextEntry(new java.util.jar.JarEntry(
+                            com.retromod.resources.ModDataMigrator.migratedEntryName(name, TARGET_MC_VERSION)));
                     jos.write(data);
                     jos.closeEntry();
                 }
@@ -2050,7 +2090,8 @@ public class RetromodCli {
                                 + entryName);
                     }
 
-                    outJar.putNextEntry(new java.util.jar.JarEntry(entryName));
+                    outJar.putNextEntry(new java.util.jar.JarEntry(
+                            com.retromod.resources.ModDataMigrator.migratedEntryName(entryName, TARGET_MC_VERSION)));
 
                     if (!entry.isDirectory()) {
                         try (var is = inJar.getInputStream(entry)) {

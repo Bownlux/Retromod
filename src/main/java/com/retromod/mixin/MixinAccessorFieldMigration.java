@@ -85,6 +85,8 @@ public final class MixinAccessorFieldMigration {
             List.of(ATTRIBUTE_BUILDER_BRIDGE, ATTRIBUTE_BUILDER_BRIDGE + "$BuilderView");
     private static final String ITEM_COMPONENTS_BRIDGE = RUNTIME + "ItemComponentsBridge";
     private static final String MULTIMAP = "Lcom/google/common/collect/Multimap;";
+    private static final String LOOT = "net/minecraft/world/level/storage/loot/";
+    private static final String LOOT_BRIDGE = RUNTIME + "LootConditionFieldsBridge";
 
     /**
      * The tool and armor items that kept their default attribute modifiers in a Guava
@@ -128,8 +130,8 @@ public final class MixinAccessorFieldMigration {
     }
 
     /**
-     * All of these fields went away or changed type in the 1.20.5 data component, entity data and
-     * attribute holder rework. {@code AttributeSupplier.Builder} kept its field under the same name
+     * Most of these fields went away or changed type in the 1.20.5 data component, entity data and
+     * attribute holder rework; the loot condition fields changed in 26.3. {@code AttributeSupplier.Builder} kept its field under the same name
      * as a Guava builder, so its accessor is listed under the Mojang name and, for Fabric hosts
      * before 26.1, under the intermediary target with both the Mojang and Yarn source names.
      */
@@ -152,7 +154,16 @@ public final class MixinAccessorFieldMigration {
             new FieldMigration("net/minecraft/class_5132$class_5133", "builder", "Ljava/util/Map;",
                     "1.20.5", ATTRIBUTE_BUILDER_BRIDGE, "builder", null, ATTRIBUTE_BUILDER_CLASSES),
             new FieldMigration("net/minecraft/class_5132$class_5133", "instances", "Ljava/util/Map;",
-                    "1.20.5", ATTRIBUTE_BUILDER_BRIDGE, "builder", null, ATTRIBUTE_BUILDER_CLASSES));
+                    "1.20.5", ATTRIBUTE_BUILDER_BRIDGE, "builder", null, ATTRIBUTE_BUILDER_CLASSES),
+            // 26.3 moved loot conditions behind holders; the old list and single-condition shapes
+            // are rebuilt from the new fields.
+            new FieldMigration(LOOT + "entries/LootPoolEntryContainer", "conditions", "Ljava/util/List;",
+                    "26.3", LOOT_BRIDGE, "conditions", null, List.of(LOOT_BRIDGE)),
+            new FieldMigration(LOOT + "predicates/CompositeLootItemCondition", "terms", "Ljava/util/List;",
+                    "26.3", LOOT_BRIDGE, "terms", "setTerms", List.of(LOOT_BRIDGE)),
+            new FieldMigration(LOOT + "predicates/InvertedLootItemCondition", "term",
+                    "L" + LOOT + "predicates/LootItemCondition;", "26.3", LOOT_BRIDGE, "term", null,
+                    List.of(LOOT_BRIDGE)));
 
     private static List<FieldMigration> withItemModifiers(FieldMigration... migrations) {
         List<FieldMigration> all = new ArrayList<>(List.of(migrations));

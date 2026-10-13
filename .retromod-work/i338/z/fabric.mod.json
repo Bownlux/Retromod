@@ -1,0 +1,37 @@
+{
+	"schemaVersion": 1,
+	"id": "futonsmod",
+	"version": "1.1.0",
+	"name": "Futons Mod",
+	"description": "Adds stylish futon beds that can be placed anywhere in the world.",
+	"authors": [
+		"Utami"
+	],
+	"license": "MIT",
+	"icon": "assets/futonsmod/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.utami.FutonsMod"
+		],
+		"client": [
+			"com.example.ExampleModClient"
+		]
+	},
+	"mixins": [
+		"futonsmod.mixins.json",
+		{
+			"config": "modid.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.14.0",
+		"minecraft": "*",
+		"java": ">=17",
+		"fabric-api": "*"
+	},
+	"suggests": {
+		"another-mod": "artisanbedmod"
+	}
+}

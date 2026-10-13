@@ -1,0 +1,23 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"oOo",
+		"I I",
+		"I I"
+	],
+	"key": {
+		"O": {
+			"item": "minecraft:iron_leggings"
+		},
+		"I": {
+			"item": "minecraft:redstone_block"
+		},
+		"o": {
+			"item": "minecraft:coal_block"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:o_yoroi_armor_legs"
+	}
+}

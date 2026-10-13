@@ -1,0 +1,37 @@
+{
+  "parent": "minecraft:recipes/root",
+  "rewards": {
+    "recipes": [
+      "amethystequipment:amethyst_axe_recipe",
+      "amethystequipment:amethyst_shovel_recipe",
+      "amethystequipment:amethyst_sword_recipe",
+      "amethystequipment:amethyst_pickaxe_recipe",
+      "amethystequipment:amethyst_hammer_recipe",
+      "amethystequipment:amethyst_hoe_recipe",
+      "amethystequipment:amethyst_boots_recipe",
+      "amethystequipment:amethyst_chestplate_recipe",
+      "amethystequipment:amethyst_leggings_recipe",
+      "amethystequipment:amethyst_helmet_recipe",
+      "amethystequipment:amethyst_horse_armor_recipe"
+    ]
+  },
+  "criteria": {
+    "has_ingredient": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [
+          {
+            "items": [
+              "minecraft:amethyst_shard"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "requirements": [
+    [
+      "has_ingredient"
+    ]
+  ]
+}

@@ -4,11 +4,11 @@ This is a direction of travel, not a release promise. Real mod reports and new M
 
 Shipped work belongs in the [changelog](CHANGELOG.md). There are no fixed release dates.
 
-Last reviewed: 2026-10-01
+Last reviewed: 2026-10-12
 
 ## Current Work
 
-Retromod 1.3.2 is the current stable release. The 1.3 line's goal was mixin translation, and it is
+Retromod 1.3.4 is the current stable release, and 1.4.0-snapshot.1 is the current snapshot. The 1.3 line's goal was mixin translation, and it is
 met: every repair that line set out to build has shipped code and a passing test, so the list of
 what it does now lives in the [changelog](CHANGELOG.md). What follows is what 1.3 did not close.
 
@@ -159,15 +159,17 @@ The main areas are:
 - creative tabs, entity AI, and spawn registration
 
 Forge 1.20.1 mods on NeoForge get the same attention. From 1.3.3, configs, menus, capabilities,
-custom registries, client extensions, and `SimpleChannel` messages are bridged. Code-registered
-enchantments, which 1.21 made data-driven and final, are the largest gap left; generating their
-data pack entries from the old classes is the next step.
+custom registries, client extensions, and `SimpleChannel` messages are bridged. 1.4.0-snapshot.1
+generates data pack entries for code-defined enchantments from the old classes. Their code-run
+effects are the gap left.
 
 1.3.3 bridged the 1.12 event bus, `RegistryEvent.Register`, the FML lifecycle, the block and item
 builders, and block states, with configs, networking, fluids, and world generators as stand-ins.
-On a survey of 15 simple 1.12.2 content mods, 3 now register content on NeoForge 1.21.1 and 2 on
-Forge 1.20.1, where none did before. What stops the rest: 1.12 world generation that never runs,
-biomes and dimensions, commands, `EnumHelper` materials, GUIs, and tile entities.
+1.4.0-snapshot.1 added the save data fixer, the static `REGISTRY` fields, blocks on changed parent
+constructors, commands, `EnumEnchantmentType`, `FMLInterModComms`, and more renamed members. On a
+survey of 16 simple 1.12.2 content mods, 10 now register content on NeoForge 1.21.1 and none stop
+the server. Later in snapshot 1, 1.12 armor, MCreator's 1.12 item template, and 1.12 enchantments
+build too. What stops the rest: 1.12 world generation that never runs, GUIs, and tile entities.
 
 1.19.2 mods on 1.20.1 now restore their code-registered worldgen through a generated data pack,
 list their items in their creative tabs again, and get natural spawns back through a generated
@@ -175,13 +177,82 @@ biome modifier. The pack is offered on hosts up to 1.20.1; newer hosts need pack
 against each newer Pack API. Old GUI drawing such as `drawString` and `fill`, and the client
 registration events 1.19 replaced, are the next client-side gaps.
 
-1.4.0 also carries the 1.3.x bridges for older Forge mods forward to the newest hosts. The armor
-material and tool bridges stop at 1.21.1, where armor and tools became item components, the
-teleporter bridge stops at 1.21.1, GUI drawing and the armor layer at 1.20.6, and the legacy
-worldgen pack at 1.20.1. Creative tabs for pre-1.19.3 mods register through Forge's mod bus only,
-so NeoForge never sees them.
+1.4.0 also carries the 1.3.x bridges for older Forge mods forward to the newest hosts. Snapshot 1
+rebuilt armor, horse armor, dyeable armor, and tools as item components on 26.x for every loader,
+and on NeoForge and Forge from 1.21.5. It rebuilt the old feature model on 26.3, offers the legacy
+worldgen pack, code-built biomes, and pre-1.19.3 creative tabs on NeoForge from 1.20.5, converts
+old dimension types, noise settings, and density functions, restores the trade events on NeoForge
+26.x, and carries the teleporter bridge to 26.x. It also rebuilds code-defined enchantments, brewing
+recipes, painting variants, and spawns, and carries HUD drawing, the armor layer, and particles to
+26.x. Still open: old screens' own drawing and custom entity models on 26.x, vanilla feature
+classes used in code on 26.3, the legacy worldgen pack from 1.20.2 to 1.20.4, Fabric's
+code-defined enchantments, Fabric API's removed trade helper, and the armor and tool rebuild on
+Fabric from 1.21.2 to 1.21.11.
 
 The target is simple to moderate content mods. Coremods, custom renderers, and projects tied to deleted internals will still need manual ports.
+
+### 1.4.0-snapshot.2
+
+These are known gaps from snapshot 1, each with a reproducing mod or report. Snapshot 2 starts here.
+
+Older Forge mods on newer hosts:
+
+- `java.util.Random` method references, lambdas, and overrides in 1.18 mods are not retyped to
+  `RandomSource`. Archipelago Additions stops on `WaterAnimal.checkSurfaceWaterAnimalSpawnRules`,
+  and trade listings fail with `AbstractMethodError` (#311). On SRG hosts the retyped call also
+  needs its name resolved again.
+- A 1.18 `BiomeDictionary` read inside the `BiomeLoadingEvent` stand-in, and Forge's
+  `PathResourcePack`, are not bridged (#311).
+- A rebuilt enchantment has no code-run effects such as `doPostAttack`.
+- Forge loot modifiers in `net/minecraftforge/common/loot`, a `DeferredRegister` registered to the
+  bus more than once, `MobEffect.addAttributeModifier` in its 1.20.1 shape, and client-only private
+  helpers that `ForgeDistCleaner` leaves in a server subscriber (#283).
+- Architectury `DeferredRegister`s for enchantments, `LootItemConditionalFunction$Serializer`, and
+  `Item$Properties.maxStackSize` read through a mod's own subclass (#308).
+- Farmer's Delight's `KnifeItem(Tier, float, float, Properties)` (#302).
+- `AbstractArrow`'s removed constructors and `setKnockback`, `ModelPart.render` with float colors,
+  GeckoLib's four-float `preRender`, and `BlockState.getValues()` returning `ImmutableMap`, all from
+  MCreator templates (#326, #328, #330).
+- Painting variants registered in code before 26.1 on 1.21 hosts (#326).
+- The 1.12 post-remap pass runs on every Forge jar at run time; it should be limited to jars from
+  before 1.13, as the offline paths already are.
+
+1.12.2 mods:
+
+- Tile entities, dimensions, biomes, world generation, GUIs, and entity rendering. Lycanites Mobs,
+  Techguns, Grimoire of Gaia 3, The Aurorian, and Doomlike Dungeons start a NeoForge 1.21.1 server,
+  and the first four start on 26.3, but they log errors in these systems.
+- AbyssalCraft stores its biomes in fields typed as the final `Biome`, so its biome subclasses
+  cannot load on a stand-in base (#304).
+- Vanilla static fields whose type or name changed, such as `Blocks.RED_MUSHROOM` and
+  `Items.FISH`, and SimpleImpl's `MessageContext` (#306).
+- `BiomeDictionary` lookups made while the mod loads find no biomes, so 1.12 spawns added then are
+  not placed.
+
+Fabric:
+
+- The armor and tool rebuild on Fabric hosts from 1.21.2 to 1.21.11, Fabric API's removed trade
+  helper, and Fabric mods' code-defined enchantments.
+- The bundled intermediary table names classes and members that 26.x renamed, such as
+  `PlayerRenderer` for `AvatarRenderer`, which leaves Minepathy's mixins unresolved (#271). A fix
+  must stay host-targeted: only an entry whose current name is absent on the host, and whose
+  1.21.11 name exists there, may change.
+
+- 26.3 removed `NumberProvider`, `ConstantValue`, and block codecs. A mod that builds loot or
+  trade sets in code, or calls `simpleCodec` on its block, fails on 26.3 (#336, #340).
+- A Fabric block built in one class and registered by name from another gets no id (#334), and
+  1.21.1's armor material registry, `Registries.ARMOR_MATERIAL`, is not bridged (#332).
+- GeckoLib 4.5 and newer mods on 26.x, whose renderer and animation API GeckoLib 5 redesigned (#332).
+
+Worldgen and rendering:
+
+- The code-registered worldgen pack and code-built biomes on hosts from 1.20.2 to 1.20.4.
+- Vanilla feature classes such as `Feature.TREE` and `OreConfiguration` used in code on 26.3, and
+  a converted dimension's own ore vein rules.
+- In-world checks of the 26.x client bridges, old screens' own `render(PoseStack)`, custom entity
+  models, and `ItemInHandRenderer.itemUsed` on 26.3, which moved to `LocalPlayer` (#298).
+- World types from before 1.16 load but are not offered (#339). Offering them needs a density
+  function, a biome source, and a generated world preset.
 
 ### Leads From Compatibility Reports
 

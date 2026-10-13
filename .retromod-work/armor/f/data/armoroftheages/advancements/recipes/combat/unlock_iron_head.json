@@ -1,0 +1,19 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_iron_helmet": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [{ "items": ["minecraft:iron_helmet"] }]
+      }
+    }
+  },
+  "requirements": [["has_iron_helmet"]],
+  "rewards": {
+    "recipes": [
+      "armoroftheages:iron_plate_armor_head",
+      "armoroftheages:o_yoroi_armor_head",
+      "armoroftheages:centurion_armor_head"
+    ]
+  }
+}

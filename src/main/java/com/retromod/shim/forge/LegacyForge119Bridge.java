@@ -76,6 +76,9 @@ public final class LegacyForge119Bridge {
         String consumerDesc = "(Ljava/util/function/BiConsumer;)L" + builder + ";";
         transformer.registerMethodRedirect(builder, "consumer", consumerDesc,
                 builder, "consumerNetworkThread", consumerDesc);
+        String handledDesc = "(L" + builder + "$ToBooleanBiFunction;)L" + builder + ";";
+        transformer.registerMethodRedirect(builder, "consumer", handledDesc,
+                builder, "consumerNetworkThread", handledDesc);
 
         registerRegistryRenames(transformer);
         registerCapabilityConstants(transformer);
@@ -218,6 +221,11 @@ public final class LegacyForge119Bridge {
             transformer.registerInheritedMethodRedirect(newOwner, oldName, descriptor,
                     newOwner, newName, descriptor);
         }
+        // On NeoForge the call reaches this pass with the event already under NeoForge's
+        // package, so the old getter name has to match there too.
+        String neoForgeOwner = newOwner.replace(FORGE_EVENT, "net/neoforged/neoforge/event/");
+        transformer.registerInheritedMethodRedirect(neoForgeOwner, oldName, descriptor,
+                neoForgeOwner, newName, descriptor);
     }
 
     private static void registerBiomeLoadingStandIn(RetromodTransformer transformer) {

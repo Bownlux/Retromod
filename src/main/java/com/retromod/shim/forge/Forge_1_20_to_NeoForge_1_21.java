@@ -44,6 +44,31 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
     
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // 1.20.5 split Properties.copy into ofFullCopy and ofLegacyCopy; the legacy one copies what copy did.
+        transformer.registerMethodRedirect("net/minecraft/world/level/block/state/BlockBehaviour$Properties", "copy",
+                "(Lnet/minecraft/world/level/block/state/BlockBehaviour;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;",
+                "net/minecraft/world/level/block/state/BlockBehaviour$Properties", "ofLegacyCopy",
+                "(Lnet/minecraft/world/level/block/state/BlockBehaviour;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;");
+        LegacyTabContentsBridge.register(transformer);
+        LegacyEntityTemplateAdapter.register(transformer);
+        LegacyFlowerBlockBridge.register(transformer);
+        LegacyTierBridge.register(transformer);
+        LegacyDungeonHooksBridge.register(transformer);
+        // RegisterHelper.register(String, value): Forge named it in the active mod's namespace.
+        SyntheticEmbedder.registerClassResource(transformer, "com/retromod/shim/forge/embedded/LegacyRegisterHelper",
+                com.retromod.shim.forge.embedded.LegacyRegisterHelper.class);
+        for (String helper : new String[] {"net/minecraftforge/registries/RegisterEvent$RegisterHelper",
+                "net/neoforged/neoforge/registries/RegisterEvent$RegisterHelper"}) {
+            transformer.registerMethodRedirect(helper, "register", "(Ljava/lang/String;Ljava/lang/Object;)V",
+                    "com/retromod/shim/forge/embedded/LegacyRegisterHelper", "register",
+                    "(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/Object;)V", true);
+        }
+        // DFU 8 (1.20.5) removed DataResult.get(); its Either is rebuilt from the result.
+        transformer.registerMethodRedirect("com/mojang/serialization/DataResult", "get",
+                "()Lcom/mojang/datafixers/util/Either;",
+                "com/retromod/polyfill/minecraft/DataResultPolyfill", "get", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
+        // 1.21 made enchantments data and Enchantment a final record (code-defined enchantments).
+        com.retromod.shim.common.LegacyEnchantmentBridge.register(transformer);
         if (!McReflect.isNeoForge()
                 && supportsForgeOfficialNetworkBridge(
                         RetromodVersion.TARGET_MC_VERSION)) {
@@ -84,6 +109,8 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         LegacyForgeEventFactoryBridge.register(transformer, com.retromod.core.ClassResourceInspector::exists);
         LegacyModLoaderBridge.register(transformer, com.retromod.core.ClassResourceInspector::exists);
         LegacyTeleporterBridge.register(transformer, com.retromod.core.ClassResourceInspector::exists);
+        LegacyTradeBridge.register(transformer);
+        LegacyBrewingBridge.register(transformer);
         LegacyDespawnEventBridge.register(transformer, com.retromod.core.ClassResourceInspector::exists);
         transformer.registerClassRedirect(
             "net/minecraftforge/common/MinecraftForge",
@@ -381,6 +408,9 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         transformer.registerClassRedirect(
             "net/minecraftforge/network/simple/SimpleChannel$MessageBuilder", builder);
         transformer.registerClassRedirect(
+            "net/minecraftforge/network/simple/SimpleChannel$MessageBuilder$ToBooleanBiFunction",
+            netShim + "$ToBooleanBiFunction");
+        transformer.registerClassRedirect(
             "net/minecraftforge/network/NetworkDirection", netShim + "$NetworkDirection");
         // newSimpleChannel: the mod's Forge-typed descriptor must erase to the shim's Object form
         // (keyed on both the pre- and post-class-redirect spellings; the return CHECKCASTs back).
@@ -505,6 +535,7 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "com.retromod.shim.forge.embedded.NetworkShim",
             "com.retromod.shim.forge.embedded.NetworkShim$SimpleChannelWrapper",
             "com.retromod.shim.forge.embedded.NetworkShim$MessageBuilder",
+            "com.retromod.shim.forge.embedded.NetworkShim$ToBooleanBiFunction",
             "com.retromod.shim.forge.embedded.NetworkShim$PacketRegistration",
             "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor",
             "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor$PacketTarget",

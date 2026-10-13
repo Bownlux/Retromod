@@ -1,0 +1,21 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_netherite_boots": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [{ "items": ["minecraft:netherite_boots"] }]
+      }
+    }
+  },
+  "requirements": [["has_netherite_boots"]],
+  "rewards": {
+    "recipes": [
+      "armoroftheages:holy_armor_feet",
+      "armoroftheages:exalted_aurum_armor_feet",
+      "armoroftheages:raijin_armor_feet",
+      "armoroftheages:anubis_armor_feet",
+      "armoroftheages:quetzalcoatl_armor_feet"
+    ]
+  }
+}

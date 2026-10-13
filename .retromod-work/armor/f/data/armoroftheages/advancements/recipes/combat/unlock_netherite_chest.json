@@ -1,0 +1,21 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_netherite_chestplate": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [{ "items": ["minecraft:netherite_chestplate"] }]
+      }
+    }
+  },
+  "requirements": [["has_netherite_chestplate"]],
+  "rewards": {
+    "recipes": [
+      "armoroftheages:holy_armor_chest",
+      "armoroftheages:exalted_aurum_armor_chest",
+      "armoroftheages:raijin_armor_chest",
+      "armoroftheages:anubis_armor_chest",
+      "armoroftheages:quetzalcoatl_armor_chest"
+    ]
+  }
+}

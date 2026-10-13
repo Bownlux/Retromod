@@ -1,0 +1,26 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"xxx",
+		"xox",
+		"ivi"
+	],
+	"key": {
+		"x": {
+			"item": "minecraft:feather"
+		},
+		"i": {
+			"item": "minecraft:gold_ingot"
+		},
+		"o": {
+			"item": "minecraft:netherite_helmet"
+		},
+		"v": {
+			"item": "minecraft:skeleton_skull"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:quetzalcoatl_armor_head"
+	}
+}

@@ -519,6 +519,7 @@ public class FabricModTransformer {
 
         // Before the snapshot, so the class pass and its hierarchy see the renamed interface.
         com.retromod.shim.fabric.Pre1_20_5ArmorMaterialBridge.renameInLegacyJar(bytecodeTransformer, dir);
+        com.retromod.shim.common.LegacyEquipmentBridge.renameInLegacyJar(bytecodeTransformer, dir);
 
         final java.util.List<Path> classFiles;
         try (var stream = Files.walk(dir)) {
@@ -1988,6 +1989,7 @@ public class FabricModTransformer {
 
                 com.retromod.shim.fabric.Pre1_20_5ArmorMaterialBridge.renameInLegacyJar(
                         bytecodeTransformer, tempDir);
+                com.retromod.shim.common.LegacyEquipmentBridge.renameInLegacyJar(bytecodeTransformer, tempDir);
 
                 // Transform class files (intermediary→Mojang remapping)
                 Map<String, byte[]> hierarchyClassLookup = buildClassLookup(tempDir);

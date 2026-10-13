@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "www",
+    "ccc"
+  ],
+  "key": {
+    "w": {
+      "item": "minecraft:pink_wool"
+    },
+    "c": {
+      "item": "minecraft:pink_carpet"
+    }
+  },
+  "result": {
+    "item": "futonsmod:pink_futon"
+  }
+}

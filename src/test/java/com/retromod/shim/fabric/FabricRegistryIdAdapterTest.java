@@ -121,6 +121,163 @@ class FabricRegistryIdAdapterTest {
                 "an untouched class must come back as the same array, not a reserialized copy");
     }
 
+    /**
+     * Utami's Futon's shape (#338): the block is built first and handed to the mod's own helper with
+     * a literal name, and the helper builds the id into a local before registering.
+     */
+    private static byte[] helperRegistration() {
+        String block = "net/minecraft/world/level/block/Block";
+        String helperDesc = "(L" + block + ";Ljava/lang/String;)L" + block + ";";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/mod/ModBlocks", null, "java/lang/Object", null);
+        MethodVisitor helper = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "register", helperDesc, null, null);
+        helper.visitCode();
+        helper.visitLdcInsn("futonsmod");
+        helper.visitVarInsn(Opcodes.ALOAD, 1);
+        helper.visitMethodInsn(Opcodes.INVOKESTATIC, IDENTIFIER, "fromNamespaceAndPath",
+                "(Ljava/lang/String;Ljava/lang/String;)L" + IDENTIFIER + ";", false);
+        helper.visitVarInsn(Opcodes.ASTORE, 2);
+        helper.visitFieldInsn(Opcodes.GETSTATIC, "net/minecraft/core/registries/BuiltInRegistries",
+                "BLOCK", "Lnet/minecraft/core/Registry;");
+        helper.visitVarInsn(Opcodes.ALOAD, 2);
+        helper.visitVarInsn(Opcodes.ALOAD, 0);
+        helper.visitMethodInsn(Opcodes.INVOKESTATIC, "net/minecraft/core/Registry", "register",
+                "(Lnet/minecraft/core/Registry;L" + IDENTIFIER + ";Ljava/lang/Object;)Ljava/lang/Object;", false);
+        helper.visitTypeInsn(Opcodes.CHECKCAST, block);
+        helper.visitInsn(Opcodes.ARETURN);
+        helper.visitMaxs(0, 0);
+        helper.visitEnd();
+
+        MethodVisitor init = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+        init.visitCode();
+        init.visitTypeInsn(Opcodes.NEW, block);
+        init.visitInsn(Opcodes.DUP);
+        init.visitMethodInsn(Opcodes.INVOKESTATIC, PROPS, "of", "()L" + PROPS + ";", false);
+        init.visitMethodInsn(Opcodes.INVOKESPECIAL, block, "<init>", "(L" + PROPS + ";)V", false);
+        init.visitLdcInsn("white_futon");
+        init.visitMethodInsn(Opcodes.INVOKESTATIC, "test/mod/ModBlocks", "register", helperDesc, false);
+        init.visitInsn(Opcodes.POP);
+        init.visitInsn(Opcodes.RETURN);
+        init.visitMaxs(0, 0);
+        init.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    @Test
+    @DisplayName("a block built before the mod's own helper names it still gets its id first")
+    void stampsBeforeABlockHandedToAHelper() {
+        byte[] out = FabricRegistryIdAdapter.apply(helperRegistration());
+        org.objectweb.asm.tree.ClassNode node = new org.objectweb.asm.tree.ClassNode();
+        new ClassReader(out).accept(node, 0);
+        org.objectweb.asm.tree.MethodNode clinit = node.methods.stream()
+                .filter(m -> m.name.equals("<clinit>")).findFirst().orElseThrow();
+        List<String> code = new ArrayList<>();
+        for (org.objectweb.asm.tree.AbstractInsnNode insn : clinit.instructions) {
+            if (insn instanceof org.objectweb.asm.tree.MethodInsnNode call) code.add(call.name);
+            if (insn instanceof org.objectweb.asm.tree.TypeInsnNode type && type.getOpcode() == Opcodes.NEW) code.add("new");
+            if (insn instanceof org.objectweb.asm.tree.LdcInsnNode ldc) code.add("ldc " + ldc.cst);
+        }
+        assertEquals(List.of("ldc futonsmod", "ldc white_futon", "fromNamespaceAndPath", "push", "new", "of",
+                "stampBlock", "<init>", "ldc white_futon", "register", "pop"), code);
+    }
+
+    @Test
+    @DisplayName("an item built into a static field and registered later by field gets its id at construction")
+    void stampsAStaticFieldRegisteredByName() {
+        assertEquals(List.of("ldc amethystequipment", "ldc amethyst_sword", "fromNamespaceAndPath", "push",
+                "<init>", "stampItem", "<init>", "putstatic", "pop"), clinitCode(itemInit(false)));
+    }
+
+    @Test
+    @DisplayName("an item built only when a flag is on gets its id on that path too (#332)")
+    void stampsAConditionalStaticFieldBeforeTheCondition() {
+        // SWORD = ENABLED ? new Item(new Item.Properties()) : null;
+        List<String> code = clinitCode(itemInit(true));
+        assertEquals("ldc amethystequipment", code.get(0), "the id is pushed before the branch: " + code);
+        assertEquals(1, code.stream().filter("push"::equals).count(), code.toString());
+        assertEquals("pop", code.get(code.size() - 1), "and popped once after the store: " + code);
+    }
+
+    private static byte[] itemInit(boolean conditional) {
+        String item = "net/minecraft/world/item/Item";
+        String itemProps = "net/minecraft/world/item/Item$Properties";
+        String helperDesc = "(L" + item + ";Ljava/lang/String;)V";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES) {
+            @Override
+            protected String getCommonSuperClass(String first, String second) {
+                return "java/lang/Object";
+            }
+        };
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/mod/ItemInit", null, "java/lang/Object", null);
+        cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "SWORD", "L" + item + ";", null, null).visitEnd();
+        cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "ENABLED", "Z", null, null).visitEnd();
+        MethodVisitor helper = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "registerItem", helperDesc, null, null);
+        helper.visitCode();
+        helper.visitFieldInsn(Opcodes.GETSTATIC, "net/minecraft/core/registries/BuiltInRegistries", "ITEM",
+                "Lnet/minecraft/core/Registry;");
+        helper.visitLdcInsn("amethystequipment");
+        helper.visitVarInsn(Opcodes.ALOAD, 1);
+        helper.visitMethodInsn(Opcodes.INVOKESTATIC, IDENTIFIER, "fromNamespaceAndPath",
+                "(Ljava/lang/String;Ljava/lang/String;)L" + IDENTIFIER + ";", false);
+        helper.visitVarInsn(Opcodes.ALOAD, 0);
+        helper.visitMethodInsn(Opcodes.INVOKESTATIC, "net/minecraft/core/Registry", "register",
+                "(Lnet/minecraft/core/Registry;L" + IDENTIFIER + ";Ljava/lang/Object;)Ljava/lang/Object;", false);
+        helper.visitInsn(Opcodes.POP);
+        helper.visitInsn(Opcodes.RETURN);
+        helper.visitMaxs(0, 0);
+        helper.visitEnd();
+        MethodVisitor register = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "registerItems", "()V", null, null);
+        register.visitCode();
+        register.visitFieldInsn(Opcodes.GETSTATIC, "test/mod/ItemInit", "SWORD", "L" + item + ";");
+        register.visitLdcInsn("amethyst_sword");
+        register.visitMethodInsn(Opcodes.INVOKESTATIC, "test/mod/ItemInit", "registerItem", helperDesc, false);
+        register.visitInsn(Opcodes.RETURN);
+        register.visitMaxs(0, 0);
+        register.visitEnd();
+        MethodVisitor init = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+        init.visitCode();
+        org.objectweb.asm.Label disabled = new org.objectweb.asm.Label();
+        org.objectweb.asm.Label store = new org.objectweb.asm.Label();
+        if (conditional) {
+            init.visitFieldInsn(Opcodes.GETSTATIC, "test/mod/ItemInit", "ENABLED", "Z");
+            init.visitJumpInsn(Opcodes.IFEQ, disabled);
+        }
+        init.visitTypeInsn(Opcodes.NEW, item);
+        init.visitInsn(Opcodes.DUP);
+        init.visitTypeInsn(Opcodes.NEW, itemProps);
+        init.visitInsn(Opcodes.DUP);
+        init.visitMethodInsn(Opcodes.INVOKESPECIAL, itemProps, "<init>", "()V", false);
+        init.visitMethodInsn(Opcodes.INVOKESPECIAL, item, "<init>", "(L" + itemProps + ";)V", false);
+        if (conditional) {
+            init.visitJumpInsn(Opcodes.GOTO, store);
+            init.visitLabel(disabled);
+            init.visitInsn(Opcodes.ACONST_NULL);
+            init.visitLabel(store);
+        }
+        init.visitFieldInsn(Opcodes.PUTSTATIC, "test/mod/ItemInit", "SWORD", "L" + item + ";");
+        init.visitInsn(Opcodes.RETURN);
+        init.visitMaxs(0, 0);
+        init.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** The calls, constants, and the field store in the transformed {@code <clinit>}, in order. */
+    private static List<String> clinitCode(byte[] classBytes) {
+        org.objectweb.asm.tree.ClassNode node = new org.objectweb.asm.tree.ClassNode();
+        new ClassReader(FabricRegistryIdAdapter.apply(classBytes)).accept(node, 0);
+        org.objectweb.asm.tree.MethodNode clinit = node.methods.stream()
+                .filter(m -> m.name.equals("<clinit>")).findFirst().orElseThrow();
+        List<String> code = new ArrayList<>();
+        for (org.objectweb.asm.tree.AbstractInsnNode insn : clinit.instructions) {
+            if (insn instanceof org.objectweb.asm.tree.MethodInsnNode call) code.add(call.name);
+            if (insn instanceof org.objectweb.asm.tree.LdcInsnNode ldc) code.add("ldc " + ldc.cst);
+            if (insn instanceof org.objectweb.asm.tree.FieldInsnNode put && put.getOpcode() == Opcodes.PUTSTATIC) code.add("putstatic");
+        }
+        return code;
+    }
+
     private static int indexOf(List<Call> calls, String name) {
         for (int i = 0; i < calls.size(); i++) {
             if (calls.get(i).name().equals(name)

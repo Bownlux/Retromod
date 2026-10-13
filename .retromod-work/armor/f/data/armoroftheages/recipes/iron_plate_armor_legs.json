@@ -1,0 +1,26 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"IiI",
+		"IOI",
+		" o "
+	],
+	"key": {
+		"i": {
+			"item": "minecraft:iron_leggings"
+		},
+		"I": {
+			"item": "minecraft:iron_block"
+		},
+		"o": {
+			"item": "minecraft:red_wool"
+		},
+		"O": {
+			"item": "minecraft:white_wool"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:iron_plate_armor_legs"
+	}
+}

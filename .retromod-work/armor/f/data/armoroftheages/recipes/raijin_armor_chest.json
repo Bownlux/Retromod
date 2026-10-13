@@ -1,0 +1,26 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"oOo",
+		"ixi",
+		"i i"
+	],
+	"key": {
+		"i": {
+			"item": "minecraft:string"
+		},
+		"x": {
+			"item": "minecraft:gold_block"
+		},
+		"o": {
+			"item": "minecraft:redstone_block"
+		},
+		"O": {
+			"item": "minecraft:netherite_chestplate"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:raijin_armor_chest"
+	}
+}

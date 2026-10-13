@@ -1,0 +1,26 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"xhx",
+		"ioi",
+		"i i"
+	],
+	"key": {
+		"x": {
+			"item": "minecraft:feather"
+		},
+		"i": {
+			"item": "minecraft:gold_ingot"
+		},
+		"o": {
+			"item": "minecraft:iron_helmet"
+		},
+		"h": {
+			"item": "minecraft:red_dye"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:centurion_armor_head"
+	}
+}

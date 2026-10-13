@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "www",
+    "ccc"
+  ],
+  "key": {
+    "w": {
+      "item": "minecraft:lime_wool"
+    },
+    "c": {
+      "item": "minecraft:lime_carpet"
+    }
+  },
+  "result": {
+    "item": "futonsmod:lime_futon"
+  }
+}

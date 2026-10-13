@@ -1,0 +1,22 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"i i",
+		"IoI"
+	],
+	"key": {
+		"I": {
+			"item": "minecraft:gold_block"
+		},
+		"i": {
+			"item": "minecraft:gold_ingot"
+		},
+		"o": {
+			"item": "minecraft:netherite_helmet"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:raijin_armor_head"
+	}
+}

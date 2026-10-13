@@ -16,12 +16,24 @@ public class FMLCommonHandlerShim {
     }
 
     public SideShim getSide() {
+        // FML knows the side. Probing for the client class instead throws on a NeoForge dedicated
+        // server, which refuses to load client classes rather than reporting them missing.
+        for (String environment : new String[]{"net.neoforged.fml.loading.FMLEnvironment",
+                "net.minecraftforge.fml.loading.FMLEnvironment"}) {
+            try {
+                Object dist = Class.forName(environment, true, FMLCommonHandlerShim.class.getClassLoader())
+                        .getField("dist").get(null);
+                return String.valueOf(dist).equals("CLIENT") ? SideShim.CLIENT : SideShim.SERVER;
+            } catch (ReflectiveOperationException | LinkageError | RuntimeException next) {
+                // Not this loader.
+            }
+        }
         // initialize=false: a side probe must never run Minecraft's static initializer.
         try {
             Class.forName("net.minecraft.client.Minecraft", false,
                     FMLCommonHandlerShim.class.getClassLoader());
             return SideShim.CLIENT;
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException | RuntimeException | LinkageError e) {
             return SideShim.SERVER;
         }
     }

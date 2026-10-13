@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "www",
+    "ccc"
+  ],
+  "key": {
+    "w": {
+      "item": "minecraft:purple_wool"
+    },
+    "c": {
+      "item": "minecraft:purple_carpet"
+    }
+  },
+  "result": {
+    "item": "futonsmod:purple_futon"
+  }
+}

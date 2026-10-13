@@ -260,6 +260,14 @@ public final class LegacyAttributeApiBridge {
             transformer.registerExactFieldRedirect(MOB_EFFECTS, constant, L_EFFECT,
                     HELPER, constantGetter(MOB_EFFECTS, constant), "()" + L_EFFECT);
         }
+        // A pre-1.20.5 mod reads ten effects under the names 1.21.5 replaced, such as
+        // DAMAGE_RESISTANCE for RESISTANCE, so those reads reach the renamed holder too.
+        for (String[] rename : LegacyMobEffectNames.RENAMES) {
+            if (effectConstants.contains(rename[1]) && !effectConstants.contains(rename[0])) {
+                transformer.registerExactFieldRedirect(MOB_EFFECTS, rename[0], L_EFFECT,
+                        HELPER, constantGetter(MOB_EFFECTS, rename[1]), "()" + L_EFFECT);
+            }
+        }
         for (Rewrite rewrite : rewrites) {
             if (rewrite.constructor()) {
                 transformer.registerConstructorRedirect(rewrite.owner(), rewrite.oldDesc(),

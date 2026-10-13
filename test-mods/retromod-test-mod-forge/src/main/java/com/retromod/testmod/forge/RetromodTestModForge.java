@@ -210,6 +210,21 @@ public class RetromodTestModForge {
         // #306: ToolActions were renamed ItemAbilities on NeoForge with the same constants.
         n++; passed += check(n, "#306 ToolActions.AXE_STRIP", () ->
             net.minecraftforge.common.ToolActions.AXE_STRIP != null);
+        // #311: a handler that reports whether it handled the packet, built with the message builder.
+        n++; passed += check(n, "#311 SimpleChannel consumerNetworkThread(ToBooleanBiFunction)", () -> {
+            net.minecraftforge.network.simple.SimpleChannel channel =
+                    net.minecraftforge.network.NetworkRegistry.newSimpleChannel(
+                            new ResourceLocation("retromod_test_mod_forge", "handled"),
+                            () -> "1", "1"::equals, "1"::equals);
+            channel.messageBuilder(String.class, 0)
+                    .encoder((message, buffer) -> buffer.writeUtf(message))
+                    .decoder(buffer -> buffer.readUtf())
+                    .consumerNetworkThread((message, context) -> true)
+                    .add();
+            return true;
+        });
+        // #338: 1.20.5 split Block.use, so an old override and its super.use need a bridge.
+        n++; passed += check(n, "#338 pre-1.20.5 Block.use override", RetromodTestModForge::oldUseOverrideRuns);
 
         LOG.info("{} SUMMARY: {}/{} passed", PREFIX, passed, n);
     }
@@ -247,6 +262,63 @@ public class RetromodTestModForge {
     private static class LegacyBook extends net.minecraft.world.item.EnchantedBookItem {
         LegacyBook() {
             super(new net.minecraft.world.item.Item.Properties());
+        }
+    }
+
+    /**
+     * Calls the five argument {@code useWithoutItem} Retromod adds for {@link UseBlock}'s old
+     * override, the method the game calls on a right click. A host before 1.20.5 still calls
+     * {@code use} itself, so it passes there. The block is allocated without its constructor,
+     * because newer hosts refuse to build a block with no registry id.
+     */
+    private static boolean oldUseOverrideRuns() throws Throwable {
+        java.lang.reflect.Method modern = fiveArgumentUse(UseBlock.class);
+        if (modern == null) {
+            for (Class<?> type = net.minecraft.world.level.block.Block.class; type != null; type = type.getSuperclass()) {
+                if (fiveArgumentUse(type) != null) return false;
+            }
+            return true;
+        }
+        java.lang.reflect.Field theUnsafe = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe");
+        theUnsafe.setAccessible(true);
+        Object unsafe = theUnsafe.get(null);
+        UseBlock block = (UseBlock) unsafe.getClass().getMethod("allocateInstance", Class.class)
+                .invoke(unsafe, UseBlock.class);
+        modern.setAccessible(true);
+        try {
+            modern.invoke(block, null, null, null, null, null);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            throw e.getCause();
+        }
+        return block.ran;
+    }
+
+    private static java.lang.reflect.Method fiveArgumentUse(Class<?> type) {
+        for (java.lang.reflect.Method method : type.getDeclaredMethods()) {
+            if (method.getParameterCount() == 5
+                    && method.getReturnType() == net.minecraft.world.InteractionResult.class) {
+                return method;
+            }
+        }
+        return null;
+    }
+
+    private static class UseBlock extends net.minecraft.world.level.block.Block {
+        boolean ran;
+
+        UseBlock(Properties properties) {
+            super(properties);
+        }
+
+        @Override
+        @SuppressWarnings("deprecation")
+        public net.minecraft.world.InteractionResult use(net.minecraft.world.level.block.state.BlockState state,
+                net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos,
+                net.minecraft.world.entity.player.Player player, net.minecraft.world.InteractionHand hand,
+                net.minecraft.world.phys.BlockHitResult hit) {
+            net.minecraft.world.InteractionResult parent = super.use(state, level, pos, player, hand, hit);
+            ran = hand == net.minecraft.world.InteractionHand.MAIN_HAND;
+            return parent;
         }
     }
 

@@ -1,0 +1,22 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"xox",
+		"ixi"
+	],
+	"key": {
+		"i": {
+			"item": "minecraft:iron_block"
+		},
+		"x": {
+			"item": "minecraft:gold_block"
+		},
+		"o": {
+			"item": "minecraft:iron_helmet"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:o_yoroi_armor_head"
+	}
+}

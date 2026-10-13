@@ -87,13 +87,24 @@ public class OreDictionaryShim {
         // No-op in modern MC: tags are data-driven
     }
 
+    /**
+     * Empty: tag contents need a loaded registry. 1.12 callers expect a {@code NonNullList}, so
+     * one is made when Minecraft is present.
+     */
     public static List<Object> getOres(String name) {
-        // Return empty list; tag queries need to go through the registry
-        return Collections.emptyList();
+        try {
+            @SuppressWarnings("unchecked")
+            List<Object> list = (List<Object>) Class.forName("net.minecraft.core.NonNullList", true,
+                    OreDictionaryShim.class.getClassLoader()).getMethod("create").invoke(null);
+            return list;
+        } catch (ReflectiveOperationException | LinkageError absent) {
+            return new ArrayList<>();
+        }
     }
 
-    public static List<String> getOreNames() {
-        return new ArrayList<>(ORE_TO_TAG.keySet());
+    /** 1.12's {@code getOreNames()} returned an array. */
+    public static String[] getOreNames() {
+        return ORE_TO_TAG.keySet().toArray(new String[0]);
     }
 
     public static boolean doesOreNameExist(String name) {

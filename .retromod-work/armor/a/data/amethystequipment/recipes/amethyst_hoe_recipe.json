@@ -1,0 +1,19 @@
+{
+    "type": "minecraft:crafting_shaped",
+    "pattern": [
+        "BB",
+        "S ",
+        "S "
+    ],
+    "key": {
+        "B": {
+            "item": "minecraft:amethyst_shard"
+        },
+        "S": {
+            "item": "minecraft:stick"
+        }
+    },
+    "result": {
+        "item": "amethystequipment:amethyst_hoe"
+    }
+}

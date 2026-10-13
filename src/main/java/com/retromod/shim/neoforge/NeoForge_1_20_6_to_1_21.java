@@ -17,6 +17,8 @@ public class NeoForge_1_20_6_to_1_21 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // 1.21 made enchantments data and Enchantment a final record (code-defined enchantments).
+        com.retromod.shim.common.LegacyEnchantmentBridge.register(transformer);
         // Vanilla item bases removed in 1.21, rebased only on hosts that lost them.
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21");
         com.retromod.shim.common.LegacyDyeColorBridge.register(transformer);

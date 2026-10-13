@@ -54,21 +54,47 @@ public final class LegacyBaseSynthesizer {
      */
     public static byte[] generate(String generatedName, String modernBase, String modernCtorDesc,
             List<String> legacyCtorDescs) {
+        return generate(generatedName, modernBase, modernCtorDesc, legacyCtorDescs, null);
+    }
+
+    /**
+     * Rebuilds one forwarded argument from every legacy argument, for a removed base whose extra
+     * constructor arguments became settings on that argument. An armor item's material and type,
+     * for example, became components on its {@code Item.Properties}.
+     *
+     * <p>The generated constructor calls
+     * {@code owner.method(String key, Object[] legacyArguments, Object forwarded)} and passes its
+     * result, cast back to {@code adaptedDesc}, in place of the forwarded argument. Only a legacy
+     * constructor that has arguments the modern one drops is adapted.
+     */
+    public record ArgumentAdapter(String owner, String method, String key, String adaptedDesc, String[] interfaces) {
+        static final String DESC = "(Ljava/lang/String;[Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;";
+
+        public ArgumentAdapter(String owner, String method, String key, String adaptedDesc) {
+            this(owner, method, key, adaptedDesc, new String[0]);
+        }
+    }
+
+    /** As {@link #generate(String, String, String, List)}, with an optional {@link ArgumentAdapter}. */
+    public static byte[] generate(String generatedName, String modernBase, String modernCtorDesc,
+            List<String> legacyCtorDescs, ArgumentAdapter adapter) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        // The removed base may have implemented an interface that now has a stand-in, as
+        // DyeableArmorItem implemented DyeableLeatherItem.
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER,
-                generatedName, null, modernBase, null);
+                generatedName, null, modernBase, adapter == null ? null : adapter.interfaces());
 
         Type[] modernArgs = Type.getArgumentTypes(modernCtorDesc);
         boolean generatedModern = false;
         for (String legacyDesc : legacyCtorDescs) {
             if (legacyDesc.equals(modernCtorDesc)) generatedModern = true;
-            emitForwardingCtor(cw, generatedName, modernBase, modernCtorDesc, modernArgs, legacyDesc);
+            emitForwardingCtor(cw, generatedName, modernBase, modernCtorDesc, modernArgs, legacyDesc, adapter);
         }
         // A subclass compiled against a version where the base already had the modern shape calls
         // it directly, so keep it available even when it was not listed.
         if (!generatedModern) {
             emitForwardingCtor(cw, generatedName, modernBase, modernCtorDesc, modernArgs,
-                    modernCtorDesc);
+                    modernCtorDesc, adapter);
         }
 
         cw.visitEnd();
@@ -104,7 +130,7 @@ public final class LegacyBaseSynthesizer {
     }
 
     private static void emitForwardingCtor(ClassWriter cw, String generatedName, String modernBase,
-            String modernCtorDesc, Type[] modernArgs, String legacyDesc) {
+            String modernCtorDesc, Type[] modernArgs, String legacyDesc, ArgumentAdapter adapter) {
         if (!isUsableCtorDescriptor(legacyDesc)) {
             throw new IllegalArgumentException("Not a usable constructor descriptor: " + legacyDesc);
         }
@@ -119,13 +145,56 @@ public final class LegacyBaseSynthesizer {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", legacyDesc, null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
+        boolean adapt = adapter != null && legacyArgs.length > modernArgs.length;
         for (int i = 0; i < slots.length; i++) {
-            mv.visitVarInsn(modernArgs[i].getOpcode(Opcodes.ILOAD), slots[i]);
+            if (adapt && modernArgs[i].getDescriptor().equals(adapter.adaptedDesc())) {
+                emitAdaptedArgument(mv, adapter, legacyArgs, slots[i]);
+            } else {
+                mv.visitVarInsn(modernArgs[i].getOpcode(Opcodes.ILOAD), slots[i]);
+            }
         }
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, modernBase, "<init>", modernCtorDesc, false);
         mv.visitInsn(Opcodes.RETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
+    }
+
+    /** {@code (T) owner.method(key, new Object[]{legacy arguments, boxed}, forwarded)}. */
+    private static void emitAdaptedArgument(MethodVisitor mv, ArgumentAdapter adapter, Type[] legacyArgs,
+            int forwardedSlot) {
+        mv.visitLdcInsn(adapter.key());
+        mv.visitLdcInsn(legacyArgs.length);
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+        int slot = 1;
+        for (int i = 0; i < legacyArgs.length; i++) {
+            mv.visitInsn(Opcodes.DUP);
+            mv.visitLdcInsn(i);
+            mv.visitVarInsn(legacyArgs[i].getOpcode(Opcodes.ILOAD), slot);
+            box(mv, legacyArgs[i]);
+            mv.visitInsn(Opcodes.AASTORE);
+            slot += legacyArgs[i].getSize();
+        }
+        mv.visitVarInsn(Opcodes.ALOAD, forwardedSlot);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, adapter.owner(), adapter.method(), ArgumentAdapter.DESC, false);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, Type.getType(adapter.adaptedDesc()).getInternalName());
+    }
+
+    private static void box(MethodVisitor mv, Type type) {
+        String wrapper = switch (type.getSort()) {
+            case Type.BOOLEAN -> "java/lang/Boolean";
+            case Type.CHAR -> "java/lang/Character";
+            case Type.BYTE -> "java/lang/Byte";
+            case Type.SHORT -> "java/lang/Short";
+            case Type.INT -> "java/lang/Integer";
+            case Type.FLOAT -> "java/lang/Float";
+            case Type.LONG -> "java/lang/Long";
+            case Type.DOUBLE -> "java/lang/Double";
+            default -> null;
+        };
+        if (wrapper != null) {
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, wrapper, "valueOf",
+                    "(" + type.getDescriptor() + ")L" + wrapper + ";", false);
+        }
     }
 
     /**

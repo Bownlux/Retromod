@@ -1,0 +1,41 @@
+{
+    "schemaVersion": 1,
+    "id": "armoroftheages",
+    "version": "1.3.16",
+    "name": "Armor of the Ages",
+    "description": "A mod that adds fancy armors from different cultures.",
+    "authors": [
+        "Poulpinou & TheGoldenWorld"
+    ],
+    "contact": {
+        "homepage": "https://fabricmc.net/",
+        "sources": "https://github.com/FabricMC/fabric-example-mod"
+    },
+    "license": "MIT",
+    "icon": "armoroftheages.png",
+    "environment": "*",
+    "entrypoints": {
+        "main": [
+          "org.dawnoftime.armoroftheages.ArmorOfTheAgesFabric"
+        ],
+        "client": ["org.dawnoftime.armoroftheages.client.ArmorOfTheAgesClientFabric"],
+        "modmenu": [
+            "org.dawnoftime.armoroftheages.compat.ModMenuEntrypoint"
+        ]
+    },
+    "mixins": [
+        "armoroftheages.mixins.json",
+        "armoroftheages.fabric.mixins.json"
+    ],
+    "depends": {
+        "fabricloader": ">=0.15.10",
+        "fabric": "*",
+        "yet_another_config_lib_v3": "*",
+        "minecraft": "1.20.1",
+        "java": ">=17"
+    },
+    "suggests": {
+        "another-mod": "*"
+    }
+}
+  

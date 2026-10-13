@@ -26,7 +26,8 @@ public final class RetromodErrorHandler {
 
         if (seenErrors.add(key)) {
             System.err.println("[Retromod] A mod entry point failed in " + className
-                    + ", but Minecraft can continue: " + t);
+                    + ". Minecraft can continue, but the rest of that entry point did not run, so features"
+                    + " it sets up, such as key handlers, may be missing: " + t);
             t.printStackTrace();
         }
     }

@@ -1,0 +1,22 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"xox",
+		"i i"
+	],
+	"key": {
+		"x": {
+			"item": "minecraft:white_wool"
+		},
+		"i": {
+			"item": "minecraft:gold_block"
+		},
+		"o": {
+			"item": "minecraft:netherite_helmet"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:holy_armor_head"
+	}
+}

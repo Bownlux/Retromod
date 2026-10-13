@@ -15,9 +15,10 @@ import java.util.Map;
  * <p>Reference parameters are {@code Object} and reference results other than the stand-ins are
  * {@code Object}, because the transform erases calls on these classes to that shape. The
  * {@code String} and {@code String[]} overloads of {@code get} share one erased method and are
- * told apart by the default's runtime type.
+ * told apart by the default's runtime type. It is not final, because a mod's own config class may
+ * extend it, as GlobalXP's does.
  */
-public final class LegacyConfiguration {
+public class LegacyConfiguration {
 
     public static final String CATEGORY_GENERAL = "general";
     public static final String CATEGORY_CLIENT = "client";

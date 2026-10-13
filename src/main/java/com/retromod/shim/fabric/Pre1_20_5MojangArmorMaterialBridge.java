@@ -60,6 +60,10 @@ public final class Pre1_20_5MojangArmorMaterialBridge {
     private static final String L_HOLDER = "L" + HOLDER + ";";
     private static final String L_PROPERTIES = "L" + ITEM_PROPERTIES + ";";
     private static final String L_LEGACY = "L" + Pre1_20_5ArmorMaterialBridge.LEGACY_MATERIAL + ";";
+    private static final String L_SLOT = "Lnet/minecraft/world/entity/EquipmentSlot;";
+    static final String OLD_1122_MATERIAL = "net/minecraft/item/ItemArmor$ArmorMaterial";
+    static final String CTOR_1122 = "(" + L_LEGACY + "I" + L_SLOT + ")V";
+    static final String ARMOR_HELPER_1122 = "com/retromod/shim/forge/embedded/Legacy1122Armor";
     private static final String RECORD_CTOR = "(Ljava/util/Map;IL" + HOLDER
             + ";Ljava/util/function/Supplier;Ljava/util/List;FF)V";
 
@@ -142,7 +146,7 @@ public final class Pre1_20_5MojangArmorMaterialBridge {
         transformer.registerSyntheticClass(Pre1_20_5ArmorMaterialBridge.MATERIALS,
                 toMojang(Pre1_20_5ArmorMaterialBridge.generateMaterials(), STRINGS));
         transformer.registerSyntheticClass(Pre1_20_5ArmorMaterialBridge.LEGACY_ARMOR_ITEM,
-                toMojang(Pre1_20_5ArmorMaterialBridge.generateLegacyArmorItem(), STRINGS));
+                with1122Constructor(toMojang(Pre1_20_5ArmorMaterialBridge.generateLegacyArmorItem(), STRINGS)));
 
         for (String field : VANILLA_FIELDS) {
             transformer.registerFieldRedirect(ARMOR_MATERIALS, field, "L" + ARMOR_MATERIALS + ";",
@@ -152,10 +156,74 @@ public final class Pre1_20_5MojangArmorMaterialBridge {
                 Pre1_20_5ArmorMaterialBridge.MATERIALS, "armorItem",
                 "(" + L_LEGACY + L_TYPE + L_PROPERTIES + ")L" + ARMOR_ITEM + ";");
         transformer.registerSuperclassRebase(ARMOR_ITEM, Pre1_20_5ArmorMaterialBridge.LEGACY_ARMOR_ITEM);
+        register1122Armor(transformer);
         if (dyeableArmorRemoved) {
             // Dye color became an item component, so a dyeable item loads as plain armor.
             transformer.registerClassRedirect(DYEABLE_ARMOR_ITEM, Pre1_20_5ArmorMaterialBridge.LEGACY_ARMOR_ITEM);
         }
+    }
+
+    /**
+     * 1.12.2 armor. Its material was an enum that later became {@code ArmorMaterials}, and its
+     * constructor took the material, a render index, and a slot, with no item properties. In a
+     * 1.12.2 jar the material becomes the old-style material this bridge already converts, its
+     * vanilla constants become the same views, and the constructor finds the armor type worn in the
+     * slot. The render index only chose the texture layer, which the material record decides now.
+     */
+    static void register1122Armor(RetromodTransformer transformer) {
+        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, ARMOR_HELPER_1122,
+                com.retromod.shim.forge.embedded.Legacy1122Armor.class);
+        transformer.registerClassRedirect(OLD_1122_MATERIAL, Pre1_20_5ArmorMaterialBridge.LEGACY_MATERIAL);
+        for (String field : VANILLA_FIELDS) {
+            transformer.registerFieldRedirect(Pre1_20_5ArmorMaterialBridge.LEGACY_MATERIAL, field, L_LEGACY,
+                    Pre1_20_5ArmorMaterialBridge.MATERIALS, field, "()" + L_LEGACY);
+        }
+        transformer.registerConstructorRedirect(ARMOR_ITEM, CTOR_1122,
+                Pre1_20_5ArmorMaterialBridge.LEGACY_ARMOR_ITEM, "of1122",
+                "(" + L_LEGACY + "I" + L_SLOT + ")L" + ARMOR_ITEM + ";");
+    }
+
+    /**
+     * Adds the 1.12.2 constructor, for a mod armor class that extends it, and a factory for
+     * {@code new ItemArmor(material, renderIndex, slot)}, which builds the generated item itself.
+     */
+    static byte[] with1122Constructor(byte[] armorItem) {
+        String self = Pre1_20_5ArmorMaterialBridge.LEGACY_ARMOR_ITEM;
+        String legacyCtor = "(" + L_LEGACY + L_TYPE + L_PROPERTIES + ")V";
+        ClassNode node = new ClassNode();
+        new ClassReader(armorItem).accept(node, 0);
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        node.accept(cw);
+
+        MethodVisitor ctor = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", CTOR_1122, null, null);
+        ctor.visitCode();
+        ctor.visitVarInsn(Opcodes.ALOAD, 0);
+        ctor.visitVarInsn(Opcodes.ALOAD, 1);
+        ctor.visitVarInsn(Opcodes.ALOAD, 3);
+        ctor.visitMethodInsn(Opcodes.INVOKESTATIC, ARMOR_HELPER_1122, "armorType", "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+        ctor.visitTypeInsn(Opcodes.CHECKCAST, ARMOR_TYPE);
+        ctor.visitTypeInsn(Opcodes.NEW, ITEM_PROPERTIES);
+        ctor.visitInsn(Opcodes.DUP);
+        ctor.visitMethodInsn(Opcodes.INVOKESPECIAL, ITEM_PROPERTIES, "<init>", "()V", false);
+        ctor.visitMethodInsn(Opcodes.INVOKESPECIAL, self, "<init>", legacyCtor, false);
+        ctor.visitInsn(Opcodes.RETURN);
+        ctor.visitMaxs(0, 0);
+        ctor.visitEnd();
+
+        MethodVisitor factory = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "of1122",
+                "(" + L_LEGACY + "I" + L_SLOT + ")L" + ARMOR_ITEM + ";", null, null);
+        factory.visitCode();
+        factory.visitTypeInsn(Opcodes.NEW, self);
+        factory.visitInsn(Opcodes.DUP);
+        factory.visitVarInsn(Opcodes.ALOAD, 0);
+        factory.visitVarInsn(Opcodes.ILOAD, 1);
+        factory.visitVarInsn(Opcodes.ALOAD, 2);
+        factory.visitMethodInsn(Opcodes.INVOKESPECIAL, self, "<init>", CTOR_1122, false);
+        factory.visitInsn(Opcodes.ARETURN);
+        factory.visitMaxs(0, 0);
+        factory.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     /**

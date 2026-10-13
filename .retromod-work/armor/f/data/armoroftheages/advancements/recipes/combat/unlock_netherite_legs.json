@@ -1,0 +1,21 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_netherite_leggings": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [{ "items": ["minecraft:netherite_leggings"] }]
+      }
+    }
+  },
+  "requirements": [["has_netherite_leggings"]],
+  "rewards": {
+    "recipes": [
+      "armoroftheages:holy_armor_legs",
+      "armoroftheages:exalted_aurum_armor_legs",
+      "armoroftheages:raijin_armor_legs",
+      "armoroftheages:anubis_armor_legs",
+      "armoroftheages:quetzalcoatl_armor_legs"
+    ]
+  }
+}

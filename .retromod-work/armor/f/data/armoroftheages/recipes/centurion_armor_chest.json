@@ -1,0 +1,23 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"o o",
+		"IiI",
+		"ooo"
+	],
+	"key": {
+		"i": {
+			"item": "minecraft:iron_chestplate"
+		},
+		"I": {
+			"item": "minecraft:red_dye"
+		},
+		"o": {
+			"item": "minecraft:gold_ingot"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:centurion_armor_chest"
+	}
+}

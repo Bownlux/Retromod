@@ -9,8 +9,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Stands in for a Forge registry that 1.21 turned into a datapack registry, such as enchantments
- * and painting variants.
+ * Stands in for a Forge registry that became a datapack registry: biomes in 1.19.3, and
+ * enchantments and painting variants in 1.21.
  *
  * <p>There is no registry object to hand a mod any more, only a key. The stand-in answers
  * {@code key()}, so {@code DeferredRegister.create(ForgeRegistries.ENCHANTMENTS, modid)} builds
@@ -26,18 +26,22 @@ public final class LegacyDatapackRegistries {
     private LegacyDatapackRegistries() {}
 
     public static Object enchantments() {
-        return standIn("ENCHANTMENT");
+        return standIn("ENCHANTMENT", "1.21");
     }
 
     public static Object paintingVariants() {
-        return standIn("PAINTING_VARIANT");
+        return standIn("PAINTING_VARIANT", "1.21");
     }
 
-    static Object standIn(String keyField) {
-        return STAND_INS.computeIfAbsent(keyField, LegacyDatapackRegistries::create);
+    public static Object biomes() {
+        return standIn("BIOME", "1.19.3");
     }
 
-    private static Object create(String keyField) {
+    static Object standIn(String keyField, String dataSince) {
+        return STAND_INS.computeIfAbsent(keyField, key -> create(key, dataSince));
+    }
+
+    private static Object create(String keyField, String dataSince) {
         ClassLoader loader = LegacyDatapackRegistries.class.getClassLoader();
         try {
             Class<?> registry = Class.forName("net.minecraft.core.Registry", false, loader);
@@ -50,8 +54,9 @@ public final class LegacyDatapackRegistries {
                         case "equals" -> proxy == args[0];
                         case "toString" -> "Retromod stand-in for the " + keyField + " datapack registry";
                         default -> throw new UnsupportedOperationException(keyField.toLowerCase()
-                                + " entries come from datapacks since Minecraft 1.21, so a mod built for"
-                                + " 1.20.1 cannot register or look them up from code (" + method.getName() + ")");
+                                + " entries come from datapacks since Minecraft " + dataSince + ", so a mod"
+                                + " built before that cannot register or look them up from code ("
+                                + method.getName() + ")");
                     });
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Cannot build a stand-in for the " + keyField + " registry", e);

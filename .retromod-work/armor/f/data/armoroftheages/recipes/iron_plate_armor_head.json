@@ -1,0 +1,26 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		" Oo",
+		"IiI",
+		"I I"
+	],
+	"key": {
+		"I": {
+			"item": "minecraft:iron_block"
+		},
+		"i": {
+			"item": "minecraft:iron_helmet"
+		},
+		"o": {
+			"item": "minecraft:red_dye"
+		},
+		"O": {
+			"item": "minecraft:feather"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:iron_plate_armor_head"
+	}
+}

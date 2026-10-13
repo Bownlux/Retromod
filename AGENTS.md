@@ -10,6 +10,7 @@ Apply this to every fix and feature, right after the security embargo in importa
 
 - **Forward to the newest Minecraft.** When something starts working on an older host, such as a mod fixed on 1.21.1 or 26.1.2, make it work on the newest Minecraft version Retromod builds for too (the last version in `build-all.sh`, 26.3 today). Follow the shim chain and every host gate up to that version, cover the newest host's shape in the unit test, and run it there when a server or client for it can run. Most users are on the newest version, and a fix that stops at an older host comes back as "works on 26.1.2 but not 26.3" (#316: Polished Planks doors dropped twice on 26.3, which changed the loot format, while 26.1.2 was fine). If the newest version removed the system outright, say so in the changelog limitations rather than leaving the gap silent.
 - **Across loaders.** If the change touches something every loader shares (vanilla classes and data formats, mixins on Minecraft code, the transformer core), make it work on Fabric, Quilt, Forge, and NeoForge alike, through each loader's shim chain and transform path. Quilt runs the Fabric artifact, so a Fabric fix covers it. If only Forge and NeoForge share it (FML, `mods.toml`, Forge-family APIs, SRG), fix both of them and leave Fabric and Quilt alone. If it belongs to one loader, keep it there.
+- **Rebuild what got removed instead of writing it off.** "26.3 rebuilt those internals" is not a limitation to ship, it is the next job. Put the old shape back on top of the new system: old mods read and call what they used to, and the bridge translates to the new structure underneath. Keep it additive. Never replace or patch away the host's new behavior, because newer mods running in the same game depend on it. If the system is gone entirely, build a separate replacement that does the old job. Do not copy Minecraft's code; it is not ours to ship. Study what it does and write our own version, even if it ends up different, a little slower, or better. Loader code depends on its license: Fabric Loader and Fabric API are Apache-2.0 and can be adapted with attribution, while Forge and NeoForge are LGPL-2.1, so reimplement their behavior rather than pasting it into this MIT project.
 - **Still gate by host** (pitfall #9). Carrying a fix forward means registering it for every host that needs it, never applying it to a host that still has the old API.
 
 ## Writing style
@@ -147,12 +148,12 @@ mvn package -P lite -DskipTests -Dexec.skip=true
 mvn exec:java -Dexec.mainClass="com.retromod.cli.RetromodCli" -Dexec.args="<command>" -q
 
 # Run the executable release CLI (dependencies bundled)
-java -jar dist/CLI/retromod-1.3.4-cli.jar <command>
+java -jar dist/CLI/retromod-1.4.0-snapshot.1-cli.jar <command>
 ```
 
 **Important:** Always pass `-Dexec.skip=true` during build to prevent Maven from running the CLI entrypoint.
 
-Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 71 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.3.4-cli.jar`.
+Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 71 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.4.0-snapshot.1-cli.jar`.
 
 ## Release integrity (self-hash)
 
@@ -161,7 +162,7 @@ Official builds embed a SHA-256 of the executable release surface in `SignatureV
 **Embed the hash as the LAST release step** (any covered code, provider, or transformation-data change shifts it):
 ```bash
 mvn clean package -Dexec.skip=true                          # build the final jars
-python3 scripts/compute-self-hash.py target/retromod-1.3.4-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.4.0-snapshot.1-all.jar
 # embed the 64-hex result into SignatureVerifier.EXPECTED_SELF_HASH PROGRAMMATICALLY
 # (sed/python - never hand-typed), rebuild, then re-run the compute script and
 # compare against the embedded value (closed-loop verify)
@@ -175,7 +176,7 @@ After embedding and rebuilding, run `bash build-all.sh --skip-build --require-se
 ## Deploy to Minecraft
 
 ```bash
-cp dist/Fabric/26.1/retromod-1.3.4+26.1.jar ~/Library/Application\ Support/minecraft/mods/
+cp dist/Fabric/26.1/retromod-1.4.0-snapshot.1+26.1.jar ~/Library/Application\ Support/minecraft/mods/
 ```
 
 Game directory (macOS): `~/Library/Application Support/minecraft/`

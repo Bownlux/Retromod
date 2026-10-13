@@ -474,4 +474,121 @@ class ModDataMigratorTest {
         assertTrue(Files.exists(kept), "an advancement for a shipped recipe stays");
         assertTrue(Files.exists(other), "another mod may provide a foreign recipe");
     }
+
+    @Test
+    void oldProviderValueWrappersAreInlined() {
+        String old = """
+                {"monster_spawn_light_level": {"type": "minecraft:uniform", "value": {"min_inclusive": 0, "max_inclusive": 7}},
+                 "height": {"type": "minecraft:constant", "value": {"absolute": 64}},
+                 "count": {"type": "minecraft:clamped", "value": {"source": {"type": "minecraft:uniform",
+                   "value": {"min_inclusive": -2, "max_inclusive": 4}}, "min_inclusive": 0, "max_inclusive": 4}}}""";
+        String migrated = new String(ModDataMigrator.migrate("data/mod/dimension_type/gourd.json",
+                old.getBytes(StandardCharsets.UTF_8), "26.3"), StandardCharsets.UTF_8);
+        com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(migrated).getAsJsonObject();
+
+        assertEquals(com.google.gson.JsonParser.parseString(
+                "{\"type\": \"minecraft:uniform\", \"min_inclusive\": 0, \"max_inclusive\": 7}"),
+                json.get("monster_spawn_light_level"));
+        assertEquals(com.google.gson.JsonParser.parseString(
+                "{\"type\": \"minecraft:constant\", \"value\": {\"absolute\": 64}}"),
+                json.get("height"), "a constant height provider's value is an anchor, not a wrapper");
+        assertEquals(com.google.gson.JsonParser.parseString("""
+                {"type": "minecraft:clamped", "source": {"type": "minecraft:uniform", "min_inclusive": -2,
+                 "max_inclusive": 4}, "min_inclusive": 0, "max_inclusive": 4}"""), json.get("count"),
+                "a nested provider is inlined too");
+    }
+
+
+    /**
+     * Mythic Fantasies, a 1.19.2 Forge mod, on NeoForge 1.21.1: its dimension type's light level
+     * still had the wrapper 1.21 dropped, and the 26.x-only rewrite never ran on that host.
+     */
+    @Test
+    void hostsFrom1_21RewriteOnlyTheirOwnFormatChanges() {
+        byte[] wrapped = """
+                {"monster_spawn_light_level": {"type": "minecraft:uniform", "value": {"min_inclusive": 0, "max_inclusive": 7}},
+                 "bed_works": true}""".getBytes(StandardCharsets.UTF_8);
+
+        String on1211 = new String(ModDataMigrator.migrate("data/mod/dimension_type/gourd.json", wrapped, "1.21.1"),
+                StandardCharsets.UTF_8);
+        com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(on1211).getAsJsonObject();
+        assertFalse(json.getAsJsonObject("monster_spawn_light_level").has("value"), "1.21 dropped the wrapper");
+        assertTrue(json.has("bed_works"), "1.21.1 still reads the old flags; attributes came in 1.21.11");
+
+        assertTrue(new String(ModDataMigrator.migrate("data/mod/dimension_type/gourd.json", wrapped, "1.21.11"),
+                StandardCharsets.UTF_8).contains("\"attributes\""), "1.21.11 moved the flags to attributes");
+        assertSame(wrapped, ModDataMigrator.migrate("data/mod/dimension_type/gourd.json", wrapped, "1.20.1"),
+                "1.20.1 still reads the wrapper");
+    }
+    @Test
+    void oldTreeSoilBecomesBelowTrunkProvider() {
+        String old = """
+                {"type": "minecraft:tree", "config": {"trunk_placer": {"type": "minecraft:straight_trunk_placer",
+                 "base_height": 4, "height_rand_a": 2, "height_rand_b": 0},
+                 "dirt_provider": {"type": "minecraft:simple_state_provider", "state": {"Name": "minecraft:dirt"}},
+                 "force_dirt": false}}""";
+        com.google.gson.JsonObject config = com.google.gson.JsonParser.parseString(new String(ModDataMigrator.migrate(
+                "data/mod/worldgen/configured_feature/birch.json", old.getBytes(StandardCharsets.UTF_8), "26.2"),
+                StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonObject("config");
+
+        assertFalse(config.has("dirt_provider") || config.has("force_dirt"), config.toString());
+        assertEquals(com.google.gson.JsonParser.parseString("""
+                {"type": "minecraft:rule_based_state_provider", "rules": [{"if_true": {"type": "minecraft:not",
+                 "predicate": {"type": "minecraft:matching_block_tag", "tag": "minecraft:cannot_replace_below_tree_trunk"}},
+                 "then": {"type": "minecraft:simple_state_provider", "state": {"Name": "minecraft:dirt"}}}]}"""),
+                config.get("below_trunk_provider"));
+
+        String forced = old.replace("\"force_dirt\": false", "\"force_dirt\": true");
+        com.google.gson.JsonObject forcedConfig = com.google.gson.JsonParser.parseString(new String(
+                ModDataMigrator.migrate("data/mod/worldgen/configured_feature/azalea.json",
+                        forced.getBytes(StandardCharsets.UTF_8), "26.2"), StandardCharsets.UTF_8))
+                .getAsJsonObject().getAsJsonObject("config");
+        assertEquals("minecraft:simple_state_provider",
+                forcedConfig.getAsJsonObject("below_trunk_provider").get("type").getAsString(),
+                "force_dirt keeps the provider as it is");
+    }
+
+    @Test
+    void renamesTheAlternativeLootConditionFrom1_20() {
+        String loot = "{\"pools\":[{\"conditions\":[{\"condition\": \"minecraft:alternative\","
+                + "\"terms\":[{\"condition\":\"minecraft:survives_explosion\"}]}]}]}";
+        for (String host : new String[] {"1.20.1", "1.21.1", "26.3"}) {
+            String out = new String(ModDataMigrator.migrate("data/archipelago/loot_tables/blocks/palm.json",
+                    loot.getBytes(StandardCharsets.UTF_8), host), StandardCharsets.UTF_8);
+            assertTrue(out.contains("minecraft:any_of"), "renamed on " + host + ": " + out);
+            assertFalse(out.contains("alternative"), "nothing left of the old name on " + host);
+        }
+        String untouched = new String(ModDataMigrator.migrate("data/archipelago/loot_tables/blocks/palm.json",
+                loot.getBytes(StandardCharsets.UTF_8), "1.19.2"), StandardCharsets.UTF_8);
+        assertTrue(untouched.contains("alternative"), "1.19 still reads the old name");
+    }
+
+    @Test
+    void inlinesAProviderWhoseTypeHasNoNamespace() {
+        String placed = "{\"feature\":\"boh:sasafras_tree_feature\",\"placement\":[{\"type\":\"minecraft:count\","
+                + "\"count\":{\"type\":\"uniform\",\"value\":{\"min_inclusive\":0,\"max_inclusive\":2}}}]}";
+        String out = new String(ModDataMigrator.migrate("data/boh/worldgen/placed_feature/sasafras_tree_feature.json",
+                placed.getBytes(StandardCharsets.UTF_8), "1.21.1"), StandardCharsets.UTF_8);
+        assertFalse(out.contains("\"value\""), "MCreator writes a bare type id: " + out);
+        assertTrue(out.contains("\"max_inclusive\": 2"), out);
+    }
+
+    @Test
+    void typesUntypedLootUniformsOn26_3() {
+        String loot = "{\"pools\":[{\"rolls\":{\"min\":1,\"max\":3},\"entries\":[{\"type\":\"minecraft:item\","
+                + "\"name\":\"minecraft:bread\",\"functions\":[{\"function\":\"minecraft:set_count\","
+                + "\"count\":{\"min\":2,\"max\":4}}],\"conditions\":[{\"condition\":\"minecraft:entity_properties\","
+                + "\"entity\":\"this\",\"predicate\":{\"distance\":{\"absolute\":{\"min\":1,\"max\":3}}}}]}]}]}";
+        String out = new String(ModDataMigrator.migrate("data/chefsdelight/loot_table/chests/cooker.json",
+                loot.getBytes(StandardCharsets.UTF_8), "26.3"), StandardCharsets.UTF_8);
+        com.google.gson.JsonObject pool = com.google.gson.JsonParser.parseString(out).getAsJsonObject()
+                .getAsJsonArray("pools").get(0).getAsJsonObject();
+        assertEquals("minecraft:uniform", pool.getAsJsonObject("rolls").get("type").getAsString());
+        // After 26.3's own rewrite the function is a "modifier" and the condition a "condition".
+        com.google.gson.JsonObject entry = pool.getAsJsonArray("entries").get(0).getAsJsonObject();
+        assertEquals("minecraft:uniform", entry.getAsJsonObject("modifier")
+                .getAsJsonObject("count").get("type").getAsString());
+        assertFalse(entry.getAsJsonObject("condition").toString().contains("uniform"),
+                "a range inside a condition is not a number provider: " + out);
+    }
 }

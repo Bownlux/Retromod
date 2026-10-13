@@ -53,6 +53,7 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
         // both the CLI/audit path and the runtime even if the mapper isn't loaded.
         // Double-registration with the same target is an idempotent Map.put. (#64)
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
+        com.retromod.shim.forge.LegacyTradeBridge.register(transformer);
 
         // EntityType.BOAT/CHEST_BOAT split into per-wood types in 26.1; OAK is the
         // common default for old mods.

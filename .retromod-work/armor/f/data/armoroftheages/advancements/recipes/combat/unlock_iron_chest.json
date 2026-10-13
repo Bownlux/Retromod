@@ -1,0 +1,19 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_iron_chestplate": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [{ "items": ["minecraft:iron_chestplate"] }]
+      }
+    }
+  },
+  "requirements": [["has_iron_chestplate"]],
+  "rewards": {
+    "recipes": [
+      "armoroftheages:iron_plate_armor_chest",
+      "armoroftheages:o_yoroi_armor_chest",
+      "armoroftheages:centurion_armor_chest"
+    ]
+  }
+}

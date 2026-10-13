@@ -54,6 +54,7 @@ public final class RemovedItemBaseBridge {
      */
     private static final java.util.Map<String, String> REMOVED_IN = java.util.Map.ofEntries(
         java.util.Map.entry("SimpleFoiledItem", "1.20.5"),
+        java.util.Map.entry("HorseArmorItem", "1.20.5"),
         java.util.Map.entry("RecordItem", "1.21"),
         java.util.Map.entry("BowlFoodItem", "1.21"),
         java.util.Map.entry("EnchantedBookItem", "1.21.2"),
@@ -80,6 +81,7 @@ public final class RemovedItemBaseBridge {
     /** Registers every base. The 26.1 shim calls this, since all of them are gone by then. */
     public static void register(RetromodTransformer transformer) {
         for (String removed : REMOVED_IN.keySet()) registerBase(transformer, removed);
+        LegacyEquipmentBridge.register(transformer);
 
         // Not bridged here: BedItem and ItemNameBlockItem sat on BlockItem, and SignItem on
         // StandingAndWallBlockItem. Both of those bases survive, so the right base is one of them
@@ -93,6 +95,7 @@ public final class RemovedItemBaseBridge {
         REMOVED_IN.forEach((removed, version) -> {
             if (version.equals(mcVersion)) registerBase(transformer, removed);
         });
+        LegacyEquipmentBridge.register(transformer);
     }
 
     /** The version {@code simpleName} was removed in, or null when this bridge does not cover it. */

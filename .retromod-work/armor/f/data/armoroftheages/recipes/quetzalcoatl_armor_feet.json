@@ -1,0 +1,22 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"BxB",
+		"i i"
+	],
+	"key": {
+		"x": {
+			"item": "minecraft:netherite_boots"
+		},
+		"i": {
+			"item": "minecraft:feather"
+		},
+		"B": {
+			"item": "minecraft:bone_block"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:quetzalcoatl_armor_feet"
+	}
+}

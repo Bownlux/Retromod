@@ -1,0 +1,23 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"xOx",
+		"III",
+		"I I"
+	],
+	"key": {
+		"x": {
+			"item": "minecraft:red_dye"
+		},
+		"I": {
+			"item": "minecraft:string"
+		},
+		"O": {
+			"item": "minecraft:netherite_leggings"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:raijin_armor_legs"
+	}
+}

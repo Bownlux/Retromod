@@ -159,7 +159,7 @@ directory is not a .yml, so the data loader skips it. Collect the hash values in
   {% endcomment %}
   {% for e in entries %}
   {% if e.bundle %}{% capture sname %}{{ e.name }} {% for m in e.mods %}{{ m.name }} {% endfor %}{% endcapture %}{% else %}{% capture sname %}{{ e.name }}{% endcapture %}{% endif %}
-  <div class="card" data-name="{{ sname | downcase | escape }}" data-badge="{{ e.badge | escape }}" data-loader="{{ e.loader | escape }}">
+  <div class="card" data-name="{{ sname | downcase | escape }}" data-badge="{{ e.badge | escape }}" data-date="{{ e.date | date: '%Y-%m-%d' | escape }}" data-loader="{{ e.loader | escape }}">
     <div class="medal m-{{ e.badge | escape }}">
       {% case e.badge %}{% when 'diamond' %}⛏<br>DIAMOND{% when 'gold' %}🥇<br>GOLD{% when 'iron' %}⚙<br>IRON{% when 'copper' %}🟠<br>COPPER{% else %}💥<br>BORKED{% endcase %}
       <small>Retromod {{ e.retromod | escape }}</small>
@@ -249,6 +249,17 @@ directory is not a .yml, so the data loader skips it. Collect the hash values in
 (function () {
   var badge='all', loader='all', q='';
   var cards=[].slice.call(document.querySelectorAll('.card'));
+  // Best rating first, newest report first within a rating. Reports come out of the data
+  // directory sorted by name, which stays the tie-breaker.
+  var rank={diamond:0,gold:1,iron:2,copper:3,borked:4};
+  function rankOf(c){var r=rank[c.getAttribute('data-badge')];return r===undefined?5:r;}
+  cards.sort(function(a,b){
+    var d=rankOf(a)-rankOf(b);if(d)return d;
+    var da=a.getAttribute('data-date')||'',db=b.getAttribute('data-date')||'';
+    return da<db?1:da>db?-1:0;
+  });
+  var listEl=document.getElementById('list');
+  cards.forEach(function(c){listEl.appendChild(c);});
   function apply(){
     var n=0;
     cards.forEach(function(c){

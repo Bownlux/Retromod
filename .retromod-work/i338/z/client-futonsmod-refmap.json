@@ -1,0 +1,19 @@
+{
+  "mappings": {
+    "com/example/mixin/client/ExampleClientMixin": {
+      "run": "Lnet/minecraft/client/Minecraft;run()V"
+    }
+  },
+  "data": {
+    "named:intermediary": {
+      "com/example/mixin/client/ExampleClientMixin": {
+        "run": "Lnet/minecraft/class_310;method_1514()V"
+      }
+    },
+    "named:official": {
+      "com/example/mixin/client/ExampleClientMixin": {
+        "run": "Lnet/minecraft/client/Minecraft;run()V"
+      }
+    }
+  }
+}

@@ -126,6 +126,20 @@ public final class ItemComponentsBridge {
         setComponent(item, MAX_STACK_SIZE, value);
     }
 
+    /** A 1.12.2 item's {@code this.maxStackSize = value}, written from the item's own class. */
+    public static void setMaxStackSize(Object item, int value) {
+        setMaxStackSize(item, (Object) value);
+    }
+
+    /** {@code Item.maxStackSize}, read from the {@code max_stack_size} component. */
+    public static int maxStackSize(Object item) {
+        try {
+            return component(item, MAX_STACK_SIZE) instanceof Integer size ? size : 64;
+        } catch (ReflectiveOperationException e) {
+            throw new UnsupportedOperationException("Retromod could not read the stack size of " + item, e);
+        }
+    }
+
     /** {@code Item.maxDamage = value}, now the {@code max_damage} and {@code damage} components. */
     public static void setMaxDamage(Object item, Object value) {
         setComponent(item, MAX_DAMAGE, value);

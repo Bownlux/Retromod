@@ -1,0 +1,7 @@
+{
+  "layers": {
+    "horse_body": [{"texture": "minecraft:amethyst"}],
+    "humanoid_leggings": [{"texture": "minecraft:amethyst"}],
+    "humanoid": [{"texture": "minecraft:amethyst"}]
+  }
+}

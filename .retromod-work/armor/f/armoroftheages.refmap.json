@@ -1,0 +1,16 @@
+{
+  "mappings": {
+    "org/dawnoftime/armoroftheages/mixin/MixinHumanoidArmorLayer": {
+      "render(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;ILnet/minecraft/world/entity/LivingEntity;FFFFFF)V": "Lnet/minecraft/class_970;method_17157(Lnet/minecraft/class_4587;Lnet/minecraft/class_4597;ILnet/minecraft/class_1309;FFFFFF)V",
+      "renderArmorPiece": "Lnet/minecraft/class_970;method_4169(Lnet/minecraft/class_4587;Lnet/minecraft/class_4597;Lnet/minecraft/class_1309;Lnet/minecraft/class_1304;ILnet/minecraft/class_572;)V"
+    }
+  },
+  "data": {
+    "named:intermediary": {
+      "org/dawnoftime/armoroftheages/mixin/MixinHumanoidArmorLayer": {
+        "render(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;ILnet/minecraft/world/entity/LivingEntity;FFFFFF)V": "Lnet/minecraft/class_970;method_17157(Lnet/minecraft/class_4587;Lnet/minecraft/class_4597;ILnet/minecraft/class_1309;FFFFFF)V",
+        "renderArmorPiece": "Lnet/minecraft/class_970;method_4169(Lnet/minecraft/class_4587;Lnet/minecraft/class_4597;Lnet/minecraft/class_1309;Lnet/minecraft/class_1304;ILnet/minecraft/class_572;)V"
+      }
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "amethystequipment",
+  "version": "2.2.0",
+  "name": "Amethyst Equipment",
+  "description": "This mod adds amethyst armor and tools!",
+  "authors": [
+    "Exline"
+  ],
+  "contact": {
+    "homepage": "https://www.curseforge.com/minecraft/mc-mods/amethyst-equipment",
+    "issues": "https://github.com/jexline/exline-mods-issues/issues"
+  },
+  "license": "MIT",
+  "icon": "assets/amethystequipment/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.exline.amethystequipment.AmethystEquipmentMain"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.14.0",
+    "minecraft": "*",
+    "java": ">=17",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "another-mod": "*"
+  }
+}

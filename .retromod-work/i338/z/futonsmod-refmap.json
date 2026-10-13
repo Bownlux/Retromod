@@ -1,0 +1,19 @@
+{
+  "mappings": {
+    "com/utami/mixin/FutonsmodMixin": {
+      "loadWorld": "Lnet/minecraft/server/MinecraftServer;loadLevel()V"
+    }
+  },
+  "data": {
+    "named:intermediary": {
+      "com/utami/mixin/FutonsmodMixin": {
+        "loadWorld": "Lnet/minecraft/server/MinecraftServer;method_3735()V"
+      }
+    },
+    "named:official": {
+      "com/utami/mixin/FutonsmodMixin": {
+        "loadWorld": "Lnet/minecraft/server/MinecraftServer;loadLevel()V"
+      }
+    }
+  }
+}

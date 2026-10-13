@@ -18,6 +18,12 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
 
     private Common_1_21_11_to_26_1_ClassMoves() {}
 
+    /** The sprite particle factory moved from {@code ParticleEngine} into {@code ParticleResources}, same method. */
+    public static void registerParticleRegistrationMove(RetromodTransformer transformer) {
+        transformer.registerClassRedirect("net/minecraft/client/particle/ParticleEngine$SpriteParticleRegistration",
+                "net/minecraft/client/particle/ParticleResources$SpriteParticleRegistration");
+    }
+
     public static void register(RetromodTransformer transformer) {
         // 26.1 removed the single-arg is() overloads from BlockState/ItemStack/FluidState
         // (NoSuchMethodError on block placement, tag checks, item comparisons - the Macaw's
@@ -28,6 +34,15 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         // pointing one at the nearest surviving name produced an inheritance error instead (#260).
         RemovedItemBaseBridge.register(transformer);
         RemovedBaseToParentBridge.register(transformer);
+
+        // Biome fog, sky, and water fog colors, particles, sounds, and music became environment
+        // attributes in 1.21.11, so an old code-built biome lost its setters.
+        LegacyBiomeEffectsBridge.register(transformer);
+        LegacyBiomeSpawnsBridge.register(transformer);
+        LegacyPaintingVariantBridge.register(transformer);
+        LegacyArmorLayerBridge.register(transformer);
+        LegacyPoseGuiBridge.register(transformer);
+        registerParticleRegistrationMove(transformer);
 
         registerOfficialEntityTypeBuildBridge(transformer);
         registerLegacyContainerInput(transformer);

@@ -44,7 +44,7 @@ class LegacyTeleporterBridgeTest {
     @Test
     @DisplayName("The teleporter and its changeDimension call move onto the generated bridge")
     void teleporterUsesTheBridge() {
-        LegacyTeleporterBridge.registerRedirects(transformer);
+        LegacyTeleporterBridge.registerRedirects(transformer, LegacyTeleporterBridge.DIMENSION_TRANSITION);
 
         ClassWriter teleporter = new ClassWriter(0);
         teleporter.visit(V17, ACC_PUBLIC | ACC_SUPER, "test/BowelsTeleporter", null, "java/lang/Object",
@@ -82,10 +82,28 @@ class LegacyTeleporterBridgeTest {
     }
 
     @Test
+    @DisplayName("From 1.21.2 the helper builds a TeleportTransition and calls teleport")
+    void newerHostsUseTeleportTransition() {
+        ClassNode calls = new ClassNode();
+        new ClassReader(LegacyTeleporterBridge.generateCalls(LegacyTeleporterBridge.TELEPORT_TRANSITION)).accept(calls, 0);
+        List<String> invoked = new java.util.ArrayList<>();
+        for (var method : calls.methods) {
+            for (var insn : method.instructions) {
+                if (insn instanceof org.objectweb.asm.tree.MethodInsnNode call) invoked.add(call.owner + "." + call.name);
+            }
+        }
+        assertTrue(invoked.contains("net/minecraft/world/level/portal/TeleportTransition.<init>"));
+        assertTrue(invoked.contains("net/minecraft/world/entity/Entity.teleport"),
+                "1.21.2 renamed changeDimension(DimensionTransition) to teleport(TeleportTransition)");
+    }
+
+    @Test
     @DisplayName("The generated teleporter classes are well formed")
     void generatedClassesAreWellFormed() {
         for (byte[] bytes : List.of(LegacyTeleporterBridge.generatePortalInfo(),
-                LegacyTeleporterBridge.generateTeleporter(), LegacyTeleporterBridge.generateCalls())) {
+                LegacyTeleporterBridge.generateTeleporter(),
+                LegacyTeleporterBridge.generateCalls(LegacyTeleporterBridge.DIMENSION_TRANSITION),
+                LegacyTeleporterBridge.generateCalls(LegacyTeleporterBridge.TELEPORT_TRANSITION))) {
             assertDoesNotThrow(() -> new ClassReader(bytes).accept(
                     new CheckClassAdapter(new ClassWriter(0), false), 0));
         }

@@ -96,6 +96,15 @@ class LegacyEventResultTest {
     }
 
     @Test
+    void theRewrittenCallHasRoomForTheMethodName() {
+        ClassNode node = node(LegacyEventResultAdapter.apply(listener(POSITION_CHECK)));
+        int maxStack = node.methods.stream().filter(m -> m.name.equals("onCheck")).findFirst().orElseThrow().maxStack;
+
+        // event, DENY, and the pushed name "setResult" are on the stack at once.
+        assertTrue(maxStack >= 3, "max stack " + maxStack + " overflows, which fails verification");
+    }
+
+    @Test
     void aModsOwnEventIsLeftAlone() {
         byte[] original = listener("com/example/MyEvent");
 

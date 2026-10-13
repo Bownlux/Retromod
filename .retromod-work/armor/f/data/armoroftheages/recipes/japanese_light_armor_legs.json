@@ -1,0 +1,22 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"ioi",
+		"I I"
+	],
+	"key": {
+		"i": {
+			"item": "minecraft:string"
+		},
+		"I": {
+			"item": "minecraft:leather"
+		},
+		"o": {
+			"item": "minecraft:leather_leggings"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:japanese_light_armor_legs"
+	}
+}

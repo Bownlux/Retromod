@@ -1,0 +1,17 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_diamond_boots": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [{ "items": ["minecraft:diamond_boots"] }]
+      }
+    }
+  },
+  "requirements": [["has_diamond_boots"]],
+  "rewards": {
+    "recipes": [
+      "armoroftheages:pharaoh_armor_feet"
+    ]
+  }
+}

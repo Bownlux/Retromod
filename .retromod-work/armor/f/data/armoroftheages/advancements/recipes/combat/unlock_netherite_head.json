@@ -1,0 +1,21 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_netherite_helmet": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [{ "items": ["minecraft:netherite_helmet"] }]
+      }
+    }
+  },
+  "requirements": [["has_netherite_helmet"]],
+  "rewards": {
+    "recipes": [
+      "armoroftheages:holy_armor_head",
+      "armoroftheages:exalted_aurum_armor_head",
+      "armoroftheages:raijin_armor_head",
+      "armoroftheages:anubis_armor_head",
+      "armoroftheages:quetzalcoatl_armor_head"
+    ]
+  }
+}

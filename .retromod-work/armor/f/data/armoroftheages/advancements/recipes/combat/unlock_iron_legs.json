@@ -1,0 +1,19 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_iron_leggings": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [{ "items": ["minecraft:iron_leggings"] }]
+      }
+    }
+  },
+  "requirements": [["has_iron_leggings"]],
+  "rewards": {
+    "recipes": [
+      "armoroftheages:iron_plate_armor_legs",
+      "armoroftheages:o_yoroi_armor_legs",
+      "armoroftheages:centurion_armor_legs"
+    ]
+  }
+}

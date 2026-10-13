@@ -1,0 +1,23 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"x x",
+		"iXi",
+		"iii"
+	],
+	"key": {
+		"X": {
+			"item": "minecraft:diamond_chestplate"
+		},
+		"x": {
+			"item": "minecraft:gold_block"
+		},
+		"i": {
+			"item": "minecraft:string"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:pharaoh_armor_chest"
+	}
+}

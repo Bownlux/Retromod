@@ -131,6 +131,11 @@ public final class Forge1122EventBridge {
         t.registerSuperConstructorRedirect("net/minecraft/world/item/BlockItem",
                 "(Lnet/minecraft/world/level/block/Block;)V",
                 "(Lnet/minecraft/world/level/block/Block;Lnet/minecraft/world/item/Item$Properties;)V");
+        // The same shape built directly rather than subclassed, as most 1.12 block registries do.
+        t.registerSyntheticClass(BLOCK_ITEMS, blockItemFactoryBytes());
+        t.registerConstructorRedirect("net/minecraft/world/item/BlockItem",
+                "(Lnet/minecraft/world/level/block/Block;)V", BLOCK_ITEMS, "of",
+                "(Lnet/minecraft/world/level/block/Block;)Lnet/minecraft/world/item/BlockItem;");
         // new ItemStack(item[, count[, meta]]): the host takes an ItemLike and has no metadata.
         t.registerSyntheticClass(STACKS, itemStackFactoryBytes());
         for (String type : new String[]{"net/minecraft/world/item/Item",
@@ -171,6 +176,34 @@ public final class Forge1122EventBridge {
     private static final String ITEM_STACK = "net/minecraft/world/item/ItemStack";
     private static final String SOUND_EVENT = "net/minecraft/sounds/SoundEvent";
     private static final String RESOURCE_LOCATION = "net/minecraft/resources/ResourceLocation";
+
+    static final String BLOCK_ITEMS = "com/retromod/generated/forge1122/LegacyBlockItems";
+
+    /** {@code static BlockItem of(Block block)}: {@code new BlockItem(block, new Item.Properties())}. */
+    static byte[] blockItemFactoryBytes() {
+        String blockItem = "net/minecraft/world/item/BlockItem";
+        String properties = "net/minecraft/world/item/Item$Properties";
+        org.objectweb.asm.ClassWriter cw = new org.objectweb.asm.ClassWriter(org.objectweb.asm.ClassWriter.COMPUTE_MAXS);
+        cw.visit(org.objectweb.asm.Opcodes.V17, org.objectweb.asm.Opcodes.ACC_PUBLIC | org.objectweb.asm.Opcodes.ACC_FINAL
+                | org.objectweb.asm.Opcodes.ACC_SUPER, BLOCK_ITEMS, null, "java/lang/Object", null);
+        org.objectweb.asm.MethodVisitor mv = cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC
+                | org.objectweb.asm.Opcodes.ACC_STATIC, "of",
+                "(Lnet/minecraft/world/level/block/Block;)L" + blockItem + ";", null, null);
+        mv.visitCode();
+        mv.visitTypeInsn(org.objectweb.asm.Opcodes.NEW, blockItem);
+        mv.visitInsn(org.objectweb.asm.Opcodes.DUP);
+        mv.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 0);
+        mv.visitTypeInsn(org.objectweb.asm.Opcodes.NEW, properties);
+        mv.visitInsn(org.objectweb.asm.Opcodes.DUP);
+        mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKESPECIAL, properties, "<init>", "()V", false);
+        mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKESPECIAL, blockItem, "<init>",
+                "(Lnet/minecraft/world/level/block/Block;L" + properties + ";)V", false);
+        mv.visitInsn(org.objectweb.asm.Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
 
     /**
      * Factories for constructors the host removed: the 1.12 {@code ItemStack} argument lists over
@@ -330,6 +363,7 @@ public final class Forge1122EventBridge {
             java.util.Map.entry("net/minecraft/world/effect/MobEffect", "mob_effect"),
             java.util.Map.entry("net/minecraft/world/item/alchemy/Potion", "potion"),
             java.util.Map.entry("net/minecraft/world/item/enchantment/Enchantment", "enchantment"),
+            java.util.Map.entry(com.retromod.shim.common.LegacyEnchantmentBridge.LEGACY, "enchantment"),
             java.util.Map.entry("net/minecraft/world/entity/EntityType", "entity_type"),
             java.util.Map.entry("net/minecraft/world/level/block/entity/BlockEntityType",
                     "block_entity_type"),
@@ -343,7 +377,7 @@ public final class Forge1122EventBridge {
     private static final String LIFECYCLE_PACKAGE = "com/retromod/shim/forge/embedded/FML";
     private static final Set<String> LIFECYCLE_EVENTS = Set.of(
             Forge1122LifecycleSynthetics.PRE_EVENT, Forge1122LifecycleSynthetics.INIT_EVENT,
-            Forge1122LifecycleSynthetics.POST_EVENT);
+            Forge1122LifecycleSynthetics.POST_EVENT, Forge1122ServiceStubs.SERVER_STARTING);
 
     /**
      * Record this class's 1.12 handlers in a {@code LegacyHandlers} annotation, so the runtime

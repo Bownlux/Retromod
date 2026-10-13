@@ -101,6 +101,19 @@ public class Forge_1_12_2_to_1_13_2 implements VersionShim {
             "net/minecraft/entity/item/EntityItem",
             "net/minecraft/entity/item/ItemEntity"
         );
+        // Hanging and display entities moved to the decoration package; Nature's Compass checks for
+        // an item frame in pre-init, before it creates its compass.
+        transformer.registerClassRedirect("net/minecraft/entity/item/EntityItemFrame",
+                "net/minecraft/world/entity/decoration/ItemFrame");
+        transformer.registerClassRedirect("net/minecraft/entity/item/EntityPainting",
+                "net/minecraft/world/entity/decoration/Painting");
+        transformer.registerClassRedirect("net/minecraft/entity/item/EntityArmorStand",
+                "net/minecraft/world/entity/decoration/ArmorStand");
+        transformer.registerClassRedirect("net/minecraft/entity/EntityHanging",
+                "net/minecraft/world/entity/decoration/HangingEntity");
+        transformer.registerClassRedirect("net/minecraft/block/BlockBed", "net/minecraft/world/level/block/BedBlock");
+        transformer.registerClassRedirect("net/minecraft/block/BlockBed$EnumPartType",
+                "net/minecraft/world/level/block/state/properties/BedPart");
         transformer.registerClassRedirect(
             "net/minecraft/entity/projectile/EntityArrow",
             "net/minecraft/entity/projectile/ArrowEntity"
@@ -494,6 +507,16 @@ public class Forge_1_12_2_to_1_13_2 implements VersionShim {
         // Material is gone on every table host; null its static-constant reads (e.g. Material.IRON)
         // so the super(Material.X) read doesn't fault before the replace bridge pops it.
         transformer.registerStaticFieldNuller("net/minecraft/block/material/Material");
+
+        // 1.20.5 moved an item's stack size into its components, and a 1.12.2 item (MCreator's
+        // template among them) set this.maxStackSize from its own constructor.
+        if (!com.retromod.core.RetromodVersion.mcVersionExceeds("1.20.5", host)) {
+            String bridge = "com/retromod/mixin/runtime/ItemComponentsBridge";
+            com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, bridge,
+                    com.retromod.mixin.runtime.ItemComponentsBridge.class);
+            transformer.registerUniqueFieldStaticBridge("field_77777_bU", "I", bridge,
+                    "maxStackSize", "(Ljava/lang/Object;)I", "setMaxStackSize", "(Ljava/lang/Object;I)V");
+        }
     }
 
     @Override

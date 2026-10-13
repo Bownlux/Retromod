@@ -1,0 +1,17 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_leather_leggings": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [{ "items": ["minecraft:leather_leggings"] }]
+      }
+    }
+  },
+  "requirements": [["has_leather_leggings"]],
+  "rewards": {
+    "recipes": [
+      "armoroftheages:japanese_light_armor_legs"
+    ]
+  }
+}

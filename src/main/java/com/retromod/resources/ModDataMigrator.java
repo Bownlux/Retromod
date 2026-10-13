@@ -113,7 +113,9 @@ public final class ModDataMigrator {
      * if the target is not 26.x, the entry is not migratable data, or nothing matched.
      */
     public static byte[] migrate(String entryName, byte[] json, String targetMcVersion) {
-        if (!RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) return json;
+        if (!RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) {
+            return migrateFor1_21(entryName, json, targetMcVersion);
+        }
         if (!isMigratableData(entryName)) return json;
         if (isLegacyItemVertexShader(entryName)) {
             return migrateLegacyItemVertexShader(json, targetMcVersion);
@@ -143,11 +145,21 @@ public final class ModDataMigrator {
             normalized = migrateEntityPredicates(normalized, advancementLike);
         }
 
+        normalized = renameAlternativeConditions(normalized);
+
         // 26.3 renamed the recipe_unlocked condition "recipe" to "recipes", and advancements are
         // loaded with the registries, so one old file stopped the world from loading.
         if (entryName.contains("/advancement") && probe.contains("recipe_unlocked")
                 && !RetromodVersion.mcVersionExceeds("26.3", targetMcVersion)) {
             normalized = migrateRecipeUnlockedConditions(normalized);
+        }
+
+        // 26.3 reads a number provider only with its type, so an untyped {"min", "max"} roll or
+        // count, accepted since 1.17, failed the loot table with "No key type". It reads the old
+        // "functions" and "conditions" keys, so it runs before the rewrite below.
+        if (!RetromodVersion.mcVersionExceeds("26.3", targetMcVersion)
+                && LegacyLootConditionMigrator.isLootFile(entryName) && probe.contains("\"min\"")) {
+            normalized = typeUntypedUniforms(normalized);
         }
 
         // 26.3 rewrote loot condition and function syntax and ignores the old keys, so an old
@@ -162,20 +174,48 @@ public final class ModDataMigrator {
                     forgeHost && LegacyLootConditionMigrator.isLootModifier(entryName));
         }
 
-        // 1.21.2 replaced ingredient objects ({"item": ...}, {"tag": ...}) with a bare id or
-        // "#tag" string. 26.2 skipped such recipes; 26.3 loads recipes with the registries, so one
-        // old recipe stopped the world from loading.
-        if (isRecipeFile(entryName) && (probe.contains("\"item\"") || probe.contains("\"tag\""))) {
-            normalized = migrateRecipeIngredients(normalized);
+        // Between 1.20.1 and 1.21, int and float providers lost their "value" wrapper, so an old
+        // dimension type or feature failed to parse its spawn light level, counts, or heights.
+        if (probe.contains("\"value\"") && (probe.contains("_inclusive") || probe.contains("\"plateau\"")
+                || probe.contains("\"deviation\"") || probe.contains("\"distribution\""))) {
+            normalized = inlineLegacyProviderValues(normalized);
+        }
+
+        // 26.1 replaced a tree's dirt_provider and force_dirt with below_trunk_provider, so an old
+        // tree failed to parse and left its feature unbound.
+        if (probe.contains("\"dirt_provider\"")) {
+            normalized = migrateTreeSoil(normalized);
+        }
+
+        if (DimensionTypeMigrator.isDimensionType(entryName)) {
+            normalized = DimensionTypeMigrator.migrate(normalized, targetMcVersion);
+        }
+
+        // 1.21.9, 26.2, and 26.3 each changed noise settings and density functions, and one old mod
+        // dimension stops the registry load.
+        if (NoiseSettingsMigrator.isTerrainData(entryName)) {
+            normalized = NoiseSettingsMigrator.migrate(entryName, normalized, targetMcVersion);
         }
 
         // 26.1 deleted the random_patch and flower features, and one stale configured feature
-        // fails the whole worldgen registry load.
+        // fails the whole worldgen registry load. Both read the old "config" wrapper, so they
+        // run before the 26.3 rewrite below removes it.
         if (LegacyRandomPatchMigrator.mayContainPatch(entryName, probe)) {
             normalized = LegacyRandomPatchMigrator.migrate(normalized);
         }
         if (LegacyDiskStateProviderMigrator.mayContainDisk(entryName, probe)) {
             normalized = LegacyDiskStateProviderMigrator.migrate(normalized);
+        }
+
+        if (Worldgen26_3Migrator.appliesTo(targetMcVersion) && Worldgen26_3Migrator.isWorldgen(entryName)) {
+            normalized = Worldgen26_3Migrator.migrate(normalized);
+        }
+
+        // 1.21.2 replaced ingredient objects ({"item": ...}, {"tag": ...}) with a bare id or
+        // "#tag" string. 26.2 skipped such recipes; 26.3 loads recipes with the registries, so one
+        // old recipe stopped the world from loading.
+        if (isRecipeFile(entryName) && (probe.contains("\"item\"") || probe.contains("\"tag\""))) {
+            normalized = migrateRecipeIngredients(normalized);
         }
 
         String in = new String(normalized, StandardCharsets.UTF_8);
@@ -195,6 +235,54 @@ public final class ModDataMigrator {
         if (out.equals(in)) return normalized;
         LOGGER.debug("Migrated 26.x data formats in {}", entryName);
         return out.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * The data format changes of 1.21 to 1.21.11 hosts, which run none of the 26.x rewrites: 1.21
+     * dropped the providers' {@code value} wrapper, 1.21.9 replaced the noise router's surface
+     * density, and 1.21.11 moved dimension types to environment attributes. Each one stopped a
+     * world from loading on those hosts as it does on 26.x.
+     */
+    private static byte[] migrateFor1_21(String entryName, byte[] json, String targetMcVersion) {
+        if (targetMcVersion == null || RetromodVersion.compareMcVersions(targetMcVersion, "1.20") < 0
+                || !isMigratableData(entryName) || isLegacyItemVertexShader(entryName)) {
+            return json;
+        }
+        try {
+            JsonSecurity.validate(json, MAX_MIGRATABLE_FILE_BYTES, MAX_JSON_DEPTH, "Data pack JSON");
+        } catch (IOException refused) {
+            return json;
+        }
+        byte[] migrated = renameAlternativeConditions(json);
+        if (RetromodVersion.compareMcVersions(targetMcVersion, "1.21") < 0) return migrated;
+        String probe = new String(migrated, StandardCharsets.UTF_8);
+        if (probe.contains("\"value\"") && (probe.contains("_inclusive") || probe.contains("\"plateau\"")
+                || probe.contains("\"deviation\"") || probe.contains("\"distribution\""))) {
+            migrated = inlineLegacyProviderValues(migrated);
+        }
+        if (NoiseSettingsMigrator.isTerrainData(entryName)) {
+            migrated = NoiseSettingsMigrator.migrate(entryName, migrated, targetMcVersion);
+        }
+        if (RetromodVersion.compareMcVersions(targetMcVersion, "1.21.11") >= 0
+                && DimensionTypeMigrator.isDimensionType(entryName)) {
+            migrated = DimensionTypeMigrator.migrate(migrated, targetMcVersion);
+        }
+        return migrated;
+    }
+
+    private static final java.util.regex.Pattern ALTERNATIVE_CONDITION = java.util.regex.Pattern.compile(
+            "(\"condition\"\\s*:\\s*)\"(?:minecraft:)?alternative\"");
+
+    /**
+     * 1.20 renamed the loot condition {@code alternative} to {@code any_of} with the same terms,
+     * and a loot table that names the old one fails to load.
+     */
+    static byte[] renameAlternativeConditions(byte[] json) {
+        String text = new String(json, StandardCharsets.UTF_8);
+        if (!text.contains("alternative")) return json;
+        java.util.regex.Matcher matcher = ALTERNATIVE_CONDITION.matcher(text);
+        if (!matcher.find()) return json;
+        return matcher.replaceAll("$1\"minecraft:any_of\"").getBytes(StandardCharsets.UTF_8);
     }
 
     private static boolean isLegacyItemVertexShader(String entryName) {
@@ -317,7 +405,7 @@ public final class ModDataMigrator {
      * which extract a mod before repackaging; the byte-stream {@link #migrate} fits the offline
      * CLI's entry-by-entry copy instead.
      *
-     * <p>Returns 0 for non-26.x targets or a missing/empty root. Entry names are normalized to
+     * <p>Returns 0 for a missing or empty root, or when no rewrite applies to the target. Entry names are normalized to
      * forward slashes so {@link #isMigratableData} path checks match on every OS.
      *
      * @return the number of files rewritten.
@@ -340,7 +428,6 @@ public final class ModDataMigrator {
                 || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("Data migration root is not a regular directory: " + root);
         }
-        boolean is26x = RetromodVersion.isUnobfuscatedTarget(targetMcVersion);
 
         int changed = 0;
         List<Path> files = new java.util.ArrayList<>();
@@ -360,8 +447,7 @@ public final class ModDataMigrator {
         for (Path p : files) {
             String rel = root.relativize(p).toString().replace(File.separatorChar, '/');
             relNames.add(rel);
-            if (!is26x) continue;                 // the data rewrites below are 26.x-only
-            if (!isMigratableData(rel)) continue;
+            if (!isMigratableData(rel)) continue; // migrate() picks the rewrites for the target
             byte[] before;
             try (InputStream input = Files.newInputStream(p)) {
                 before = ZipSecurity.safeReadAllBytes(input, MAX_MIGRATABLE_FILE_BYTES);
@@ -397,7 +483,32 @@ public final class ModDataMigrator {
             Files.write(out, def.getValue());
             changed++;
         }
+        // 1.21.9 titles key binding categories by id; name the ones old mods made from a string.
+        changed += LegacyKeyCategoryNames.writeTree(root, targetMcVersion);
+        // 26.3 moved configured features and carvers into new folders. An entry already at the
+        // new path wins, as it is the mod's own 26.3 data.
+        for (String rel : relNames) {
+            String moved = migratedEntryName(rel, targetMcVersion);
+            if (moved.equals(rel)) continue;
+            Path from = root.resolve(rel).normalize();
+            Path to = root.resolve(moved).normalize();
+            if (!to.startsWith(root.normalize())) {
+                throw new IOException("Migrated data path escapes migration root: " + moved);
+            }
+            if (Files.exists(to)) {
+                Files.delete(from);
+            } else {
+                Files.createDirectories(to.getParent());
+                Files.move(from, to);
+            }
+            changed++;
+        }
         return changed;
+    }
+
+    /** Where a data entry lives on {@code targetMcVersion}, which can differ from where it was built. */
+    public static String migratedEntryName(String entryName, String targetMcVersion) {
+        return Worldgen26_3Migrator.migratedEntryName(entryName, targetMcVersion);
     }
 
     /**
@@ -587,6 +698,157 @@ public final class ModDataMigrator {
      * {@code item} or {@code tag}, or an array made entirely of them, is converted; a loader's
      * custom ingredient (anything with a {@code type}) is left alone.
      */
+    /**
+     * A tree's {@code dirt_provider} becomes {@code below_trunk_provider}. With {@code force_dirt}
+     * it is used as it is; without, it only replaces blocks outside
+     * {@code #minecraft:cannot_replace_below_tree_trunk}, which is how vanilla wrote the change.
+     */
+    static byte[] migrateTreeSoil(byte[] json) {
+        com.google.gson.JsonElement root;
+        try {
+            root = com.google.gson.JsonParser.parseString(new String(json, StandardCharsets.UTF_8));
+        } catch (RuntimeException unparsable) {
+            return json;
+        }
+        if (!rewriteTreeSoil(root)) return json;
+        return new com.google.gson.GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create().toJson(root)
+                .getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static boolean rewriteTreeSoil(com.google.gson.JsonElement element) {
+        boolean changed = false;
+        if (element instanceof com.google.gson.JsonArray array) {
+            for (com.google.gson.JsonElement item : array) changed |= rewriteTreeSoil(item);
+        } else if (element instanceof com.google.gson.JsonObject object) {
+            if (object.has("dirt_provider") && object.has("trunk_placer") && !object.has("below_trunk_provider")) {
+                com.google.gson.JsonElement soil = object.remove("dirt_provider");
+                com.google.gson.JsonElement force = object.remove("force_dirt");
+                boolean forced = force != null && force.isJsonPrimitive() && force.getAsBoolean();
+                object.add("below_trunk_provider", forced ? soil : unlessProtectedBelowTrunk(soil));
+                changed = true;
+            }
+            for (var field : object.entrySet()) changed |= rewriteTreeSoil(field.getValue());
+        }
+        return changed;
+    }
+
+    private static com.google.gson.JsonObject unlessProtectedBelowTrunk(com.google.gson.JsonElement soil) {
+        com.google.gson.JsonObject tag = new com.google.gson.JsonObject();
+        tag.addProperty("type", "minecraft:matching_block_tag");
+        tag.addProperty("tag", "minecraft:cannot_replace_below_tree_trunk");
+        com.google.gson.JsonObject not = new com.google.gson.JsonObject();
+        not.addProperty("type", "minecraft:not");
+        not.add("predicate", tag);
+        com.google.gson.JsonObject rule = new com.google.gson.JsonObject();
+        rule.add("if_true", not);
+        rule.add("then", soil);
+        com.google.gson.JsonArray rules = new com.google.gson.JsonArray();
+        rules.add(rule);
+        com.google.gson.JsonObject provider = new com.google.gson.JsonObject();
+        provider.addProperty("type", "minecraft:rule_based_state_provider");
+        provider.add("rules", rules);
+        return provider;
+    }
+
+    private static final java.util.Set<String> WRAPPED_PROVIDER_TYPES = java.util.Set.of(
+            "minecraft:uniform", "minecraft:biased_to_bottom", "minecraft:clamped", "minecraft:clamped_normal",
+            "minecraft:trapezoid", "minecraft:weighted_list");
+    private static final java.util.Set<String> PROVIDER_FIELDS = java.util.Set.of(
+            "min_inclusive", "max_inclusive", "max_exclusive", "min", "max", "plateau", "mean", "deviation",
+            "source", "distribution");
+
+    /**
+     * {@code {"type": "minecraft:uniform", "value": {"min_inclusive": 0, ...}}} becomes
+     * {@code {"type": "minecraft:uniform", "min_inclusive": 0, ...}}. Only those provider types, with
+     * exactly a type and an object of provider fields, are inlined: a constant height provider's
+     * {@code "value"} is an anchor object and stays as it is.
+     */
+    static byte[] inlineLegacyProviderValues(byte[] json) {
+        com.google.gson.JsonElement root;
+        try {
+            root = com.google.gson.JsonParser.parseString(new String(json, StandardCharsets.UTF_8));
+        } catch (RuntimeException unparsable) {
+            return json;
+        }
+        if (!inlineProviders(root)) return json;
+        return new com.google.gson.GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create().toJson(root)
+                .getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static boolean inlineProviders(com.google.gson.JsonElement element) {
+        boolean changed = false;
+        if (element instanceof com.google.gson.JsonArray array) {
+            for (com.google.gson.JsonElement item : array) changed |= inlineProviders(item);
+        } else if (element instanceof com.google.gson.JsonObject object) {
+            if (isWrappedProvider(object)) {
+                com.google.gson.JsonObject value = object.remove("value").getAsJsonObject();
+                for (var field : value.entrySet()) object.add(field.getKey(), field.getValue());
+                changed = true;
+            }
+            for (var field : object.entrySet()) changed |= inlineProviders(field.getValue());
+        }
+        return changed;
+    }
+
+    private static final java.util.Set<String> POOL_PROVIDERS = java.util.Set.of("rolls", "bonus_rolls");
+    private static final java.util.Set<String> FUNCTION_PROVIDERS = java.util.Set.of("count", "damage", "levels");
+
+    /**
+     * Adds {@code "type": "minecraft:uniform"} to untyped {@code {"min", "max"}} number providers in
+     * a loot table: a pool's rolls and bonus rolls, and a function's count, damage, and levels. The
+     * same shape in a condition or predicate is a range, not a provider, and is left alone.
+     */
+    static byte[] typeUntypedUniforms(byte[] json) {
+        com.google.gson.JsonElement root;
+        try {
+            root = com.google.gson.JsonParser.parseString(new String(json, StandardCharsets.UTF_8));
+        } catch (RuntimeException unparsable) {
+            return json;
+        }
+        if (!typeUniforms(root)) return json;
+        return new com.google.gson.GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create().toJson(root)
+                .getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static boolean typeUniforms(com.google.gson.JsonElement element) {
+        boolean changed = false;
+        if (element instanceof com.google.gson.JsonArray array) {
+            for (com.google.gson.JsonElement item : array) changed |= typeUniforms(item);
+        } else if (element instanceof com.google.gson.JsonObject object) {
+            java.util.Set<String> providers = object.has("function") ? FUNCTION_PROVIDERS
+                    : object.has("entries") ? POOL_PROVIDERS : java.util.Set.of();
+            for (String key : providers) {
+                if (object.get(key) instanceof com.google.gson.JsonObject value && isUntypedUniform(value)) {
+                    value.addProperty("type", "minecraft:uniform");
+                    changed = true;
+                }
+            }
+            // A condition list holds ranges, never providers, so it is not walked.
+            for (var field : object.entrySet()) {
+                if (!field.getKey().equals("conditions")) changed |= typeUniforms(field.getValue());
+            }
+        }
+        return changed;
+    }
+
+    private static boolean isUntypedUniform(com.google.gson.JsonObject value) {
+        return !value.has("type") && value.size() == 2 && value.has("min") && value.has("max");
+    }
+
+    /** A bare id such as {@code uniform} names Minecraft's, as the game reads it. */
+    private static String namespaced(String id) {
+        return id.indexOf(':') < 0 ? "minecraft:" + id : id;
+    }
+
+    private static boolean isWrappedProvider(com.google.gson.JsonObject object) {
+        if (object.size() != 2 || !(object.get("value") instanceof com.google.gson.JsonObject value)
+                || !(object.get("type") instanceof com.google.gson.JsonPrimitive type)
+                || !WRAPPED_PROVIDER_TYPES.contains(namespaced(type.getAsString())) || value.isEmpty()) {
+            return false;
+        }
+        return PROVIDER_FIELDS.containsAll(value.keySet());
+    }
+
     static byte[] migrateRecipeIngredients(byte[] json) {
         try {
             com.google.gson.JsonElement root = com.google.gson.JsonParser

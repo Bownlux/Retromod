@@ -1,0 +1,17 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_leather_boots": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [{ "items": ["minecraft:leather_boots"] }]
+      }
+    }
+  },
+  "requirements": [["has_leather_boots"]],
+  "rewards": {
+    "recipes": [
+      "armoroftheages:japanese_light_armor_feet"
+    ]
+  }
+}

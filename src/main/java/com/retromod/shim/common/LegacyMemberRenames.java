@@ -35,12 +35,18 @@ public class LegacyMemberRenames implements MinecraftVersionedApiShim {
     /** One rename: {@code field} is false for a method, whose descriptor includes its arguments. */
     public record Rename(String owner, boolean field, String oldName, String desc, String newName) {}
 
+    private static final String LOOT_CONTEXT = "net/minecraft/world/level/storage/loot/LootContext";
+    private static final String CONTEXT_KEY_GETTER = "(Lnet/minecraft/util/context/ContextKey;)Ljava/lang/Object;";
+
     public static final List<Rename> RENAMES = List.of(
             new Rename("net/minecraft/world/entity/LivingEntity", true,
                     "lastHurtByPlayerTime", "I", "lastHurtByPlayerMemoryTime"),
-            new Rename("net/minecraft/world/level/storage/loot/LootContext", false,
-                    "getParamOrNull", "(Lnet/minecraft/util/context/ContextKey;)Ljava/lang/Object;",
-                    "getOptionalParameter"));
+            new Rename(LOOT_CONTEXT, false, "getParamOrNull", CONTEXT_KEY_GETTER, "getOptionalParameter"),
+            // 26.3 folded both parameter getters into getOptional, so each older spelling maps there.
+            // getParameter used to throw for a missing parameter, where getOptional returns null.
+            new Rename(LOOT_CONTEXT, false, "getParamOrNull", CONTEXT_KEY_GETTER, "getOptional"),
+            new Rename(LOOT_CONTEXT, false, "getOptionalParameter", CONTEXT_KEY_GETTER, "getOptional"),
+            new Rename(LOOT_CONTEXT, false, "getParameter", CONTEXT_KEY_GETTER, "getOptional"));
 
     @Override
     public String getShimName() {

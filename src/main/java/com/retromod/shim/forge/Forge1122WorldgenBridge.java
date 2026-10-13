@@ -7,6 +7,7 @@ package com.retromod.shim.forge;
 import com.retromod.core.RetromodTransformer;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Type;
 
 import static org.objectweb.asm.Opcodes.*;
 
@@ -23,9 +24,10 @@ import static org.objectweb.asm.Opcodes.*;
  *
  * <p>The limits are concrete. 1.12 world generation ran from {@code IWorldGenerator}, which no
  * host calls, so the generators are never invoked. {@code WorldGenMinable.generate} places
- * nothing. {@code EnumHelper} returns null for every new enum constant, because armor materials,
- * tool tiers and enchantment categories are registry entries or records on modern hosts, not
- * enum constants; an item built from such a material fails in its own registry handler.
+ * nothing. {@code EnumHelper} builds armor materials on 1.21 and 1.21.1 hosts through the armor
+ * material bridge, builds enchantment types that keep their item predicate, and returns null for
+ * every other new enum constant, because tool tiers are records on modern hosts, not enum
+ * constants; an item built from such a value fails in its own registry handler.
  */
 public final class Forge1122WorldgenBridge {
 
@@ -34,6 +36,8 @@ public final class Forge1122WorldgenBridge {
     static final String GENERATOR = "com/retromod/generated/forge1122/WorldGenerator";
     static final String MINABLE = "com/retromod/generated/forge1122/WorldGenMinable";
     static final String ENUM_HELPER = "com/retromod/generated/forge1122/EnumHelper";
+    static final String ARMOR_HELPER = "com/retromod/shim/forge/embedded/Legacy1122Armor";
+    static final String ENCHANTMENT_TYPE = "com/retromod/shim/forge/embedded/LegacyEnchantmentType";
 
     private static final String LEVEL = "net/minecraft/world/level/Level";
     private static final String POS = "net/minecraft/core/BlockPos";
@@ -61,6 +65,8 @@ public final class Forge1122WorldgenBridge {
                 "(Z)V", "(ZIL" + STATE + ";L" + STATE + ";Z)V");
         registerVanillaGenerator(t, "WorldGenSwamp", PACKAGE + ABSTRACT_TREE, false, "()V");
         registerVanillaGenerator(t, "WorldGenBush", GENERATOR, false, "(" + bush + ")V");
+        com.retromod.core.SyntheticEmbedder.registerClassResource(t, ARMOR_HELPER,
+                com.retromod.shim.forge.embedded.Legacy1122Armor.class);
         t.registerSyntheticClass(ENUM_HELPER, enumHelperBytes());
         t.registerClassRedirect("net/minecraftforge/common/util/EnumHelper", ENUM_HELPER);
     }
@@ -160,6 +166,8 @@ public final class Forge1122WorldgenBridge {
                 {"addArmorMaterial", "(" + o + o + "I" + o + "I" + o + "F)" + o},
                 {"addToolMaterial", "(" + o + "IIFFI)" + o},
                 {"addEnchantmentType", "(" + o + o + ")" + o},
+                // The type is Retromod's own stand-in, which the erasure pass leaves in the call.
+                {"addEnchantmentType", "(" + o + o + ")L" + ENCHANTMENT_TYPE + ";"},
                 {"addCreatureAttribute", "(" + o + ")" + o},
                 {"addRarity", "(" + o + o + o + ")" + o},
                 {"addAction", "(" + o + ")" + o},
@@ -169,7 +177,24 @@ public final class Forge1122WorldgenBridge {
         for (String[] factory : factories) {
             MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, factory[0], factory[1], null, null);
             mv.visitCode();
-            mv.visitInsn(ACONST_NULL);
+            if (factory[0].equals("addArmorMaterial")) {
+                // Armor materials become the armor material bridge's old-style materials.
+                int slot = 0;
+                for (Type argument : Type.getArgumentTypes(factory[1])) {
+                    mv.visitVarInsn(argument.getOpcode(ILOAD), slot);
+                    slot += argument.getSize();
+                }
+                mv.visitMethodInsn(INVOKESTATIC, ARMOR_HELPER, "material", factory[1], false);
+            } else if (factory[0].equals("addEnchantmentType")) {
+                // A mod's own enchantment category keeps its item predicate.
+                mv.visitVarInsn(ALOAD, 0);
+                mv.visitMethodInsn(INVOKESTATIC, "java/lang/String", "valueOf", "(Ljava/lang/Object;)Ljava/lang/String;", false);
+                mv.visitVarInsn(ALOAD, 1);
+                mv.visitMethodInsn(INVOKESTATIC, ENCHANTMENT_TYPE, "create",
+                        "(Ljava/lang/String;Ljava/lang/Object;)L" + ENCHANTMENT_TYPE + ";", false);
+            } else {
+                mv.visitInsn(ACONST_NULL);
+            }
             mv.visitInsn(ARETURN);
             mv.visitMaxs(0, 0);
             mv.visitEnd();

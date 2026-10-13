@@ -1,0 +1,19 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_iron_boots": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [{ "items": ["minecraft:iron_boots"] }]
+      }
+    }
+  },
+  "requirements": [["has_iron_boots"]],
+  "rewards": {
+    "recipes": [
+      "armoroftheages:iron_plate_armor_feet",
+      "armoroftheages:o_yoroi_armor_feet",
+      "armoroftheages:centurion_armor_feet"
+    ]
+  }
+}

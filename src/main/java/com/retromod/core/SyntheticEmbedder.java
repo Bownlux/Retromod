@@ -504,8 +504,41 @@ public final class SyntheticEmbedder {
     private static byte[] remap(byte[] classBytes, Remapper remapper) {
         ClassReader cr = new ClassReader(classBytes);
         ClassWriter cw = new ClassWriter(0); // pure rename, no frame/maxs recomputation
-        cr.accept(new ClassRemapper(cw, remapper), 0);
+        cr.accept(new ClassRemapper(new DuplicateMemberFilter(cw), remapper), 0);
         return cw.toByteArray();
+    }
+
+    /**
+     * Keeps the first of two members that a rename gave the same name and descriptor, such as a
+     * stand-in method spelled both by its readable name and by the SRG name the host maps to it.
+     * Two would fail the class with {@code ClassFormatError: Duplicate method}.
+     */
+    private static final class DuplicateMemberFilter extends org.objectweb.asm.ClassVisitor {
+        private final Set<String> seen = new java.util.HashSet<>();
+
+        DuplicateMemberFilter(org.objectweb.asm.ClassVisitor next) {
+            super(org.objectweb.asm.Opcodes.ASM9, next);
+        }
+
+        @Override
+        public org.objectweb.asm.MethodVisitor visitMethod(int access, String name, String descriptor,
+                String signature, String[] exceptions) {
+            if (!seen.add("m " + name + descriptor)) {
+                LOGGER.debug("Dropped a duplicate method {}{} after renaming a stand-in", name, descriptor);
+                return null;
+            }
+            return super.visitMethod(access, name, descriptor, signature, exceptions);
+        }
+
+        @Override
+        public org.objectweb.asm.FieldVisitor visitField(int access, String name, String descriptor,
+                String signature, Object value) {
+            if (!seen.add("f " + name + descriptor)) {
+                LOGGER.debug("Dropped a duplicate field {} {} after renaming a stand-in", name, descriptor);
+                return null;
+            }
+            return super.visitField(access, name, descriptor, signature, value);
+        }
     }
 
     private static Map<String, String> relocationMap(String base, Set<String> referenced)
@@ -554,7 +587,10 @@ public final class SyntheticEmbedder {
         if (key == null) return "mod";
         String s = key.replaceAll("\\.jar$", "").replaceAll("[^A-Za-z0-9_]", "_");
         if (s.length() > 96) s = s.substring(0, 96);
-        return s.isEmpty() ? "mod" : s;
+        if (s.isEmpty()) return "mod";
+        // A package segment must be a Java identifier, and JPMS rejects the whole module when one
+        // starts with a digit, as a jar named "1.20.1 ModName.jar" produced.
+        return Character.isDigit(s.charAt(0)) ? "m" + s : s;
     }
 
     private static String shortDigest(String rawKey) {

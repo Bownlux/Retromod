@@ -1,0 +1,23 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"iIi",
+		"x x",
+		"x x"
+	],
+	"key": {
+		"x": {
+			"item": "minecraft:gold_block"
+		},
+		"i": {
+			"item": "minecraft:lapis_block"
+		},
+		"I": {
+			"item": "minecraft:netherite_leggings"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:anubis_armor_legs"
+	}
+}

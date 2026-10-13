@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "www",
+    "ccc"
+  ],
+  "key": {
+    "w": {
+      "item": "minecraft:gray_wool"
+    },
+    "c": {
+      "item": "minecraft:gray_carpet"
+    }
+  },
+  "result": {
+    "item": "futonsmod:gray_futon"
+  }
+}

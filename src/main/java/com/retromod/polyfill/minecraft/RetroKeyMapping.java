@@ -17,7 +17,7 @@ package com.retromod.polyfill.minecraft;
  *
  * <p><b>Category resolution:</b> a vanilla {@code key.categories.*} string maps to the matching
  * builtin constant; any other (mod) string registers a {@code Category} under a derived
- * {@code retromod:} identifier (cached, so repeated keybinds in the same category register once);
+ * {@code retromod_compat:} identifier (cached, so repeated keybinds in the same category register once);
  * if registration isn't possible the keybind falls back to {@code MISC} so it still works, just
  * listed under Miscellaneous.
  *
@@ -101,15 +101,21 @@ public final class RetroKeyMapping {
             Class<?> idCls = Class.forName(IDENTIFIER);
             // 26.x has fromNamespaceAndPath, not of; with of every mod category fell to MISC.
             Object id = idCls.getMethod("fromNamespaceAndPath", String.class, String.class)
-                    .invoke(null, "retromod", sanitize(category));
-            return categoryCls.getMethod("register", idCls).invoke(null, id);
+                    .invoke(null, "retromod_compat", sanitize(category));
+            try {
+                return categoryCls.getMethod("register", idCls).invoke(null, id);
+            } catch (java.lang.reflect.InvocationTargetException alreadyRegistered) {
+                // Another converted mod registered the same string; an equal record finds its slot.
+                return categoryCls.getConstructor(idCls).newInstance(id);
+            }
         } catch (Throwable t) {
             return null;
         }
     }
 
+    /** Same id as KeyBindingShim and LegacyKeyCategoryNames, which names it in the mod's lang. */
     private static String sanitize(String s) {
-        String out = s.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9._/-]", "_");
+        String out = s.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_-]", "_");
         return out.isEmpty() ? "custom" : out;
     }
 

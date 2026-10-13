@@ -8,6 +8,40 @@ description: "Highlights from Retromod releases."
 
 This page keeps the release history readable. The [full technical changelog](https://github.com/Bownlux/Retromod/blob/main/CHANGELOG.md) lists every fix and regression test.
 
+## 1.4.0 Snapshot Line
+
+### Snapshot 1, October 10, 2026
+
+- Keeps older blocks' right-click actions working on 1.20.5 and newer, on every loader.
+- Gives older Fabric blocks their registry id on 26.x when a mod builds the block before naming it.
+- Restores old loot condition access on 26.3, which moved those conditions behind holders.
+- Rebuilds armor, horse armor, and tools from mods written before they became item components, on 26.x and on NeoForge and Forge from 1.21.5. They protect, deal damage, and mine again, and their textures are moved to where the current renderer looks.
+- Registers older Fabric items and blocks that are built into fields and named later.
+- Moves more simple 1.12.2 Forge mods past pre-init on NeoForge 1.21.1, including Forge's save data fixer, the old static registries, blocks on changed parent blocks, and commands.
+- Builds old axes, shovels, and hoes on 26.1 and 26.2, and keeps dyeable armor's color.
+- Rewrites older worldgen data for 26.3, and keeps a mod's own worldgen features working there.
+- Restores code-registered worldgen and creative tabs from pre-1.19.3 mods on NeoForge.
+- Rewrites old dimension types, trees, and number providers for their current formats.
+- Keeps a Forge mod loading on NeoForge when it listens for a removed event or marks members client-only.
+- Rewrites old noise settings and density functions, so a mod dimension with its own terrain loads on 26.x.
+- Restores code-built biomes and the code-registered worldgen pack on NeoForge from 1.20.5, with the biomes' fog, sky, and water colors, particles, sounds, and music.
+- Applies the 1.21 to 1.21.11 data format changes on those hosts, so older dimensions load there too.
+- Adds villager and wandering trader trades from the removed trade events on NeoForge 26.x. They apply from the second start.
+- Carries the teleporter bridge for older Forge mods to 1.21.2 and newer.
+- Builds 1.12.2 armor and MCreator 1.12 items on NeoForge 1.21.1.
+- Rebuilds enchantments that 1.12.2 and 1.20.1 mods define in code, on NeoForge and Forge from 1.21, as data pack enchantments.
+- Restores brewing recipes, painting variants, spawn placements, and biome spawns from older mods on 26.x.
+- Carries older Forge mods' HUD drawing, armor layers, entity textures, and particles to 26.x.
+- Maps about a thousand more 1.12.2 classes to their current names and adds stand-ins that large content mods share, so more large 1.12.2 mods start on NeoForge 1.21.1 and 26.3.
+- Loads mods that define a world type from before 1.16, without offering the world type.
+- Bridges many Forge 1.20.1 calls that MCreator mods share on NeoForge, including tab contents, commands, flower blocks, and mob experience drops.
+- Converts Forge jars that also carry a leftover NeoForge metadata file, and jars whose file name starts with a digit.
+- Names key binding categories that older mods gave as a plain string on 1.21.9 and newer.
+- Leaves Sodium, Iris, Embeddium, Oculus, and Rubidium unconverted, so the loader asks for the right version instead of crashing.
+- Loads older loot table rolls and worldgen patches on 26.3, and registers older Fabric items that are only built when a setting is on.
+
+The old right-click action is no longer asked about the off hand. The armor and tool rebuild does not apply to Fabric from 1.21.2 to 1.21.11. A rebuilt enchantment keeps its levels but not the effects its old class ran in code, and Fabric mods' enchantments are not rebuilt. Fabric mods lose trades added through Fabric API's removed trade helper. Old screens on 26.x draw only their widgets. Large 1.12.2 mods now start, but their tile entities, dimensions, world generation, GUIs, and rendering do not run yet. World types from before 1.16 are not offered.
+
 ## 1.3.4, October 9, 2026
 
 - Opens Forge mods' menu screens on NeoForge clients, which stopped loading with `IllegalAccessError`.

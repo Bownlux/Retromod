@@ -73,12 +73,26 @@ public class MixinShadowRenamesTest {
         handler.instructions.add(new InsnNode(POP));
         handler.instructions.add(new InsnNode(RETURN));
 
-        assertTrue(MixinShadowRenames.apply(mixin, rename -> true));
+        // A 26.1.2 host has getOptionalParameter and not 26.3's getOptional.
+        assertTrue(MixinShadowRenames.apply(mixin, rename -> !rename.newName().equals("getOptional")));
 
         assertEquals("getOptionalParameter", shadow.name);
         MethodInsnNode call = (MethodInsnNode) handler.instructions.get(2);
         assertEquals("getOptionalParameter", call.name,
                 "the mixin's own call must follow the renamed shadow");
+    }
+
+    @Test
+    @DisplayName("On 26.3 the same shadow lands on getOptional, Porting Lib's LootContextMixin case")
+    void shadowMethodFollowsThe26_3Rename() {
+        ClassNode mixin = mixinOn(LOOT_CONTEXT);
+        MethodNode shadow = new MethodNode(ACC_PUBLIC | ACC_ABSTRACT, "getParamOrNull", PARAM_DESC,
+                null, null);
+        shadow.visibleAnnotations = shadowAnnotation();
+        mixin.methods.add(shadow);
+
+        assertTrue(MixinShadowRenames.apply(mixin, rename -> !rename.newName().equals("getOptionalParameter")));
+        assertEquals("getOptional", shadow.name);
     }
 
     @Test

@@ -47,6 +47,8 @@ public final class ForgeNeoForgeApiBridge {
             {"event/entity/player/PlayerSleepInBedEvent", "event/entity/player/CanPlayerSleepEvent"},
             {"registries/RegisterEvent", "registries/RegisterEvent"},
             {"registries/RegisterEvent$RegisterHelper", "registries/RegisterEvent$RegisterHelper"},
+            // Same constructor: volume, pitch, and five sound suppliers.
+            {"common/util/ForgeSoundType", "common/util/DeferredSoundType"},
             // Same methods; Forge's static registry calls go through LegacyBrewingRegistryBridge.
             {"common/brewing/IBrewingRecipe", "common/brewing/IBrewingRecipe"},
             {"common/brewing/BrewingRecipe", "common/brewing/BrewingRecipe"},

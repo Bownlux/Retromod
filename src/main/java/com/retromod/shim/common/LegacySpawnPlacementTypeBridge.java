@@ -55,6 +55,28 @@ public final class LegacySpawnPlacementTypeBridge {
         }
         transformer.registerMethodRedirect(NATURAL_SPAWNER, "isSpawnPositionOk", OLD_CHECK_DESC,
                 HELPER, "isSpawnPositionOk", NEW_STATIC_CHECK_DESC);
+        registerPrivateRegister(transformer);
+    }
+
+    /**
+     * Forge opened {@code SpawnPlacements.register} to mods; NeoForge keeps it private, so an old
+     * mod's call failed with {@code IllegalAccessError} in its setup task and stopped the game.
+     * Only where the host's method is private.
+     */
+    static void registerPrivateRegister(RetromodTransformer transformer) {
+        String placements = "net/minecraft/world/entity/SpawnPlacements";
+        String desc = "(Lnet/minecraft/world/entity/EntityType;L" + NEW_TYPE
+                + ";Lnet/minecraft/world/level/levelgen/Heightmap$Types;L" + placements + "$SpawnPredicate;)V";
+        org.objectweb.asm.tree.ClassNode host = com.retromod.core.ClassResourceInspector.read(placements);
+        if (host == null || host.methods.stream().noneMatch(m -> m.name.equals("register") && m.desc.equals(desc)
+                && (m.access & Opcodes.ACC_PRIVATE) != 0)) {
+            return;
+        }
+        String helper = "com/retromod/shim/common/embedded/LegacySpawnPlacements";
+        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, helper,
+                com.retromod.shim.common.embedded.LegacySpawnPlacements.class);
+        transformer.registerMethodRedirect(placements, "register", desc, helper, "register",
+                "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V");
     }
 
     /** {@code static boolean isSpawnPositionOk(type, level, pos, entityType)}: calls the interface. */

@@ -29,8 +29,9 @@ import java.util.function.Predicate;
  * same four fields. The old {@code changeDimension} call asks the teleporter for its portal info,
  * or uses the entity's own position when it has none, and moves the entity with a transition built
  * from it. A teleporter's {@code placeEntity} override and its teleport sound are not consulted,
- * because the transition places the entity itself. Applies to the 1.21 and 1.21.1 transition
- * shape only.
+ * because the transition places the entity itself. 1.21.2 renamed the transition to
+ * {@code TeleportTransition} and the move to {@code teleport}, with the same fields, so the bridge
+ * builds whichever of the two the host has.
  */
 final class LegacyTeleporterBridge {
 
@@ -40,8 +41,17 @@ final class LegacyTeleporterBridge {
     static final String PORTAL_INFO = "com/retromod/generated/LegacyPortalInfo";
     static final String CALLS = "com/retromod/generated/LegacyTeleporterCalls";
 
-    static final String TRANSITION = "net/minecraft/world/level/portal/DimensionTransition";
-    private static final String POST = TRANSITION + "$PostDimensionTransition";
+    /** The host's transition class, its follow-up action type, and the entity method that takes it. */
+    record Shape(String transition, String post, String move) {
+        String constructor() {
+            return "(" + L_LEVEL + L_VEC3 + L_VEC3 + "FFL" + post + ";)V";
+        }
+    }
+
+    static final Shape DIMENSION_TRANSITION = new Shape("net/minecraft/world/level/portal/DimensionTransition",
+            "net/minecraft/world/level/portal/DimensionTransition$PostDimensionTransition", "changeDimension");
+    static final Shape TELEPORT_TRANSITION = new Shape("net/minecraft/world/level/portal/TeleportTransition",
+            "net/minecraft/world/level/portal/TeleportTransition$PostTeleportTransition", "teleport");
     private static final String ENTITY = "net/minecraft/world/entity/Entity";
     private static final String SERVER_PLAYER = "net/minecraft/server/level/ServerPlayer";
     private static final String SERVER_LEVEL = "net/minecraft/server/level/ServerLevel";
@@ -54,22 +64,25 @@ final class LegacyTeleporterBridge {
     private static final String L_INFO = "L" + PORTAL_INFO + ";";
     private static final String L_TELEPORTER = "L" + TELEPORTER + ";";
     private static final String GET_PORTAL_INFO_DESC = "(" + L_ENTITY + L_LEVEL + "L" + FUNCTION + ";)" + L_INFO;
-    private static final String TRANSITION_CTOR = "(" + L_LEVEL + L_VEC3 + L_VEC3 + "FFL" + POST + ";)V";
 
     private LegacyTeleporterBridge() {}
 
     static boolean register(RetromodTransformer transformer, Predicate<String> hostHasClass) {
         if (hostHasClass.test(FORGE_TELEPORTER) || hostHasClass.test(OLD_PORTAL_INFO)) return false;
-        ClassNode transition = ClassResourceInspector.read(TRANSITION);
-        if (transition == null || !hasMethod(transition, "<init>", TRANSITION_CTOR)) return false;
-        registerRedirects(transformer);
-        return true;
+        for (Shape shape : new Shape[] {DIMENSION_TRANSITION, TELEPORT_TRANSITION}) {
+            ClassNode transition = ClassResourceInspector.read(shape.transition());
+            if (transition != null && hasMethod(transition, "<init>", shape.constructor())) {
+                registerRedirects(transformer, shape);
+                return true;
+            }
+        }
+        return false;
     }
 
-    static void registerRedirects(RetromodTransformer transformer) {
+    static void registerRedirects(RetromodTransformer transformer, Shape shape) {
         transformer.registerSyntheticClass(PORTAL_INFO, generatePortalInfo());
         transformer.registerSyntheticClass(TELEPORTER, generateTeleporter());
-        transformer.registerSyntheticClass(CALLS, generateCalls());
+        transformer.registerSyntheticClass(CALLS, generateCalls(shape));
         transformer.registerClassRedirect(OLD_PORTAL_INFO, PORTAL_INFO);
         transformer.registerClassRedirect(FORGE_TELEPORTER, TELEPORTER);
         String oldDesc = "(" + L_LEVEL + "L" + FORGE_TELEPORTER + ";)" + L_ENTITY;
@@ -156,7 +169,7 @@ final class LegacyTeleporterBridge {
      * {@code changeDimension(entity, level, teleporter)}: the teleporter's portal info, asked with a
      * default that keeps the entity where it is, becomes a transition with no follow-up action.
      */
-    static byte[] generateCalls() {
+    static byte[] generateCalls(Shape shape) {
         ClassWriter cw = newWriter();
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, CALLS, null,
                 "java/lang/Object", null);
@@ -178,17 +191,17 @@ final class LegacyTeleporterBridge {
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitLabel(found);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitTypeInsn(Opcodes.NEW, TRANSITION);
+        mv.visitTypeInsn(Opcodes.NEW, shape.transition());
         mv.visitInsn(Opcodes.DUP);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         for (String[] field : new String[][] {{"pos", L_VEC3}, {"speed", L_VEC3}, {"yRot", "F"}, {"xRot", "F"}}) {
             mv.visitVarInsn(Opcodes.ALOAD, 3);
             mv.visitFieldInsn(Opcodes.GETFIELD, PORTAL_INFO, field[0], field[1]);
         }
-        mv.visitFieldInsn(Opcodes.GETSTATIC, TRANSITION, "DO_NOTHING", "L" + POST + ";");
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, TRANSITION, "<init>", TRANSITION_CTOR, false);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, ENTITY, "changeDimension",
-                "(L" + TRANSITION + ";)" + L_ENTITY, false);
+        mv.visitFieldInsn(Opcodes.GETSTATIC, shape.transition(), "DO_NOTHING", "L" + shape.post() + ";");
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, shape.transition(), "<init>", shape.constructor(), false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, ENTITY, shape.move(),
+                "(L" + shape.transition() + ";)" + L_ENTITY, false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

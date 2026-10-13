@@ -67,7 +67,7 @@ public class ModVersionDetector {
             }
 
             JarEntry neoEntry = jar.getJarEntry("META-INF/neoforge.mods.toml");
-            if (neoEntry != null) {
+            if (neoEntry != null && ForgeTomlChoice.NEOFORGE_TOML.equals(ForgeTomlChoice.metadataEntry(jar))) {
                 return parseNeoForgeMod(jar, neoEntry);
             }
 

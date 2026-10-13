@@ -1,0 +1,6 @@
+{
+    "parent": "item/generated",
+    "textures": {
+        "layer0": "armoroftheages:item/o_yoroi_armor_head"
+    }
+}

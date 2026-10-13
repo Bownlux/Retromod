@@ -85,6 +85,7 @@ public final class LegacyForgeEvents {
         modBus = findModBus(id);
         installRegistryDispatcher();
         subscribeAnnotatedClasses(id, modClass.getClassLoader());
+        installCommandHooks(mod, id);
 
         // Pre-init waits for the first registry event. A mod may build itself from its own static
         // initializer, before its other static fields are assigned, and 1.12 pre-init creates
@@ -96,6 +97,91 @@ public final class LegacyForgeEvents {
             fireLifecycle(mod, id, initEvent);
             fireLifecycle(mod, id, postEvent);
         }
+    }
+
+    /**
+     * 1.12 mods registered their commands from {@code FMLServerStartingEvent}. It is fired from the
+     * host's server-starting event, and the commands it registers go into that server's dispatcher,
+     * and again into each rebuilt dispatcher, since {@code /reload} makes a new one.
+     */
+    private static void installCommandHooks(Object mod, String id) {
+        Object bus = gameBus();
+        if (bus == null) return;
+        Class<?> starting = firstClass("net.neoforged.neoforge.event.server.ServerStartingEvent",
+                "net.minecraftforge.event.server.ServerStartingEvent");
+        Class<?> registering = firstClass("net.neoforged.neoforge.event.RegisterCommandsEvent",
+                "net.minecraftforge.event.RegisterCommandsEvent");
+        if (starting != null) {
+            addListener(bus, starting, false, event -> {
+                Object server = invokeNoArgs(event, "getServer");
+                fireServerStarting(mod, id, server);
+                Object dispatcher = dispatcherOf(server);
+                if (dispatcher != null) LegacyCommands.registerAll(dispatcher);
+            });
+        }
+        if (registering != null) {
+            addListener(bus, registering, false, event -> {
+                Object dispatcher = invokeNoArgs(event, "getDispatcher");
+                if (dispatcher != null) LegacyCommands.registerAll(dispatcher);
+            });
+        }
+        Class<?> clientRegistering = firstClass("net.neoforged.neoforge.client.event.RegisterClientCommandsEvent",
+                "net.minecraftforge.client.event.RegisterClientCommandsEvent");
+        if (clientRegistering != null) {
+            addListener(bus, clientRegistering, false, event -> {
+                Object dispatcher = invokeNoArgs(event, "getDispatcher");
+                if (dispatcher != null) LegacyCommands.registerAllClient(dispatcher);
+            });
+        }
+    }
+
+    private static void fireServerStarting(Object mod, String id, Object server) {
+        String wanted = "(L" + LegacyServerStartingEvent.class.getName().replace('.', '/') + ";)V";
+        for (String[] h : handlers(mod.getClass())) {
+            if (!h[0].equals("L") || !relocate(h[3]).equals(wanted)) continue;
+            try {
+                handle(mod.getClass(), h, mod).invokeWithArguments(new LegacyServerStartingEvent(server));
+            } catch (Throwable t) {
+                LOGGER.warn("Legacy mod {} failed in {}.{}; continuing", id, mod.getClass().getName(), h[2], unwrap(t));
+            }
+        }
+    }
+
+    /** {@code server.getCommands().getDispatcher()}, found by type because Forge 1.20.1 uses SRG names. */
+    private static Object dispatcherOf(Object server) {
+        if (server == null) return null;
+        try {
+            Object commands = null;
+            for (Method m : server.getClass().getMethods()) {
+                if (m.getParameterCount() == 0 && m.getReturnType().getName().equals("net.minecraft.commands.Commands")) {
+                    commands = m.invoke(server);
+                    break;
+                }
+            }
+            if (commands == null) return null;
+            for (Method m : commands.getClass().getMethods()) {
+                if (m.getParameterCount() == 0
+                        && m.getReturnType().getName().equals("com.mojang.brigadier.CommandDispatcher")) {
+                    return m.invoke(commands);
+                }
+            }
+        } catch (Throwable t) {
+            LOGGER.warn("Legacy mod {}: could not reach the command dispatcher", modId, unwrap(t));
+        }
+        return null;
+    }
+
+    private static Object invokeNoArgs(Object target, String name) {
+        try {
+            return target.getClass().getMethod(name).invoke(target);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** For the other 1.12 stand-ins, which log under this mod's name. */
+    static void warn(String what, Throwable cause) {
+        LOGGER.warn("Legacy mod {}: {}", modId, what, unwrap(cause));
     }
 
     static void fireLifecycle(Object mod, String id, Class<?> eventType) {
@@ -457,6 +543,7 @@ public final class LegacyForgeEvents {
         synchronized (REGISTRY_HANDLERS) {
             handlers = new ArrayList<>(REGISTRY_HANDLERS);
         }
+        dispatchDataEnchantments(handlers);
         Object vanilla = builtInRegistry(String.valueOf(key));
         for (Object[] h : handlers) {
             if (!path.equals(h[2])) continue;
@@ -473,6 +560,55 @@ public final class LegacyForgeEvents {
                         unwrap(t));
             }
             dropOrphans(vanilla, before, registered, path);
+        }
+    }
+
+    private static boolean enchantmentsDispatched;
+
+    /**
+     * 1.21 made enchantments data, so no host fires an enchantment registry event and a 1.12
+     * enchantment handler would never run. On such a host the handlers run once, on the first
+     * registry event after they subscribe, and what they register is recorded for the legacy
+     * enchantment pack.
+     */
+    private static void dispatchDataEnchantments(List<Object[]> handlers) {
+        // The mod's handlers may subscribe after the host's first registry event, so this waits
+        // for the first event that has an enchantment handler.
+        if (handlers.stream().noneMatch(h -> "enchantment".equals(h[2]))) return;
+        synchronized (LegacyForgeEvents.class) {
+            if (enchantmentsDispatched) return;
+            enchantmentsDispatched = true;
+        }
+        // The bracket keeps enchantment_effect_component_type, a 1.21 registry, from matching.
+        if (builtInRegistry("/ minecraft:enchantment]") != null) return;
+        Method record;
+        try {
+            String home = "com.retromod.shim.forge.embedded.LegacyForgeEvents";
+            String self = LegacyForgeEvents.class.getName();
+            String prefix = self.substring(0, self.length() - home.length());
+            record = Class.forName(prefix + "com.retromod.shim.common.embedded.LegacyEnchantmentSupport", true,
+                    LegacyForgeEvents.class.getClassLoader()).getMethod("record", String.class, Object.class);
+        } catch (ReflectiveOperationException | LinkageError e) {
+            LOGGER.warn("Legacy mod {}: its enchantments cannot be added on this host", modId, e);
+            return;
+        }
+        for (Object[] h : handlers) {
+            if (!"enchantment".equals(h[2])) continue;
+            Consumer<Object> registrar = entry -> {
+                Object name = entry == null ? null : getRegistryName(entry);
+                if (name == null) return;
+                try {
+                    record.invoke(null, String.valueOf(name), entry);
+                } catch (ReflectiveOperationException e) {
+                    LOGGER.warn("Legacy mod {}: could not add the enchantment {}", modId, name, unwrap(e));
+                }
+            };
+            try {
+                Object legacyEvent = ((Class<?>) h[1]).getConstructor(Object.class).newInstance(registrar);
+                ((MethodHandle) h[0]).invokeWithArguments(legacyEvent);
+            } catch (Throwable t) {
+                LOGGER.warn("Legacy mod {}: registry handler {} failed for enchantment", modId, h[3], unwrap(t));
+            }
         }
     }
 
@@ -643,7 +779,52 @@ public final class LegacyForgeEvents {
         Object name = NAMES.get(entry);
         if (name != null) return name;
         Object own = callOwn(entry, "getRegistryName", new Class<?>[0]);
-        return own == NOT_DECLARED ? null : own;
+        return own == NOT_DECLARED ? builtInName(entry) : own;
+    }
+
+    private static final String[] BUILT_IN_REGISTRIES = {"BLOCK", "ITEM", "ENTITY_TYPE", "BLOCK_ENTITY_TYPE",
+            "SOUND_EVENT", "MOB_EFFECT", "POTION", "PARTICLE_TYPE", "FLUID"};
+
+    /**
+     * A vanilla object's id, such as {@code Blocks.SANDSTONE}'s, which old mods read through the
+     * removed {@code getRegistryName()} for their config defaults. A registry that falls back to a
+     * default entry answers with that entry's id for anything it lacks, so the default id is never
+     * returned and the id must lead back to this object.
+     */
+    private static Object builtInName(Object entry) {
+        // Only Minecraft's own objects; a mod's object that was never named stays unnamed.
+        if (!entry.getClass().getName().startsWith("net.minecraft.")) return null;
+        try {
+            Class<?> registries = Class.forName("net.minecraft.core.registries.BuiltInRegistries", true,
+                    entry.getClass().getClassLoader());
+            for (String field : BUILT_IN_REGISTRIES) {
+                Object registry;
+                try {
+                    registry = registries.getField(field).get(null);
+                } catch (NoSuchFieldException absent) {
+                    continue;
+                }
+                Object id = invokeByName(registry, "getKey", entry);
+                if (id != null && !"minecraft:air".equals(String.valueOf(id)) && (invokeByName(registry, "getValue", id) == entry || invokeByName(registry, "get", id) == entry)) {
+                    return id;
+                }
+            }
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            return null;
+        }
+        return null;
+    }
+
+    /** The one-argument public method of this name whose parameter accepts the argument, or null. */
+    private static Object invokeByName(Object target, String name, Object argument) throws ReflectiveOperationException {
+        for (Method method : target.getClass().getMethods()) {
+            if (method.getName().equals(name) && method.getParameterCount() == 1
+                    && !method.getParameterTypes()[0].isPrimitive()
+                    && method.getParameterTypes()[0].isInstance(argument)) {
+                return method.invoke(target, argument);
+            }
+        }
+        return null;
     }
 
     private static Object putName(Object entry, Object location) {

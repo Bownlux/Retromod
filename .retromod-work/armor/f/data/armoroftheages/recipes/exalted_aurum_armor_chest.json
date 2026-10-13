@@ -1,0 +1,23 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		" I ",
+		"oio",
+		"ooo"
+	],
+	"key": {
+		"i": {
+			"item": "minecraft:netherite_chestplate"
+		},
+		"I": {
+			"item": "minecraft:red_wool"
+		},
+		"o": {
+			"item": "minecraft:gold_block"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:exalted_aurum_armor_chest"
+	}
+}

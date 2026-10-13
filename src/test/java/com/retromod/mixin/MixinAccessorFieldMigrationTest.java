@@ -67,6 +67,21 @@ class MixinAccessorFieldMigrationTest {
     }
 
     @Test
+    void bridgesLootConditionListsThat26_3MovedBehindHolders() {
+        // Porting Lib's LootPoolEntryContainerAccessor and CompositeLootItemConditionAccessor (#249).
+        String loot = "net/minecraft/world/level/storage/loot/";
+        for (String[] rule : new String[][]{{loot + "entries/LootPoolEntryContainer", "conditions"},
+                {loot + "predicates/CompositeLootItemCondition", "terms"}}) {
+            ClassNode onNewHost = read(accessorMixin(rule[0], rule[1]));
+            assertEquals(1, MixinAccessorFieldMigration.removeMigratedAccessors(onNewHost, "26.3").size(),
+                    rule[0] + "." + rule[1] + " is a holder on 26.3, so its List accessor must be bridged");
+            ClassNode onOldHost = read(accessorMixin(rule[0], rule[1]));
+            assertTrue(MixinAccessorFieldMigration.removeMigratedAccessors(onOldHost, "26.2").isEmpty(),
+                    "26.2 still has the List field, so the accessor works as written");
+        }
+    }
+
+    @Test
     void ignoresAnAccessorOfTheSameNameOnAnotherTarget() {
         ClassNode mixin = read(accessorMixin("com/example/OtherCloud", "effects"));
         assertTrue(MixinAccessorFieldMigration.removeMigratedAccessors(mixin, "1.21.1").isEmpty(),

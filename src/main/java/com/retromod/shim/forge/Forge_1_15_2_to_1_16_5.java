@@ -41,6 +41,8 @@ public class Forge_1_15_2_to_1_16_5 implements VersionShim {
             "com/retromod/shim/forge/embedded/DimensionShim", "isUltrawarm",
             "(Ljava/lang/Object;)Z"
         );
+        // WorldType became world presets; the mod's type loads but is not offered.
+        LegacyWorldTypeBridge.register(transformer);
         // worldgen moved to codecs
         transformer.registerMethodRedirect(
             "net/minecraft/world/gen/feature/Feature", "withConfiguration",

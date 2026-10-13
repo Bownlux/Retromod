@@ -60,6 +60,20 @@ class LegacyForge119BridgeTest {
                 "getWorld became getLevel, saw " + result);
     }
 
+    /**
+     * Useful Slime, a 1.12.2 mod on NeoForge 1.21.1: its fall handler's event reached this pass
+     * under NeoForge's package, where only the Forge owner had the getter rename.
+     */
+    @Test
+    void livingGetterIsRenamedUnderNeoForgeOwner() {
+        String event = "net/neoforged/neoforge/event/entity/living/LivingEvent";
+        List<String> result = transform(handler(event, "getEntityLiving",
+                "()Lnet/minecraft/world/entity/LivingEntity;"));
+
+        assertTrue(result.contains("CALL " + event + ".getEntity()Lnet/minecraft/world/entity/LivingEntity;"),
+                "getEntityLiving became getEntity, saw " + result);
+    }
+
     @Test
     void spawnCheckHandlerTargetsPositionCheck() {
         String oldEvent = "net/minecraftforge/event/entity/living/LivingSpawnEvent$CheckSpawn";

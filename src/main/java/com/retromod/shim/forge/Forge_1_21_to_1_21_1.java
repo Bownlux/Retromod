@@ -32,6 +32,8 @@ public class Forge_1_21_to_1_21_1 implements VersionShim {
     
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // 1.21 made enchantments data and Enchantment a final record (code-defined enchantments).
+        com.retromod.shim.common.LegacyEnchantmentBridge.register(transformer);
         // patch-level bump, no API changes
     }
     

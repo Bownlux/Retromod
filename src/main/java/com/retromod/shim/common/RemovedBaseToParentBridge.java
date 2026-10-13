@@ -62,8 +62,14 @@ public final class RemovedBaseToParentBridge {
         // and would leave every one of those still pointing at a class that is gone. The limit of
         // the rename is the other direction: a subclass calling the old four-argument constructor
         // finds no such constructor on vanilla's SpawnEggItem and still needs a port.
-        transformer.registerClassRedirect(
-                "net/minecraftforge/common/ForgeSpawnEggItem",
-                "net/minecraft/world/item/SpawnEggItem");
+        //
+        // On NeoForge the Forge-to-NeoForge shim already points it at Retromod's DeferredSpawnEggItem
+        // stand-in, which keeps that constructor and moves the type onto the item properties, so
+        // this rename would only take that constructor away again.
+        if (!com.retromod.util.McReflect.isNeoForge()) {
+            transformer.registerClassRedirect(
+                    "net/minecraftforge/common/ForgeSpawnEggItem",
+                    "net/minecraft/world/item/SpawnEggItem");
+        }
     }
 }

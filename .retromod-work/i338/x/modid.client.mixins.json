@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "com.example.mixin.client",
+  "compatibilityLevel": "JAVA_17",
+  "client": [
+    "ExampleClientMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "refmap": "client-futonsmod-refmap.json"
+}

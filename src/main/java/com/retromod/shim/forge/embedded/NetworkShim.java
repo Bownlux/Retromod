@@ -319,6 +319,11 @@ public final class NetworkShim {
     }
 
     /** Fluent packet registration builder. */
+    /** Forge's {@code SimpleChannel.MessageBuilder.ToBooleanBiFunction}. */
+    public interface ToBooleanBiFunction<T, U> {
+        boolean applyAsBool(T first, U second);
+    }
+
     public static class MessageBuilder<T> {
         private final SimpleChannelWrapper channel;
         private final Class<T> type;
@@ -356,6 +361,19 @@ public final class NetworkShim {
         /** Forge's network-thread variant. NeoForge runs every bridged handler on the main thread. */
         public MessageBuilder<T> consumerNetworkThread(BiConsumer<T, Object> consumer) {
             return consumer(consumer);
+        }
+
+        /**
+         * Forge's handler that reports whether it handled the packet. NeoForge marks every bridged
+         * packet handled, so the answer is not needed.
+         */
+        public MessageBuilder<T> consumer(ToBooleanBiFunction<T, Object> handler) {
+            return consumer((BiConsumer<T, Object>) handler::applyAsBool);
+        }
+
+        /** The network-thread spelling of {@link #consumer(ToBooleanBiFunction)}. */
+        public MessageBuilder<T> consumerNetworkThread(ToBooleanBiFunction<T, Object> handler) {
+            return consumer(handler);
         }
 
         public void add() {

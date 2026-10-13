@@ -94,6 +94,8 @@ public final class Forge1122LifecycleSynthetics {
         active = true;
         t.onRegistrationReset(() -> active = false);
         t.registerSyntheticClass(BRIDGE, generateBridge());
+        com.retromod.core.SyntheticEmbedder.registerClassResource(t, Forge1122BlockConstructorAdapter.STATES,
+                com.retromod.shim.forge.embedded.LegacyBlockStates.class);
         t.registerSyntheticClass(PRE_EVENT, generateEvent(PRE_EVENT, true));
         t.registerSyntheticClass(INIT_EVENT, generateEvent(INIT_EVENT, false));
         t.registerSyntheticClass(POST_EVENT, generateEvent(POST_EVENT, false));
@@ -334,6 +336,7 @@ public final class Forge1122LifecycleSynthetics {
                 com.retromod.core.RetromodTransformer.getInstance().remapQualifiedMethodName(
                         Forge1122BlockStateBridge.BLOCK, "createBlockStateDefinition",
                         Forge1122BlockStateBridge.DEFINITION_DESC));
+        classBytes = Forge1122BlockConstructorAdapter.apply(classBytes);
         // cheap pre-filter before a full parse. BOTH spellings: depending on pass ordering the
         // class may already be remapped to the NeoForge annotation before this runs, and matching
         // only the Forge spelling silently skipped the value-shape upgrade, so the mod was scanned

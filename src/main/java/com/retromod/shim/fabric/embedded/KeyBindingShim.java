@@ -127,6 +127,11 @@ public final class KeyBindingShim {
         }
     }
 
+    /** Vanilla's own categories; a mod's {@code key.categories.<mod>} string is its own category. */
+    private static final java.util.Set<String> VANILLA_CATEGORIES = java.util.Set.of(
+            "key.categories.movement", "key.categories.misc", "key.categories.multiplayer",
+            "key.categories.gameplay", "key.categories.inventory", "key.categories.creative");
+
     // Cached: re-registering the same category throws.
     private static Object getOrCreateCategory(String categoryString) throws Exception {
         if (categoryCache.containsKey(categoryString)) {
@@ -140,13 +145,14 @@ public final class KeyBindingShim {
             String[] parts = categoryString.split(":", 2);
             namespace = parts[0];
             path = parts[1];
-        } else if (categoryString.startsWith("key.categories.")) {
-            String rest = categoryString.substring("key.categories.".length());
+        } else if (VANILLA_CATEGORIES.contains(categoryString)) {
             namespace = "minecraft";
-            path = rest;
+            path = categoryString.substring("key.categories.".length());
         } else {
+            // Same id as RetroKeyMapping and LegacyKeyCategoryNames, which names it in the mod's lang.
             namespace = "retromod_compat";
-            path = categoryString.replace('.', '_').replace(' ', '_').toLowerCase();
+            path = categoryString.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_-]", "_");
+            if (path.isEmpty()) path = "custom";
         }
 
         Object identifier = IdentifierShim.of(namespace, path);

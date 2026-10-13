@@ -1,0 +1,18 @@
+{
+  "parent": "minecraft:recipes/root",
+  "criteria": {
+    "has_leather_helmet": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [{ "items": ["minecraft:leather_helmet"] }]
+      }
+    }
+  },
+  "requirements": [["has_leather_helmet"]],
+  "rewards": {
+    "recipes": [
+      "armoroftheages:bamboo_hat",
+      "armoroftheages:japanese_light_armor_head"
+    ]
+  }
+}

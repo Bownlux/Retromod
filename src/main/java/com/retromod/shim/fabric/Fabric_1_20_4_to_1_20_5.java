@@ -20,6 +20,10 @@ public class Fabric_1_20_4_to_1_20_5 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // DFU 8 (1.20.5) removed DataResult.get(); its Either is rebuilt from the result.
+        transformer.registerMethodRedirect("com/mojang/serialization/DataResult", "get",
+                "()Lcom/mojang/datafixers/util/Either;",
+                "com/retromod/polyfill/minecraft/DataResultPolyfill", "get", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
         // ItemStack NBT methods removed; use components
         transformer.registerMethodRedirect(
             "net/minecraft/item/ItemStack", "getNbt",

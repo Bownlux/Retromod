@@ -1,0 +1,22 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"ixi",
+		"I I"
+	],
+	"key": {
+		"I": {
+			"item": "minecraft:string"
+		},
+		"i": {
+			"item": "minecraft:leather"
+		},
+		"x": {
+			"item": "minecraft:leather_boots"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:japanese_light_armor_feet"
+	}
+}

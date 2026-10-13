@@ -54,6 +54,46 @@ class RegistryIdBridgeTest {
         }
     }
 
+    /**
+     * Mythic Fantasies, a 1.19.2 Forge mod, on NeoForge 26.3: its biome went to a DeferredRegister,
+     * which NeoForge never runs for a data-driven registry, so the dimension naming it failed to load.
+     */
+    @Test
+    void biomeRegistrationsAreKeptForTheWorldgenStore() throws Exception {
+        ClassNode cn = new ClassNode();
+        new ClassReader(RegistryIdBridgeSynthetic.generate()).accept(cn, 0);
+
+        assertTrue(cn.fields.stream().anyMatch(f -> f.name.equals(RegistryIdBridgeSynthetic.LEGACY_BIOMES)
+                        && (f.access & Opcodes.ACC_STATIC) != 0 && f.desc.equals("Ljava/util/Map;")),
+                "the store reads the biome suppliers from a public static map");
+        org.objectweb.asm.tree.MethodNode register = cn.methods.stream()
+                .filter(m -> m.name.equals("register")).findFirst().orElseThrow();
+        assertTrue(java.util.stream.StreamSupport.stream(register.instructions.spliterator(), false)
+                        .anyMatch(i -> i instanceof org.objectweb.asm.tree.FieldInsnNode f && f.name.equals("BIOME")),
+                "register must check for the biome registry");
+        for (org.objectweb.asm.tree.MethodNode method : cn.methods) {
+            new org.objectweb.asm.tree.analysis.Analyzer<>(new org.objectweb.asm.tree.analysis.BasicVerifier())
+                    .analyze(cn.name, method);
+        }
+    }
+
+    @Test
+    void biomeRecorderForNeoForge1_21VerifiesAndKeepsTheMap() throws Exception {
+        ClassNode cn = new ClassNode();
+        new ClassReader(RegistryIdBridgeSynthetic.generateBiomeRecorder()).accept(cn, 0);
+        assertTrue(cn.name.equals(RegistryIdBridgeSynthetic.BIOME_RECORDER));
+        assertTrue(cn.fields.stream().anyMatch(f -> f.name.equals(RegistryIdBridgeSynthetic.LEGACY_BIOMES)));
+        assertFalse(java.util.stream.StreamSupport.stream(cn.methods.stream().filter(m -> m.name.equals("register"))
+                        .findFirst().orElseThrow().instructions.spliterator(), false)
+                        .anyMatch(i -> i instanceof org.objectweb.asm.tree.MethodInsnNode call
+                                && call.desc.contains("net/minecraft/resources/Identifier")),
+                "1.21.1 has no Identifier class, so the recorder must not name it");
+        for (org.objectweb.asm.tree.MethodNode method : cn.methods) {
+            new org.objectweb.asm.tree.analysis.Analyzer<>(new org.objectweb.asm.tree.analysis.BasicVerifier())
+                    .analyze(cn.name, method);
+        }
+    }
+
     /** A class whose {@code <clinit>} does {@code BLOCKS.register("x", () -> null)} and calls Properties.of(). */
     private static byte[] registrarFixture() {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);

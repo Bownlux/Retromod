@@ -32,12 +32,13 @@ import static org.objectweb.asm.Opcodes.*;
  * Holders serialize as their ids, so a placed feature points at its configured feature, and a biome
  * points at vanilla features such as {@code minecraft:patch_grass} by key.
  *
- * <p>Two limits remain. The pack is offered through Forge's {@code AddPackFindersEvent}, so the
- * restore is Forge only; on other loaders the calls still succeed and the features are simply
- * absent. A vanilla constant read through the converted field is an unbound reference, so it works
- * inside worldgen definitions but a mod that calls {@code value()} on it directly still fails.
- * The pack source and the overworld splice link version-specific APIs, so each is generated only
- * on the hosts {@link #packApiLinks} and {@link #overworldInjectionLinks} accept.
+ * <p>The pack is offered through Forge's or NeoForge's {@code AddPackFindersEvent}. Its source
+ * links version-specific pack APIs, so it is generated for Forge hosts up to 1.20.1 and reached by
+ * reflection on 26.1 and newer; between those, the calls succeed and the features are absent.
+ * Code-built biomes are read back from Forge's biome registry, so they are restored on Forge only.
+ * A vanilla constant read through the converted field is an unbound reference, so it works inside
+ * worldgen definitions but a mod that calls {@code value()} on it directly still fails. The
+ * overworld splice is generated only on the hosts {@link #overworldInjectionLinks} accepts.
  */
 public final class LegacyWorldgenBridge {
 
@@ -47,6 +48,7 @@ public final class LegacyWorldgenBridge {
     static final String BIOME_BUILDER_BRIDGE = "com/retromod/generated/LegacyBiomeBuilder";
     static final String STORE = "com/retromod/shim/forge/embedded/LegacyWorldgenStore";
     static final String CODECS = STORE + "$Codecs";
+    static final String MODERN_PACK_SOURCE = "com/retromod/shim/forge/embedded/LegacyDataPackSource";
 
     private static final String HOLDER = "net/minecraft/core/Holder";
     private static final String REFERENCE = "net/minecraft/core/Holder$Reference";
@@ -133,6 +135,8 @@ public final class LegacyWorldgenBridge {
         transformer.registerSyntheticClass(OWNER, generateOwner());
         if (packApiLinks(RetromodVersion.TARGET_MC_VERSION)) {
             transformer.registerSyntheticClass(PACK_SOURCE, generatePackSource());
+        } else if (modernPackApi(RetromodVersion.TARGET_MC_VERSION)) {
+            SyntheticEmbedder.registerClassResource(transformer, MODERN_PACK_SOURCE, LegacyWorldgenBridge.class);
         }
 
         transformer.registerMethodRedirect(FEATURE_UTILS, "register", REGISTER_CONFIGURED_DESC,
@@ -192,12 +196,91 @@ public final class LegacyWorldgenBridge {
     }
 
     /**
+     * 1.20.5 and newer, whose pack API takes a location record and a selection config, which
+     * {@code LegacyDataPackSource} reaches by Mojang names. Those are the runtime names on NeoForge
+     * and, from 26.1, on every loader.
+     */
+    static boolean modernPackApi(String host) {
+        return RetromodVersion.compareMcVersions(host, "1.20.5") >= 0;
+    }
+
+    /**
      * Whether the host still has {@code RegistryAccess.registryOrThrow} and
      * {@code Registry.getHolderOrThrow}, which the overworld splice redirects to. 1.21.2 renamed
      * both, so a newer host keeps the mod's original calls rather than linking missing ones.
      */
     static boolean overworldInjectionLinks(String host) {
         return RetromodVersion.compareMcVersions(host, "1.21.2") < 0;
+    }
+
+    /**
+     * Wraps a server start handler that splices biomes into the overworld in a guard, on hosts
+     * whose noise settings the splice cannot rebuild (1.21.2 and newer, see
+     * {@link #overworldInjectionLinks}). The handler runs on the server thread before the levels
+     * exist, so a failure there stopped the server; now it is logged, and the overworld keeps
+     * vanilla's biomes. Other server start handlers, and every handler on older hosts, are left
+     * as they are. Returns the input array when nothing applies.
+     */
+    public static byte[] guardOverworldInjection(byte[] classBytes) {
+        if (classBytes == null || overworldInjectionLinks(RetromodVersion.TARGET_MC_VERSION)) return classBytes;
+        String text = new String(classBytes, java.nio.charset.StandardCharsets.ISO_8859_1);
+        if (!text.contains("ServerAboutToStartEvent") || !text.contains("NoiseGeneratorSettings")) return classBytes;
+        org.objectweb.asm.tree.ClassNode node = new org.objectweb.asm.tree.ClassNode();
+        new org.objectweb.asm.ClassReader(classBytes).accept(node, 0);
+        if ((node.version & 0xFFFF) < V1_7) return classBytes; // the guard's frame needs a framed class
+        boolean changed = false;
+        for (org.objectweb.asm.tree.MethodNode method : node.methods) {
+            if (isOverworldSplice(method)) {
+                guard(node.name, method);
+                changed = true;
+            }
+        }
+        if (!changed) return classBytes;
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        node.accept(writer);
+        return writer.toByteArray();
+    }
+
+    private static boolean isOverworldSplice(org.objectweb.asm.tree.MethodNode method) {
+        org.objectweb.asm.Type[] arguments = org.objectweb.asm.Type.getArgumentTypes(method.desc);
+        if (arguments.length != 1 || !arguments[0].getInternalName().endsWith("/ServerAboutToStartEvent")
+                || (method.access & ACC_ABSTRACT) != 0 || method.instructions.size() == 0) {
+            return false;
+        }
+        for (org.objectweb.asm.tree.AbstractInsnNode insn : method.instructions) {
+            if (insn instanceof org.objectweb.asm.tree.MethodInsnNode call
+                    && call.owner.endsWith("/NoiseGeneratorSettings") && call.name.equals("<init>")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** try { body } catch (Throwable t) { log; return; } around the whole method. */
+    private static void guard(String owner, org.objectweb.asm.tree.MethodNode method) {
+        org.objectweb.asm.tree.LabelNode start = new org.objectweb.asm.tree.LabelNode();
+        org.objectweb.asm.tree.LabelNode end = new org.objectweb.asm.tree.LabelNode();
+        org.objectweb.asm.tree.LabelNode handler = new org.objectweb.asm.tree.LabelNode();
+        method.instructions.insert(start);
+        method.instructions.add(end);
+        method.instructions.add(handler);
+        java.util.List<Object> locals = new java.util.ArrayList<>();
+        if ((method.access & ACC_STATIC) == 0) locals.add(owner);
+        for (org.objectweb.asm.Type argument : org.objectweb.asm.Type.getArgumentTypes(method.desc)) {
+            locals.add(argument.getInternalName());
+        }
+        method.instructions.add(new org.objectweb.asm.tree.FrameNode(F_FULL, locals.size(), locals.toArray(),
+                1, new Object[] {"java/lang/Throwable"}));
+        method.instructions.add(new org.objectweb.asm.tree.InsnNode(POP));
+        method.instructions.add(new org.objectweb.asm.tree.FieldInsnNode(GETSTATIC, "java/lang/System", "out",
+                "Ljava/io/PrintStream;"));
+        method.instructions.add(new org.objectweb.asm.tree.LdcInsnNode("[Retromod] Legacy worldgen: " + owner.replace('/', '.')
+                + " could not add its biomes to the overworld on this Minecraft version, so the overworld keeps"
+                + " vanilla's biomes"));
+        method.instructions.add(new org.objectweb.asm.tree.MethodInsnNode(INVOKEVIRTUAL, "java/io/PrintStream",
+                "println", "(Ljava/lang/String;)V", false));
+        method.instructions.add(new org.objectweb.asm.tree.InsnNode(RETURN));
+        method.tryCatchBlocks.add(new org.objectweb.asm.tree.TryCatchBlockNode(start, end, handler, "java/lang/Throwable"));
     }
 
     /**
@@ -279,7 +362,8 @@ public final class LegacyWorldgenBridge {
         mv.visitMaxs(0, 0);
         mv.visitEnd();
 
-        emitRegisterConfigured(cw);
+        boolean featureInterface = com.retromod.shim.common.LegacyFeatureBridge.hostHasFeatureInterface();
+        emitRegisterConfigured(cw, featureInterface);
         emitRegisterConfiguredNone(cw);
         emitRegisterPlaced(cw);
         emitRegisterPlacedArray(cw);
@@ -290,12 +374,14 @@ public final class LegacyWorldgenBridge {
         emitBuilderAdder(cw, "addFeature", "L" + DECORATION + ";", ALOAD);
         emitBuilderAdder(cw, "addFeatureAt", "I", ILOAD);
         emitBuilderAdder(cw, "addCarver", "L" + CARVING + ";", ALOAD);
-        emitEncoder(cw, "encodeConfigured", CONFIGURED, "configured feature");
+        emitEncoder(cw, "encodeConfigured", featureInterface ? FEATURE : CONFIGURED, "configured feature");
         emitEncoder(cw, "encodePlaced", PLACED, "placed feature");
         emitEncoder(cw, "encodeBiome", BIOME, "biome");
         emitEncode(cw);
-        emitPackFormat(cw);
-        emitRepositorySource(cw, packApiLinks(RetromodVersion.TARGET_MC_VERSION));
+        boolean modernPacks = !packApiLinks(RetromodVersion.TARGET_MC_VERSION)
+                && modernPackApi(RetromodVersion.TARGET_MC_VERSION);
+        emitPackFormat(cw, modernPacks);
+        emitRepositorySource(cw, packApiLinks(RetromodVersion.TARGET_MC_VERSION), modernPacks);
         if (overworldInjectionLinks(RetromodVersion.TARGET_MC_VERSION)) {
             emitWorldGenSettings(cw);
             emitDimensions(cw);
@@ -306,20 +392,38 @@ public final class LegacyWorldgenBridge {
         return cw.toByteArray();
     }
 
-    /** {@code registerConfigured(id, feature, config)}: build the configured feature, then record it. */
-    private static void emitRegisterConfigured(ClassWriter cw) {
+    /**
+     * {@code registerConfigured(id, feature, config)}: build the configured feature, then record it.
+     * On 26.3, where a configured feature is a {@code Feature} in {@code worldgen/feature}, the
+     * mod's feature type is the generated {@code LegacyFeature} and builds the generated one.
+     */
+    private static void emitRegisterConfigured(ClassWriter cw, boolean featureInterface) {
         MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "registerConfigured",
                 REGISTER_CONFIGURED_DESC, null, null);
         mv.visitCode();
-        mv.visitFieldInsn(GETSTATIC, REGISTRIES, "CONFIGURED_FEATURE", L_KEY);
-        mv.visitLdcInsn("configured_feature");
-        mv.visitVarInsn(ALOAD, 0);
-        mv.visitTypeInsn(NEW, CONFIGURED);
-        mv.visitInsn(DUP);
-        mv.visitVarInsn(ALOAD, 1);
-        mv.visitVarInsn(ALOAD, 2);
-        mv.visitMethodInsn(INVOKESPECIAL, CONFIGURED, "<init>",
-                "(L" + FEATURE + ";L" + CONFIG + ";)V", false);
+        if (featureInterface) {
+            String legacyFeature = com.retromod.shim.common.LegacyFeatureBridge.LEGACY_FEATURE;
+            String configured = com.retromod.shim.common.LegacyFeatureBridge.CONFIGURED;
+            mv.visitFieldInsn(GETSTATIC, REGISTRIES, "FEATURE", L_KEY);
+            mv.visitLdcInsn("feature");
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitTypeInsn(NEW, configured);
+            mv.visitInsn(DUP);
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitTypeInsn(CHECKCAST, legacyFeature);
+            mv.visitVarInsn(ALOAD, 2);
+            mv.visitMethodInsn(INVOKESPECIAL, configured, "<init>", "(L" + legacyFeature + ";" + L_OBJECT + ")V", false);
+        } else {
+            mv.visitFieldInsn(GETSTATIC, REGISTRIES, "CONFIGURED_FEATURE", L_KEY);
+            mv.visitLdcInsn("configured_feature");
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitTypeInsn(NEW, CONFIGURED);
+            mv.visitInsn(DUP);
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitVarInsn(ALOAD, 2);
+            mv.visitMethodInsn(INVOKESPECIAL, CONFIGURED, "<init>",
+                    "(L" + FEATURE + ";L" + CONFIG + ";)V", false);
+        }
         mv.visitMethodInsn(INVOKESTATIC, GENERATED, "reference",
                 "(" + L_KEY + L_STRING + L_STRING + L_OBJECT + ")" + L_HOLDER, false);
         mv.visitInsn(ARETURN);
@@ -517,7 +621,10 @@ public final class LegacyWorldgenBridge {
                 "(L" + DYNAMIC_OPS + ";" + L_OBJECT + ")L" + DATA_RESULT + ";", true);
         mv.visitVarInsn(ASTORE, 3);
         mv.visitVarInsn(ALOAD, 3);
-        mv.visitMethodInsn(INVOKEVIRTUAL, DATA_RESULT, "result", "()" + L_OPTIONAL, false);
+        // Newer DataFixerUpper releases made DataResult an interface; the host's own copy decides.
+        boolean dataResultInterface = dataResultIsInterface();
+        mv.visitMethodInsn(dataResultInterface ? INVOKEINTERFACE : INVOKEVIRTUAL, DATA_RESULT, "result",
+                "()" + L_OPTIONAL, dataResultInterface);
         mv.visitVarInsn(ASTORE, 4);
         Label failed = new Label();
         mv.visitVarInsn(ALOAD, 4);
@@ -538,22 +645,48 @@ public final class LegacyWorldgenBridge {
         mv.visitEnd();
     }
 
-    private static void emitPackFormat(ClassWriter cw) {
+    static boolean hostHasRegistryInfo() {
+        if (com.retromod.core.ClassResourceInspector.exists(REGISTRY_INFO)) return true;
+        return !com.retromod.core.ClassResourceInspector.exists(HOLDER_GETTER)
+                && !RetromodVersion.isUnobfuscatedTarget(RetromodVersion.TARGET_MC_VERSION);
+    }
+
+    static boolean dataResultIsInterface() {
+        org.objectweb.asm.tree.ClassNode node = com.retromod.core.ClassResourceInspector.read(DATA_RESULT);
+        if (node == null) return RetromodVersion.isUnobfuscatedTarget(RetromodVersion.TARGET_MC_VERSION);
+        return (node.access & ACC_INTERFACE) != 0;
+    }
+
+    private static void emitPackFormat(ClassWriter cw, boolean modernPacks) {
         MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, "packFormat", "()I", null, null);
         mv.visitCode();
-        mv.visitMethodInsn(INVOKESTATIC, SHARED_CONSTANTS, "getCurrentVersion", "()L" + WORLD_VERSION + ";", false);
-        mv.visitFieldInsn(GETSTATIC, PACK_TYPE, "SERVER_DATA", "L" + PACK_TYPE + ";");
-        mv.visitMethodInsn(INVOKEINTERFACE, WORLD_VERSION, "getPackVersion", "(L" + PACK_TYPE + ";)I", true);
+        if (modernPacks) {
+            mv.visitMethodInsn(INVOKESTATIC, MODERN_PACK_SOURCE, "packFormat", "()I", false);
+        } else {
+            mv.visitMethodInsn(INVOKESTATIC, SHARED_CONSTANTS, "getCurrentVersion", "()L" + WORLD_VERSION + ";", false);
+            mv.visitFieldInsn(GETSTATIC, PACK_TYPE, "SERVER_DATA", "L" + PACK_TYPE + ";");
+            mv.visitMethodInsn(INVOKEINTERFACE, WORLD_VERSION, "getPackVersion", "(L" + PACK_TYPE + ";)I", true);
+        }
         mv.visitInsn(IRETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
 
     /** Without the pack API it answers null, and the store logs that worldgen is not restored. */
-    private static void emitRepositorySource(ClassWriter cw, boolean packApi) {
+    private static void emitRepositorySource(ClassWriter cw, boolean packApi, boolean modernPacks) {
         MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, "repositorySource",
                 "(" + L_STRING + "Ljava/nio/file/Path;)" + L_OBJECT, null, null);
         mv.visitCode();
+        if (modernPacks) {
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitVarInsn(ALOAD, 2);
+            mv.visitMethodInsn(INVOKESTATIC, MODERN_PACK_SOURCE, "create",
+                    "(" + L_STRING + "Ljava/nio/file/Path;)" + L_OBJECT, false);
+            mv.visitInsn(ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+            return;
+        }
         if (!packApi) {
             mv.visitInsn(ACONST_NULL);
             mv.visitInsn(ARETURN);
@@ -652,7 +785,11 @@ public final class LegacyWorldgenBridge {
         mv = cw.visitMethod(ACC_PUBLIC, "lookup", "(" + L_KEY + ")" + L_OPTIONAL, null, null);
         mv.visitCode();
         Label owned = new Label();
-        for (String registry : new String[]{"CONFIGURED_FEATURE", "PLACED_FEATURE", "CONFIGURED_CARVER"}) {
+        // 26.3 merged configured features into FEATURE and configured carvers into CARVER.
+        String[] registries = com.retromod.shim.common.LegacyFeatureBridge.hostHasFeatureInterface()
+                ? new String[]{"FEATURE", "PLACED_FEATURE", "CARVER"}
+                : new String[]{"CONFIGURED_FEATURE", "PLACED_FEATURE", "CONFIGURED_CARVER"};
+        for (String registry : registries) {
             mv.visitFieldInsn(GETSTATIC, REGISTRIES, registry, L_KEY);
             mv.visitVarInsn(ALOAD, 1);
             mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Object", "equals", "(" + L_OBJECT + ")Z", false);
@@ -662,13 +799,18 @@ public final class LegacyWorldgenBridge {
         mv.visitMethodInsn(INVOKESTATIC, "java/util/Optional", "empty", "()" + L_OPTIONAL, false);
         mv.visitInsn(ARETURN);
         mv.visitLabel(owned);
-        mv.visitTypeInsn(NEW, REGISTRY_INFO);
-        mv.visitInsn(DUP);
-        mv.visitVarInsn(ALOAD, 0);
-        mv.visitVarInsn(ALOAD, 0);
-        mv.visitMethodInsn(INVOKESTATIC, LIFECYCLE, "stable", "()L" + LIFECYCLE + ";", false);
-        mv.visitMethodInsn(INVOKESPECIAL, REGISTRY_INFO, "<init>",
-                "(L" + HOLDER_OWNER + ";L" + HOLDER_GETTER + ";L" + LIFECYCLE + ";)V", false);
+        if (hostHasRegistryInfo()) {
+            mv.visitTypeInsn(NEW, REGISTRY_INFO);
+            mv.visitInsn(DUP);
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitMethodInsn(INVOKESTATIC, LIFECYCLE, "stable", "()L" + LIFECYCLE + ";", false);
+            mv.visitMethodInsn(INVOKESPECIAL, REGISTRY_INFO, "<init>",
+                    "(L" + HOLDER_OWNER + ";L" + HOLDER_GETTER + ";L" + LIFECYCLE + ";)V", false);
+        } else {
+            // Newer hosts look up the getter itself, which this owner is.
+            mv.visitVarInsn(ALOAD, 0);
+        }
         mv.visitMethodInsn(INVOKESTATIC, "java/util/Optional", "of", "(" + L_OBJECT + ")" + L_OPTIONAL, false);
         mv.visitInsn(ARETURN);
         mv.visitMaxs(0, 0);

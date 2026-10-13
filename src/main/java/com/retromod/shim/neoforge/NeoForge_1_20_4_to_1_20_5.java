@@ -17,6 +17,17 @@ public class NeoForge_1_20_4_to_1_20_5 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // 1.20.5 split Properties.copy into ofFullCopy and ofLegacyCopy; the legacy one copies what copy did.
+        transformer.registerMethodRedirect("net/minecraft/world/level/block/state/BlockBehaviour$Properties", "copy",
+                "(Lnet/minecraft/world/level/block/state/BlockBehaviour;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;",
+                "net/minecraft/world/level/block/state/BlockBehaviour$Properties", "ofLegacyCopy",
+                "(Lnet/minecraft/world/level/block/state/BlockBehaviour;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;");
+        com.retromod.shim.forge.LegacyEntityTemplateAdapter.register(transformer);
+        com.retromod.shim.forge.LegacyTierBridge.register(transformer);
+        // DFU 8 (1.20.5) removed DataResult.get(); its Either is rebuilt from the result.
+        transformer.registerMethodRedirect("com/mojang/serialization/DataResult", "get",
+                "()Lcom/mojang/datafixers/util/Either;",
+                "com/retromod/polyfill/minecraft/DataResultPolyfill", "get", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
         // 1.20.5 made ArmorMaterial a registered record, replaced particle deserializers with
         // codecs, deleted PotionUtils, and folded SimpleFoiledItem into the glint component.
         // Each bridge probes the host.

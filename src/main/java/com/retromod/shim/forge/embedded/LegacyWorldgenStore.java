@@ -61,6 +61,8 @@ public final class LegacyWorldgenStore {
     }
 
     static final String CONFIGURED = "configured_feature";
+    /** Where 26.3 keeps configured features, which it merged into features. */
+    static final String FEATURE = "feature";
     static final String PLACED = "placed_feature";
     static final String BIOME = "biome";
 
@@ -179,10 +181,15 @@ public final class LegacyWorldgenStore {
         Files.createDirectories(root);
         String description = "Worldgen registered in code by " + String.join(", ", NAMESPACES)
                 + ", restored by Retromod";
-        Files.writeString(root.resolve("pack.mcmeta"), "{\"pack\":{\"pack_format\":"
-                + with.packFormat() + ",\"description\":\"" + description + "\"}}",
-                StandardCharsets.UTF_8);
+        // 1.21.9 replaced pack_format with a format range; each version reads its own key.
+        int format = with.packFormat();
+        Files.writeString(root.resolve("pack.mcmeta"), "{\"pack\":{\"pack_format\":" + format
+                + ",\"min_format\":" + format + ",\"max_format\":" + format
+                + ",\"description\":\"" + description + "\"}}", StandardCharsets.UTF_8);
 
+        // Built first: a biome built here registers its own placed features, which the loop
+        // below has to see.
+        Map<String, Object> biomes = legacyBiomes();
         int written = 0;
         for (Map.Entry<String, Map<String, Object>> registry : ENTRIES.entrySet()) {
             for (Map.Entry<String, Object> entry : registry.getValue().entrySet()) {
@@ -192,17 +199,17 @@ public final class LegacyWorldgenStore {
                 }
             }
         }
-        for (Map.Entry<String, Object> biome : legacyBiomes().entrySet()) {
+        for (Map.Entry<String, Object> biome : biomes.entrySet()) {
             String json = encode(with, BIOME, biome.getValue());
             if (json != null && writeEntry(root, BIOME, biome.getKey(), json)) written++;
         }
-        return written;
+        return written + writePaintings(root);
     }
 
     private static String encode(Codecs with, String registry, Object value) {
         try {
             return switch (registry) {
-                case CONFIGURED -> with.encodeConfigured(value);
+                case CONFIGURED, FEATURE -> with.encodeConfigured(value);
                 case PLACED -> with.encodePlaced(value);
                 case BIOME -> with.encodeBiome(value);
                 default -> null;
@@ -247,7 +254,7 @@ public final class LegacyWorldgenStore {
         }
     }
 
-    // ---- Forge glue (reflection on Forge's own, unobfuscated API) -------------------------
+    // ---- Loader glue (reflection on Forge's and NeoForge's own, unobfuscated API) ---------
 
     /**
      * Biomes the mod put in Forge's biome registry. 1.19.3 stopped reading that registry for
@@ -256,6 +263,28 @@ public final class LegacyWorldgenStore {
      */
     private static Map<String, Object> legacyBiomes() {
         Map<String, Object> biomes = new LinkedHashMap<>();
+        Map<?, ?> deferred = deferredBiomes();
+        if (deferred != null) {
+            // NeoForge: the biomes were registered through Retromod's register bridge, which kept
+            // their suppliers because NeoForge never builds entries of a data-driven registry.
+            for (Map.Entry<?, ?> entry : List.copyOf(deferred.entrySet())) {
+                String id = entry.getKey().toString();
+                int colon = id.indexOf(':');
+                if (colon <= 0 || !NAMESPACES.contains(id.substring(0, colon))) continue;
+                try {
+                    Object biome = ((java.util.function.Supplier<?>) entry.getValue()).get();
+                    if (biome != null) biomes.put(id, biome);
+                } catch (RuntimeException | LinkageError e) {
+                    // The biome is already named in its registry, and an unbound name stops the
+                    // world from loading, so it gets a plain stand-in instead.
+                    Object standIn = plainBiome();
+                    if (standIn != null) biomes.put(id, standIn);
+                    log("could not build the code-registered biome " + id + ", so it loads as a plain biome"
+                            + " with no features or spawns: " + e);
+                }
+            }
+            return biomes;
+        }
         try {
             Object registry = Class.forName("net.minecraftforge.registries.ForgeRegistries")
                     .getField("BIOMES").get(null);
@@ -277,15 +306,103 @@ public final class LegacyWorldgenStore {
         return biomes;
     }
 
+    /**
+     * Painting variants the mod registered in code, which 1.21 made data. Each is written under
+     * its registry id, which names its texture as before, with its size, and joins the
+     * {@code placeable} tag, because every registered variant could be placed before 1.21.
+     */
+    private static int writePaintings(Path root) throws IOException {
+        Map<?, ?> paintings = deferred("LEGACY_PAINTINGS");
+        if (paintings == null) return 0;
+        List<String> placeable = new ArrayList<>();
+        for (Map.Entry<?, ?> entry : List.copyOf(paintings.entrySet())) {
+            String id = entry.getKey().toString();
+            int colon = id.indexOf(':');
+            if (colon <= 0 || !NAMESPACES.contains(id.substring(0, colon)) || !isSafeIdPart(id.substring(colon + 1))) continue;
+            try {
+                Object variant = ((java.util.function.Supplier<?>) entry.getValue()).get();
+                int width = (Integer) variant.getClass().getMethod("width").invoke(variant);
+                int height = (Integer) variant.getClass().getMethod("height").invoke(variant);
+                Path file = root.resolve("data").resolve(id.substring(0, colon)).resolve("painting_variant")
+                        .resolve(id.substring(colon + 1) + ".json");
+                Files.createDirectories(file.getParent());
+                Files.writeString(file, "{\"asset_id\":\"" + id + "\",\"width\":" + width + ",\"height\":" + height + "}",
+                        StandardCharsets.UTF_8);
+                placeable.add("{\"id\":\"" + id + "\",\"required\":false}");
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+                log("could not write the painting " + id + ": " + e);
+            }
+        }
+        if (placeable.isEmpty()) return 0;
+        Path tag = root.resolve("data").resolve("minecraft").resolve("tags").resolve("painting_variant").resolve("placeable.json");
+        Files.createDirectories(tag.getParent());
+        Files.writeString(tag, "{\"replace\":false,\"values\":[" + String.join(",", placeable) + "]}", StandardCharsets.UTF_8);
+        return placeable.size();
+    }
+
+    /** A biome with vanilla's void colors and no features or spawns, built with the host's builders. */
+    private static Object plainBiome() {
+        try {
+            ClassLoader loader = LegacyWorldgenStore.class.getClassLoader();
+            String biome = "net.minecraft.world.level.biome.";
+            Object effects = Class.forName(biome + "BiomeSpecialEffects$Builder", true, loader).getConstructor().newInstance();
+            // 1.21.11 moved fog and sky colors out of the effects; older builders require them.
+            for (Object[] color : new Object[][] {{"waterColor", 0x3F76E4}, {"fogColor", 0xC0D8FF},
+                    {"waterFogColor", 0x050533}, {"skyColor", 0x7BA4FF}}) {
+                Method setter = findSingleArgMethod(effects.getClass(), (String) color[0], int.class);
+                if (setter != null) setter.invoke(effects, color[1]);
+            }
+            Object builder = Class.forName(biome + "Biome$BiomeBuilder", true, loader).getConstructor().newInstance();
+            builder.getClass().getMethod("hasPrecipitation", boolean.class).invoke(builder, false);
+            builder.getClass().getMethod("temperature", float.class).invoke(builder, 0.5F);
+            builder.getClass().getMethod("downfall", float.class).invoke(builder, 0.5F);
+            Object built = effects.getClass().getMethod("build").invoke(effects);
+            findSingleArgMethod(builder.getClass(), "specialEffects", built.getClass()).invoke(builder, built);
+            Object spawns = Class.forName(biome + "MobSpawnSettings", true, loader).getField("EMPTY").get(null);
+            findSingleArgMethod(builder.getClass(), "mobSpawnSettings", spawns.getClass()).invoke(builder, spawns);
+            Object generation = Class.forName(biome + "BiomeGenerationSettings", true, loader).getField("EMPTY").get(null);
+            findSingleArgMethod(builder.getClass(), "generationSettings", generation.getClass()).invoke(builder, generation);
+            return builder.getClass().getMethod("build").invoke(builder);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            log("could not build a plain stand-in biome: " + e);
+            return null;
+        }
+    }
+
+    /**
+     * The biome suppliers recorded by this mod's embedded register bridge, or null when there is
+     * none (a Forge host, or a host without either bridge). The bridge is a sibling in this package.
+     */
+    private static Map<?, ?> deferredBiomes() {
+        return deferred("LEGACY_BIOMES");
+    }
+
+    /** The recorded suppliers in one of the register bridge's maps, or null. */
+    private static Map<?, ?> deferred(String map) {
+        // RegistryIdBridge on 26.1 and newer, LegacyBiomeRecorder on NeoForge 1.20.5 to 1.21.11.
+        for (String recorder : new String[] {"RegistryIdBridge", "LegacyBiomeRecorder"}) {
+            try {
+                Class<?> bridge = Class.forName(LegacyWorldgenStore.class.getPackageName() + "." + recorder,
+                        true, LegacyWorldgenStore.class.getClassLoader());
+                return (Map<?, ?>) bridge.getField(map).get(null);
+            } catch (ReflectiveOperationException | LinkageError | ClassCastException e) {
+                // Not in this mod; try the other one.
+            }
+        }
+        return null;
+    }
+
     private static void listenForPacks(String namespace) {
         if (listening) return;
         try {
             Object bus = modEventBus(namespace);
             if (bus == null) return;
-            Class<?> eventType = Class.forName("net.minecraftforge.event.AddPackFindersEvent");
-            Class<?> priorityType = Class.forName("net.minecraftforge.eventbus.api.EventPriority");
+            Class<?> eventType = firstClass("net.minecraftforge.event.AddPackFindersEvent",
+                    "net.neoforged.neoforge.event.AddPackFindersEvent");
+            Class<?> priorityType = firstClass("net.minecraftforge.eventbus.api.EventPriority",
+                    "net.neoforged.bus.api.EventPriority");
             Object normal = priorityType.getField("NORMAL").get(null);
-            Method addListener = Class.forName("net.minecraftforge.eventbus.api.IEventBus")
+            Method addListener = firstClass("net.minecraftforge.eventbus.api.IEventBus", "net.neoforged.bus.api.IEventBus")
                     .getMethod("addListener", priorityType, boolean.class, Class.class, Consumer.class);
             Consumer<Object> listener = LegacyWorldgenStore::onAddPackFinders;
             addListener.invoke(bus, normal, false, eventType, listener);
@@ -305,7 +422,8 @@ public final class LegacyWorldgenStore {
             // No active mod context on this thread: look the mod up by its namespace instead.
         }
         if (namespace == null) return null;
-        Object modList = Class.forName("net.minecraftforge.fml.ModList").getMethod("get").invoke(null);
+        Object modList = firstClass("net.minecraftforge.fml.ModList", "net.neoforged.fml.ModList")
+                .getMethod("get").invoke(null);
         Object found = modList.getClass().getMethod("getModContainerById", String.class)
                 .invoke(modList, namespace);
         Object container = found instanceof java.util.Optional<?> optional ? optional.orElse(null) : null;
@@ -316,7 +434,7 @@ public final class LegacyWorldgenStore {
 
     private static String activeNamespace() {
         try {
-            Object context = Class.forName("net.minecraftforge.fml.ModLoadingContext")
+            Object context = firstClass("net.minecraftforge.fml.ModLoadingContext", "net.neoforged.fml.ModLoadingContext")
                     .getMethod("get").invoke(null);
             Object namespace = context.getClass().getMethod("getActiveNamespace").invoke(context);
             return namespace == null ? null : namespace.toString();
@@ -359,7 +477,7 @@ public final class LegacyWorldgenStore {
 
     private static Path gameDirectory() {
         try {
-            Class<?> paths = Class.forName("net.minecraftforge.fml.loading.FMLPaths");
+            Class<?> paths = firstClass("net.minecraftforge.fml.loading.FMLPaths", "net.neoforged.fml.loading.FMLPaths");
             Object gameDir = paths.getField("GAMEDIR").get(null);
             Object path = gameDir.getClass().getMethod("get").invoke(gameDir);
             if (path instanceof Path resolved) return resolved;
@@ -367,6 +485,15 @@ public final class LegacyWorldgenStore {
             // Fall back to the working directory, which is the game directory on every launcher.
         }
         return Path.of("").toAbsolutePath();
+    }
+
+    /** Forge's class, or NeoForge's when the host is NeoForge. */
+    private static Class<?> firstClass(String forge, String neoForge) throws ClassNotFoundException {
+        try {
+            return Class.forName(forge);
+        } catch (ClassNotFoundException e) {
+            return Class.forName(neoForge);
+        }
     }
 
     private static Method findSingleArgMethod(Class<?> owner, String name, Class<?> argument) {

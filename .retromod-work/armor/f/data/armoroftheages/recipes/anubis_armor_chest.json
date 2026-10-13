@@ -1,0 +1,23 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"x x",
+		"iXi",
+		"iii"
+	],
+	"key": {
+		"X": {
+			"item": "minecraft:netherite_chestplate"
+		},
+		"x": {
+			"item": "minecraft:lapis_block"
+		},
+		"i": {
+			"item": "minecraft:gold_block"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:anubis_armor_chest"
+	}
+}

@@ -20,6 +20,15 @@ public class Forge_1_18_2_to_1_19 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // PoiType became a record; its block states register themselves now.
+        String poiLookups = "com/retromod/shim/forge/embedded/LegacyPoiLookups";
+        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, poiLookups,
+                com.retromod.shim.forge.embedded.LegacyPoiLookups.class);
+        String findMethod = "(Ljava/lang/Class;Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;";
+        for (String helper : new String[] {"net/minecraftforge/fml/util/ObfuscationReflectionHelper",
+                "net/neoforged/fml/util/ObfuscationReflectionHelper"}) {
+            transformer.registerMethodRedirect(helper, "findMethod", findMethod, poiLookups, "findMethod", findMethod);
+        }
         transformer.registerConstructorRedirect(
             "net/minecraft/network/chat/TextComponent",
             "(Ljava/lang/String;)V",

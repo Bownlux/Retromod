@@ -445,6 +445,18 @@ public class AotCompiler {
             };
             try (var hierarchyScope = transformer
                     .pushJarClassBytesProvider(hierarchyProvider)) {
+                // Decided for the whole jar before any class is transformed, as the runtime paths do.
+                List<byte[]> classBytesForEquipment = new ArrayList<>();
+                for (Enumeration<JarEntry> scan = jar.entries(); scan.hasMoreElements(); ) {
+                    String scanned = scan.nextElement().getName();
+                    if (scanned.endsWith(".class")) {
+                        byte[] bytes = hierarchyProvider.apply(scanned.substring(0, scanned.length() - 6));
+                        if (bytes != null) classBytesForEquipment.add(bytes);
+                    }
+                }
+                Map<String, String> equipmentRenames = com.retromod.shim.common.LegacyEquipmentBridge
+                        .legacyRenames(transformer, classBytesForEquipment);
+                classBytesForEquipment = null;
                 Enumeration<JarEntry> entries = jar.entries();
 
                 while (entries.hasMoreElements()) {
@@ -468,8 +480,9 @@ public class AotCompiler {
                             String className = entryName.substring(
                                     0, entryName.length() - ".class".length());
 
-                            byte[] preparedMixin = AotMixinRepair.applyPreRemap(
-                                    mixinTransformer, data, className);
+                            byte[] preparedMixin = AotMixinRepair.applyPreRemap(mixinTransformer,
+                                    com.retromod.shim.common.LegacyEquipmentBridge.rename(data, equipmentRenames),
+                                    className);
                             byte[] out = preparedMixin;
                             if (shouldTransformClass(className, modInfo)) {
                                 if (isObfuscated(data)) {
@@ -566,6 +579,28 @@ public class AotCompiler {
                         entry.getKey(), entry.getValue());
             }
             
+            if (com.retromod.resources.LegacyKeyCategoryNames.appliesTo(targetMcVersion)) {
+                java.util.Set<String> names = new java.util.LinkedHashSet<>(originalResources.keySet());
+                names.addAll(transformedClasses.keySet());
+                com.retromod.resources.LegacyKeyCategoryNames.entries(names,
+                        name -> transformedClasses.containsKey(name) ? transformedClasses.get(name) : originalResources.get(name))
+                        .forEach(originalResources::putIfAbsent);
+            }
+            if (com.retromod.shim.common.LegacyEquipmentBridge.isRegistered(transformer)) {
+                com.retromod.shim.common.LegacyEquipmentBridge.armorAssetEntries(
+                        new ArrayList<>(originalResources.keySet()), originalResources::get)
+                        .forEach(originalResources::putIfAbsent);
+            }
+            // 26.3 moved configured features and carvers; the mod's own new-path entry wins.
+            Map<String, byte[]> relocated = new java.util.LinkedHashMap<>();
+            for (Map.Entry<String, byte[]> resource : originalResources.entrySet()) {
+                String moved = com.retromod.resources.ModDataMigrator.migratedEntryName(
+                        resource.getKey(), targetMcVersion);
+                if (!moved.equals(resource.getKey()) && originalResources.containsKey(moved)) continue;
+                relocated.put(moved, resource.getValue());
+            }
+            originalResources.clear();
+            originalResources.putAll(relocated);
             java.util.Set<String> danglingAdvancements = com.retromod.resources.ModDataMigrator
                     .danglingRecipeAdvancements(originalResources.keySet(),
                             originalResources::get, targetMcVersion);
@@ -896,6 +931,8 @@ public class AotCompiler {
                     jarData, mixinTransformer, forgeRefmaps, official,
                     nestedBudget, syntheticKey);
             Set<String> entryNames = new HashSet<>();
+            Map<String, String> equipmentRenames = com.retromod.shim.common.LegacyEquipmentBridge
+                    .legacyRenames(transformer, classBytes.values());
             try (var hierarchyScope = transformer.pushJarClassBytesProvider(classBytes::get);
                  var jis = new java.util.zip.ZipInputStream(bais);
                  var jos = new JarOutputStream(boundedOutput)) {
@@ -910,7 +947,8 @@ public class AotCompiler {
                     if (e.isDirectory()) {
                         nestedBudget.reserve(0, qualifiedName);
                     }
-                    jos.putNextEntry(new JarEntry(name));
+                    jos.putNextEntry(new JarEntry(
+                            com.retromod.resources.ModDataMigrator.migratedEntryName(name, targetMcVersion)));
                     if (!e.isDirectory()) {
                         long allowance = nestedBudget.beginRead(
                                 ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, qualifiedName);
@@ -919,6 +957,7 @@ public class AotCompiler {
                         String lower = name.toLowerCase(Locale.ROOT);
                         if (name.endsWith(".class")) {
                             String cn = name.substring(0, name.length() - ".class".length());
+                            d = com.retromod.shim.common.LegacyEquipmentBridge.rename(d, equipmentRenames);
                             byte[] preparedMixin = AotMixinRepair.applyPreRemap(
                                     mixinTransformer, d, cn);
                             if (preparedMixin != d) {

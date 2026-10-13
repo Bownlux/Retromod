@@ -90,7 +90,8 @@ public class LegacyVersionSupport {
                     return getFabricEra(mcVer);
                 }
                 // NeoForge
-                if (jar.getEntry("META-INF/neoforge.mods.toml") != null) return ModLoaderEra.NEOFORGE;
+                if (com.retromod.core.ForgeTomlChoice.NEOFORGE_TOML.equals(
+                        com.retromod.core.ForgeTomlChoice.metadataEntry(jar))) return ModLoaderEra.NEOFORGE;
                 // Modern Forge
                 if (jar.getEntry("META-INF/mods.toml") != null) {
                     String mcVer = extractVersion(jar, "META-INF/mods.toml", "versionRange\\s*=\\s*\"\\[([0-9.]+)");

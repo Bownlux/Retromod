@@ -103,6 +103,8 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
             // the shim self-contained: a redirect to a synthetic that isn't registered would be
             // dropped by the transformer's phantom-target sweep (#119) and silently no-op.
             transformer.registerSyntheticClass(B, RegistryIdBridgeSynthetic.generate());
+            // The bridge builds and holds enchantments, which 26.x reads from data.
+            com.retromod.shim.common.LegacyEnchantmentBridge.registerSynthetics(transformer);
             // dr.register(name, supplier) -> RegistryIdBridge.register(dr, name, supplier) [devirtualize: receiver becomes arg 0]
             transformer.registerMethodRedirect(
                 "net/neoforged/neoforge/registries/DeferredRegister", "register",
@@ -140,6 +142,18 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
             transformer.registerConstructorRedirect(
                 "net/minecraft/world/item/Item$Properties", "()V",
                 B, "itemProps", RegistryIdBridgeSynthetic.ITEM_PROPS_DESC);
+        } else if (com.retromod.util.McReflect.isNeoForge()
+                && RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20.5") >= 0) {
+            // NeoForge never builds a data-driven registry's entries, so a pre-1.19.3 mod's
+            // code-built biome is kept here for the legacy worldgen store, as RegistryIdBridge does on 26.x.
+            final String recorder = RegistryIdBridgeSynthetic.BIOME_RECORDER;
+            boolean dataEnchantments = RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21") >= 0;
+            if (dataEnchantments) com.retromod.shim.common.LegacyEnchantmentBridge.registerSynthetics(transformer);
+            transformer.registerSyntheticClass(recorder, RegistryIdBridgeSynthetic.generateBiomeRecorder(dataEnchantments));
+            transformer.registerMethodRedirect(
+                "net/neoforged/neoforge/registries/DeferredRegister", "register",
+                "(Ljava/lang/String;Ljava/util/function/Supplier;)Lnet/neoforged/neoforge/registries/DeferredHolder;",
+                recorder, "register", RegistryIdBridgeSynthetic.REGISTER_DESC, true);
         }
 
         // Do not class-redirect ForgeRegistries: a class redirect rewrites the GETSTATIC owner before
@@ -291,7 +305,7 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
     static void registerDatapackRegistryStandIns(RetromodTransformer transformer) {
         String helper = "com/retromod/shim/api/forge/embedded/LegacyDatapackRegistries";
         String[][] registries = {{"ENCHANTMENTS", "ENCHANTMENT", "enchantments"},
-                {"PAINTING_VARIANTS", "PAINTING_VARIANT", "paintingVariants"}};
+                {"PAINTING_VARIANTS", "PAINTING_VARIANT", "paintingVariants"}, {"BIOMES", "BIOME", "biomes"}};
         org.objectweb.asm.tree.ClassNode builtIn =
                 com.retromod.core.ClassResourceInspector.read("net/minecraft/core/registries/BuiltInRegistries");
         for (String[] registry : registries) {

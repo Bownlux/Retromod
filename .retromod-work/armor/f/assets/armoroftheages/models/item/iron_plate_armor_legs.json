@@ -1,0 +1,6 @@
+{
+    "parent": "item/generated",
+    "textures": {
+        "layer0": "armoroftheages:item/iron_plate_armor_legs"
+    }
+}

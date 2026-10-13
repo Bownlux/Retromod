@@ -54,6 +54,12 @@ public class Forge_1_21_11_to_26_1 implements VersionShim {
         // 26.1 removed the single-arg is() overloads from BlockState/ItemStack/FluidState;
         // same wiring note as above (Forge doesn't run the Common class-moves path).
         com.retromod.shim.common.IsOverloadBridgeSynthetic.register(transformer);
+        com.retromod.shim.common.LegacyBiomeEffectsBridge.register(transformer);
+        com.retromod.shim.common.LegacyBiomeSpawnsBridge.register(transformer);
+        com.retromod.shim.common.LegacyPaintingVariantBridge.register(transformer);
+        com.retromod.shim.common.LegacyArmorLayerBridge.register(transformer);
+        com.retromod.shim.common.LegacyPoseGuiBridge.register(transformer);
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerParticleRegistrationMove(transformer);
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
             .registerOfficialEntityTypeBuildBridge(transformer);
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves

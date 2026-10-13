@@ -378,6 +378,16 @@ public class ForgeEventApiShim implements MinecraftVersionedApiShim {
                     owner, "player", "getEntity", playerDesc, "getEntity", playerDesc);
         }
 
+        // LevelTickEvent.level, a public final field on Forge, is private behind getLevel() on NeoForge.
+        String levelDesc = "()Lnet/minecraft/world/level/Level;";
+        for (String owner : new String[]{
+                "net/minecraftforge/event/TickEvent$LevelTickEvent",
+                "net/neoforged/neoforge/event/tick/LevelTickEvent",
+                "net/neoforged/neoforge/event/tick/LevelTickEvent$Post"}) {
+            transformer.registerFieldAccessorRedirect(
+                    owner, "level", "getLevel", levelDesc, "getLevel", levelDesc);
+        }
+
         LOGGER.debug("Registered the Forge tick event split (listener -> Post, phase -> bridge)");
     }
 

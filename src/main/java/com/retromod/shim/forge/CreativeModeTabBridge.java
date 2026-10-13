@@ -21,8 +21,8 @@ import org.objectweb.asm.Opcodes;
  * <p>The inheritance edge moves onto a generated subclass that bridges the two styles. Its
  * {@code (String)} constructor builds a tab through {@code CreativeModeTab.builder()} and titles it
  * with the name the mod passed, then calls the {@code Builder} constructor. That constructor is a
- * Forge patch: vanilla only has a package-private one, which nothing outside the package could call.
- * This shim is Forge only for exactly that reason.
+ * Forge and NeoForge patch: vanilla only has a package-private one, which nothing outside the
+ * package could call. Fabric has neither, so this shim belongs to the Forge family.
  *
  * <p>The generated base also declares {@code makeIcon}, so the mod's own override still overrides
  * something, and {@code getIconItem} is pointed at it. Without that the override would be dead code
@@ -66,6 +66,51 @@ public final class CreativeModeTabBridge {
         // properties and remembers the tab, so the item constructed from them is listed there.
         transformer.registerMethodRedirect(ITEM_PROPERTIES, "tab", "(L" + TAB + ";)L" + ITEM_PROPERTIES + ";",
                 GENERATED, "tab", "(L" + ITEM_PROPERTIES + ";L" + TAB + ";)L" + ITEM_PROPERTIES + ";", true);
+        transformer.registerMethodRedirect(TAB, "getNextID", "()I", GENERATED, "getNextID", "()I");
+        // The background setters, called on a tab typed as the vanilla class rather than the mod's.
+        for (String name : new String[]{"setBackgroundImageName", "setBackgroundSuffix"}) {
+            transformer.registerMethodRedirect(TAB, name, "(Ljava/lang/String;)L" + TAB + ";",
+                    GENERATED, "keepBackground", "(L" + TAB + ";Ljava/lang/String;)L" + TAB + ";", true);
+        }
+    }
+
+    /**
+     * Older tabs were numbered: {@code super(CreativeTabs.getNextID(), label)}. Tabs are registered
+     * by id now, so the number is dropped and the tab is built from its label.
+     */
+    private static void emitIndexedConstructor(ClassWriter cw) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(ILjava/lang/String;)V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, GENERATED, "<init>", "(Ljava/lang/String;)V", false);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(2, 3);
+        mv.visitEnd();
+    }
+
+    /** {@code static int getNextID()}: a counter, since the number no longer places the tab. */
+    private static void emitNextId(ClassWriter cw) {
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "nextId", "I", null, null).visitEnd();
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_SYNCHRONIZED,
+                "getNextID", "()I", null, null);
+        mv.visitCode();
+        mv.visitFieldInsn(Opcodes.GETSTATIC, GENERATED, "nextId", "I");
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitInsn(Opcodes.IADD);
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, GENERATED, "nextId", "I");
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(3, 0);
+        mv.visitEnd();
+
+        MethodVisitor keep = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "keepBackground",
+                "(L" + TAB + ";Ljava/lang/String;)L" + TAB + ";", null, null);
+        keep.visitCode();
+        keep.visitVarInsn(Opcodes.ALOAD, 0);
+        keep.visitInsn(Opcodes.ARETURN);
+        keep.visitMaxs(1, 2);
+        keep.visitEnd();
     }
 
     /** {@code static Item.Properties tab(Item.Properties properties, CreativeModeTab tab)}: records the tab. */
@@ -145,9 +190,12 @@ public final class CreativeModeTabBridge {
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, GENERATED, null, TAB, null);
 
         emitStringConstructor(cw);
+        emitIndexedConstructor(cw);
+        emitNextId(cw);
         emitMakeIcon(cw);
         emitGetIconItem(cw);
         emitPropertiesTab(cw);
+        emitBackgroundSetters(cw);
 
         cw.visitEnd();
         return cw.toByteArray();
@@ -161,6 +209,24 @@ public final class CreativeModeTabBridge {
      * touches it until the arguments are on the stack. The title is {@code itemGroup.<label>},
      * the translation key the old constructor used, so the mod's language file still names it.
      */
+    /**
+     * 1.12's {@code setBackgroundImageName(name)}, which MCreator tabs chain on their new tab and
+     * which the SRG table spells {@code setBackgroundSuffix}. The background is chosen by the tab
+     * builder now, so the call keeps the tab and drops the name. The mod's {@code func_78025_a}
+     * call is renamed by the same table, so the SRG spelling is not emitted: on an SRG host it
+     * would be renamed to {@code setBackgroundSuffix} too and duplicate it.
+     */
+    private static void emitBackgroundSetters(ClassWriter cw) {
+        for (String name : new String[]{"setBackgroundImageName", "setBackgroundSuffix"}) {
+            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, name, "(Ljava/lang/String;)L" + TAB + ";", null, null);
+            mv.visitCode();
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+        }
+    }
+
     private static void emitStringConstructor(ClassWriter cw) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(Ljava/lang/String;)V",
                 null, null);

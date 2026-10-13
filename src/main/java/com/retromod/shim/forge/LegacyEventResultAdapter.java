@@ -43,15 +43,24 @@ public final class LegacyEventResultAdapter {
                     String[] exceptions) {
                 return new MethodVisitor(Opcodes.ASM9,
                         super.visitMethod(access, name, descriptor, signature, exceptions)) {
+                    private boolean rewroteHere;
+
                     @Override
                     public void visitMethodInsn(int opcode, String owner, String method, String desc,
                             boolean itf) {
                         if (opcode == Opcodes.INVOKEVIRTUAL && LegacyEventCancelAdapter.isNeoForgeEvent(owner)
                                 && rewrite(this, method, desc)) {
                             changed[0] = true;
+                            rewroteHere = true;
                             return;
                         }
                         super.visitMethodInsn(opcode, owner, method, desc, itf);
+                    }
+
+                    // The writer keeps the old maximum, and each rewrite pushes the method name.
+                    @Override
+                    public void visitMaxs(int maxStack, int maxLocals) {
+                        super.visitMaxs(rewroteHere ? maxStack + 1 : maxStack, maxLocals);
                     }
 
                     private boolean rewrite(MethodVisitor out, String method, String desc) {

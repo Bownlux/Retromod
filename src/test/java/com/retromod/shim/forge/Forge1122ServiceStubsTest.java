@@ -91,6 +91,65 @@ class Forge1122ServiceStubsTest {
         assertEquals(2, checked);
     }
 
+    /**
+     * Wireless Redstone's pre-init: {@code FMLCommonHandler.instance().getDataFixer().init(id, 1)}
+     * then {@code registerFix(FixTypes.BLOCK_ENTITY, fix)}, and More Armor's
+     * {@code SoundEvent.REGISTRY.getObject(name)}. Each call must land on a method the compiled
+     * stand-in declares, or it fails to link and the mod stops before registering content.
+     */
+    @Test
+    void dataFixerAndStaticRegistryCallsLinkAgainstStandIns() throws Exception {
+        String handler = "net/minecraftforge/fml/common/FMLCommonHandler";
+        String fixer = "net/minecraftforge/common/util/CompoundDataFixer";
+        String fixes = "net/minecraftforge/common/util/ModFixs";
+        String fixTypes = "net/minecraft/util/datafix/FixTypes";
+        String registry = "net/minecraft/util/registry/RegistryNamespaced";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "test/PreInit", null, "java/lang/Object", null);
+        var mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "init", "()Ljava/lang/Object;", null, null);
+        mv.visitCode();
+        mv.visitMethodInsn(INVOKESTATIC, handler, "instance", "()L" + handler + ";", false);
+        mv.visitMethodInsn(INVOKEVIRTUAL, handler, "getDataFixer", "()L" + fixer + ";", false);
+        mv.visitLdcInsn("wirelessredstone");
+        mv.visitInsn(ICONST_1);
+        mv.visitMethodInsn(INVOKEVIRTUAL, fixer, "init", "(Ljava/lang/String;I)L" + fixes + ";", false);
+        mv.visitFieldInsn(GETSTATIC, fixTypes, "BLOCK_ENTITY", "L" + fixTypes + ";");
+        mv.visitInsn(ACONST_NULL);
+        mv.visitMethodInsn(INVOKEVIRTUAL, fixes, "registerFix",
+                "(Lnet/minecraft/util/datafix/IFixType;Lnet/minecraft/util/datafix/IFixableData;)V", false);
+        mv.visitFieldInsn(GETSTATIC, "net/minecraft/sounds/SoundEvent", "REGISTRY", "L" + registry + ";");
+        mv.visitInsn(ACONST_NULL);
+        mv.visitMethodInsn(INVOKEVIRTUAL, registry, "getObject", "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        new com.retromod.polyfill.forge.ForgeRegistryPolyfill().registerPolyfills(t);
+        Forge1122LifecycleSynthetics.register(t);
+        Forge1122EventBridge.register(t);
+        Forge1122ServiceStubs.register(t);
+
+        byte[] remapped = t.transformClass(cw.toByteArray(), "test/PreInit.class");
+        ClassNode cn = new ClassNode();
+        new ClassReader(Forge1122EventBridge.rewriteLegacyCalls(remapped)).accept(cn, 0);
+        MethodNode init = cn.methods.stream().filter(m -> m.name.equals("init")).findFirst().orElseThrow();
+        List<String> standInCalls = new java.util.ArrayList<>();
+        for (AbstractInsnNode in : init.instructions.toArray()) {
+            if (in instanceof MethodInsnNode mi && !mi.owner.startsWith("com/retromod/polyfill/")) {
+                assertTrue(declares(standIn(mi.owner), mi.name, mi.desc),
+                        mi.owner + " must declare " + mi.name + mi.desc + " or the call fails to link");
+                standInCalls.add(mi.name);
+            }
+            if (in instanceof org.objectweb.asm.tree.FieldInsnNode fi) {
+                assertEquals(Forge1122ServiceStubs.FIX_TYPES, fi.owner, "only the fix type constant stays a field");
+            }
+        }
+        assertEquals(List.of("of", "init", "registerFix", "soundEvents", "getObject"), standInCalls);
+    }
+
     /** The usual 1.12 config read: build, load, get(category, key, default, comment).getInt(). */
     private static byte[] preInitWithConfig() {
         String config = "net/minecraftforge/common/config/Configuration";

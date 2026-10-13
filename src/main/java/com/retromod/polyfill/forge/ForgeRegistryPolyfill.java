@@ -69,9 +69,10 @@ public class ForgeRegistryPolyfill implements PolyfillProvider {
         if (!com.retromod.shim.forge.Forge1122LifecycleSynthetics.isActive()) {
             registerInertLifecycle(transformer);
         }
+        // The 1.12 bridge's stand-in, which registers the mod's commands.
         transformer.registerClassRedirect(
             "net/minecraftforge/fml/common/event/FMLServerStartingEvent",
-            "com/retromod/polyfill/forge/embedded/FMLEventShim$ServerStarting"
+            "com/retromod/shim/forge/embedded/LegacyServerStartingEvent"
         );
 
         // OreDictionary, now tag-based

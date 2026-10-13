@@ -110,22 +110,37 @@ public final class LegacyCreativeTabContents {
     private static synchronized void listenForRegistration() {
         if (listening) return;
         listening = true;
-        try {
-            Object bus = modEventBus();
-            if (bus == null) {
-                log("no mod event bus is active, so its creative tabs stay unregistered");
+        // NeoForge first: it kept the protected Builder constructor the generated tab calls, but
+        // renamed every bus and registry class, so the Forge names alone left its tabs unregistered.
+        String[][] loaders = {
+            {"net.neoforged.neoforge.registries.RegisterEvent", "net.neoforged.bus.api.EventPriority",
+                    "net.neoforged.bus.api.IEventBus"},
+            {"net.minecraftforge.registries.RegisterEvent", "net.minecraftforge.eventbus.api.EventPriority",
+                    "net.minecraftforge.eventbus.api.IEventBus"},
+        };
+        for (String[] loader : loaders) {
+            try {
+                Class<?> eventType = Class.forName(loader[0]);
+                Object bus = modEventBus();
+                if (bus == null) {
+                    log("no mod event bus is active, so its creative tabs stay unregistered");
+                    return;
+                }
+                Class<?> priorityType = Class.forName(loader[1]);
+                Object normal = priorityType.getField("NORMAL").get(null);
+                Method addListener = Class.forName(loader[2])
+                        .getMethod("addListener", priorityType, boolean.class, Class.class, Consumer.class);
+                Consumer<Object> listener = LegacyCreativeTabContents::onRegister;
+                addListener.invoke(bus, normal, false, eventType, listener);
+                return;
+            } catch (ClassNotFoundException notThisLoader) {
+                // Try the next loader's names.
+            } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
+                log("cannot register old creative tabs on this loader: " + e);
                 return;
             }
-            Class<?> eventType = Class.forName("net.minecraftforge.registries.RegisterEvent");
-            Class<?> priorityType = Class.forName("net.minecraftforge.eventbus.api.EventPriority");
-            Object normal = priorityType.getField("NORMAL").get(null);
-            Method addListener = Class.forName("net.minecraftforge.eventbus.api.IEventBus")
-                    .getMethod("addListener", priorityType, boolean.class, Class.class, Consumer.class);
-            Consumer<Object> listener = LegacyCreativeTabContents::onRegister;
-            addListener.invoke(bus, normal, false, eventType, listener);
-        } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
-            log("cannot register old creative tabs on this loader: " + e);
         }
+        log("cannot register old creative tabs on this loader: no RegisterEvent");
     }
 
     private static void onRegister(Object event) {
@@ -135,7 +150,13 @@ public final class LegacyCreativeTabContents {
             // with "<registry id>]".
             if (!String.valueOf(registryKey).endsWith(TAB_REGISTRY + "]")) return;
             Class<?> keyType = Class.forName("net.minecraft.resources.ResourceKey");
-            Class<?> locationType = Class.forName("net.minecraft.resources.ResourceLocation");
+            Class<?> locationType;
+            try {
+                locationType = Class.forName("net.minecraft.resources.ResourceLocation");
+            } catch (ClassNotFoundException renamed) {
+                // 26.1 renamed it.
+                locationType = Class.forName("net.minecraft.resources.Identifier");
+            }
             Method register = event.getClass().getMethod("register", keyType, locationType, Supplier.class);
             List<Map.Entry<String, Object>> tabs = new ArrayList<>(pendingTabs().entrySet());
             for (Map.Entry<String, Object> tab : tabs) {
@@ -166,15 +187,26 @@ public final class LegacyCreativeTabContents {
     }
 
     private static Object modEventBus() throws ReflectiveOperationException {
-        Object context = Class.forName("net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext")
-                .getMethod("get").invoke(null);
-        return context == null ? null : context.getClass().getMethod("getModEventBus").invoke(context);
+        try {
+            Object context = Class.forName("net.neoforged.fml.ModLoadingContext").getMethod("get").invoke(null);
+            Object container = context.getClass().getMethod("getActiveContainer").invoke(context);
+            return container == null ? null : container.getClass().getMethod("getEventBus").invoke(container);
+        } catch (ClassNotFoundException notNeoForge) {
+            Object context = Class.forName("net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext")
+                    .getMethod("get").invoke(null);
+            return context == null ? null : context.getClass().getMethod("getModEventBus").invoke(context);
+        }
     }
 
     private static String activeNamespace() {
         try {
-            Object context = Class.forName("net.minecraftforge.fml.ModLoadingContext")
-                    .getMethod("get").invoke(null);
+            Class<?> loading;
+            try {
+                loading = Class.forName("net.neoforged.fml.ModLoadingContext");
+            } catch (ClassNotFoundException notNeoForge) {
+                loading = Class.forName("net.minecraftforge.fml.ModLoadingContext");
+            }
+            Object context = loading.getMethod("get").invoke(null);
             Object namespace = context.getClass().getMethod("getActiveNamespace").invoke(context);
             return namespace == null ? null : namespace.toString();
         } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {

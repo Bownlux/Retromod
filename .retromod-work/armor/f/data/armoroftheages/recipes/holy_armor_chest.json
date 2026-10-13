@@ -1,0 +1,23 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"pattern": [
+		"o o",
+		"IiI",
+		"oIo"
+	],
+	"key": {
+		"i": {
+			"item": "minecraft:netherite_chestplate"
+		},
+		"I": {
+			"item": "minecraft:iron_block"
+		},
+		"o": {
+			"item": "minecraft:gold_block"
+		}
+	},
+	"result": {
+		"item": "armoroftheages:holy_armor_chest"
+	}
+}
