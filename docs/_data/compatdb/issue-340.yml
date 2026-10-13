@@ -1,0 +1,14 @@
+name: "Chef's Delight"
+badge: borked
+mod_version: "26.2"
+host_mc: "26.3"
+loader: "fabric"
+retromod: "1.3.4"
+links:
+  modrinth: "https://modrinth.com/mod/chefs-delight"
+summary: "Cannot load worlds with mod installed"
+details: "Asks to load in safe mode then says the world is corrupted. This issue is not present after removing the mod."
+reporter: "staarchild97"
+date: "2026-10-12"
+issue: 340
+
