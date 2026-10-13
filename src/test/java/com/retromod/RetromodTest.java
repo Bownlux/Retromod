@@ -590,6 +590,9 @@ public class RetromodTest {
         // the whole table. (The host-filtering path is exercised at runtime, not here.)
         String savedVer = RetromodVersion.TARGET_MC_VERSION;
         RetromodVersion.TARGET_MC_VERSION = "26.1";
+        // Only this table's redirects: another test's leftovers on the shared transformer could
+        // already claim one of these names.
+        transformer.clearRedirectsForTesting();
         try {
         int moves = com.retromod.mapping.IntermediaryToMojangMapper
                 .applyClassMovesOnly(transformer);
@@ -630,6 +633,7 @@ public class RetromodTest {
                 "structure pieces should move into the structure/structures package");
         } finally {
             RetromodVersion.TARGET_MC_VERSION = savedVer;
+            transformer.clearRedirectsForTesting();
         }
     }
 }

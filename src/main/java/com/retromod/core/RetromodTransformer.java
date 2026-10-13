@@ -3437,8 +3437,13 @@ public class RetromodTransformer implements ClassFileTransformer {
                                 || !"<init>".equals(methodName)) return;
                         if (preservesProviderReference(caller, owner)) return;
                         String resolvedOwner = remapper == null ? owner : remapper.mapType(owner);
-                        String resolvedDesc = remapper == null
-                                ? methodDesc : remapper.mapMethodDesc(methodDesc);
+                        String resolvedDesc;
+                        try {
+                            resolvedDesc = remapper == null ? methodDesc : remapper.mapMethodDesc(methodDesc);
+                        } catch (IllegalArgumentException malformed) {
+                            // A hostile jar's descriptor ASM cannot parse matches no redirect.
+                            return;
+                        }
                         found[0] = constructorRedirects.containsKey(
                                 new ConstructorKey(resolvedOwner, resolvedDesc))
                                 || (!resolvedDesc.equals(methodDesc) && constructorRedirects.containsKey(

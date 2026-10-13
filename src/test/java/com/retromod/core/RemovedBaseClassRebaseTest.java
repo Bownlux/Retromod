@@ -178,6 +178,16 @@ class RemovedBaseClassRebaseTest {
     }
 
     @Test
+    @DisplayName("a descriptor ASM cannot parse does not fail the constructor redirect check")
+    void malformedDescriptorWithConstructorRedirectsRegistered() {
+        // Any registered constructor redirect makes every super(...) call go through the check,
+        // which in CI order a shim registered before this class ran.
+        transformer.registerConstructorRedirect("net/minecraft/world/item/SwordItem", "(" + PROPS + ")V",
+                "test/removed/Factory", "sword", "(" + PROPS + ")Lnet/minecraft/world/item/SwordItem;", true);
+        assertDoesNotThrow(() -> transform(rawDiscItem("(QBogus;" + PROPS + ")V")));
+    }
+
+    @Test
     @DisplayName("a descriptor the JVM would reject never reaches the shared base")
     void refusesDescriptorsTheJvmWouldReject() {
         // The descriptor is the mod's own super(...) call and only has to satisfy ASM's parser. A
