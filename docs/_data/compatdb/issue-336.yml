@@ -1,0 +1,14 @@
+name: "Tiny Dragons"
+badge: borked
+mod_version: "1.21.11"
+host_mc: "26.3"
+loader: "fabric"
+retromod: "26.3"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/longwings/gallery"
+summary: "Game crashes, will not load"
+details: "Game crashes, will not load. Both regular and reforged are broken"
+reporter: "Inkfiish"
+date: "2026-10-09"
+issue: 336
+
