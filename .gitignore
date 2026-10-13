@@ -1,3 +1,6 @@
+# Local test material: unpacked third-party mods and Minecraft files. Never commit these.
+.retromod-work/
+
 # Build output
 target/
 build/

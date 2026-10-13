@@ -1,3 +1,0 @@
-# Retromod fuzzy-resolver report: one row per distinct unresolved reference; NEAR rows are shim-bridge candidates
-# kind	band	score	owner	name	descriptor	candidateOwner	candidateName	candidateDescriptor
-FIELD	NEAR	75	net/minecraft/sounds/SoundEvents	ARMOR_EQUIP_DIAMOND	Lnet/minecraft/sounds/SoundEvent;	net/minecraft/sounds/SoundEvents	ARMOR_UNEQUIP_WOLF	Lnet/minecraft/sounds/SoundEvent;

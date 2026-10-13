@@ -1,6 +1,0 @@
-{
-    "parent": "item/generated",
-    "textures": {
-        "layer0": "armoroftheages:item/raijin_armor_chest"
-    }
-}
