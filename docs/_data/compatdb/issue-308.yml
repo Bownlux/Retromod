@@ -1,0 +1,21 @@
+name: "Fossils and morehitboxes"
+bundle: true
+badge: borked
+host_mc: "1.21.1"
+loader: "forge"
+retromod: "1.3.2"
+mods:
+  - name: "Fossils and Archeology: Revival"
+    version: "9.3.4.0"
+    source_mc: "1.20.1"
+    link: "https://www.curseforge.com/minecraft/mc-mods/fossils"
+  - name: "More Hitboxes"
+    version: "1.9.2"
+    source_mc: "1.20.1"
+    link: "https://www.curseforge.com/minecraft/mc-mods/more-hitboxes"
+summary: "Crashes on load"
+details: "https://mclo.gs/rxMSdvA Fossil also requires Architectury and GeckoLib which I'm using the 1.21.1 versions of idk if that's a problem"
+reporter: "freopt"
+date: "2026-10-02"
+issue: 308
+
