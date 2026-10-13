@@ -1,0 +1,13 @@
+name: "Hold My Items"
+badge: diamond
+mod_version: "1.21.11"
+host_mc: "26.3"
+loader: "fabric"
+retromod: "5.1.1"
+links:
+  modrinth: "https://modrinth.com/mod/hold-my-items/versions"
+summary: "needs to be 26.3"
+reporter: "SvenCreator"
+date: "2026-10-04"
+issue: 312
+
