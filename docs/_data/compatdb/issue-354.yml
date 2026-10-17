@@ -1,0 +1,13 @@
+name: "Metallurgy 4: Reforged"
+badge: borked
+mod_version: "1.4.1 for 1.12.2"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.4.0"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/metallurgy-4-reforged"
+summary: "crashes to desktop before reaching title screen"
+reporter: "vxpepsicola"
+date: "2026-10-17"
+issue: 354
+
