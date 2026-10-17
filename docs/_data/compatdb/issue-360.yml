@@ -1,0 +1,14 @@
+name: "Lord of the Rings Mod: Legacy"
+badge: borked
+mod_version: "36.15 for 1.7.10"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.4.0"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/the-lord-of-the-rings-mod-legacy"
+summary: "mod loads and allows you to get into world but recipes don't appear"
+details: "JEI initially says there are 21 pages but quickly drops back down to 14. custom title screen doesn't work. in practice the mod's content is inaccessible."
+reporter: "vxpepsicola"
+date: "2026-10-17"
+issue: 360
+
