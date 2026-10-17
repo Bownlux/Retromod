@@ -1,0 +1,19 @@
+name: "Rockhounding Mod: Rocks"
+bundle: true
+badge: borked
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.4.0"
+mods:
+  - name: "Rockhounding Mod: Rocks"
+    version: "3.23 for 1.12.2"
+    source_mc: "https://www.curseforge.com/minecraft/mc-mods/rockhounding-mod-rocks"
+  - name: "Rockhounding Mod: Core"
+    version: "3.30 for 1.12.2"
+    source_mc: "https://www.curseforge.com/minecraft/mc-mods/rockhounding-mod-core"
+summary: "mod and its dependency (rockhounding core) successfully transform but no content appears in game"
+details: "able to create and join worlds but the content of the mod is totally absent"
+reporter: "vxpepsicola"
+date: "2026-10-17"
+issue: 362
+
