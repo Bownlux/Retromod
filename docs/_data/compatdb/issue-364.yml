@@ -1,0 +1,14 @@
+name: "Super Mario Mania"
+badge: borked
+mod_version: "1.19.4 / 1.20.1"
+host_mc: "1.20.1"
+loader: "forge"
+retromod: "1.20.1"
+links:
+  modrinth: "https://modrinth.com/mod/mario-mania"
+summary: "Java.lang.NoClassDefFoundError: net/minecraftforge/event/CreativeModeTabEvent$BuildContents"
+details: "I would like the Super Mario Mania mod for 1.19.4 to work on 1.20.1 Forge. If there’s an error after the retromod update, I’ll let you know. Super Mario Mania (mario_mania) has failed to load correctly  java.lang.NoClassDefFoundError: net/minecraftforge/event/CreativeModeTabEvent$BuildContents"
+reporter: "MartyRicci"
+date: "2026-10-17"
+issue: 364
+
