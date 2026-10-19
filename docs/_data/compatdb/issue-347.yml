@@ -1,0 +1,15 @@
+name: "S33R More Food"
+badge: iron
+mod_version: "1.0.0"
+source_mc: "1.19.2"
+host_mc: "26.1.2"
+loader: "neoforge"
+retromod: "1.4.0-snapshot.1"
+links:
+  modrinth: "https://modrinth.com/mod/s33r-more-food"
+summary: "Items and creative menu register, food items can be eaten, cakes and textures broken"
+details: "I can join a world, and the creative tabs register with their contents. The food items can be eaten (and give their effects in case of e.g. Golden Carrot Juice), but the cake blocks can't be eaten. Crafting recipes and the textures of every item are broken. No clue if it should belong to Copper or Iron right now, but I would rate it in the latter category, if only barely. At least it is an ... full log in the linked issue."
+reporter: "ttaute"
+date: "2026-10-13"
+issue: 347
+
