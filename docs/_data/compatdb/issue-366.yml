@@ -1,0 +1,14 @@
+name: "Project E"
+badge: borked
+mod_version: "1.21.1"
+host_mc: "26.2"
+loader: "neoforge"
+retromod: "1.4.0-snapshot.2"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/projecte"
+summary: "not working."
+details: "[com.retromod.cli.RetromodCli.main()] ERROR Retromod-Transformer - moze_intel/projecte/utils/NovaExplosion extends net/minecraft/world/level/Explosion, which is an interface and belongs in implements, not extends on this Minecraft version, so this mod cannot load. Minecraft removed it outright rather than moving it. Retromod has no replacement base for it yet. Report this line with the mod and ... full log in the linked issue."
+reporter: "maxsspeaker"
+date: "2026-10-19"
+issue: 366
+
