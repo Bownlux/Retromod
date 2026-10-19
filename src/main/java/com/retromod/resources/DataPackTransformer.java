@@ -126,6 +126,7 @@ public class DataPackTransformer {
             MigrationContext context = MigrationContext.builder(targetMcVersion)
                 .sourceMcVersion(PackFormat.minecraftVersionForData(oldFormat))
                 .targetLoader(MigrationContext.Loader.host())
+                .standalonePack(true)
                 .build();
             int migrated = ModResourceMigrations.migrateDirectory(tempDir, context);
             if (migrated > 0) {

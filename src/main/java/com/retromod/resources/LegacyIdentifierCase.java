@@ -21,15 +21,20 @@ import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.SortedMap;
 import java.util.SortedSet;
 import java.util.TreeMap;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /** Lowercases the identifiers a 1.12 mod wrote in mixed case. */
 final class LegacyIdentifierCase implements ModResourceConverter {
@@ -76,10 +81,10 @@ final class LegacyIdentifierCase implements ModResourceConverter {
             FileKind kind = FileKind.of(name);
             if (kind != null && rewriteReferences(tree, name, kind)) rewritten++;
         }
-        // Then files whose own names have uppercase letters get lowercase copies.
-        int copied = copyMixedCaseFiles(tree, context);
+        // Then files whose own names have uppercase letters get lowercase names.
+        int copied = lowercaseFileNames(tree, context);
         if (rewritten + copied > 0) {
-            LOGGER.info("Lowercased the 1.12 identifiers in {} file(s) and copied {} file(s) to "
+            LOGGER.info("Lowercased the 1.12 identifiers in {} file(s) and gave {} file(s) "
                     + "lowercase names for Minecraft {}", rewritten, copied, context.targetMcVersion());
         }
         return rewritten + copied;
@@ -387,62 +392,117 @@ final class LegacyIdentifierCase implements ModResourceConverter {
         }
     }
 
-    /** Copies the mod's mixed-case textures, models, blockstates and sounds to lowercase names. */
-    private static int copyMixedCaseFiles(ResourceTree tree, MigrationContext context) throws IOException {
+    /** Gives the mod's mixed-case textures, models, blockstates and sounds lowercase names. */
+    private static int lowercaseFileNames(ResourceTree tree, MigrationContext context) throws IOException {
         // 1.12 never loaded such a file through an identifier either, because its lowercased
-        // lookup missed it inside a jar. Mod code that reads it by its exact name still can, so
-        // the original stays beside the copy. Files are grouped by the name they would take.
+        // lookup missed it inside a jar. Files are grouped by the name they would take.
         SortedSet<String> names = tree.names();
         Map<String, List<String>> byTarget = new TreeMap<>();
         for (String name : names) {
             String target = lowercaseAssetName(name, context.ownNamespaces());
             if (target != null) byTarget.computeIfAbsent(target, key -> new ArrayList<>()).add(name);
         }
-        int copied = 0;
+        // Each lowercase name with the one file that takes it.
+        SortedMap<String, String> planned = new TreeMap<>();
         for (Map.Entry<String, List<String>> copy : byTarget.entrySet()) {
             String target = copy.getKey();
             if (target.endsWith(".png.mcmeta")) continue; // copied with its texture
-            if (!canCopy(tree, names, byTarget, target)) continue;
+            if (!canCopy(names, byTarget, target)) continue;
             // A texture travels with its .png.mcmeta, so an animation is never split from its frames.
             String source = copy.getValue().get(0);
             String metadataTarget = target + ".mcmeta";
             List<String> metadata = byTarget.get(metadataTarget);
             boolean animated = names.contains(source + ".mcmeta");
             if (target.endsWith(".png") && animated) {
-                if (metadata == null || !canCopy(tree, names, byTarget, metadataTarget)) {
+                if (metadata == null || !canCopy(names, byTarget, metadataTarget)) {
                     LOGGER.debug("Left {} under its name: its animation file cannot follow it", source);
                     continue;
                 }
-                tree.write(metadataTarget, tree.read(source + ".mcmeta"));
-                copied++;
+                planned.put(metadataTarget, source + ".mcmeta");
             } else if (target.endsWith(".png") && names.contains(metadataTarget)) {
                 LOGGER.debug("Left {} under its name: {} would animate it", source, metadataTarget);
                 continue;
             }
-            tree.write(target, tree.read(source));
-            copied++;
+            planned.put(target, source);
         }
-        return copied;
+        if (planned.isEmpty()) return 0;
+        // Mod code that reads a file by its exact name still can, so the original stays beside the
+        // copy. A pack has no such code, and a disk that ignores case cannot hold both names, so
+        // there the file is renamed: the models now name only the lowercase one.
+        if (!context.standalonePack() && !ignoresCase(tree, planned.firstKey())) {
+            for (Map.Entry<String, String> copy : planned.entrySet()) {
+                tree.write(copy.getKey(), tree.read(copy.getValue()));
+            }
+            return planned.size();
+        }
+        // A renamed file takes a lowercase folder only when its mixed-case folder empties, or the
+        // result would hold both folder names. Leaving one file can keep another's folder, so repeat.
+        boolean dropped;
+        do {
+            Set<String> moving = new HashSet<>(planned.values());
+            dropped = planned.values().removeIf(source -> !leavesFolderEmpty(names, moving, source));
+        } while (dropped);
+        rename(tree, planned);
+        return planned.size();
+    }
+
+    /** Whether the source's first mixed-case folder holds only files that move with it. */
+    private static boolean leavesFolderEmpty(SortedSet<String> names, Set<String> moving, String source) {
+        String folder = source.substring(0, source.lastIndexOf('/') + 1);
+        Matcher uppercase = UPPERCASE.matcher(folder);
+        if (!uppercase.find()) return true;
+        String prefix = folder.substring(0, folder.indexOf('/', uppercase.start()) + 1);
+        boolean empties = names.tailSet(prefix).stream()
+                .takeWhile(name -> name.startsWith(prefix)).allMatch(moving::contains);
+        if (!empties) LOGGER.debug("Left {} under its name: other files keep {}", source, prefix);
+        return empties;
     }
 
     /** Whether exactly one file takes the lowercase name, and the name is still free. */
-    private static boolean canCopy(ResourceTree tree, SortedSet<String> names,
-                                   Map<String, List<String>> byTarget, String target) {
+    private static boolean canCopy(SortedSet<String> names, Map<String, List<String>> byTarget,
+                                   String target) {
         List<String> sources = byTarget.get(target);
         // Two files that lowercase to one name are both left alone.
         if (sources.size() > 1) {
             LOGGER.debug("Left {} under their names: they all lowercase to {}", sources, target);
             return false;
         }
-        if (names.contains(target)) return false; // the mod's own lowercase file wins
-        if (sharesFileOnDisk(tree, target)) {
-            // A case-insensitive file system already resolves the lowercase name to the original,
-            // and writing it would only rewrite that file under its mixed-case name.
-            LOGGER.debug("Left {} under its name: this file system does not tell the names apart",
-                    sources.get(0));
-            return false;
+        return !names.contains(target); // the mod's own lowercase file wins
+    }
+
+    /** Moves each file to its lowercase name, removing every original before any is written. */
+    private static void rename(ResourceTree tree, Map<String, String> planned) throws IOException {
+        if (planned.isEmpty()) return;
+        Map<String, byte[]> contents = new LinkedHashMap<>();
+        for (Map.Entry<String, String> move : planned.entrySet()) {
+            contents.put(move.getKey(), tree.read(move.getValue()));
         }
-        return true;
+        for (String source : planned.values()) tree.delete(source);
+        // An emptied mixed-case folder goes too. A disk that ignores case would otherwise put the
+        // lowercase files back into it, and a pack cannot hold both folder names.
+        if (tree instanceof DirectoryResourceTree directory) {
+            for (String source : planned.values()) removeEmptyFolders(directory, source);
+        }
+        for (Map.Entry<String, byte[]> file : contents.entrySet()) tree.write(file.getKey(), file.getValue());
+    }
+
+    /** Deletes the empty folders above a removed file, up to its asset kind folder. */
+    private static void removeEmptyFolders(DirectoryResourceTree directory, String removed) throws IOException {
+        String[] parts = removed.split("/", 4);
+        Path kindFolder = directory.root().resolve(parts[0]).resolve(parts[1]).resolve(parts[2]);
+        Path folder = directory.root().resolve(removed).getParent();
+        while (folder != null && folder.startsWith(kindFolder) && !folder.equals(kindFolder)
+                && isEmptyFolder(folder)) {
+            Files.delete(folder);
+            folder = folder.getParent();
+        }
+    }
+
+    private static boolean isEmptyFolder(Path folder) throws IOException {
+        if (!Files.isDirectory(folder, LinkOption.NOFOLLOW_LINKS)) return false;
+        try (Stream<Path> entries = Files.list(folder)) {
+            return entries.findAny().isEmpty();
+        }
     }
 
     /** The lowercase name for a mixed-case asset this converter copies, or null to leave it. */
@@ -463,9 +523,9 @@ final class LegacyIdentifierCase implements ModResourceConverter {
         return "assets/" + parts[1] + "/" + parts[2] + "/" + lowered;
     }
 
-    /** Whether the name already resolves to a file on disk, as on a case-insensitive file system. */
-    private static boolean sharesFileOnDisk(ResourceTree tree, String name) {
+    /** Whether a lowercase name not in the tree still resolves to a file on its disk. */
+    private static boolean ignoresCase(ResourceTree tree, String lowercaseName) {
         return tree instanceof DirectoryResourceTree directory
-                && Files.exists(directory.root().resolve(name), LinkOption.NOFOLLOW_LINKS);
+                && Files.exists(directory.root().resolve(lowercaseName), LinkOption.NOFOLLOW_LINKS);
     }
 }

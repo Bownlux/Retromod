@@ -103,11 +103,7 @@ public class ResourcePackTransformerTest {
     @ValueSource(strings = {"1.21.1", "26.3"})
     @DisplayName("A 1.12 pack gets JSON language files and lowercase ids, as a 1.12 mod does")
     void legacyPackGetsLanguageJsonAndLowercaseIds(String target, @TempDir Path root) throws Exception {
-        Path source = legacyModPack(root, 3, "items");
-        // The pack is converted in a temporary folder, where a file system that ignores case
-        // cannot hold the lowercase copy beside the original.
-        boolean caseSensitive = !Files.exists(source.resolve("assets/somemod/textures/items/RUBY.png"));
-        Map<String, byte[]> pack = transform(source, target, root);
+        Map<String, byte[]> pack = transform(legacyModPack(root, 3, "items"), target, root);
 
         JsonObject lang = JsonParser.parseString(text(pack.get("assets/somemod/lang/en_us.json")))
             .getAsJsonObject();
@@ -116,9 +112,9 @@ public class ResourcePackTransformerTest {
             "the pack's own item model shows the id");
         assertTrue(pack.containsKey("assets/somemod/lang/en_US.lang"), "the original stays");
         assertEquals("somemod:item/ruby", layer0(pack));
-        assertArrayEquals(bytes("ruby"), pack.get("assets/somemod/textures/item/Ruby.png"));
-        assertEquals(caseSensitive, pack.containsKey("assets/somemod/textures/item/ruby.png"),
-            pack.keySet().toString());
+        assertArrayEquals(bytes("ruby"), pack.get("assets/somemod/textures/item/ruby.png"));
+        assertFalse(pack.containsKey("assets/somemod/textures/item/Ruby.png"),
+            "a pack has no code to read the old name, so the texture is renamed: " + pack.keySet());
         assertTrue(pack.keySet().stream().noneMatch(name -> name.startsWith("data/")),
             "a resource pack carries no data, so the data steps add nothing: " + pack.keySet());
     }

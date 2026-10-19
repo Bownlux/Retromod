@@ -130,6 +130,7 @@ public class ResourcePackTransformer {
             MigrationContext context = MigrationContext.builder(targetMcVersion)
                 .sourceMcVersion(PackFormat.minecraftVersionForPre113Resources(oldFormat))
                 .targetLoader(MigrationContext.Loader.host())
+                .standalonePack(true)
                 .build();
             int migrated = ModResourceMigrations.migrateDirectory(tempDir, context);
             if (migrated > 0) {

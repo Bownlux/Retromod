@@ -82,6 +82,7 @@ public final class MigrationContext {
     private final Set<String> ownNamespaces;
     private final boolean nested;
     private final boolean equipmentAssets;
+    private final boolean standalonePack;
     private final Collection<String> classNames;
     private final Function<String, byte[]> classReader;
     private final MigrationLedger ledger;
@@ -96,6 +97,7 @@ public final class MigrationContext {
         this.ownNamespaces = Collections.unmodifiableSet(ownNamespaces);
         this.nested = builder.nested;
         this.equipmentAssets = builder.equipmentAssets;
+        this.standalonePack = builder.standalonePack;
         this.classNames = List.copyOf(builder.classNames);
         this.classReader = builder.classReader;
         this.ledger = ledger;
@@ -142,6 +144,11 @@ public final class MigrationContext {
         return equipmentAssets;
     }
 
+    /** Whether this tree is a resource or data pack, which ships no code that reads its files by name. */
+    public boolean standalonePack() {
+        return standalonePack;
+    }
+
     /** Class entries for streaming paths, whose tree holds no classes; empty for an extracted tree. */
     public Collection<String> classNames() {
         return classNames;
@@ -181,6 +188,7 @@ public final class MigrationContext {
         copy.declaredNamespaces.addAll(declaredNamespaces);
         copy.nested = nested;
         copy.equipmentAssets = equipmentAssets;
+        copy.standalonePack = standalonePack;
         copy.classNames = classNames;
         copy.classReader = classReader;
         return new MigrationContext(copy, namespaces, new MigrationLedger());
@@ -205,6 +213,7 @@ public final class MigrationContext {
         private final Set<String> declaredNamespaces = new LinkedHashSet<>();
         private boolean nested;
         private boolean equipmentAssets;
+        private boolean standalonePack;
         private Collection<String> classNames = List.of();
         private Function<String, byte[]> classReader = name -> null;
 
@@ -254,6 +263,11 @@ public final class MigrationContext {
 
         public Builder equipmentAssets(boolean active) {
             this.equipmentAssets = active;
+            return this;
+        }
+
+        public Builder standalonePack(boolean pack) {
+            this.standalonePack = pack;
             return this;
         }
 

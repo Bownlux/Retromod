@@ -16,6 +16,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.jar.JarEntry;
@@ -109,7 +111,8 @@ public final class LoaderApiFixtures {
         try (JarOutputStream out = new JarOutputStream(bytes)) {
             for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
                 JarEntry jarEntry = new JarEntry(entry.getKey());
-                jarEntry.setTime(FIXED_TIME);
+                // Stored as a local time, so the bytes do not depend on the machine's time zone.
+                jarEntry.setTimeLocal(LocalDateTime.ofEpochSecond(FIXED_TIME / 1000, 0, ZoneOffset.UTC));
                 out.putNextEntry(jarEntry);
                 out.write(entry.getValue());
                 out.closeEntry();

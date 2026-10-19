@@ -23,7 +23,7 @@ In-place loading is new and on by default on Forge and NeoForge. If it misbehave
 - Copies a mod's data to the folders the host reads: 1.12 recipes and advancements under `assets/` to `data/`, and the plural folders 1.21 renamed (`recipes`, `loot_tables`, `advancements`, `tags/blocks`, `tags/items`, and the rest) to their singular names. The originals stay in the jar, and a copy is never written into `minecraft` or another shared namespace except as a tag.
 - Keeps a copied recipe, loot table, or advancement out of the game when its shape is not proven current for the host. A file that would fail to parse, or load with the wrong meaning, stays inert instead.
 - Converts 1.12 `.lang` files to the JSON language files 1.13 and newer read, and adds the modern keys for blocks, items, and entities whose registry names it can find.
-- Lowercases mixed-case identifiers in 1.12 mods and resource packs, and copies mixed-case files to their lowercase names while keeping the originals.
+- Lowercases mixed-case identifiers in 1.12 mods and resource packs, and gives mixed-case files lowercase names. A mod keeps the original beside the copy when its disk tells the two names apart.
 - Copies Forge 1.12 recipes into the format the host reads. Constants, ore dictionary ingredients, `ore_shaped` and `ore_shapeless` types, and conditions become the tags and condition syntax of the host's loader.
 - Maps 1.12 item ids with data values to their flattened names in recipes, loot tables, and advancements.
 - Translates 1.12 and Forge `forge_marker` blockstates into vanilla blockstates and models, with inventory item models.

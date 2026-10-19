@@ -239,21 +239,70 @@ class LegacyIdentifierCaseTest {
     }
 
     @Test
-    @DisplayName("On disk the copy never overwrites the original, whatever the file system's case rules")
-    void directoryTreeKeepsTheOriginal(@TempDir Path directory) throws IOException {
+    @DisplayName("On disk the lowercase name always exists, and the original stays where the disk holds both")
+    void directoryTreeGetsTheLowercaseName(@TempDir Path directory) throws IOException {
         writeDirectory(directory, entries("assets/oldmod/textures/items/Card.png", "card"));
+        boolean caseSensitive = !Files.exists(directory.resolve("assets/oldmod/textures/items/CARD.png"));
         DirectoryResourceTree tree = DirectoryResourceTree.open(directory);
         MigrationContext context = context("1.12.2", "26.3", new MapResourceTree(readDirectory(directory)));
 
-        CONVERTER.apply(tree, context);
+        assertEquals(1, CONVERTER.apply(tree, context));
 
-        Path original = directory.resolve("assets/oldmod/textures/items/Card.png");
-        assertEquals("card", Files.readString(original));
-        try (var listing = Files.list(original.getParent())) {
-            List<String> onDisk = listing.map(path -> path.getFileName().toString()).sorted().toList();
-            assertTrue(onDisk.contains("Card.png"), "the original keeps its name: " + onDisk);
-            boolean caseSensitive = !Files.exists(directory.resolve("assets/oldmod/textures/items/CARD.png"));
-            assertEquals(caseSensitive, onDisk.contains("card.png"), onDisk.toString());
+        Path folder = directory.resolve("assets/oldmod/textures/items");
+        assertEquals(caseSensitive ? List.of("Card.png", "card.png") : List.of("card.png"), listing(folder),
+                "a disk that ignores case cannot hold both names, so the models' name wins");
+        assertEquals("card", Files.readString(folder.resolve("card.png")));
+    }
+
+    @Test
+    @DisplayName("A standalone pack renames its mixed-case files, since no code reads them by name")
+    void standalonePackRenames() throws IOException {
+        MapResourceTree tree = new MapResourceTree(entries(
+                "assets/oldmod/textures/blocks/Ruby.png", "ruby",
+                "assets/oldmod/textures/blocks/Ruby.png.mcmeta", "{\"animation\":{}}"));
+
+        assertEquals(2, CONVERTER.apply(tree, packContext(tree)));
+
+        assertEquals(List.of("assets/oldmod/textures/blocks/ruby.png",
+                "assets/oldmod/textures/blocks/ruby.png.mcmeta"), List.copyOf(tree.names()));
+        assertArrayEquals(bytes("ruby"), tree.read("assets/oldmod/textures/blocks/ruby.png"));
+    }
+
+    @Test
+    @DisplayName("A pack keeps a file's name when other files keep its mixed-case folder")
+    void standalonePackKeepsAFolderStillInUse(@TempDir Path directory) throws IOException {
+        writeDirectory(directory, entries(
+                "assets/oldmod/textures/blocks/Gems/Ruby.png", "ruby",
+                "assets/oldmod/textures/blocks/Gems/Old Gem.png", "space"));
+        DirectoryResourceTree tree = DirectoryResourceTree.open(directory);
+
+        assertEquals(0, CONVERTER.apply(tree, packContext(tree)));
+
+        assertEquals(List.of("Gems"), listing(directory.resolve("assets/oldmod/textures/blocks")),
+                "one folder name, so the pack can still be written");
+        assertTrue(tree.exists("assets/oldmod/textures/blocks/Gems/Ruby.png"));
+    }
+
+    @Test
+    @DisplayName("A pack's emptied mixed-case folder is removed, so the pack holds one folder name")
+    void standalonePackDropsTheEmptiedFolder(@TempDir Path directory) throws IOException {
+        writeDirectory(directory, entries("assets/oldmod/textures/items/Tools/Pick.png", "pick"));
+        DirectoryResourceTree tree = DirectoryResourceTree.open(directory);
+
+        assertEquals(1, CONVERTER.apply(tree, packContext(tree)));
+
+        assertEquals(List.of("tools"), listing(directory.resolve("assets/oldmod/textures/items")));
+        assertEquals(List.of("pick.png"), listing(directory.resolve("assets/oldmod/textures/items/tools")));
+    }
+
+    private static MigrationContext packContext(ResourceTree tree) throws IOException {
+        return MigrationContext.builder("26.3").sourceMcVersion("1.12.2").standalonePack(true).build()
+                .forRun(ModResourceMigrations.rootNamespaces(tree.names()));
+    }
+
+    private static List<String> listing(Path folder) throws IOException {
+        try (var entries = Files.list(folder)) {
+            return entries.map(path -> path.getFileName().toString()).sorted().toList();
         }
     }
 
