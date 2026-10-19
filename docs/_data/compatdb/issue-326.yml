@@ -1,0 +1,13 @@
+name: "The Box of Horrors [Forge]"
+badge: borked
+mod_version: "1.20.1"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.3.2"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/box-of-horrors/files/all?page=1&pageSize=20&showAlphaFiles=hide"
+summary: "el minecraft corre pero el mod no se pudo cargar"
+reporter: "MartyRicci"
+date: "2026-10-07"
+issue: 326
+
