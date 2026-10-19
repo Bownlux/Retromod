@@ -1,0 +1,13 @@
+name: "Minestrappolation"
+badge: borked
+mod_version: "3.3.4 for 1.7.10"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.4.0"
+links:
+  github: "https://github.com/MinestrapTeam/Minestrappolation-2/releases/tag/1.7.10-3.3.4"
+summary: "gives \"is not a valid mod file\" error screen"
+reporter: "vxpepsicola"
+date: "2026-10-17"
+issue: 356
+
