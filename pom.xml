@@ -573,7 +573,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.5.6</version>
+                <version>3.6.0</version>
                 <configuration>
                     <!-- The suite runs with the loader API runtime off, whatever the version string
                          says, so the same commit passes before and after an rc bump. Runtime-on tests
