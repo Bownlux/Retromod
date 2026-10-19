@@ -22,16 +22,7 @@ import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
-/**
- * Runs the pre-1.20 data migrations that work on a whole data tree, on every transform path.
- *
- * <p>{@link LegacyStructureDataMigrator} renames and rewrites structure files, and
- * {@link LegacySmithingRecipeMigrator} rewrites smithing recipes. The runtime Forge path works on
- * an extracted tree and calls {@link #migrateTree}. The CLI and AOT paths stream entries into a new
- * jar, so they finish the jar first and call {@link #migrateArchive}, which extracts only
- * {@code data/}, migrates it, and rewrites the jar when something changed. A nested jar is a mod
- * of its own, so its source version comes from its own metadata.
- */
+/** Runs the pre-1.20 data migrations that work on a whole data tree, on every transform path. */
 public final class LegacyDataMigrations {
 
     private LegacyDataMigrations() {}
@@ -41,6 +32,15 @@ public final class LegacyDataMigrations {
             throws IOException {
         return LegacyStructureDataMigrator.migrate(extractedJar, sourceMcVersion, targetMcVersion)
                 + LegacySmithingRecipeMigrator.migrate(extractedJar, sourceMcVersion, targetMcVersion);
+    }
+
+    /** Both migrations over any resource tree; returns the number of files written. */
+    static int migrateTree(ResourceTree tree, String sourceMcVersion, String targetMcVersion)
+            throws IOException {
+        // The structure migrator renames and rewrites structure files; the smithing migrator
+        // rewrites smithing recipes.
+        return LegacyStructureDataMigrator.migrate(tree, sourceMcVersion, targetMcVersion)
+                + LegacySmithingRecipeMigrator.migrate(tree, sourceMcVersion, targetMcVersion);
     }
 
     /**
@@ -62,6 +62,8 @@ public final class LegacyDataMigrations {
             return 0;
         }
 
+        // The CLI and AOT paths stream entries into a new jar, so they migrate the finished jar:
+        // only data/ is extracted, and the jar is rewritten only when a file changed.
         Path tree = Files.createTempDirectory("retromod-data-");
         try {
             if (!extractData(jar, tree)) return 0;
@@ -78,6 +80,7 @@ public final class LegacyDataMigrations {
         Path file = Files.createTempFile("retromod-nested-", ".jar");
         try {
             Files.write(file, jar);
+            // A nested jar is a mod of its own, so its source version comes from its own metadata.
             return migrateArchive(file, null, targetMcVersion) > 0 ? Files.readAllBytes(file) : jar;
         } finally {
             Files.deleteIfExists(file);

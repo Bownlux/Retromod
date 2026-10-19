@@ -22,12 +22,7 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 
-/**
- * Keeps ahead-of-time cache entries tied to the Retromod build that created
- * them. Packaged builds use both the version and self-hash. An unpackaged
- * development run can only use the version, so same-version experiments may
- * still require a manual cache clear.
- */
+/** Ties each ahead-of-time cache to the Retromod build that wrote it. */
 public final class AotCacheStamp {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("retromod-aot");
@@ -56,7 +51,11 @@ public final class AotCacheStamp {
     }
 
     private static String expectedStamp() {
-        return AotCompiler.AOT_VERSION + "|" + currentSelfHash();
+        // Packaged builds stamp the version and self-hash. An unpackaged development run has only
+        // the version, so same-version experiments may still need a manual cache clear.
+        // The loader API runtime identity joins the stamp only while it is on.
+        return AotCompiler.AOT_VERSION + "|" + currentSelfHash()
+                + com.retromod.loaderapi.LoaderApiRuntime.cacheStampSuffix();
     }
 
     /** Creates the cache or clears it when it belongs to another Retromod build. */
@@ -79,6 +78,38 @@ public final class AotCacheStamp {
         return ensureCurrent(cacheDir, expectedStamp() + "|target=" + targetVersion);
     }
 
+    /** The stamp a target-specific cache must carry for this build, or null if the target is not one line. */
+    public static String stampForTarget(String targetVersion) {
+        if (targetVersion == null || targetVersion.isBlank()
+                || targetVersion.indexOf('\n') >= 0 || targetVersion.indexOf('\r') >= 0) {
+            return null;
+        }
+        String stamp = expectedStamp() + "|target=" + targetVersion;
+        return isValidExpectedStamp(stamp) ? stamp : null;
+    }
+
+    /** Creates the cache or clears it on a stamp change, checking links only below {@code trustedRoot}. */
+    public static boolean ensureCurrentBelow(Path trustedRoot, Path cacheDir, String stamp) {
+        if (trustedRoot == null) {
+            LOGGER.warn("Could not validate the cache at {} because no trusted root was given",
+                    cacheDir);
+            return false;
+        }
+        return ensureCurrent(trustedRoot, cacheDir, stamp);
+    }
+
+    /** Reads a cache's stamp without changing it, or null when it has none or crosses a link. */
+    public static String readStampBelow(Path trustedRoot, Path cacheDir) {
+        if (trustedRoot == null) return null;
+        try {
+            Path validated = validateCachePath(trustedRoot, cacheDir);
+            if (!Files.isDirectory(validated, LinkOption.NOFOLLOW_LINKS)) return null;
+            return readRecordedStamp(validated.resolve(STAMP_FILE));
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
+    }
+
     /** Clears a target-specific cache and restores its complete stamp. */
     static boolean clearCurrentForTarget(Path cacheDir, String targetVersion) {
         if (targetVersion == null || targetVersion.isBlank()
@@ -91,13 +122,13 @@ public final class AotCacheStamp {
     private static boolean clearAndStamp(Path cacheDir, String stamp) {
         if (!isValidExpectedStamp(stamp)) return false;
         try {
-            Path validated = validateCachePath(cacheDir);
+            Path validated = validateCachePath(null, cacheDir);
             if (Files.exists(validated, LinkOption.NOFOLLOW_LINKS)) {
                 if (!Files.isDirectory(validated, LinkOption.NOFOLLOW_LINKS)) {
                     throw new IOException("AOT cache path is not a regular directory: "
                             + validated);
                 }
-                wipe(validated);
+                wipe(null, validated);
             }
             return ensureCurrent(validated, stamp);
         } catch (IOException | RuntimeException e) {
@@ -109,19 +140,23 @@ public final class AotCacheStamp {
 
     /** Testable variant with an explicit stamp value. */
     static boolean ensureCurrent(Path cacheDir, String stamp) {
+        return ensureCurrent(null, cacheDir, stamp);
+    }
+
+    private static boolean ensureCurrent(Path trustedRoot, Path cacheDir, String stamp) {
         if (!isValidExpectedStamp(stamp)) {
             LOGGER.warn("Could not validate the AOT cache because its expected stamp is invalid");
             return false;
         }
         try {
-            cacheDir = validateCachePath(cacheDir);
+            cacheDir = validateCachePath(trustedRoot, cacheDir);
             if (Files.exists(cacheDir, LinkOption.NOFOLLOW_LINKS)
                     && !Files.isDirectory(cacheDir, LinkOption.NOFOLLOW_LINKS)) {
                 throw new IOException("AOT cache path is not a regular directory: " + cacheDir);
             }
             Path stampFile = cacheDir.resolve(STAMP_FILE);
             if (Files.isDirectory(cacheDir, LinkOption.NOFOLLOW_LINKS)) {
-                validateCachePath(cacheDir);
+                validateCachePath(trustedRoot, cacheDir);
                 String recorded;
                 try {
                     recorded = readRecordedStamp(stampFile);
@@ -133,18 +168,18 @@ public final class AotCacheStamp {
                     return true;
                 }
                 boolean empty;
-                validateCachePath(cacheDir);
+                validateCachePath(trustedRoot, cacheDir);
                 try (var s = Files.list(cacheDir)) {
                     empty = s.findFirst().isEmpty();
                 }
                 if (!empty) {
                     LOGGER.info("Retromod build changed since the AOT cache was written, clearing {}",
                             cacheDir);
-                    wipe(cacheDir);
+                    wipe(trustedRoot, cacheDir);
                     // A failed delete must leave the old stamp in place. Otherwise the
                     // next launch could trust a stale file as current.
                     if (Files.isDirectory(cacheDir, LinkOption.NOFOLLOW_LINKS)) {
-                        validateCachePath(cacheDir);
+                        validateCachePath(trustedRoot, cacheDir);
                         try (var s = Files.list(cacheDir)) {
                             if (s.findFirst().isPresent()) {
                                 LOGGER.warn("Could not fully clear the AOT cache at {}. "
@@ -155,14 +190,14 @@ public final class AotCacheStamp {
                     }
                 }
             }
-            validateCachePath(cacheDir);
+            validateCachePath(trustedRoot, cacheDir);
             Files.createDirectories(cacheDir);
-            validateCachePath(cacheDir);
+            validateCachePath(trustedRoot, cacheDir);
             if (!Files.isDirectory(cacheDir, LinkOption.NOFOLLOW_LINKS)) {
                 throw new IOException("AOT cache path is not a regular directory: " + cacheDir);
             }
-            writeStampAtomically(cacheDir, stampFile, stamp);
-            validateCachePath(cacheDir);
+            writeStampAtomically(trustedRoot, cacheDir, stampFile, stamp);
+            validateCachePath(trustedRoot, cacheDir);
             return stamp.equals(readRecordedStamp(stampFile));
         } catch (IOException | RuntimeException e) {
             LOGGER.warn("Could not validate the AOT cache at {}: {}",
@@ -179,7 +214,8 @@ public final class AotCacheStamp {
         return stamp.getBytes(StandardCharsets.UTF_8).length <= MAX_EXPECTED_STAMP_BYTES;
     }
 
-    private static Path validateCachePath(Path cacheDir) throws IOException {
+    /** The cache path made absolute, after checking that it crosses no symbolic link. */
+    private static Path validateCachePath(Path trustedRoot, Path cacheDir) throws IOException {
         if (cacheDir == null) {
             throw new IOException("AOT cache path is missing");
         }
@@ -188,7 +224,18 @@ public final class AotCacheStamp {
         if (current == null) {
             throw new IOException("AOT cache path is not absolute: " + cacheDir);
         }
-        for (Path component : absolute) {
+        // With a trusted root, only the folders below it are checked. The in-place cache lives
+        // under the game directory, which often sits under a linked path (a linked /home, an
+        // instance folder moved to another drive, macOS /var). Those links are the player's choice.
+        Path checked = absolute;
+        if (trustedRoot != null) {
+            current = trustedRoot.toAbsolutePath().normalize();
+            if (!absolute.startsWith(current) || absolute.equals(current)) {
+                throw new IOException("Cache path is not inside " + current + ": " + cacheDir);
+            }
+            checked = current.relativize(absolute);
+        }
+        for (Path component : checked) {
             current = current.resolve(component);
             if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
                 break;
@@ -209,17 +256,17 @@ public final class AotCacheStamp {
         }
     }
 
-    private static void writeStampAtomically(Path cacheDir, Path stampFile, String stamp)
-            throws IOException {
-        validateCachePath(cacheDir);
+    private static void writeStampAtomically(Path trustedRoot, Path cacheDir, Path stampFile,
+            String stamp) throws IOException {
+        validateCachePath(trustedRoot, cacheDir);
         Path staged = Files.createTempFile(cacheDir, ".cache-stamp-", ".tmp");
         try {
-            validateCachePath(cacheDir);
+            validateCachePath(trustedRoot, cacheDir);
             Files.writeString(staged, stamp + "\n", StandardCharsets.UTF_8);
             if (!Files.isRegularFile(staged, LinkOption.NOFOLLOW_LINKS)) {
                 throw new IOException("AOT cache stamp staging path is not a regular file");
             }
-            validateCachePath(cacheDir);
+            validateCachePath(trustedRoot, cacheDir);
             try {
                 Files.move(staged, stampFile, StandardCopyOption.ATOMIC_MOVE,
                         StandardCopyOption.REPLACE_EXISTING);
@@ -235,8 +282,8 @@ public final class AotCacheStamp {
     }
 
     /** Delete everything under {@code cacheDir}, including the directory itself. */
-    private static void wipe(Path cacheDir) throws IOException {
-        validateCachePath(cacheDir);
+    private static void wipe(Path trustedRoot, Path cacheDir) throws IOException {
+        validateCachePath(trustedRoot, cacheDir);
         Files.walkFileTree(cacheDir, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attributes)

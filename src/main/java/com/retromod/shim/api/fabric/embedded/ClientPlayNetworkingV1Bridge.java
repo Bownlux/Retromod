@@ -26,6 +26,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * rather than a {@code VerifyError}/{@code NoSuchMethodError}.
  *
  * <p>Written against 26.1.2 but not yet runtime-verified. See {@code docs-dev/cpn-v1-bridge-design.md}.
+ *
+ * <p>The payload and codec come from {@link RawChannelPayloads}, which the loader API runtime
+ * uses too, so both can serve one channel. While the runtime is on, every entry point forwards
+ * to the runtime's client channels instead.
  */
 public final class ClientPlayNetworkingV1Bridge {
 
@@ -51,7 +55,7 @@ public final class ClientPlayNetworkingV1Bridge {
     private static Method mNetSend;                // ClientPlayNetworking.send(CustomPacketPayload)
     private static Method mNetCanSend;             // ClientPlayNetworking.canSend(Type)   (nullable)
     private static Method mCtxPlayer, mCtxResponseSender;
-    private static Method mBufReadableBytes, mBufReadBytes, mBufWriteBytes;
+    private static Method mBufReadableBytes, mBufReadBytes;
     private static Method mUnpooledWrapped;        // Unpooled.wrappedBuffer(byte[])
     private static Method mMcGetInstance, mMcGetConnection;
 
@@ -94,7 +98,6 @@ public final class ClientPlayNetworkingV1Bridge {
 
             mBufReadableBytes = cByteBuf.getMethod("readableBytes");
             mBufReadBytes = cByteBuf.getMethod("readBytes", byte[].class);
-            mBufWriteBytes = cByteBuf.getMethod("writeBytes", byte[].class);
             mUnpooledWrapped = cUnpooled.getMethod("wrappedBuffer", byte[].class);
 
             mMcGetInstance = staticNoArgReturning(cMc, cMc);
@@ -116,16 +119,25 @@ public final class ClientPlayNetworkingV1Bridge {
 
     /** old {@code registerGlobalReceiver(Identifier, PlayChannelHandler) : boolean}. */
     public static boolean registerGlobalReceiver(Object id, Object oldHandler) {
+        RawChannelPayloads.ClientDelegate delegate = RawChannelPayloads.clientDelegate();
+        if (delegate != null) return delegate.registerGlobalReceiver(id, oldHandler);
         return doRegister(id, oldHandler);
     }
 
     /** old {@code registerReceiver(Identifier, PlayChannelHandler) : boolean} (best-effort global). */
     public static boolean registerReceiver(Object id, Object oldHandler) {
+        RawChannelPayloads.ClientDelegate delegate = RawChannelPayloads.clientDelegate();
+        if (delegate != null) return delegate.registerReceiver(id, oldHandler);
         return doRegister(id, oldHandler);
     }
 
     /** old {@code send(Identifier, FriendlyByteBuf) : void}. */
     public static void send(Object id, Object buf) {
+        RawChannelPayloads.ClientDelegate delegate = RawChannelPayloads.clientDelegate();
+        if (delegate != null) {
+            delegate.send(id, buf);
+            return;
+        }
         ensureInit();
         if (!ready) return;
         try {
@@ -140,6 +152,8 @@ public final class ClientPlayNetworkingV1Bridge {
 
     /** old {@code canSend(Identifier) : boolean}. */
     public static boolean canSend(Object id) {
+        RawChannelPayloads.ClientDelegate delegate = RawChannelPayloads.clientDelegate();
+        if (delegate != null) return delegate.canSend(id);
         ensureInit();
         if (!ready || mNetCanSend == null) return false;
         try {
@@ -198,15 +212,14 @@ public final class ClientPlayNetworkingV1Bridge {
         }
     }
 
-    /** {@code CustomPacketPayload} carrying (Type, raw bytes). */
+    /** {@code CustomPacketPayload} carrying (Type, raw bytes), the same class the runtime uses. */
     private static Object newRawPayload(Object type, byte[] data) {
-        return Proxy.newProxyInstance(loader(), new Class<?>[]{cCustomPayload},
-                new RawPayloadHandler(type, data));
+        return RawChannelPayloads.newPayload(cCustomPayload, type, data);
     }
 
     /** {@code StreamCodec} bound to {@code type}, copying raw bytes both ways. */
     private static Object newRawCodec(Object type) {
-        return Proxy.newProxyInstance(loader(), new Class<?>[]{cStreamCodec}, new RawCodecHandler(type));
+        return RawChannelPayloads.newCodec(cStreamCodec, cCustomPayload, type);
     }
 
     /** {@code PlayPayloadHandler} that unwraps bytes and calls the mod's old 4-arg handler. */
@@ -229,64 +242,6 @@ public final class ClientPlayNetworkingV1Bridge {
             }
         }
         throw last != null ? last : new ClassNotFoundException("no class aliases supplied");
-    }
-
-    /** Backing handler for a raw {@code CustomPacketPayload} proxy. */
-    private static final class RawPayloadHandler implements InvocationHandler {
-        final Object type;
-        final byte[] data;
-        RawPayloadHandler(Object type, byte[] data) { this.type = type; this.data = data; }
-        @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-            if (method.getParameterCount() == 0 && method.getReturnType().isInstance(type)) {
-                return type;
-            }
-            switch (method.getName()) {
-                case "type":     return type;
-                case "hashCode": return System.identityHashCode(proxy);
-                case "equals":   return proxy == (args != null ? args[0] : null);
-                case "toString": return "RetromodRawPayload";
-                default:
-                    if (method.isDefault()) return InvocationHandler.invokeDefault(proxy, method, args);
-                    return null;
-            }
-        }
-    }
-
-    /** Backing handler for the raw-bytes {@code StreamCodec} proxy, bound to one channel Type. */
-    private static final class RawCodecHandler implements InvocationHandler {
-        final Object type;
-        RawCodecHandler(Object type) { this.type = type; }
-        @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-            if (args != null && args.length == 1 && method.getReturnType() != Void.TYPE) {
-                byte[] data = drainBytes(args[0]);
-                return newRawPayload(type, data);
-            }
-            if (args != null && args.length == 2 && method.getReturnType() == Void.TYPE) {
-                byte[] data = bytesOf(args[1]);
-                if (data != null) mBufWriteBytes.invoke(args[0], (Object) data);
-                return null;
-            }
-            switch (method.getName()) {
-                case "decode": {           // V decode(B buffer)
-                    Object buf = args[0];
-                    byte[] data = drainBytes(buf);
-                    return newRawPayload(type, data);
-                }
-                case "encode": {           // void encode(B buffer, V value)
-                    Object buf = args[0];
-                    Object payload = args[1];
-                    byte[] data = bytesOf(payload);
-                    if (data != null) mBufWriteBytes.invoke(buf, (Object) data);
-                    return null;
-                }
-                case "hashCode": return System.identityHashCode(proxy);
-                case "equals":   return proxy == (args != null ? args[0] : null);
-                case "toString": return "RetromodRawCodec";
-                default:
-                    if (method.isDefault()) return InvocationHandler.invokeDefault(proxy, method, args);
-                    return null;
-            }
-        }
     }
 
     /** Backing handler for the new-API {@code PlayPayloadHandler} proxy. */
@@ -355,12 +310,10 @@ public final class ClientPlayNetworkingV1Bridge {
     /** Raw bytes carried by one of our payload proxies, or null if not ours. */
     private static byte[] bytesOf(Object payload) {
         try {
-            if (payload != null && Proxy.isProxyClass(payload.getClass())) {
-                InvocationHandler h = Proxy.getInvocationHandler(payload);
-                if (h instanceof RawPayloadHandler) return ((RawPayloadHandler) h).data;
-            }
-        } catch (Throwable ignored) {}
-        return null;
+            return RawChannelPayloads.bytesOf(payload);
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private static Constructor<?> singleArgCtor(Class<?> c) {

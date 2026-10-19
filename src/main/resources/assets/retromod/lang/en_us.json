@@ -6,6 +6,7 @@
   "retromod.main.subtitle": "Choose old mod jars to update for this Minecraft version",
   "retromod.main.add_mods": "Choose Mods\u2026",
   "retromod.main.open_folder": "Open Mods Folder",
+  "retromod.main.inplace_status": "%s from cache, %s after restart, %s failed",
 
   "retromod.screen.title": "Retromod Mod Manager",
   "retromod.screen.add_mods": "Choose Mods",
@@ -31,6 +32,8 @@
   "retromod.settings.force_translate_complex": "Try unlikely mods",
   "retromod.settings.log_transformations": "Log every change",
   "retromod.settings.debug": "Extra debug checks",
+  "retromod.settings.write_translated_jars": "Write translated jars to mods/",
+  "retromod.settings.next_launch": "Takes effect on the next launch",
 
   "retromod.filepicker.title": "Retromod: Choose Mod Jars",
 

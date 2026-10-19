@@ -9,19 +9,15 @@ import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Method;
 
-/**
- * Reflective wrapper around Minecraft's {@code Text.translatable() / Component.translatable()},
- * since Retromod has no compile-time MC classpath. A Text from {@link #translatable(String)}
- * resolves against the in-game language at render time. When the translatable API isn't
- * reachable we fall back to {@code Text.literal(key)}, so the user sees the raw key (MC's
- * own behavior for missing translations) rather than a crash.
- */
+/** Builds Minecraft translatable and literal text through reflection. */
 public final class McI18n {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 
+    // Retromod has no compile-time Minecraft classpath, so Text or Component is found at runtime.
     private static volatile Class<?> textClass;
     private static volatile Method translatableMethod;
+    private static volatile Method translatableWithArgsMethod;
     private static volatile Method literalMethod;
     private static volatile boolean resolved;
 
@@ -39,6 +35,8 @@ public final class McI18n {
             if (translatableMethod != null) {
                 return translatableMethod.invoke(null, translationKey);
             }
+            // Without the translatable API, show the raw key, as Minecraft does for a missing
+            // translation, instead of crashing.
             if (literalMethod != null) {
                 return literalMethod.invoke(null, translationKey);
             }
@@ -46,6 +44,25 @@ public final class McI18n {
             LOGGER.debug("McI18n.translatable({}) failed: {}", translationKey, e.getMessage());
         }
         return null;
+    }
+
+    /** Like {@link #translatable(String)}, with values for the {@code %s} slots in the translation. */
+    public static Object translatable(String translationKey, Object... args) {
+        if (args == null || args.length == 0) return translatable(translationKey);
+        resolve();
+        // Pass the arguments as strings, which every supported version accepts.
+        Object[] text = new Object[args.length];
+        for (int i = 0; i < args.length; i++) text[i] = String.valueOf(args[i]);
+        try {
+            if (translatableWithArgsMethod != null) {
+                return translatableWithArgsMethod.invoke(null, translationKey, (Object) text);
+            }
+        } catch (Exception e) {
+            LOGGER.debug("McI18n.translatable({}, args) failed: {}", translationKey,
+                    e.getMessage());
+        }
+        // Without the two-argument form, fall back to the key without arguments.
+        return translatable(translationKey);
     }
 
     /** Build a literal Text/Component for text that should never be translated. */
@@ -72,6 +89,8 @@ public final class McI18n {
             if (textClass != null) {
                 translatableMethod = McReflect.findMethod(textClass,
                         new Class[]{String.class}, "translatable");
+                translatableWithArgsMethod = McReflect.findMethod(textClass,
+                        new Class[]{String.class, Object[].class}, "translatable");
                 literalMethod = McReflect.findMethod(textClass,
                         new Class[]{String.class}, "literal");
                 // older MC has no Text.literal, try Text.of

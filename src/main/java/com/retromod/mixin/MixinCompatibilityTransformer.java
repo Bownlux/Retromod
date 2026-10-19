@@ -572,6 +572,25 @@ public final class MixinCompatibilityTransformer {
     }
 
     /**
+     * The name a class ends up with after every class redirect, which is what the bytecode pass
+     * reaches by repeating until nothing changes. A selector is annotation text that this class
+     * rewrites once, so a single lookup left it on an intermediate name: an intermediary owner
+     * mapped to {@code advancements/criterion/ConsumeItemTrigger} while 26.2 moved the class on to
+     * {@code advancements/triggers/}, and the handler's own descriptor already named the new place.
+     * After the first hop the chain stops short of a Retromod stand-in, because Minecraft's own
+     * code, which the selector has to match, still names the host class.
+     */
+    private String finalRedirect(String internal) {
+        List<String> chain = redirectChain(internal);
+        if (chain.size() == 1) return internal;
+        String resolved = chain.get(1);
+        for (int hop = 2; hop < chain.size() && !chain.get(hop).startsWith("com/retromod/"); hop++) {
+            resolved = chain.get(hop);
+        }
+        return resolved;
+    }
+
+    /**
      * Whether a method carries an injector annotation: a SpongePowered injection
      * ({@code @Inject}/{@code @Redirect}/{@code @ModifyArg}/{@code @ModifyVariable}/...),
      * {@code @Overwrite}, or any MixinExtras annotation. Used by whole-class blocklist
@@ -662,8 +681,7 @@ public final class MixinCompatibilityTransformer {
                 for (Object v : values) {
                     if (v instanceof org.objectweb.asm.Type type) {
                         String internal = type.getInternalName();
-                        String redirected = transformer.getClassRedirects()
-                            .getOrDefault(internal, internal);
+                        String redirected = finalRedirect(internal);
                         currentTargetOwners.get().add(redirected);
                         if (!internal.equals(redirected)) {
                             newValues.add(org.objectweb.asm.Type.getObjectType(redirected));
@@ -1306,7 +1324,7 @@ public final class MixinCompatibilityTransformer {
      */
     private String redirectClassName(String className) {
         String internal = className.replace('.', '/');
-        String redirected = transformer.getClassRedirects().getOrDefault(internal, internal);
+        String redirected = finalRedirect(internal);
         // preserve the input's separator style
         return className.contains(".") ? redirected.replace('/', '.') : redirected;
     }
@@ -1331,7 +1349,7 @@ public final class MixinCompatibilityTransformer {
             String owner = target.substring(1, semiIdx);
             String rest = target.substring(semiIdx + 1);
 
-            String newOwner = transformer.getClassRedirects().getOrDefault(owner, owner);
+            String newOwner = finalRedirect(owner);
 
             int descIdx = rest.indexOf('(');
             // FIELD selector: "fieldName:Ltype;" (a ':' with no method descriptor). This was
@@ -1507,7 +1525,6 @@ public final class MixinCompatibilityTransformer {
     private String remapDescriptorClasses(String descriptor) {
         if (descriptor == null || descriptor.indexOf('L') < 0) return descriptor;
 
-        Map<String, String> classRedirects = transformer.getClassRedirects();
         StringBuilder result = new StringBuilder(descriptor.length());
         int i = 0;
         while (i < descriptor.length()) {
@@ -1515,8 +1532,7 @@ public final class MixinCompatibilityTransformer {
                 int semi = descriptor.indexOf(';', i);
                 if (semi > 0) {
                     String className = descriptor.substring(i + 1, semi);
-                    String remapped = classRedirects.getOrDefault(className, className);
-                    result.append('L').append(remapped).append(';');
+                    result.append('L').append(finalRedirect(className)).append(';');
                     i = semi + 1;
                 } else {
                     result.append(descriptor.charAt(i));

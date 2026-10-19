@@ -7,7 +7,7 @@ nav_order: 10
 
 ## Is Retromod safe?
 
-Retromod is open source, runs inside Minecraft, and is offline by default. Runtime transforms stay inside the selected game directory, and original mod jars are kept in `retromod-input/processed/`, `mods/retromod-backups/`, or the game-directory `retromod-backups/` health-recovery folder. The standalone CLI can also read and write paths you explicitly give it.
+Retromod is open source, runs inside Minecraft, and is offline by default. Runtime transforms stay inside the selected game directory. On Forge and NeoForge, Retromod leaves your mod jars unchanged and keeps translated copies in `retromod-cache/translated/`. On Fabric and Quilt, and when `write_translated_jars` is `true`, original mod jars are kept in `retromod-input/processed/`, `mods/retromod-backups/`, or the game-directory `retromod-backups/` health-recovery folder. The standalone CLI can also read and write paths you explicitly give it.
 
 It does rewrite third-party bytecode. Use mods from sources you trust, back up important worlds yourself, and test save-affecting mods in a copied instance first. Retromod's jar backup is not a world backup and it does not sandbox a mod after launch.
 
@@ -38,7 +38,17 @@ Paper, Spigot, Bukkit, and Purpur plugins are not supported. Retromod targets Fa
 
 ## Does it work with modpacks?
 
-Yes. Keep old Fabric and Quilt mods in `retromod-input/` so Retromod can process them before the loader's version check. For repeatable distribution, prepare the pack with the CLI.
+Yes. On Forge and NeoForge, a pack can ship its old mods in `mods/` next to Retromod. Each player's first launch translates them and asks for one restart. Keep old Fabric and Quilt mods in `retromod-input/` so Retromod can process them before the loader's version check. For repeatable distribution, prepare the pack with the CLI.
+
+## Does Retromod change the jars in my mods folder?
+
+Not on Forge and NeoForge, unless you ask it to. Retromod translates old jars into `retromod-cache/translated/` and gives the loader those copies, while the files in `mods/` stay byte for byte the same. Set `write_translated_jars` to `true` to have it write translated jars into `mods/` instead, as earlier versions did.
+
+Fabric and Quilt still use `retromod-input/`. Fabric resolves every jar in `mods/` before any mod runs, so Retromod cannot swap a jar there in the same way.
+
+## Can I share a translated mod?
+
+Yes, with limits. `java -jar retromod-1.4.0-snapshot.2-cli.jar export <game-dir>` copies translations out of a Forge or NeoForge game's cache to `retromod-output/mods/`. A jar translated for NeoForge on 1.21.1 only fits NeoForge on 1.21.1. The game you share it with also needs Retromod for that loader and version, because a translated jar can call Retromod's code. Sharing the original jar is usually simpler, since Retromod on the other game translates it there.
 
 ## What happens to dependencies?
 
@@ -72,7 +82,7 @@ The running classes do not match the embedded release hash. That can be a legiti
 
 ## Where are my files written?
 
-Runtime inputs and originals use `retromod-input/`, `retromod-input/processed/`, `mods/retromod-backups/`, and the game-directory `retromod-backups/` health-recovery folder. Staged resource packs use `retromod-input/resourcepacks/`, then successful output moves to `resourcepacks/`. Staged data packs use `retromod-input/datapacks/`, with successful output in `retromod-output/datapacks/` for you to copy into a world. Successful pack sources move into the matching input folder's `processed/` subfolder.
+On Forge and NeoForge, translated mods live in `retromod-cache/translated/<loader>/<version>/`. Retromod also uses `retromod-cache/runtime/` for its own extracted code and `retromod-cache/serve/` on Forge and on NeoForge 1.20.1. `export` writes to `retromod-output/mods/`. Runtime inputs and originals use `retromod-input/`, `retromod-input/processed/`, `mods/retromod-backups/`, and the game-directory `retromod-backups/` health-recovery folder. Staged resource packs use `retromod-input/resourcepacks/`, then successful output moves to `resourcepacks/`. Staged data packs use `retromod-input/datapacks/`, with successful output in `retromod-output/datapacks/` for you to copy into a world. Successful pack sources move into the matching input folder's `processed/` subfolder.
 
 Generated reports use `config/retromod/verify-reports/`. The normal AOT cache is `config/retromod/aot-cache/`. Full AOT state uses `retromod-cache/full-aot/`. API archives use `config/retromod/api-archive/`. CLI `transform` output defaults to a sibling jar, `batch` uses an input-folder `retromod-output/`, and `aot` uses the normal AOT cache unless you choose `--output`. The CLI initializes the standard input and backup folders in its current working directory.
 

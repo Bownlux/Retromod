@@ -6,6 +6,7 @@
   "retromod.main.subtitle": "D\u00e9posez ou s\u00e9lectionnez des JAR de mods",
   "retromod.main.add_mods": "Ajouter des mods\u2026",
   "retromod.main.open_folder": "Ouvrir le dossier des mods",
+  "retromod.main.inplace_status": "%s depuis le cache, %s apr\u00e8s red\u00e9marrage, %s en \u00e9chec",
 
   "retromod.screen.title": "Retromod - Gestionnaire de mods",
   "retromod.screen.add_mods": "Ajouter des mods \u00e0 transformer",
@@ -31,6 +32,8 @@
   "retromod.settings.force_translate_complex": "Forcer la traduction complexe",
   "retromod.settings.log_transformations": "Journaliser les transformations",
   "retromod.settings.debug": "Mode d\u00e9bogage",
+  "retromod.settings.write_translated_jars": "\u00c9crire les jars traduits dans mods/",
+  "retromod.settings.next_launch": "S'applique au prochain lancement",
 
   "retromod.filepicker.title": "Retromod: S\u00e9lectionnez les JAR de mods \u00e0 transformer",
 

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "retromod_test_lib",
+  "version": "0.1.0",
+  "name": "Retromod Test Library",
+  "description": "A library for the Retromod test mod. Install it next to the test mod so the cross-jar case can run.",
+  "authors": [
+    "Bownlux"
+  ],
+  "license": "MIT",
+  "environment": "*",
+  "depends": {
+    "fabricloader": ">=0.15.0",
+    "minecraft": "1.20.1",
+    "java": ">=17"
+  }
+}

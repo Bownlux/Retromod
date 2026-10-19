@@ -84,6 +84,7 @@ public final class TransformVerifier {
         try {
             Objects.requireNonNull(archiveBudget, "archiveBudget");
             Set<String> modClasses = new HashSet<>();
+            Map<String, ClassShape> modShapes = new HashMap<>();
             Set<String> referencedClasses = new LinkedHashSet<>();
             Map<String, Set<String>> referencedMethods = new LinkedHashMap<>();
             Map<String, Set<FieldReference>> referencedFields = new LinkedHashMap<>();
@@ -102,6 +103,10 @@ public final class TransformVerifier {
                         (entryName, classBytes, nested) -> {
                             String discoveredClass = className(entryName);
                             modClasses.add(discoveredClass);
+                            if (!nested) {
+                                ClassShape shape = ClassShape.read(classBytes);
+                                if (shape != null) modShapes.put(discoveredClass, shape);
+                            }
                             if (nested && !scanNestedTargets) return;
                             try (InputStream input = new ByteArrayInputStream(classBytes)) {
                                 if (nested) {
@@ -128,6 +133,10 @@ public final class TransformVerifier {
 
             for (var entry : referencedMethods.entrySet()) {
                 String owner = entry.getKey();
+                if (modShapes.containsKey(owner)) {
+                    checkInheritedMembers(owner, entry.getValue(), true, modShapes, targetIndex, issues);
+                    continue;
+                }
                 if (isArrayType(owner) || modClasses.contains(owner) || isSafe(owner)
                         || !canResolveClass(owner, targetIndex)) continue;
 
@@ -144,6 +153,14 @@ public final class TransformVerifier {
 
             for (var entry : referencedFields.entrySet()) {
                 String owner = entry.getKey();
+                if (modShapes.containsKey(owner)) {
+                    Set<String> members = new LinkedHashSet<>();
+                    for (FieldReference field : entry.getValue()) {
+                        members.add(field.name() + ":" + field.descriptor());
+                    }
+                    checkInheritedMembers(owner, members, false, modShapes, targetIndex, issues);
+                    continue;
+                }
                 if (isArrayType(owner) || modClasses.contains(owner) || isSafe(owner)
                         || !canResolveClass(owner, targetIndex)) continue;
 
@@ -328,6 +345,107 @@ public final class TransformVerifier {
                 }
             }
         }
+    }
+
+    /**
+     * A mod class's superclass, interfaces, and declared members. A method is written as
+     * {@code name + descriptor} and a field as {@code name + ":" + descriptor}.
+     */
+    private record ClassShape(String superName, String[] interfaces, Set<String> members) {
+        static ClassShape read(byte[] classBytes) {
+            try {
+                ClassReader reader = new ClassReader(classBytes);
+                Set<String> members = new HashSet<>();
+                reader.accept(new ClassVisitor(Opcodes.ASM9) {
+                    @Override
+                    public FieldVisitor visitField(int access, String name, String descriptor,
+                            String signature, Object value) {
+                        members.add(name + ":" + descriptor);
+                        return null;
+                    }
+
+                    @Override
+                    public MethodVisitor visitMethod(int access, String name, String descriptor,
+                            String signature, String[] exceptions) {
+                        members.add(name + descriptor);
+                        return null;
+                    }
+                }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+                return new ClassShape(reader.getSuperName(), reader.getInterfaces(), members);
+            } catch (RuntimeException unreadable) {
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Checks members a call or field access names on a mod class but that the mod class does not
+     * declare. javac names the class it calls through, so a block's own static initializer calls an
+     * inherited Minecraft helper as {@code ModBlock.simpleCodec}. Such a member is looked up on the
+     * first Minecraft ancestor. Nothing is reported when the chain reaches a class or interface
+     * this check cannot read, since the member may live there.
+     */
+    private static void checkInheritedMembers(String owner, Set<String> members, boolean methods,
+            Map<String, ClassShape> modShapes, McSymbolIndex targetIndex, List<Issue> issues) {
+        for (String member : members) {
+            int split = methods ? member.indexOf('(') : member.indexOf(':');
+            if (split < 0 || (methods && member.startsWith("<"))) continue;
+            String name = member.substring(0, split);
+            String descriptor = member.substring(methods ? split : split + 1);
+
+            List<String> outsideInterfaces = new ArrayList<>();
+            String ancestor = owner;
+            boolean declared = false;
+            for (int depth = 0; ancestor != null && modShapes.containsKey(ancestor) && depth < 64;
+                    depth++) {
+                ClassShape shape = modShapes.get(ancestor);
+                if (shape.members().contains(member) || modInterfacesDeclare(shape.interfaces(), member,
+                        modShapes, outsideInterfaces, new HashSet<>())) {
+                    declared = true;
+                    break;
+                }
+                ancestor = shape.superName();
+            }
+            if (declared || ancestor == null || isSafe(ancestor) || isArrayType(ancestor)
+                    || !canResolveClass(ancestor, targetIndex)) continue;
+            if (resolves(ancestor, name, descriptor, methods, targetIndex)) continue;
+
+            boolean unknownInterface = false;
+            boolean viaInterface = false;
+            for (String iface : outsideInterfaces) {
+                if (isSafe(iface) || !canResolveClass(iface, targetIndex)) {
+                    unknownInterface = true;
+                } else if (resolves(iface, name, descriptor, methods, targetIndex)) {
+                    viaInterface = true;
+                }
+            }
+            if (unknownInterface || viaInterface) continue;
+            addIssue(issues, new Issue(methods ? IssueType.MISSING_METHOD : IssueType.MISSING_FIELD,
+                    ancestor, name, descriptor));
+        }
+    }
+
+    /** Whether a mod interface declares the member, collecting the interfaces outside the mod. */
+    private static boolean modInterfacesDeclare(String[] interfaces, String member,
+            Map<String, ClassShape> modShapes, List<String> outside, Set<String> visited) {
+        if (interfaces == null) return false;
+        for (String iface : interfaces) {
+            if (!visited.add(iface)) continue;
+            ClassShape shape = modShapes.get(iface);
+            if (shape == null) {
+                outside.add(iface);
+            } else if (shape.members().contains(member)
+                    || modInterfacesDeclare(shape.interfaces(), member, modShapes, outside, visited)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean resolves(String owner, String name, String descriptor, boolean method,
+            McSymbolIndex targetIndex) {
+        return method ? canResolveMethod(owner, name, descriptor, targetIndex)
+                : canResolveField(owner, name, descriptor, targetIndex);
     }
 
     private static boolean isTargetOwnedClass(String internalName) {

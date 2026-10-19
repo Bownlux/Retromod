@@ -7,7 +7,7 @@ package com.retromod.shim.neoforge;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
 
-/** Maps the SimpleChannel/NetworkRegistry networking removed in 1.20.2 onto PayloadRegistrar. */
+/** Updates NeoForge 1.20.1 mods for the 1.20.2 networking and advancement changes. */
 public class NeoForge_1_20_1_to_1_20_2 implements VersionShim {
 
     @Override public String getShimName() { return "NeoForge 1.20.1 to 1.20.2"; }
@@ -17,6 +17,9 @@ public class NeoForge_1_20_1_to_1_20_2 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // 1.20.2 split Advancement into its data and an AdvancementHolder.
+        com.retromod.shim.common.LegacyAdvancementBridge.register(transformer);
+        // 1.20.2 removed the SimpleChannel and NetworkRegistry networking; map it onto PayloadRegistrar.
         transformer.registerClassRedirect(
             "net/neoforged/neoforge/network/NetworkRegistry",
             "net/neoforged/neoforge/network/registration/PayloadRegistrar"

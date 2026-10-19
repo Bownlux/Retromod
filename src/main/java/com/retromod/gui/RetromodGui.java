@@ -63,14 +63,7 @@ public class RetromodGui {
             
             int choice = JOptionPane.showOptionDialog(
                 null,
-                """
-                Choose the old mod jars you want Retromod to update for this
-                Minecraft version.
-
-                Retromod keeps the originals and installs updated copies in
-                your mods folder. You can also precompile them from Settings
-                if you want later launches to do less work.
-                """,
+                firstRunText(inPlaceLoadingThisLaunch()),
                 "Set up Retromod",
                 JOptionPane.DEFAULT_OPTION,
                 JOptionPane.INFORMATION_MESSAGE,
@@ -88,6 +81,49 @@ public class RetromodGui {
     }
     
     private boolean fullAotEnabled = false;
+
+    /** True when this launch serves Forge and NeoForge mods from Retromod's cache. */
+    private static boolean inPlaceLoadingThisLaunch() {
+        return com.retromod.inplace.InPlaceSettings
+                .writesTranslatedJarsThisLaunch(System.getProperties())
+                .map(writes -> !writes).orElse(false);
+    }
+
+    /** The setup text. In-place mode puts the chosen jars in mods/ unchanged. */
+    static String firstRunText(boolean inPlace) {
+        if (inPlace) {
+            return """
+                Choose the old mod jars you want Retromod to update for this
+                Minecraft version.
+
+                Retromod puts the jars you choose in your mods folder unchanged
+                and loads translated copies from its cache. Restart Minecraft
+                after choosing them.
+                """;
+        }
+        return """
+                Choose the old mod jars you want Retromod to update for this
+                Minecraft version.
+
+                Retromod keeps the originals and installs updated copies in
+                your mods folder. You can also precompile them from Settings
+                if you want later launches to do less work.
+                """;
+    }
+
+    /** One result line for a jar placed in mods/ by in-place loading. */
+    static String inPlaceResultLine(String fileName,
+            com.retromod.inplace.InPlaceLaunch.ChosenOutcome outcome) {
+        return switch (outcome) {
+            case TRANSLATED -> "Added " + fileName
+                    + " to mods. Its translated copy loads after a restart.";
+            case ALREADY_TRANSLATED -> "Added " + fileName
+                    + " to mods. Retromod already has a translated copy.";
+            case NEXT_LAUNCH -> "Added " + fileName + " to mods. Retromod translates it on "
+                    + "the next launch and then asks for one more restart.";
+            case FAILED -> fileName + " could not be translated. logs/latest.log has the reason.";
+        };
+    }
     
     /** Opens the file picker and updates the selected mods. */
     public void openFilePickerAndTransform() {
@@ -188,9 +224,23 @@ public class RetromodGui {
                     });
                     
                     var analysis = checker.analyzeJar(modFile.toPath());
+                    // In in-place mode a Forge or NeoForge jar goes into mods/ unchanged and its
+                    // translation into Retromod's cache. An empty result means rewrite it as before.
+                    var inPlace = analysis != null
+                        ? checker.installInPlace(modFile.toPath())
+                        : java.util.Optional.<ModCompatibilityChecker.InPlaceInstall>empty();
                     
                     String logMessage;
-                    if (analysis != null) {
+                    if (inPlace.isPresent()) {
+                        var outcome = inPlace.get().outcome();
+                        logMessage = inPlaceResultLine(modFile.getName(), outcome);
+                        if (outcome == com.retromod.inplace.InPlaceLaunch.ChosenOutcome.FAILED) {
+                            failedMods.add(modFile.getName());
+                        } else {
+                            successfulMods.add(modFile.getName());
+                            transformedAnyMods = true;
+                        }
+                    } else if (analysis != null) {
                         Path result = checker.transformAndInstall(modFile.toPath());
                         logMessage = "Updated " + modFile.getName() + " as " + result.getFileName();
                         successfulMods.add(modFile.getName());

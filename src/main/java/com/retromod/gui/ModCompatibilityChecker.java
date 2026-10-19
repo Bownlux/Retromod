@@ -5,6 +5,7 @@
 package com.retromod.gui;
 
 import com.retromod.core.FabricModTransformer;
+import com.retromod.core.ForgeModTransformer;
 import com.retromod.core.ModVersionDetector;
 import com.retromod.core.QuiltModTransformer;
 import com.retromod.core.RetromodVersion;
@@ -12,22 +13,20 @@ import com.retromod.core.VersionShim;
 import com.retromod.aot.AotCompiler;
 import com.retromod.shim.ShimRegistry;
 import com.retromod.embedder.ModVersionInfo;
+import com.retromod.inplace.InPlaceLaunch;
+import com.retromod.inplace.InPlaceSettings;
 import com.retromod.util.ArchivePublication;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.*;
+import java.util.Optional;
+import java.util.Properties;
 import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
 
-/**
- * Mod compatibility checker, used internally by the GUI.
- * 
- * Handles transformation for all mod loaders:
- * - Fabric: Uses FabricModTransformer (updates fabric.mod.json in JAR)
- * - Forge/NeoForge: Uses AotCompiler (bytecode transformation)
- */
+/** Checks the mods the GUI picks and installs updated copies, for every loader. */
 public class ModCompatibilityChecker {
 
     /**
@@ -48,6 +47,9 @@ public class ModCompatibilityChecker {
     private final String targetVersion;
     private final ShimRegistry shimRegistry;
     
+    /** A mod the picker placed in {@code mods/} unchanged, and whether its translation is already cached. */
+    public record InPlaceInstall(Path installed, InPlaceLaunch.ChosenOutcome outcome) {}
+
     public record IncompatibleMod(
         Path jarPath,
         String modName,
@@ -189,6 +191,35 @@ public class ModCompatibilityChecker {
         
         LOGGER.info("Installed transformed mod: {}", transformed.getFileName());
         return transformed;
+    }
+
+    /** Installs a Forge or NeoForge mod the in-place way; empty means use {@link #transformAndInstall}. */
+    public Optional<InPlaceInstall> installInPlace(Path sourceJar) throws IOException {
+        // Empty when this launch does not run in-place loading, or for a jar it does not handle.
+        ModVersionInfo info = detector.detectVersion(sourceJar);
+        String loaderType = info != null ? info.modLoaderType() : "unknown";
+        if (!handledInPlace(loaderType, System.getProperties())) return Optional.empty();
+
+        // The original goes into mods/ unchanged. An AOT jar there, as transformAndInstall writes,
+        // would go against the setting, and its output differs from the entry point's translation.
+        Files.createDirectories(modsFolder);
+        Path installed = modsFolder.resolve(sourceJar.getFileName().toString());
+        if (!Files.exists(installed) || !Files.isSameFile(sourceJar, installed)) {
+            ArchivePublication.copyReplacing(sourceJar, installed);
+        }
+        // Translate it into Retromod's cache now, so the next launch loads it.
+        InPlaceLaunch launch = InPlaceLaunch.forEntryPoint(modsFolder.getParent());
+        InPlaceLaunch.ChosenOutcome outcome = launch.translateChosen(installed, targetVersion,
+                () -> (InPlaceLaunch.LinkingTranslator) new ForgeModTransformer(targetVersion)::transformMod);
+        LOGGER.info("Added {} to mods/ ({})", installed.getFileName(), outcome);
+        return Optional.of(new InPlaceInstall(installed, outcome));
+    }
+
+    /** True when a jar of this loader type goes through in-place loading in this launch. */
+    static boolean handledInPlace(String loaderType, Properties properties) {
+        boolean forgeFamily = "forge".equals(loaderType) || "neoforge".equals(loaderType);
+        return forgeFamily && InPlaceSettings.writesTranslatedJarsThisLaunch(properties)
+                .map(writes -> !writes).orElse(false);
     }
 
     /** Loads packaged providers while allowing lite builds to omit optional implementations. */

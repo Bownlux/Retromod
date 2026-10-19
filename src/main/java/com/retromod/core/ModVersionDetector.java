@@ -16,9 +16,7 @@ import java.util.*;
 import java.util.jar.*;
 import java.util.zip.*;
 
-/**
- * Detects which Minecraft version a mod was built for, from its metadata.
- */
+/** Detects which Minecraft version a mod was built for, from its metadata. */
 public class ModVersionDetector {
 
     private static final org.slf4j.Logger LOGGER =
@@ -30,9 +28,12 @@ public class ModVersionDetector {
     /** Splits a TOML file before each array-of-tables header, which is how these files are shaped. */
     private static final java.util.regex.Pattern TABLE_HEADER_SPLIT =
             java.util.regex.Pattern.compile("(?m)^(?=[ \\t]*\\[\\[)");
-    /** Matches only at the start of a chunk, so it cannot scan forward. */
+    /**
+     * Matches only at the start of a chunk, so it cannot scan forward. The Forge MDK template
+     * writes the header as {@code [[mods]] #mandatory}, and TOML allows that trailing comment.
+     */
     private static final java.util.regex.Pattern MODS_HEADER =
-            java.util.regex.Pattern.compile("[ \\t]*\\[\\[mods]][ \\t]*(\\R|$)");
+            java.util.regex.Pattern.compile("[ \\t]*\\[\\[mods]][ \\t]*(?:#[^\\r\\n]*)?(\\R|$)");
 
     /** No real Minecraft or mod version is longer than this. */
     private static final int MAX_VERSION_LENGTH = 64;
@@ -49,6 +50,24 @@ public class ModVersionDetector {
     private static final int FORGE_NUMBERING_FLOOR = 40;
     private static final long MAX_CLASS_SCAN_SIZE = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
     private static final int MAX_JSON_DEPTH = 256;
+    /** The 1.12 {@code @Mod} annotation; 1.13 kept the name but replaced {@code modid} with {@code value}. */
+    private static final String LEGACY_MOD_ANNOTATION = "Lnet/minecraftforge/fml/common/Mod;";
+
+    /** Whether to scan class bytes for packages and loader APIs, which only the shim choice needs. */
+    private final boolean scanClasses;
+
+    public ModVersionDetector() {
+        this(true);
+    }
+
+    private ModVersionDetector(boolean scanClasses) {
+        this.scanClasses = scanClasses;
+    }
+
+    /** A detector that reads only the declared version and mod id, skipping the scan of every class. */
+    public static ModVersionDetector metadataOnly() {
+        return new ModVersionDetector(false);
+    }
 
     public ModVersionInfo detectVersion(Path modJarPath) throws IOException {
         try (JarFile jar = new JarFile(modJarPath.toFile())) {
@@ -81,7 +100,9 @@ public class ModVersionDetector {
                 return parseLegacyForgeMod(jar, legacyForgeEntry);
             }
 
-            return null;
+            // 1.12 Forge did not require mcmod.info: FML read the id from @Mod and the mod filled
+            // its metadata in code.
+            return parseLegacyModAnnotation(jar);
         }
     }
 
@@ -243,6 +264,9 @@ public class ModVersionDetector {
         if (mcVersion == null) {
             mcVersion = inferMcVersionFromModVersion(modVersion);
         }
+        if (mcVersion == null) {
+            mcVersion = inferMcVersionFromManifest(jar);
+        }
         String forgeVersion = toml.get("forge");
 
         Set<String> packages = scanModPackages(jar, modId);
@@ -261,9 +285,8 @@ public class ModVersionDetector {
     }
     
     private ModVersionInfo parseLegacyForgeMod(JarFile jar, JarEntry entry) throws IOException {
-        JsonArray array = parseJsonArray(
-                readJsonMetadata(jar, entry, "mcmod.info"), "mcmod.info");
-        if (array.isEmpty()) return null;
+        JsonArray array = mcmodEntries(readJsonMetadata(jar, entry, "mcmod.info"));
+        if (array.isEmpty() || !array.get(0).isJsonObject()) return null;
 
         JsonObject first = array.get(0).getAsJsonObject();
 
@@ -286,6 +309,88 @@ public class ModVersionDetector {
         );
     }
     
+    /** The mod entries of an mcmod.info, whichever of its three shapes the file uses. */
+    private static JsonArray mcmodEntries(String content) throws IOException {
+        validateJsonDepth(content, "mcmod.info");
+        JsonElement root;
+        try {
+            root = GSON.fromJson(content, JsonElement.class);
+        } catch (JsonParseException | IllegalStateException e) {
+            throw new IOException("Could not parse mcmod.info: " + e.getMessage(), e);
+        }
+        if (root == null) throw new IOException("mcmod.info root is missing");
+        // Most files are a bare array.
+        if (root.isJsonArray()) return root.getAsJsonArray();
+        // The version 2 format wraps the array as {"modListVersion": 2, "modList": [...]}, which
+        // AbyssalCraft ships. A few files hold a single object.
+        if (root.isJsonObject()) {
+            JsonObject object = root.getAsJsonObject();
+            if (object.get("modList") instanceof JsonArray list) return list;
+            JsonArray single = new JsonArray();
+            single.add(object);
+            return single;
+        }
+        throw new IOException("mcmod.info is neither a list nor an object");
+    }
+
+    /** A 1.12 Forge mod without mcmod.info, read from its {@code @Mod} annotation. */
+    private ModVersionInfo parseLegacyModAnnotation(JarFile jar) throws IOException {
+        long remainingBytes = MAX_CLASS_SCAN_SIZE;
+        Enumeration<JarEntry> entries = jar.entries();
+        while (entries.hasMoreElements() && remainingBytes > 0) {
+            JarEntry entry = entries.nextElement();
+            String name = ZipSecurity.safeEntryName(entry.getName());
+            if (!name.endsWith(".class")) continue;
+            byte[] bytes;
+            try (InputStream input = jar.getInputStream(entry)) {
+                bytes = ZipSecurity.safeReadAllBytes(input,
+                        Math.min(ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, remainingBytes));
+            }
+            remainingBytes -= bytes.length;
+            // Only parse a class whose constant pool names the annotation.
+            if (!new String(bytes, StandardCharsets.ISO_8859_1).contains(LEGACY_MOD_ANNOTATION)) continue;
+            // The 1.12 annotation names the mod with modid, which 1.13 replaced with value, so a
+            // modern mod that lost its toml is never read as an old one.
+            Map<String, String> mod = legacyModAnnotation(bytes);
+            String modId = mod.get("modid");
+            if (modId == null || modId.isBlank()) continue;
+            // The Minecraft version is the lower bound of acceptedMinecraftVersions, or unknown
+            // when the annotation has none.
+            String accepted = mod.get("acceptedMinecraftVersions");
+            String mcVersion = accepted == null || accepted.isBlank() ? null
+                    : parseMavenVersionRange(accepted);
+            Set<String> packages = scanModPackages(jar, modId);
+            Set<String> apiDeps = scanApiDependencies(jar);
+            return new ModVersionInfo(modId, mod.getOrDefault("version", "unknown"), mcVersion,
+                    "forge", null, packages, apiDeps, checkForRemovedApis(apiDeps));
+        }
+        return null;
+    }
+
+    /** The string values of a class's 1.12 {@code @Mod} annotation, or an empty map. */
+    private static Map<String, String> legacyModAnnotation(byte[] classBytes) {
+        Map<String, String> values = new HashMap<>();
+        try {
+            new org.objectweb.asm.ClassReader(classBytes).accept(
+                    new org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                @Override
+                public org.objectweb.asm.AnnotationVisitor visitAnnotation(String desc, boolean visible) {
+                    if (!LEGACY_MOD_ANNOTATION.equals(desc)) return null;
+                    return new org.objectweb.asm.AnnotationVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                        @Override
+                        public void visit(String key, Object value) {
+                            if (value instanceof String text) values.put(key, text);
+                        }
+                    };
+                }
+            }, org.objectweb.asm.ClassReader.SKIP_CODE | org.objectweb.asm.ClassReader.SKIP_DEBUG
+                    | org.objectweb.asm.ClassReader.SKIP_FRAMES);
+        } catch (RuntimeException malformed) {
+            return Map.of();
+        }
+        return values;
+    }
+
     private ModVersionInfo parseNeoForgeMod(JarFile jar, JarEntry entry) throws IOException {
         String tomlContent = readMetadata(jar, entry);
 
@@ -299,6 +404,9 @@ public class ModVersionDetector {
         String mcVersion = extractMcVersionFromToml(tomlContent);
         if (mcVersion == null) {
             mcVersion = inferMcVersionFromModVersion(modVersion);
+        }
+        if (mcVersion == null) {
+            mcVersion = inferMcVersionFromManifest(jar);
         }
         if (mcVersion == null) {
             mcVersion = inferMcVersionFromNeoForgeRange(tomlContent);
@@ -351,17 +459,6 @@ public class ModVersionDetector {
         validateJsonDepth(content, name);
         try {
             JsonObject parsed = GSON.fromJson(content, JsonObject.class);
-            if (parsed == null) throw new IOException(name + " root is missing");
-            return parsed;
-        } catch (JsonParseException | IllegalStateException e) {
-            throw new IOException("Could not parse " + name + ": " + e.getMessage(), e);
-        }
-    }
-
-    private static JsonArray parseJsonArray(String content, String name) throws IOException {
-        validateJsonDepth(content, name);
-        try {
-            JsonArray parsed = GSON.fromJson(content, JsonArray.class);
             if (parsed == null) throw new IOException(name + " root is missing");
             return parsed;
         } catch (JsonParseException | IllegalStateException e) {
@@ -566,20 +663,58 @@ public class ModVersionDetector {
      * a separator, for example 1.16.4-0.3.9. Plain mod semver such as 1.3.0 is not inferred.
      */
     private String inferMcVersionFromModVersion(String modVersion) {
-        if (modVersion == null) {
+        String inferred = leadingMcVersion(modVersion);
+        if (inferred != null) {
+            LOGGER.info("Inferred Minecraft {} from mod version {} because its metadata has no "
+                    + "minecraft dependency", inferred, modVersion);
+        }
+        return inferred;
+    }
+
+    /**
+     * Forge MDK builds stamp {@code Implementation-Version} with the Gradle project version, and
+     * many mods name that {@code <minecraft>-<mod>} while their toml version leaves the Minecraft
+     * version out or is {@code ${file.jarVersion}}. It is read through the same pattern as the
+     * toml version, so a plain {@code 1.0.0} still names no Minecraft version. The loader range
+     * is not used instead: a 1.18.2 mod can still declare the {@code [36,)} floor it was
+     * generated with on 1.16.5.
+     *
+     * <p>The manifest is read with the same size bound as the toml. An unreadable or oversized
+     * manifest names no version instead of failing detection, because the jar was detectable
+     * before this fallback existed.
+     */
+    private String inferMcVersionFromManifest(JarFile jar) {
+        JarEntry manifestEntry = jar.getJarEntry(JarFile.MANIFEST_NAME);
+        if (manifestEntry == null) {
+            return null;
+        }
+        String implementationVersion;
+        try (InputStream input = jar.getInputStream(manifestEntry)) {
+            Manifest manifest = new Manifest(new ByteArrayInputStream(
+                    ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE)));
+            implementationVersion = manifest.getMainAttributes()
+                    .getValue(Attributes.Name.IMPLEMENTATION_VERSION);
+        } catch (IOException | RuntimeException unreadable) {
+            return null;
+        }
+        String inferred = leadingMcVersion(implementationVersion);
+        if (inferred != null) {
+            LOGGER.info("Inferred Minecraft {} from the jar manifest's Implementation-Version "
+                    + "because its metadata has no minecraft dependency", inferred);
+        }
+        return inferred;
+    }
+
+    /** The supported Minecraft version a version string starts with, or null. */
+    private static String leadingMcVersion(String version) {
+        if (version == null) {
             return null;
         }
         java.util.regex.Matcher matcher = java.util.regex.Pattern
                 .compile("^(?:mc)?((?:1\\.(?:1[2-9]|2[0-1])(?:\\.\\d+)?|26\\.\\d+(?:\\.\\d+)?))(?=[+_-])",
                         java.util.regex.Pattern.CASE_INSENSITIVE)
-                .matcher(modVersion.trim());
-        if (!matcher.find()) {
-            return null;
-        }
-        String inferred = matcher.group(1);
-        LOGGER.info("Inferred Minecraft {} from mod version {} because its metadata has no "
-                + "minecraft dependency", inferred, modVersion);
-        return inferred;
+                .matcher(version.trim());
+        return matcher.find() ? matcher.group(1) : null;
     }
 
     /**
@@ -704,6 +839,7 @@ public class ModVersionDetector {
     /** Packages that hold the mod's own classes, with common libraries filtered out. */
     private Set<String> scanModPackages(JarFile jar, String modId) {
         Set<String> packages = new HashSet<>();
+        if (!scanClasses) return packages;
 
         Enumeration<JarEntry> entries = jar.entries();
         while (entries.hasMoreElements()) {
@@ -737,6 +873,7 @@ public class ModVersionDetector {
     /** Loader API package references found in the mod's class bytes (constant-pool substring scan). */
     private Set<String> scanApiDependencies(JarFile jar) {
         Set<String> apis = new HashSet<>();
+        if (!scanClasses) return apis;
         long remainingBytes = MAX_CLASS_SCAN_SIZE;
 
         Enumeration<JarEntry> entries = jar.entries();

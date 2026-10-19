@@ -4,9 +4,9 @@
  */
 package com.retromod.shim.fabric;
 
-import com.retromod.util.SafeClassWriter;
+import com.retromod.shim.common.StaticFieldIdStamper;
+import com.retromod.shim.common.StaticFieldRegistryIds;
 import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AbstractInsnNode;
@@ -30,27 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Makes a Fabric mod's registry id reachable while its block is being constructed.
- *
- * <p>A Fabric mod registers with {@code Registry.register(registry, id, object)} and builds the
- * object inside the argument list, so by the time any Retromod code runs the block has already
- * failed in its own constructor. Arguments evaluate left to right though, which means the id is on
- * the stack before the object expression starts. This finds the instruction that produced the id and
- * stamps a copy of it into {@link FabricRegistryIdSynthetic}'s thread local right there, then clears
- * it once the registration returns.
- *
- * <p>The stamp is only inserted when the id has exactly ONE producing instruction. A merged producer
- * means the value came from more than one branch, and duplicating it there would stamp whichever the
- * analyzer happened to see rather than the one actually used.
- *
- * <p>Stamping where the {@code Properties} is CREATED is not enough on its own. A mod may build one
- * Properties into a shared static field long before any registration runs, then hand the same object
- * to several blocks. Hearth and Home does exactly that, and its ColumnBlock still arrived with no id.
- * So the Properties is also stamped where it is CONSUMED, immediately before the constructor that
- * receives it, which is always inside the registration window. The stamp returns the same object and
- * takes one argument of the type it returns, so it is stack neutral and safe to splice in.
- */
+/** Makes a Fabric mod's registry id readable while its block or item is being built. */
 public final class FabricRegistryIdAdapter {
 
     private FabricRegistryIdAdapter() {}
@@ -66,12 +46,23 @@ public final class FabricRegistryIdAdapter {
     /** One registration call worth rewriting, and the instruction that produced its id. */
     private record Stamp(MethodInsnNode call, AbstractInsnNode idProducer) {}
 
-    /**
-     * @param classBytes the class to repair
-     * @return the repaired class, or the same array when nothing matched
-     */
+    /** Repairs one class, or returns the same array when nothing matched. */
     public static byte[] apply(byte[] classBytes) {
-        if (classBytes == null || indexOf(classBytes, REGISTER) < 0) return classBytes;
+        return apply(classBytes, StaticFieldRegistryIds.NONE);
+    }
+
+    /** Repairs one class, also stamping the fields that the rest of the jar registers. */
+    public static byte[] apply(byte[] classBytes, StaticFieldRegistryIds jarIds) {
+        if (classBytes == null) return classBytes;
+        // jarIds holds the ids other classes of the jar register static fields under, so a field
+        // filled here and registered elsewhere is stamped too.
+        StaticFieldRegistryIds jar = jarIds != null ? jarIds : StaticFieldRegistryIds.NONE;
+        // Skip the parse when the class has no register call, no store into a field the jar
+        // registers, and no static initializer.
+        if (indexOf(classBytes, REGISTER) < 0 && !jar.mayStoreInto(classBytes)
+                && !StaticFieldIdStamper.mayHaveClassInitializer(classBytes)) {
+            return classBytes;
+        }
 
         ClassNode cn = new ClassNode();
         try {
@@ -83,23 +74,47 @@ public final class FabricRegistryIdAdapter {
         // Found before any stamping, because stamping inserts instructions into these helpers.
         Map<String, Helper> helpers = registrationHelpers(cn);
         int stamped = 0;
-        Map<String, String[]> fieldIds = registeredStaticFields(cn, helpers);
+        Map<String, String[]> ownIds = ownFieldIds(cn.name, registeredStaticFields(cn, helpers), jar);
+        // Each method gets every kind of stamp: around stores into registered static fields,
+        // around helper and register calls, and on Properties handed to a constructor.
         for (MethodNode m : cn.methods) {
-            if (m.name.equals("<clinit>")) stamped += stampStaticFieldInitializers(cn.name, m, fieldIds);
+            boolean clinit = m.name.equals("<clinit>");
+            stamped += StaticFieldIdStamper.stamp(cn.name, m,
+                    put -> fieldId(put, cn.name, clinit, ownIds, jar), BRIDGE);
             stamped += stampHelperCalls(cn.name, m, helpers);
             stamped += stampMethod(cn.name, m);
             stamped += stampConstructorArguments(m);
         }
-        if (stamped == 0) return classBytes;
+        // After the stamps, so the class's own stamped statements run inside the isolated region.
+        boolean isolated = StaticFieldIdStamper.isolateClassInitializer(cn, BRIDGE);
+        if (stamped == 0 && !isolated) return classBytes;
+        // Frames are recomputed only when a stamp was added.
+        return StaticFieldIdStamper.write(classBytes, cn, stamped > 0);
+    }
 
-        try {
-            SafeClassWriter cw = new SafeClassWriter(new ClassReader(classBytes),
-                    ClassWriter.COMPUTE_FRAMES);
-            cn.accept(cw);
-            return cw.toByteArray();
-        } catch (Throwable failed) {
-            return classBytes; // never ship a half-rewritten class
-        }
+    /** This class's static fields with an id, from its own registrations and from the rest of the jar. */
+    private static Map<String, String[]> ownFieldIds(String owner, Map<String, String[]> registeredHere,
+                                                     StaticFieldRegistryIds jarIds) {
+        Map<String, String[]> ids = new HashMap<>(registeredHere);
+        Set<String> conflicting = new java.util.HashSet<>();
+        jarIds.fieldsOf(owner).forEach((field, id) -> {
+            String[] previous = ids.putIfAbsent(field, id);
+            if (previous != null && !java.util.Arrays.equals(previous, id)) conflicting.add(field);
+        });
+        // A field the two sources give different ids is left out.
+        conflicting.forEach(ids::remove);
+        return ids;
+    }
+
+    /** The id to stamp around a static field store, or null to leave the store alone. */
+    private static String[] fieldId(org.objectweb.asm.tree.FieldInsnNode put, String owner, boolean clinit,
+                                    Map<String, String[]> ownIds, StaticFieldRegistryIds jarIds) {
+        // A field the jar index knows is stamped wherever it is filled, as when a loader class
+        // builds an item straight into the common class's field.
+        if (!put.owner.equals(owner)) return jarIds.fieldsOf(put.owner).get(put.name);
+        // The class's own fields keep the long-standing rule of being stamped in its static
+        // initializer, unless the jar index knows them too.
+        return clinit || jarIds.fieldsOf(owner).containsKey(put.name) ? ownIds.get(put.name) : null;
     }
 
     private static final String BLOCK_PROPS =
@@ -114,6 +129,9 @@ public final class FabricRegistryIdAdapter {
      * {@code new Block(props)} and {@code new StairBlock(state, props)}.
      */
     private static int stampConstructorArguments(MethodNode m) {
+        // Stamping where the Properties is created is not enough. A mod may build one Properties
+        // into a shared static field before any registration runs and hand it to several blocks,
+        // as Hearth and Home does. Right before the constructor is always inside the registration.
         List<MethodInsnNode> targets = new ArrayList<>();
         for (AbstractInsnNode insn : m.instructions) {
             if (!(insn instanceof MethodInsnNode call)) continue;
@@ -123,6 +141,7 @@ public final class FabricRegistryIdAdapter {
                 targets.add(call);
             }
         }
+        // The stamp takes and returns the same Properties, so it leaves the stack as it was.
         for (MethodInsnNode call : targets) {
             boolean block = call.desc.endsWith("L" + BLOCK_PROPS + ";)V");
             String type = block ? BLOCK_PROPS : ITEM_PROPS;
@@ -135,6 +154,9 @@ public final class FabricRegistryIdAdapter {
     private static int stampMethod(String owner, MethodNode m) {
         if (m.instructions == null || m.instructions.size() == 0) return 0;
 
+        // A mod builds the object inside Registry.register(registry, id, object), so the block fails
+        // in its own constructor before any Retromod code runs. Arguments run left to right, though,
+        // so the id is already on the stack when the object starts.
         List<MethodInsnNode> calls = new ArrayList<>();
         for (AbstractInsnNode insn : m.instructions) {
             if (insn instanceof MethodInsnNode call && isRegistration(call)) calls.add(call);
@@ -159,11 +181,15 @@ public final class FabricRegistryIdAdapter {
             int idSlot = f.getStackSize() - 2;
             if (idSlot < 0) continue;
             SourceValue id = f.getStack(idSlot);
+            // Only an id with one producer. A merged one came from several branches, and a copy
+            // would stamp whichever the analyzer saw rather than the one actually used.
             if (id == null || id.insns.size() != 1) continue;
             stamps.add(new Stamp(call, id.insns.iterator().next()));
         }
         if (stamps.isEmpty()) return 0;
 
+        // Copy the id into the bridge's thread local right after it is made, and clear it once
+        // the registration returns.
         for (Stamp s : stamps) {
             m.instructions.insert(s.idProducer(), new MethodInsnNode(
                     Opcodes.INVOKESTATIC, BRIDGE, "push", "(L" + IDENTIFIER + ";)V", false));
@@ -221,22 +247,16 @@ public final class FabricRegistryIdAdapter {
                 || !(IDENTIFIER.equals(factory.owner) || RESOURCE_LOCATION.equals(factory.owner))) {
             return null;
         }
+        // The namespace has to be a constant.
         Frame<SourceValue> atFactory = frames[m.instructions.indexOf(factory)];
         int top = atFactory.getStackSize();
-        if (!(single(atFactory.getStack(top - 2)) instanceof LdcInsnNode ns) || !(ns.cst instanceof String namespace)
-                || !(single(atFactory.getStack(top - 1)) instanceof VarInsnNode path)
-                || path.getOpcode() != Opcodes.ALOAD) {
+        if (!(single(atFactory.getStack(top - 2)) instanceof LdcInsnNode ns) || !(ns.cst instanceof String namespace)) {
             return null;
         }
-        int slot = 0;
-        Type[] args = Type.getArgumentTypes(m.desc);
-        for (int arg = 0; arg < args.length; arg++) {
-            if (slot == path.var) {
-                return args[arg].getDescriptor().equals("Ljava/lang/String;") ? new Helper(namespace, arg) : null;
-            }
-            slot += args[arg].getSize();
-        }
-        return null;
+        // The path has to be one of the helper's own String parameters.
+        int nameArg = StaticFieldRegistryIds.parameterRead(m, frames, single(atFactory.getStack(top - 1)),
+                "Ljava/lang/String;");
+        return nameArg < 0 ? null : new Helper(namespace, nameArg);
     }
 
     /** Follows {@code aload n} back to the value its only {@code astore n} saved. */
@@ -251,16 +271,12 @@ public final class FabricRegistryIdAdapter {
         return atStore == null ? insn : single(atStore.getStack(atStore.getStackSize() - 1));
     }
 
-    /**
-     * Static fields of this class that some method registers, keyed to {@code {namespace, path}}.
-     *
-     * <p>Most older mods build every block and item into a static field when the class loads and
-     * register the fields later, as in {@code registerItem(AMETHYST_SWORD, "amethyst_sword")} or
-     * {@code Registry.register(ITEM, new Identifier("mod", "sword"), SWORD)}. The id is never on the
-     * stack while the item is built, so it is read off the registration and applied where the field
-     * is filled. Only literal ids count, and a field registered under two different ids is skipped.
-     */
+    /** Static fields of this class that some method registers, keyed to {@code {namespace, path}}. */
     private static Map<String, String[]> registeredStaticFields(ClassNode cn, Map<String, Helper> helpers) {
+        // Most older mods build every block and item into a static field when the class loads and
+        // register the fields later, as in registerItem(AMETHYST_SWORD, "amethyst_sword"). The id is
+        // never on the stack while the item is built, so it is read off the registration and stamped
+        // where the field is filled. A field another class registers comes from StaticFieldRegistryIds.
         Map<String, String[]> ids = new HashMap<>();
         Set<String> conflicting = new java.util.HashSet<>();
         for (MethodNode m : cn.methods) {
@@ -282,6 +298,8 @@ public final class FabricRegistryIdAdapter {
                 if (f == null) continue;
                 int argCount = Type.getArgumentTypes(call.desc).length;
                 int base = f.getStackSize() - argCount;
+                // Only a literal id counts, read from the helper's name argument or from
+                // Registry.register(ITEM, new Identifier("mod", "sword"), SWORD).
                 String[] id = null;
                 String field = null;
                 if (helperCall) {
@@ -302,6 +320,7 @@ public final class FabricRegistryIdAdapter {
                 if (previous != null && !java.util.Arrays.equals(previous, id)) conflicting.add(field);
             }
         }
+        // A field registered under two different ids is skipped.
         conflicting.forEach(ids::remove);
         return ids;
     }
@@ -323,68 +342,6 @@ public final class FabricRegistryIdAdapter {
         return single(f.getStack(top - 2)) instanceof LdcInsnNode ns && ns.cst instanceof String namespace
                 && single(f.getStack(top - 1)) instanceof LdcInsnNode path && path.cst instanceof String value
                 ? new String[]{namespace, value} : null;
-    }
-
-    /** Stamps a registered static field's id around the {@code new} that fills it. */
-    private static int stampStaticFieldInitializers(String owner, MethodNode clinit, Map<String, String[]> ids) {
-        if (ids.isEmpty() || clinit.instructions == null) return 0;
-        Frame<SourceValue>[] frames;
-        try {
-            frames = new Analyzer<>(new SourceInterpreter()).analyze(owner, clinit);
-        } catch (Throwable unanalyzable) {
-            return 0;
-        }
-        record FieldStamp(AbstractInsnNode store, AbstractInsnNode created, String[] id) {}
-        List<FieldStamp> stamps = new ArrayList<>();
-        for (AbstractInsnNode insn : clinit.instructions) {
-            if (!(insn instanceof org.objectweb.asm.tree.FieldInsnNode put) || put.getOpcode() != Opcodes.PUTSTATIC
-                    || !put.owner.equals(owner) || !ids.containsKey(put.name)) {
-                continue;
-            }
-            AbstractInsnNode start = statementStart(clinit, frames, clinit.instructions.indexOf(put));
-            if (start != null) stamps.add(new FieldStamp(put, start, ids.get(put.name)));
-        }
-        for (FieldStamp stamp : stamps) {
-            InsnList push = new InsnList();
-            push.add(new LdcInsnNode(stamp.id()[0]));
-            push.add(new LdcInsnNode(stamp.id()[1]));
-            push.add(new MethodInsnNode(Opcodes.INVOKESTATIC, IDENTIFIER, "fromNamespaceAndPath",
-                    "(Ljava/lang/String;Ljava/lang/String;)L" + IDENTIFIER + ";", false));
-            push.add(new MethodInsnNode(Opcodes.INVOKESTATIC, BRIDGE, "push", "(L" + IDENTIFIER + ";)V", false));
-            clinit.instructions.insertBefore(stamp.created(), push);
-            clinit.instructions.insert(stamp.store(), new MethodInsnNode(Opcodes.INVOKESTATIC, BRIDGE, "pop", "()V", false));
-        }
-        return stamps.size();
-    }
-
-    /**
-     * The first instruction of the statement that ends at {@code end}: the last one before it
-     * that runs with an empty operand stack. The value may come from {@code new}, a factory, or a
-     * builder chain, and the id has to be in place before any of them builds the properties.
-     */
-    private static AbstractInsnNode statementStart(MethodNode m, Frame<SourceValue>[] frames, int end) {
-        for (int i = end - 1; i >= 0; i--) {
-            AbstractInsnNode insn = m.instructions.get(i);
-            if (insn.getOpcode() < 0) continue;
-            if (frames[i] == null) return null;
-            if (frames[i].getStackSize() == 0 && !enteredFromBefore(m, i, end)) return insn;
-        }
-        return null;
-    }
-
-    /**
-     * Whether a jump before {@code start} lands between it and {@code end}. A conditional such as
-     * {@code FIELD = enabled ? new Item(...) : null} has an empty stack at the start of each branch,
-     * and stamping one branch would push on one path and pop on both.
-     */
-    private static boolean enteredFromBefore(MethodNode m, int start, int end) {
-        for (int i = 0; i < start; i++) {
-            if (m.instructions.get(i) instanceof org.objectweb.asm.tree.JumpInsnNode jump) {
-                int target = m.instructions.indexOf(jump.label);
-                if (target > start && target <= end) return true;
-            }
-        }
-        return false;
     }
 
     /** The {@code new} behind a value, which the analyzer attributes to the {@code dup} after it. */

@@ -4,6 +4,7 @@
  */
 package com.retromod.gui;
 
+import com.retromod.inplace.InPlaceLaunch;
 import com.retromod.util.McI18n;
 import com.retromod.util.McReflect;
 import org.slf4j.Logger;
@@ -14,10 +15,7 @@ import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/**
- * Builds the Retromod screen opened from the title menu.
- * It provides shortcuts for adding mods, opening the input folder, and changing settings.
- */
+/** Builds the Retromod screen opened from the title menu. */
 public final class MainScreenFactory {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
@@ -76,8 +74,11 @@ public final class MainScreenFactory {
 
             // Title text via a non-interactive button (cheapest way to get
             // labeled text without a full DrawContext call from reflection).
-            // Stack: subtitle + Add Mods + Open Folder, vertically centered.
-            int totalH = btnHeight * 3 + gap * 2;
+            // Stack: subtitle + Add Mods + Open Folder, vertically centered,
+            // plus an in-place status row on Forge and NeoForge.
+            Object inPlaceStatus = inPlaceStatusText();
+            int rows = inPlaceStatus == null ? 3 : 4;
+            int totalH = btnHeight * rows + gap * (rows - 1);
             int startY = Math.max(50, (height - totalH) / 2 - 10);
             int x = width / 2 - btnWidth / 2;
 
@@ -102,6 +103,15 @@ public final class MainScreenFactory {
                     x, startY + (btnHeight + gap) * 2, btnWidth, btnHeight);
             addWidget(screen, folderBtn);
 
+            // In-place status row, a label like the subtitle.
+            if (inPlaceStatus != null) {
+                int statusWidth = 300;
+                Object statusRow = buildButton(inPlaceStatus, makePressAction(() -> { }),
+                        width / 2 - statusWidth / 2, startY + (btnHeight + gap) * 3,
+                        statusWidth, btnHeight);
+                addWidget(screen, statusRow);
+            }
+
             Object doneBtn = buildButton(McI18n.translatable("retromod.settings.done"),
                     makePressAction(() -> setScreen(parentScreen)),
                     width / 2 - 75, height - 28, 150, 20);
@@ -110,6 +120,16 @@ public final class MainScreenFactory {
         } catch (Exception e) {
             LOGGER.warn("Could not lay out Retromod main screen: {}", e.getMessage());
         }
+    }
+
+    /** Counts from in-place loading in this launch, or null where it did not run. */
+    private static Object inPlaceStatusText() {
+        // In-place mode changes nothing in mods/, so this row is where a player sees how many
+        // mods load from the cache, wait for a restart, or failed.
+        return InPlaceLaunch.summaryThisLaunch()
+                .map(summary -> McI18n.translatable("retromod.main.inplace_status",
+                        summary.served(), summary.translated(), summary.failed()))
+                .orElse(null);
     }
 
     // ACTIONS

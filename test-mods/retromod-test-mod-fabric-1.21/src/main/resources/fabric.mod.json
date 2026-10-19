@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "retromod_test_mod_121",
+  "version": "${version}",
+  "name": "Retromod Test Mod for 1.21",
+  "description": "Exercises Retromod on Fabric API shapes from 1.20.5 to 1.21.11 and reports per-test results to the launch log.",
+  "authors": [
+    "Bownlux"
+  ],
+  "contact": {
+    "homepage": "https://github.com/Bownlux/Retromod",
+    "sources": "https://github.com/Bownlux/Retromod"
+  },
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.retromod.testmod121.RetromodTestMod121"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.15.11",
+    "minecraft": "1.21.1",
+    "java": ">=21"
+  }
+}

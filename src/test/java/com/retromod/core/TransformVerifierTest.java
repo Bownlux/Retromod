@@ -15,6 +15,7 @@ import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
@@ -189,6 +190,26 @@ class TransformVerifierTest {
     }
 
     @Test
+    @DisplayName("#336: a Minecraft member a mod class reaches through its own name is checked on its Minecraft ancestor")
+    void inheritedMemberNamedOnModClassIsChecked(@TempDir Path dir) throws Exception {
+        FuzzyBackedSymbolIndex index = indexTarget(
+                dir, targetClassWithField(INDEXED_TARGET, "value", "I"));
+        String block = "test/ModBlock";
+        Path transformedMod = dir.resolve("inherited-members.jar");
+        writeJar(transformedMod, new String[]{block + ".class"},
+                new byte[][]{modSubclassCalling(block, INDEXED_TARGET)});
+
+        TransformVerifier.VerifyResult result = TransformVerifier.verify(
+                transformedMod, "inherited-members.jar", "26.3", index);
+
+        assertEquals(List.of(new TransformVerifier.Issue(TransformVerifier.IssueType.MISSING_METHOD,
+                        INDEXED_TARGET, "simpleCodec", "(Ljava/util/function/Function;)Ljava/lang/Object;")),
+                result.issues(),
+                "only the helper no class in the chain declares is missing; the block's own method,"
+                        + " the inherited field and Object's hashCode resolve");
+    }
+
+        @Test
     @DisplayName("Exact verification rejects a same-name field with the wrong descriptor")
     void sameNameWrongFieldDescriptorIsReported(@TempDir Path dir) throws Exception {
         FuzzyBackedSymbolIndex index = indexTarget(
@@ -529,6 +550,39 @@ class TransformVerifierTest {
         constructor.visitInsn(Opcodes.RETURN);
         constructor.visitMaxs(0, 0);
         constructor.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
+    /**
+     * A mod block that calls an inherited helper the target lacks, its own helper, an inherited
+     * field the target has, and Object's hashCode, each named on the block's own class as javac
+     * writes them.
+     */
+    private static byte[] modSubclassCalling(String name, String superName) {
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, name, null, superName, null);
+        MethodVisitor own = writer.visitMethod(Opcodes.ACC_STATIC, "ownHelper", "()V", null, null);
+        own.visitCode();
+        own.visitInsn(Opcodes.RETURN);
+        own.visitMaxs(0, 0);
+        own.visitEnd();
+        MethodVisitor probe = writer.visitMethod(Opcodes.ACC_PUBLIC, "probe", "()V", null, null);
+        probe.visitCode();
+        probe.visitInsn(Opcodes.ACONST_NULL);
+        probe.visitMethodInsn(Opcodes.INVOKESTATIC, name, "simpleCodec",
+                "(Ljava/util/function/Function;)Ljava/lang/Object;", false);
+        probe.visitInsn(Opcodes.POP);
+        probe.visitMethodInsn(Opcodes.INVOKESTATIC, name, "ownHelper", "()V", false);
+        probe.visitVarInsn(Opcodes.ALOAD, 0);
+        probe.visitFieldInsn(Opcodes.GETFIELD, name, "value", "I");
+        probe.visitInsn(Opcodes.POP);
+        probe.visitVarInsn(Opcodes.ALOAD, 0);
+        probe.visitMethodInsn(Opcodes.INVOKEVIRTUAL, name, "hashCode", "()I", false);
+        probe.visitInsn(Opcodes.POP);
+        probe.visitInsn(Opcodes.RETURN);
+        probe.visitMaxs(0, 0);
+        probe.visitEnd();
         writer.visitEnd();
         return writer.toByteArray();
     }

@@ -68,17 +68,29 @@ public final class Forge1122BlockConstructorAdapter {
     private Forge1122BlockConstructorAdapter() {}
 
     public static byte[] apply(byte[] classBytes) {
-        return apply(classBytes, ClassResourceInspector::read);
+        return apply(classBytes, Forge1122BlockConstructorAdapter::chainClass);
     }
 
-    /** @param host reads a host class, or returns null when it cannot */
+    /**
+     * @param host reads a class on the block's superclass chain: Minecraft's, or a mod class from
+     *             this jar or a library it builds on. Returns null when it cannot.
+     */
     static byte[] apply(byte[] classBytes, Function<String, ClassNode> host) {
         if (classBytes == null) return null;
         ClassNode node = new ClassNode();
         new ClassReader(classBytes).accept(node, 0);
-        if (node.superName == null || !(node.superName.startsWith(BLOCKS)
-                || node.superName.startsWith("net/minecraft/world/item/"))) {
-            return classBytes;
+        if (node.superName == null) return classBytes;
+        if (!isHostBlockOrItem(node.superName)) {
+            // A block built on a mod's own base block, often one from a core mod in another jar,
+            // calls the removed members on itself just the same. Its super constructor is the
+            // mod's own, so only those calls are handled.
+            if (!extendsHostBlockOrItem(node.superName, host)
+                    || !neutralizeRemovedMembers(node, host)) {
+                return classBytes;
+            }
+            ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+            node.accept(writer);
+            return writer.toByteArray();
         }
         ClassNode parent = host.apply(node.superName);
         if (parent == null) return classBytes;
@@ -97,6 +109,57 @@ public final class Forge1122BlockConstructorAdapter {
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         node.accept(writer);
         return writer.toByteArray();
+    }
+
+    private static boolean isHostBlockOrItem(String internalName) {
+        return internalName.startsWith(BLOCKS) || internalName.startsWith("net/minecraft/world/item/");
+    }
+
+    /** Whether a mod class chain ends in a Minecraft block or item class the host has. */
+    private static boolean extendsHostBlockOrItem(String superName, Function<String, ClassNode> classes) {
+        String current = superName;
+        for (int depth = 0; current != null && depth < 32; depth++) {
+            if (isHostBlockOrItem(current)) return classes.apply(current) != null;
+            ClassNode cls = classes.apply(current);
+            if (cls == null) return false;
+            current = cls.superName;
+        }
+        return false;
+    }
+
+    /**
+     * Reads a class on a block's chain: the host's, then this jar's, then a library's. This jar's
+     * classes are read as they were before translation, so their superclass is mapped forward the
+     * way the transform maps it.
+     */
+    private static ClassNode chainClass(String internalName) {
+        ClassNode hostClass = ClassResourceInspector.read(internalName);
+        if (hostClass != null) return hostClass;
+        byte[] bytes = com.retromod.core.RetromodTransformer.readCurrentJarClassForAdapter(internalName);
+        boolean beforeTranslation = bytes != null;
+        if (bytes == null) {
+            bytes = com.retromod.core.RetromodTransformer.readLinkedLibraryClassForAdapter(internalName);
+        }
+        if (bytes == null) return null;
+        ClassNode node = new ClassNode();
+        try {
+            new ClassReader(bytes).accept(node, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG);
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (beforeTranslation && node.superName != null) node.superName = translatedName(node.superName);
+        return node;
+    }
+
+    private static String translatedName(String internalName) {
+        Map<String, String> moves = com.retromod.core.RetromodTransformer.getInstance().getClassRedirects();
+        String current = internalName;
+        for (int step = 0; step < 16; step++) {
+            String next = moves.get(current);
+            if (next == null || next.equals(current)) break;
+            current = next;
+        }
+        return current;
     }
 
     /** 1.12 Forge block setters that have no modern counterpart; mining level is a block tag now. */
@@ -168,7 +231,8 @@ public final class Forge1122BlockConstructorAdapter {
             ClassNode cls = current.equals(node.name) ? node : host.apply(current);
             if (cls == null) return FieldStatus.PRESENT;
             for (var declared : cls.fields) {
-                if (declared.name.equals(field.name) && declared.desc.equals(field.desc)) {
+                if (declared.name.equals(field.name)
+                        && (declared.desc.equals(field.desc) || isModAncestor(node, cls))) {
                     boolean inherited = cls != node && (declared.access & Opcodes.ACC_FINAL) != 0;
                     return inherited ? FieldStatus.FINAL : FieldStatus.PRESENT;
                 }
@@ -186,10 +250,22 @@ public final class Forge1122BlockConstructorAdapter {
         for (String current = node.name; current != null; ) {
             ClassNode cls = current.equals(node.name) ? node : host.apply(current);
             if (cls == null) return true;
-            if (cls.methods.stream().anyMatch(m -> m.name.equals(name) && m.desc.equals(desc))) return true;
+            boolean nameOnly = isModAncestor(node, cls);
+            if (cls.methods.stream().anyMatch(m -> m.name.equals(name)
+                    && (nameOnly || m.desc.equals(desc)))) {
+                return true;
+            }
             current = cls.superName;
         }
         return false;
+    }
+
+    /**
+     * A mod class above the block. This jar's classes are read before translation, so their
+     * descriptors still name 1.12 types; any member with the same name counts as declared there.
+     */
+    private static boolean isModAncestor(ClassNode node, ClassNode cls) {
+        return cls != node && !cls.name.startsWith("net/minecraft/");
     }
 
     private static boolean isAncestor(ClassNode node, String type, Function<String, ClassNode> host) {

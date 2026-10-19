@@ -3,11 +3,13 @@
 
 from dataclasses import dataclass
 import hashlib
+import importlib.util
 import os
 from pathlib import Path, PurePosixPath
 import re
 import tempfile
 import xml.etree.ElementTree as ET
+import zipfile
 
 
 MINECRAFT_VERSIONS = (
@@ -53,6 +55,44 @@ CHECKSUM_LINE = re.compile(r"^([0-9A-Fa-f]{64})[ \t]+\*?(.+)$")
 
 class ReleaseArtifactError(ValueError):
     """Raised when a release tree is incomplete, stale, or unsafe to publish."""
+
+
+def _load_script(module_name, file_name):
+    # The scripts run both as "scripts.<name>" (tests) and as plain files next to each other
+    # (publishers, build-all), so siblings are loaded by path.
+    path = Path(__file__).with_name(file_name)
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _artifact_runtime_self_hash(artifact, version, errors):
+    """Checks one artifact's layout and returns the self-hash of the runtime it loads.
+
+    Forge and NeoForge artifacts must be bootstraps around a nested runtime; a plain runtime
+    jar there would declare no locator and, worse, an old-layout file next to a new one would
+    load twice. Fabric and the CLI are runtime jars themselves.
+    """
+    relative = artifact.relative_path.as_posix()
+    try:
+        if artifact.loader_name in ("forge", "neoforge"):
+            bootstrap = _load_script("retromod_loader_bootstrap", "loader_bootstrap.py")
+            try:
+                return bootstrap.validate(artifact.path, artifact.loader_name,
+                                          artifact.minecraft_version, version)
+            except bootstrap.BootstrapError as error:
+                errors.append(f"{relative} is not a valid bootstrap jar: {error}")
+                return None
+        with zipfile.ZipFile(artifact.path) as jar:
+            if "META-INF/retromod/runtime.jar" in jar.namelist():
+                errors.append(f"{relative} must be a runtime jar, not a bootstrap")
+                return None
+        self_hash = _load_script("retromod_compute_self_hash", "compute-self-hash.py")
+        return self_hash.compute_self_hash(artifact.path)
+    except (OSError, zipfile.BadZipFile, KeyError, ValueError) as error:
+        errors.append(f"{relative} could not be inspected: {error}")
+        return None
 
 
 @dataclass(frozen=True)
@@ -338,6 +378,21 @@ def validate_release_artifacts(version, dist_dir="dist", pom_path="pom.xml"):
                 minecraft_version=artifact.minecraft_version,
             )
         )
+
+    # Every artifact must load the same runtime surface, or the one embedded self-hash
+    # cannot match them all. A stale nested runtime in one bootstrap is caught here.
+    if not errors:
+        runtime_hashes = {}
+        for artifact in validated:
+            runtime_hash = _artifact_runtime_self_hash(artifact, version, errors)
+            if runtime_hash is not None:
+                runtime_hashes.setdefault(runtime_hash, []).append(
+                    artifact.relative_path.as_posix())
+        if len(runtime_hashes) > 1:
+            groups = "; ".join(
+                f"{runtime_hash[:12]}... in {len(paths)} artifact(s), e.g. {paths[0]}"
+                for runtime_hash, paths in sorted(runtime_hashes.items()))
+            errors.append("artifacts carry different runtime self-hashes: " + groups)
 
     if errors:
         unique_errors = list(dict.fromkeys(errors))

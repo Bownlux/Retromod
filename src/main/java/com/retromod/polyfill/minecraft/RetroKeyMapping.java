@@ -4,34 +4,14 @@
  */
 package com.retromod.polyfill.minecraft;
 
-/**
- * 1.3.0: bridge the {@code KeyMapping} (keybind) constructor break in 26.x. Pre-26.x a mod wrote
- * {@code new KeyMapping(name, [type,] code, categoryString)} where the last argument was the
- * category as a {@code String} translation key ({@code "key.categories.misc"}, or a mod's own).
- * 26.x replaced that {@code String} with a {@code KeyMapping.Category} record (builtin constants
- * {@code MOVEMENT}/{@code MISC}/... plus {@code Category.register(Identifier)}), so the old
- * constructors are gone and any mod that adds a keybind dies {@code NoSuchMethodError} at client
- * init. A {@code new KeyMapping(...)} is rewritten (constructor-to-factory redirect) to one of these
- * factories, which resolves the category string to a {@code Category} and calls the real
- * constructor.
- *
- * <p><b>Category resolution:</b> a vanilla {@code key.categories.*} string maps to the matching
- * builtin constant; any other (mod) string registers a {@code Category} under a derived
- * {@code retromod_compat:} identifier (cached, so repeated keybinds in the same category register once);
- * if registration isn't possible the keybind falls back to {@code MISC} so it still works, just
- * listed under Miscellaneous.
- *
- * <p><b>Zero compile-time Minecraft dependency</b> (Retromod builds without MC, and a per-mod
- * embedded copy must load with only what the mod's module sees): every MC type is reached
- * reflectively and results are typed {@code Object}; the redirect appends a {@code CHECKCAST}.
- *
- * <p><b>Fail-safe:</b> any reflection failure yields {@code null} (the redirect's {@code CHECKCAST
- * null} passes), i.e. that one keybind goes inert rather than crashing construction.
- */
+/** Runs old keybind constructors and key and mouse polls on hosts that changed them. */
 public final class RetroKeyMapping {
 
     private RetroKeyMapping() {}
 
+    // Retromod builds without Minecraft, and a per-mod embedded copy must load with only what the
+    // mod's module sees. So every Minecraft type is reached by reflection and returned as Object,
+    // and the redirect adds a CHECKCAST after the call.
     private static final String KEY_MAPPING = "net.minecraft.client.KeyMapping";
     private static final String CATEGORY = "net.minecraft.client.KeyMapping$Category";
     private static final String INPUT_TYPE = "com.mojang.blaze3d.platform.InputConstants$Type";
@@ -49,17 +29,21 @@ public final class RetroKeyMapping {
     // Categories we registered for mod strings, so a mod's repeated keybinds don't re-register.
     private static final java.util.Map<String, Object> REGISTERED = new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** Old {@code new KeyMapping(String, InputConstants.Type, int, String)}. */
+    /** Old {@code new KeyMapping(String, InputConstants.Type, int, String)}, sent here by a redirect. */
     public static Object create(String name, Object type, int code, String category) {
         try {
             Class<?> keyMapping = Class.forName(KEY_MAPPING);
             Class<?> categoryCls = Class.forName(CATEGORY);
             Class<?> inputType = Class.forName(INPUT_TYPE);
+            // 26.x takes a KeyMapping.Category where this was a String key ("key.categories.misc" or a
+            // mod's own), so the old constructor failed with NoSuchMethodError at client init.
             Object cat = resolveCategory(categoryCls, category);
             if (cat == null) return null;
             return keyMapping.getConstructor(String.class, inputType, int.class, categoryCls)
                     .newInstance(name, type, hostCode(type, code), cat);
         } catch (Throwable t) {
+            // Null passes the redirect's CHECKCAST, so this one keybind goes inert instead of
+            // crashing construction.
             return null;
         }
     }
@@ -78,13 +62,16 @@ public final class RetroKeyMapping {
         }
     }
 
+    /** The {@code Category} for an old category string. */
     private static Object resolveCategory(Class<?> categoryCls, String category) {
         if (category != null) {
+            // A vanilla key.categories.* string maps to the matching builtin constant.
             String constant = VANILLA.get(category);
             if (constant != null) {
                 Object c = staticField(categoryCls, constant);
                 if (c != null) return c;
             }
+            // A mod's own string registers a Category under a derived retromod_compat: id, once.
             Object cached = REGISTERED.get(category);
             if (cached != null) return cached;
             Object registered = tryRegister(categoryCls, category);
@@ -225,6 +212,92 @@ public final class RetroKeyMapping {
 
     private static final String INPUT_CONSTANTS = "com.mojang.blaze3d.platform.InputConstants";
     private static volatile java.lang.reflect.Method isKeyDownMethod;
+
+    // 26.3 ships no GLFW: windowing and input moved to SDL, so a mod's own GLFW polls have no class
+    // left to call. These answer the polls from the host's input state. The window argument is
+    // ignored, because Minecraft has one window and on 26.3 its handle is an SDL window.
+
+    private static final int GLFW_RELEASE = 0;
+    private static final int GLFW_PRESS = 1;
+    private static final String MINECRAFT = "net.minecraft.client.Minecraft";
+
+    /** Minecraft tracks these three buttons; GLFW's other buttons have no host state to read. */
+    private static final java.util.Map<String, String> MOUSE_BUTTON_QUERIES = java.util.Map.of(
+            "MOUSE_BUTTON_LEFT", "isLeftPressed",
+            "MOUSE_BUTTON_RIGHT", "isRightPressed",
+            "MOUSE_BUTTON_MIDDLE", "isMiddlePressed");
+
+    /** {@code GLFW.glfwGetKey} with a literal GLFW key code. */
+    public static int glfwGetKey(long window, int glfwKey) {
+        return glfwGetKeyUntranslated(window, hostKeyCode(glfwKey));
+    }
+
+    /** {@code GLFW.glfwGetKey} with a code the mod read at runtime, which the host numbered. */
+    public static int glfwGetKeyUntranslated(long window, int hostKey) {
+        return hostKey >= 0 && isKeyDownUntranslated(null, hostKey) ? GLFW_PRESS : GLFW_RELEASE;
+    }
+
+    /** {@code GLFW.glfwGetMouseButton} with a literal GLFW button number. */
+    public static int glfwGetMouseButton(long window, int glfwButton) {
+        return glfwGetMouseButtonUntranslated(window, translate(glfwButton, true, hostValues()));
+    }
+
+    /** {@code GLFW.glfwGetMouseButton} with a button the mod read at runtime, numbered by the host. */
+    public static int glfwGetMouseButtonUntranslated(long window, int hostButton) {
+        String query = mouseButtonQuery(hostButton, hostValues());
+        return query != null && Boolean.TRUE.equals(queryMouseHandler(query))
+                ? GLFW_PRESS : GLFW_RELEASE;
+    }
+
+    /** {@code GLFW.glfwGetCursorPos}: the cursor in window coordinates, as Minecraft tracks it. */
+    public static void glfwGetCursorPos(long window, double[] x, double[] y) {
+        if (x != null && x.length > 0) x[0] = queryMouseHandler("xpos") instanceof Double d ? d : 0.0;
+        if (y != null && y.length > 0) y[0] = queryMouseHandler("ypos") instanceof Double d ? d : 0.0;
+    }
+
+    /** The {@code MouseHandler} query for a host-numbered button, or null for an untracked one. */
+    static String mouseButtonQuery(int button, java.util.Map<String, Integer> host) {
+        String name = null;
+        // A null host means its constants could not be read, so the numbering is GLFW's.
+        if (host == null) {
+            name = GLFW_MOUSE.get(button);
+        } else {
+            for (String candidate : MOUSE_BUTTON_QUERIES.keySet()) {
+                if (Integer.valueOf(button).equals(host.get(candidate))) name = candidate;
+            }
+        }
+        return name == null ? null : MOUSE_BUTTON_QUERIES.get(name);
+    }
+
+    /** Calls a no-argument method on the client's mouse handler, or returns null when there is none yet. */
+    private static Object queryMouseHandler(String method) {
+        try {
+            // A mod can poll the mouse every frame, so the reflected members are looked up once.
+            java.lang.reflect.Method getInstance = minecraftInstanceMethod;
+            java.lang.reflect.Field mouseField = mouseHandlerField;
+            if (getInstance == null || mouseField == null) {
+                Class<?> minecraft = Class.forName(MINECRAFT);
+                mouseHandlerField = mouseField = minecraft.getField("mouseHandler");
+                minecraftInstanceMethod = getInstance = minecraft.getMethod("getInstance");
+            }
+            Object client = getInstance.invoke(null);
+            Object mouse = client == null ? null : mouseField.get(client);
+            if (mouse == null) return null;
+            java.lang.reflect.Method query = MOUSE_HANDLER_METHODS.get(method);
+            if (query == null) {
+                query = mouseField.getType().getMethod(method);
+                MOUSE_HANDLER_METHODS.put(method, query);
+            }
+            return query.invoke(mouse);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static volatile java.lang.reflect.Method minecraftInstanceMethod;
+    private static volatile java.lang.reflect.Field mouseHandlerField;
+    private static final java.util.Map<String, java.lang.reflect.Method> MOUSE_HANDLER_METHODS =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * Calls the public KeyMapping constructor these arguments fit. A null result would only surface

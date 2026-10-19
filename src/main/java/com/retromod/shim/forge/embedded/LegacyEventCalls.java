@@ -29,6 +29,9 @@ public final class LegacyEventCalls {
      * must not need an inner class.
      */
     private static final Map<Class<?>, Boolean> CANCELLABLE_TYPES = new ConcurrentHashMap<>();
+    /** Deferred registers already on a bus, held weakly and compared by identity. */
+    private static final java.util.Set<Object> DEFERRED_ON_A_BUS =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
     private LegacyEventCalls() {}
 
@@ -151,6 +154,30 @@ public final class LegacyEventCalls {
         } catch (IllegalAccessException e) {
             throw new IllegalStateException("Retromod could not call " + method, e);
         }
+    }
+
+    /**
+     * Forge's {@code DeferredRegister.register(bus)}, which a mod could call more than once. Forge
+     * only added another listener that registered the same entries again, while NeoForge throws
+     * "Cannot register DeferredRegister to more than one event bus" and stops the mod's
+     * constructor. The first call registers and a repeat is skipped, so each entry registers once.
+     */
+    public static void registerDeferredRegister(Object deferredRegister, Object bus) {
+        synchronized (DEFERRED_ON_A_BUS) {
+            if (DEFERRED_ON_A_BUS.contains(deferredRegister)) return;
+            invoke(deferredRegister, findBusRegister(deferredRegister.getClass(), bus), bus);
+            DEFERRED_ON_A_BUS.add(deferredRegister);
+        }
+    }
+
+    private static Method findBusRegister(Class<?> type, Object bus) {
+        for (Method method : type.getMethods()) {
+            if (method.getName().equals("register") && method.getParameterCount() == 1
+                    && method.getParameterTypes()[0].isInstance(bus)) {
+                return method;
+            }
+        }
+        throw new IllegalStateException("No register(bus) on " + type.getName() + " for " + bus);
     }
 
     /** Architectury 9's {@code EventBuses.registerModEventBus}: NeoForge already knows the bus. */

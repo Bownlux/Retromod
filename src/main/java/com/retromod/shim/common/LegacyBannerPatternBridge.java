@@ -22,27 +22,17 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 import static org.objectweb.asm.Opcodes.*;
 
-/**
- * Registers banner patterns that a pre-1.19 Forge mod creates with {@code BannerPattern.create}.
- *
- * <p>Forge 1.18 extended the {@code BannerPattern} enum. 1.19 made patterns registry entries and
- * gave each pattern item a tag of patterns instead of one pattern, so the mod's static initializer
- * failed and took its item registration with it. The old call now builds a pattern and registers
- * it under the old file name, which is also where 1.19 looks for its texture. The pattern item gets
- * the {@code pattern_item/<name>} tag that vanilla items use, and that tag, plus the
- * {@code no_item_required} entry for patterns that never had an item, is written into the mod's
- * data from the constant arguments of each call. A call whose arguments are not constants still
- * registers its pattern, but its item shows no pattern in the loom.
- *
- * <p>Hosts from 1.19.3 up to 1.20.4 only: 1.20.5 moved patterns into data packs.
- */
+/** Registers banner patterns that a pre-1.19 Forge mod creates with {@code BannerPattern.create}. */
 public final class LegacyBannerPatternBridge {
 
     static final String SYNTH = "com/retromod/generated/LegacyBannerPatterns";
@@ -61,11 +51,15 @@ public final class LegacyBannerPatternBridge {
 
     /** Whether {@code host} keeps banner patterns in a built-in registry. */
     public static boolean appliesTo(String host) {
+        // 1.19.3 up to 1.20.4 only: 1.20.5 moved patterns into data packs.
         return RetromodVersion.compareMcVersions(host, "1.19.3") >= 0
                 && RetromodVersion.compareMcVersions(host, "1.20.5") < 0;
     }
 
     public static void register(RetromodTransformer transformer) {
+        // Forge 1.18 extended the BannerPattern enum. 1.19 made patterns registry entries and gave
+        // each pattern item a tag of patterns instead of one pattern, so the mod's static
+        // initializer failed and took its item registration with it.
         transformer.registerSyntheticClass(SYNTH, generate());
         transformer.registerMethodRedirect(PATTERN, "create", CREATE_DESC, SYNTH, "create", CREATE_DESC);
         transformer.registerConstructorRedirect(ITEM, "(L" + PATTERN + ";L" + PROPERTIES + ";)V",
@@ -81,7 +75,9 @@ public final class LegacyBannerPatternBridge {
         };
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, SYNTH, null, "java/lang/Object", null);
 
-        // Registration fails once the registry is frozen. The pattern still works as an object.
+        // The old call builds a pattern and registers it under the old file name, which is also
+        // where 1.19 looks for its texture. Registration fails once the registry is frozen. The
+        // pattern still works as an object.
         MethodVisitor create = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "create", CREATE_DESC, null, null);
         create.visitCode();
         Label start = new Label();
@@ -119,6 +115,7 @@ public final class LegacyBannerPatternBridge {
         create.visitMaxs(0, 0);
         create.visitEnd();
 
+        // The pattern item gets the pattern_item/<name> tag that vanilla items use.
         MethodVisitor item = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "item",
                 "(L" + PATTERN + ";L" + PROPERTIES + ";)L" + ITEM + ";", null, null);
         item.visitCode();
@@ -178,12 +175,45 @@ public final class LegacyBannerPatternBridge {
             classes = walk.filter(p -> p.toString().endsWith(".class")).toList();
         }
         for (Path file : classes) {
-            byte[] bytes = Files.readAllBytes(file);
-            if (!new String(bytes, StandardCharsets.ISO_8859_1).contains(SYNTH)) continue;
-            patterns.putAll(constantPatterns(bytes));
+            patterns.putAll(patternsIn(Files.readAllBytes(file)));
         }
-        if (patterns.isEmpty()) return 0;
+        for (Map.Entry<String, byte[]> tag : tagFiles(patterns).entrySet()) {
+            Path file = modRoot.resolve(tag.getKey());
+            Files.createDirectories(file.getParent());
+            Files.write(file, tag.getValue());
+        }
+        return patterns.size();
+    }
 
+    /** The tag files {@link #writeTags} writes, from already transformed classes read by entry name. */
+    public static Map<String, byte[]> tagEntries(Collection<String> entryNames,
+                                                 Function<String, byte[]> read) {
+        // The resource migration runs this on every transform path, with the classes it has.
+        Map<String, Boolean> patterns = new TreeMap<>();
+        for (String name : entryNames) {
+            if (!name.endsWith(".class")) continue;
+            byte[] bytes = read.apply(name);
+            if (bytes != null) patterns.putAll(patternsIn(bytes));
+        }
+        return tagFiles(patterns);
+    }
+
+    /** The constant patterns one class creates through the bridge, or none. */
+    private static Map<String, Boolean> patternsIn(byte[] classBytes) {
+        if (!new String(classBytes, StandardCharsets.ISO_8859_1).contains(SYNTH)) return Map.of();
+        try {
+            return constantPatterns(classBytes);
+        } catch (RuntimeException malformed) {
+            // A class that cannot be read adds no patterns instead of failing the jar.
+            return Map.of();
+        }
+    }
+
+    /** Entry name to content for the pattern item tags and the {@code no_item_required} list. */
+    private static Map<String, byte[]> tagFiles(Map<String, Boolean> patterns) {
+        // A pattern with an item gets its pattern_item/<name> tag. One that never had an item goes
+        // into vanilla's no_item_required list instead.
+        Map<String, byte[]> files = new LinkedHashMap<>();
         List<String> withoutItem = new ArrayList<>();
         for (Map.Entry<String, Boolean> pattern : patterns.entrySet()) {
             String id = pattern.getKey().contains(":") ? pattern.getKey() : "minecraft:" + pattern.getKey();
@@ -193,18 +223,19 @@ public final class LegacyBannerPatternBridge {
             }
             String namespace = id.substring(0, id.indexOf(':'));
             String path = id.substring(id.indexOf(':') + 1);
-            Path tag = modRoot.resolve("data").resolve(namespace).resolve("tags/banner_pattern/pattern_item")
-                    .resolve(path + ".json");
-            Files.createDirectories(tag.getParent());
-            Files.writeString(tag, "{\n  \"values\": [\"" + id + "\"]\n}\n");
+            // A name Minecraft would reject cannot have a tag, and must not become a file path.
+            if (!namespace.matches("[a-z0-9_.-]+") || !path.matches("[a-z0-9_-]+(/[a-z0-9_-]+)*")) {
+                continue;
+            }
+            files.put("data/" + namespace + "/tags/banner_pattern/pattern_item/" + path + ".json",
+                    ("{\n  \"values\": [\"" + id + "\"]\n}\n").getBytes(StandardCharsets.UTF_8));
         }
         if (!withoutItem.isEmpty()) {
-            Path tag = modRoot.resolve("data/minecraft/tags/banner_pattern/no_item_required.json");
-            Files.createDirectories(tag.getParent());
-            Files.writeString(tag, "{\n  \"replace\": false,\n  \"values\": [\"" + String.join("\", \"", withoutItem)
-                    + "\"]\n}\n");
+            files.put("data/minecraft/tags/banner_pattern/no_item_required.json",
+                    ("{\n  \"replace\": false,\n  \"values\": [\"" + String.join("\", \"", withoutItem)
+                            + "\"]\n}\n").getBytes(StandardCharsets.UTF_8));
         }
-        return patterns.size();
+        return files;
     }
 
     /** File name to whether the pattern has an item, for each call made with constant arguments. */
@@ -219,6 +250,8 @@ public final class LegacyBannerPatternBridge {
                         || !call.desc.equals(CREATE_DESC)) {
                     continue;
                 }
+                // A call whose arguments are not constants still registers its pattern, but its
+                // item shows no pattern in the loom.
                 AbstractInsnNode hasItem = previousReal(call);
                 AbstractInsnNode hash = previousReal(hasItem);
                 AbstractInsnNode fileName = previousReal(hash);

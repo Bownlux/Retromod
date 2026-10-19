@@ -21,11 +21,7 @@ import java.util.jar.*;
 import java.util.zip.*;
 import java.util.regex.*;
 
-/**
- * Transforms Forge and NeoForge mods to work on newer Minecraft versions.
- * Like FabricModTransformer, but handles mods.toml / neoforge.mods.toml instead
- * of fabric.mod.json: extract, transform bytecode, patch metadata, repackage.
- */
+/** Transforms Forge and NeoForge mods to work on newer Minecraft versions. */
 public class ForgeModTransformer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-ForgeTransform");
@@ -73,6 +69,8 @@ public class ForgeModTransformer {
     private final String targetMcVersion;
     private final RetromodTransformer bytecodeTransformer;
     private final MixinCompatibilityTransformer mixinTransformer;
+    /** Libraries translated before the current jar, whose stand-in copies it may reuse. */
+    private SyntheticLibraries syntheticLibraries = SyntheticLibraries.NONE;
 
     public ForgeModTransformer(String targetMcVersion) {
         this.targetMcVersion = targetMcVersion;
@@ -85,13 +83,29 @@ public class ForgeModTransformer {
      * or null if it failed or was skipped.
      */
     public Path transformMod(Path sourceJar, Path outputDir) throws IOException {
+        return transformMod(sourceJar, outputDir, SyntheticLibraries.NONE);
+    }
+
+    /**
+     * Transforms a jar that may build on {@code libraries}, the translated jars handled before it.
+     * It reuses their copies of the stand-in classes their APIs take, so calls across the two jars
+     * link.
+     */
+    public Path transformMod(Path sourceJar, Path outputDir, SyntheticLibraries libraries)
+            throws IOException {
         // SRG ids a Forge mod carries mean what they meant in its own version (see
         // RetromodTransformer.registerSrgVersionDrift), so the remap needs that version.
-        bytecodeTransformer.setSrgSourceVersion(extractMinecraftVersion(sourceJar));
+        String sourceVersion = extractMinecraftVersion(sourceJar);
+        bytecodeTransformer.setSrgSourceVersion(sourceVersion);
+        bytecodeTransformer.setModSourceVersion(sourceVersion);
+        SyntheticLibraries previousLibraries = syntheticLibraries;
+        syntheticLibraries = libraries == null ? SyntheticLibraries.NONE : libraries;
         try {
             return transformModForItsVersion(sourceJar, outputDir);
         } finally {
+            syntheticLibraries = previousLibraries;
             bytecodeTransformer.setSrgSourceVersion(null);
+            bytecodeTransformer.setModSourceVersion(null);
         }
     }
 
@@ -129,7 +143,8 @@ public class ForgeModTransformer {
         // match. The key mirrors the AOT cache; the loader is folded in because the
         // transform differs by host. (adapted from Sinytra Connector (MIT))
         String cacheKey = transformCacheKey(sourceJar);
-        if (cacheKey != null && isCacheUpToDate(outputJar, cacheKey)) {
+        if (cacheKey != null && isCacheUpToDate(outputJar, cacheKey)
+                && !syntheticLibraries.isStale(outputJar)) {
             LOGGER.info("  {} is up to date in the transform cache - reusing {}",
                     originalName, outputName);
             return outputJar;
@@ -139,6 +154,8 @@ public class ForgeModTransformer {
 
         LOGGER.info("Transforming Forge/NeoForge mod: {} -> {}", originalName, outputName);
 
+        // Extract, transform the bytecode, patch mods.toml or neoforge.mods.toml, and repackage,
+        // as FabricModTransformer does with fabric.mod.json.
         Path tempDir = Files.createTempDirectory("retromod-forge-");
 
         try {
@@ -146,6 +163,10 @@ public class ForgeModTransformer {
 
             com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs =
                     collectRefmapRepairs(tempDir);
+            // Read from the original classes, before the class pass redirects Rarity.create.
+            java.util.List<com.retromod.shim.forge.LegacyRarityBridge.Extension> rarities =
+                    com.retromod.shim.forge.LegacyRarityBridge.hostNeedsDeclarations()
+                            ? com.retromod.shim.forge.LegacyRarityBridge.scan(tempDir) : java.util.List.of();
             int classesTransformed = transformClasses(tempDir, refmapRepairs);
             LOGGER.info("Transformed {} class files", classesTransformed);
 
@@ -160,15 +181,25 @@ public class ForgeModTransformer {
             stripMixinSyntheticPackage(tempDir);
             stripBundledMixinExtras(tempDir);
             GeckoLib3Coexistence.relocateDemoPackage(tempDir);
-            // Before the embed, so the injected registration call pulls the modifier in.
+            // Before the embed, so the injected registration call pulls the modifier in. The
+            // banner pattern tags are data, so the shared resource migration below writes them.
             com.retromod.shim.forge.LegacyBiomeLoadingBridge.wire(tempDir, bytecodeTransformer);
-            com.retromod.shim.common.LegacyBannerPatternBridge.writeTags(tempDir);
+
+            // The mod's own resources and data, through the same converters every path runs. The
+            // source version is read from the source jar, which still holds the original metadata.
+            // This runs before the embed, as on the CLI and AOT paths, so the converters that read
+            // classes see the mod's own and not Retromod's embedded copies.
+            int dataMigrated = com.retromod.resources.ModResourceMigrations.migrateDirectory(
+                    tempDir, resourceContext(sourceJar, false));
+            if (dataMigrated > 0) {
+                LOGGER.info("Updated {} resource and data file(s)", dataMigrated);
+            }
 
             // Embed registered synthetic classes this mod references under a
             // unique-per-mod Retromod package (split-package-safe) and redirect
             // the mod's references there.
-            int synthetics = SyntheticEmbedder.embed(
-                    tempDir, sourceJar.getFileName().toString(), bytecodeTransformer);
+            int synthetics = SyntheticEmbedder.embed(tempDir, sourceJar.getFileName().toString(),
+                    bytecodeTransformer, syntheticLibraries);
             if (synthetics > 0) {
                 LOGGER.info("Embedded {} referenced synthetic class(es)", synthetics);
             }
@@ -180,6 +211,9 @@ public class ForgeModTransformer {
             updateModsToml(tempDir, "META-INF/mods.toml");
             updateModsToml(tempDir, "META-INF/neoforge.mods.toml");
             promoteToNeoForgeToml(tempDir);
+            // NeoForge adds enum values only from metadata it reads before the game starts.
+            com.retromod.shim.forge.LegacyRarityBridge.declareInJar(tempDir,
+                    tempDir.resolve("META-INF/neoforge.mods.toml"), rarities);
 
             // Patch metadata in nested Jar-in-Jar deps. A bundled dep carries its
             // own mods.toml with a stale minecraft versionRange Forge would reject.
@@ -188,16 +222,6 @@ public class ForgeModTransformer {
             if (jijPatched > 0) {
                 LOGGER.info("Patched metadata in {} JIJ dependencies", jijPatched);
             }
-
-            // Migrate bundled data-pack JSON across the 1.21.x -> 26.x format
-            // changes the bytecode pass can't reach. Gated to 26.x in ModDataMigrator.
-            int dataMigrated = com.retromod.resources.ModDataMigrator.migrateTreeChecked(
-                    tempDir, targetMcVersion);
-            if (dataMigrated > 0) {
-                LOGGER.info("Migrated 26.x data formats in {} data file(s)", dataMigrated);
-            }
-            com.retromod.resources.LegacyDataMigrations.migrateTree(
-                    tempDir, modMcVersion, targetMcVersion);
 
             // Stamp the manifest so runtime code can tell a Retromod-brought mod from a
             // native one (#14/#46). The Fabric path already stamps Retromod-Transformed.
@@ -228,6 +252,19 @@ public class ForgeModTransformer {
                 });
             }
         }
+    }
+
+    /** The resource migration context for one jar on this Forge or NeoForge host. */
+    private com.retromod.resources.MigrationContext resourceContext(Path sourceJar, boolean nested) {
+        return com.retromod.resources.MigrationContext.builder(targetMcVersion)
+                .source(com.retromod.resources.SourceVersionResolver.inspect(sourceJar))
+                .targetLoader(com.retromod.util.McReflect.isNeoForge()
+                        ? com.retromod.resources.MigrationContext.Loader.NEOFORGE
+                        : com.retromod.resources.MigrationContext.Loader.FORGE)
+                .equipmentAssets(com.retromod.shim.common.LegacyEquipmentBridge
+                        .isRegistered(bytecodeTransformer))
+                .nested(nested)
+                .build();
     }
 
     /** Read the minecraft version a Forge/NeoForge mod JAR targets, or null. */
@@ -431,6 +468,11 @@ public class ForgeModTransformer {
         // Object, and the JVM rejects the method as soon as that value is passed somewhere that
         // wants a specific type. The Fabric pass has always done this; Forge and NeoForge did not.
         bytecodeTransformer.setJarClassBytesProvider(originalClasses::get);
+        bytecodeTransformer.setLinkedLibraries(syntheticLibraries);
+        // A block filled into a static field of one class can be registered by another, so the
+        // jar's registry ids are indexed from all its classes before any is transformed.
+        bytecodeTransformer.setJarRegistryIds(
+                bytecodeTransformer.indexJarRegistryIds(originalClasses.values()));
         try {
             com.retromod.core.parallel.RetromodExecutors.parallelForEach(classFiles, classFile -> {
                 try {
@@ -491,9 +533,11 @@ public class ForgeModTransformer {
                 }
             });
         } finally {
-            // A nested jar transforms through this same method, so the provider has to be dropped
-            // again or the inner jar's directory would answer for the outer one's classes.
+            // A nested jar transforms through this same method, so the provider and the registry ids
+            // have to be dropped again, or the inner jar's would answer for the outer one's classes.
             bytecodeTransformer.clearJarClassBytesProvider();
+            bytecodeTransformer.clearLinkedLibraries();
+            bytecodeTransformer.clearJarRegistryIds();
         }
 
         return counter.get();
@@ -603,10 +647,15 @@ public class ForgeModTransformer {
             int classesTransformed = transformClasses(tempDir, refmapRepairs);
             int refmapsTransformed = transformRefmaps(tempDir);
             boolean accessTransformerNormalized = sanitizeAccessTransformer(tempDir);
-            // A bundled mod loads its own @Mod class and data, so it gets its own biome modifier
-            // and banner tags. The calls these add pull in synthetics, which marks the jar changed.
+            // A bundled mod loads its own @Mod class and data, so it gets its own biome modifier,
+            // and its banner tags come from the resource migration below. The calls the biome
+            // wiring adds pull in synthetics, which marks the jar changed.
             com.retromod.shim.forge.LegacyBiomeLoadingBridge.wire(tempDir, bytecodeTransformer);
-            com.retromod.shim.common.LegacyBannerPatternBridge.writeTags(tempDir);
+            // A bundled library is built for whatever its own metadata says, and the jar on disk
+            // is still the original until it is repackaged below. Migrated before the embed, like
+            // the outer mod, so no converter reads Retromod's embedded classes as the library's.
+            int dataMigrated = com.retromod.resources.ModResourceMigrations.migrateDirectory(
+                    tempDir, resourceContext(jijJar, true));
             // A bundled library loads as its own mod file, so it needs its own copy of every
             // synthetic its rewritten classes now name, exactly like the outer mod. The key carries
             // the parent path, as on the CLI and AOT paths, so two parents bundling different
@@ -623,12 +672,6 @@ public class ForgeModTransformer {
                 updateModsToml(tempDir, "META-INF/neoforge.mods.toml");
             }
             promoteToNeoForgeToml(tempDir);
-
-            int dataMigrated = com.retromod.resources.ModDataMigrator.migrateTreeChecked(
-                    tempDir, targetMcVersion);
-            // A bundled library is built for whatever its own metadata says.
-            dataMigrated += com.retromod.resources.LegacyDataMigrations.migrateTree(tempDir,
-                    com.retromod.resources.LegacyDataMigrations.declaredVersion(jijJar), targetMcVersion);
 
             int nestedPatched = depth < MAX_JIJ_DEPTH
                     ? patchJarInJarMetadata(tempDir, depth + 1, budget, archiveKey)

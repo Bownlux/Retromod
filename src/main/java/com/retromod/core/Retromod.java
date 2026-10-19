@@ -222,6 +222,11 @@ public class Retromod implements ModInitializer {
             }
         }
 
+        // Shims and polyfills registered again above; the loader API runtime keeps its keys.
+        com.retromod.loaderapi.LoaderApiRuntime.prepare(RetromodTransformer.getInstance(),
+                new com.retromod.loaderapi.LoaderApiContext("fabric", TARGET_MC_VERSION,
+                        com.retromod.loaderapi.LoaderApiContext.TransformPath.FABRIC_INIT, null));
+
         try {
             aotCompiler = new AotCompiler(shimRegistry, TARGET_MC_VERSION);
         } catch (Exception e) {
@@ -244,9 +249,12 @@ public class Retromod implements ModInitializer {
             LOGGER.warn("Could not scan/compile mods", e);
         }
 
-        // Bridge old HUD callbacks to the new HudElementRegistry API (26.1+).
+        // Bridge old HUD callbacks to the new HudElementRegistry API (26.1+). The loader API
+        // runtime draws them itself where it serves this host, and this element never drew there.
         try {
-            com.retromod.shim.fabric.embedded.HudRenderCallbackShim.bridgeToNewApi();
+            if (com.retromod.loaderapi.LoaderApiRuntime.translationIdentity("fabric", TARGET_MC_VERSION) == null) {
+                com.retromod.shim.fabric.embedded.HudRenderCallbackShim.bridgeToNewApi();
+            }
         } catch (Throwable e) {
             // Throwable: IdentifierShim can throw ExceptionInInitializerError
             LOGGER.warn("Could not bridge HUD callbacks: {}", e.getMessage());

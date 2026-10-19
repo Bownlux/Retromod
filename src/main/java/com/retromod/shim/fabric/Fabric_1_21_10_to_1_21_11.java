@@ -10,10 +10,7 @@ package com.retromod.shim.fabric;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
 
-/**
- * Fabric shim for 1.21.10 mods on 1.21.11, the last obfuscated MC version
- * (Yarn mappings stop here). Handles the ResourceLocation to Identifier rename.
- */
+/** Updates Fabric 1.21.10 mods for 1.21.11, the last obfuscated version and the last with Yarn mappings. */
 public class Fabric_1_21_10_to_1_21_11 implements VersionShim {
     
     @Override
@@ -64,6 +61,13 @@ public class Fabric_1_21_10_to_1_21_11 implements VersionShim {
             "net/minecraft/class_1657", "PLAYER_MODEL_PARTS", dataAccessor,
             "net/minecraft/class_11890", "field_62514", dataAccessor
         );
+
+        // The int permission level in CommandSourceStack's constructor became a PermissionSet.
+        // The bridge matches Mojang names, which a Fabric mod only has after the 26.x remap.
+        if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            com.retromod.shim.common.LegacyCommandSourceBridge.register(transformer);
+        }
     }
     
     @Override

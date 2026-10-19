@@ -24,57 +24,16 @@ import java.util.regex.Pattern;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
 
-/**
- * Migrates a mod's bundled data-pack JSON across the 1.21.x to 26.x data changes the
- * bytecode pass can't reach (loot tables, advancements, recipes, tags, worldgen).
- *
- * <p>The mod-jar transform rewrites bytecode and loader metadata but not the {@code data/}
- * JSON a mod ships, and several 26.x changes are data-only.
- *
- * <p>Main fix: 26.1 parses data-pack JSON with a strict Gson reader, rejecting the {@code //}
- * / {@code /* *}{@code /} comments and trailing commas common in hand-authored worldgen files
- * (Jigsaw template_pools, processor_lists). Each such file throws
- * {@code MalformedJsonException} and stays unbound, and one unbound template_pool is fatal
- * (FatalStartupException) and aborts the shared worldgen registry load, so co-loaded structure
- * mods then look like they never registered their own types. {@link #normalizeLenientJson}
- * strips the offending tokens, but only for files that contain one.
- *
- * <p>Targeted rewrites, each gated to 26.x targets ({@link RetromodVersion#isUnobfuscatedTarget}):
- * <ul>
- *   <li>{@code minecraft:chain} to {@code minecraft:iron_chain}: 26.x split the chain item
- *       into iron/copper variants. Quote-bounded so it can't touch
- *       {@code minecraft:chain_command_block} or a {@code <modid>:chain}.</li>
- *   <li>{@code dyed_color} object to int: 26.x wants the colour int (or an {@code [r,g,b]}
- *       array); 1.21.x shipped an object {@code {"rgb":N,...}}.</li>
- *   <li>advancement icon {@code "item"} to {@code "id"}: 26.x renamed the icon ItemStack key.</li>
- *   <li>{@code custom_model_data} int to object: 26.x (1.21.4+) expanded the component from a
- *       bare int to {@code {"floats":[...],...}}; the legacy int maps to the first float.</li>
- *   <li>{@code minecraft:potion} entity-type split: 26.x split the thrown-potion entity into
- *       {@code minecraft:splash_potion} and {@code minecraft:lingering_potion} (vanilla's
- *       {@code ThrownPotionSplitFix}). Scoped to {@code tags/entity_type/} files only, since
- *       the potion item is unchanged.</li>
- *   <li>recipe ingredient objects ({@code {"item": ...}}, {@code {"tag": ...}}) to the 1.21.2
- *       string form.</li>
- *   <li>{@code recipe_unlocked} condition {@code "recipe"} to {@code "recipes"}: 26.3 renamed
- *       it. Gated to 26.3 and newer targets.</li>
- * </ul>
- */
+/** Rewrites the data-pack JSON and functions a mod ships, which the bytecode pass never reaches. */
 public final class ModDataMigrator {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-DataMigrate");
     private static final int MAX_JSON_DEPTH = 256;
     private static final long MAX_MIGRATABLE_FILE_BYTES = 16L * 1024 * 1024;
 
-    private static final String CHAIN_OLD = "\"minecraft:chain\"";
-    private static final String CHAIN_NEW = "\"minecraft:iron_chain\"";
-
     // No nested braces inside a dyed_color object, so [^}] stays within the one object.
     private static final Pattern DYED_COLOR = Pattern.compile(
             "\"minecraft:dyed_color\"\\s*:\\s*\\{[^}]*?\"rgb\"\\s*:\\s*(-?\\d+)[^}]*?\\}");
-
-    // The icon object's item id is its leading key, so anchor on the icon brace.
-    private static final Pattern ICON_ITEM = Pattern.compile(
-            "(\"icon\"\\s*:\\s*\\{\\s*)\"item\"(\\s*:)");
 
     // Bare-int custom_model_data. The negative lookahead skips a value that's already a float
     // or a longer token.
@@ -87,19 +46,24 @@ public final class ModDataMigrator {
     private static final Pattern POTION_ENTITY_SPLIT = Pattern.compile(
             "([\\[,]\\s*)\"minecraft:potion\"(?=\\s*[,\\]])");
 
-    // Lenient-only features 26.1's strict gson rejects. A `//` inside a string value only
+    // Lenient-only features the strict reader rejects. A `//` inside a string value only
     // triggers the string-aware strip, never a false negative.
     private static final Pattern LENIENT_JSON_HINT = Pattern.compile("//|/\\*|,\\s*[}\\]]");
 
+    // The first host that parses data-pack JSON strictly. Checked in the client jars: 1.21.5's
+    // RegistryDataLoader, TagLoader and SimpleJsonResourceReloadListener read leniently, and 1.21.6
+    // routes all three through a new StrictJsonParser. 1.21.11 and 26.x still do.
+    static final String FIRST_STRICT_DATA_JSON_HOST = "1.21.6";
+
     private ModDataMigrator() {}
 
-    /**
-     * True for bundled resources this migrator can act on (cheap pre-filter). Covers all datapack
-     * JSON plus the legacy item-entity vertex shader removed in 26.2.
-     */
+    /** A cheap pre-filter for the bundled resources this migrator can act on. */
     public static boolean isMigratableData(String entryName) {
+        // Data-pack JSON and function files, plus the legacy item-entity vertex shader removed in 26.2.
         return isLegacyItemVertexShader(entryName)
-                || entryName.endsWith(".json")
+                || entryName.endsWith(".mcfunction") && !isUnderAssets(entryName)
+                && (entryName.startsWith("data/") || entryName.contains("/data/"))
+                || entryName.endsWith(".json") && !isUnderAssets(entryName)
                 && (entryName.startsWith("data/")         // datapack JSON (worldgen, loot, tags, ...)
                  || entryName.contains("/data/")          // same, with a path prefix
                  || entryName.contains("/loot_table")     // fallback for layouts that don't sit
@@ -108,17 +72,47 @@ public final class ModDataMigrator {
                  || entryName.contains("/tags/"));
     }
 
-    /**
-     * Apply the 26.x data rewrites to one JSON entry. Returns the input bytes unchanged
-     * if the target is not 26.x, the entry is not migratable data, or nothing matched.
-     */
-    public static byte[] migrate(String entryName, byte[] json, String targetMcVersion) {
-        if (!RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) {
-            return migrateFor1_21(entryName, json, targetMcVersion);
+    /** Whether the entry sits in an {@code assets/} folder before any {@code data/} folder. */
+    private static boolean isUnderAssets(String entryName) {
+        // A 1.12 mod kept recipes and loot tables under assets/ and may still read them from code in
+        // the old shape, so only its data/ copy is rewritten. Client files such as a nested pack's
+        // models/item/recipe_book.json are not data either.
+        for (String segment : entryName.split("/")) {
+            if (segment.equals("data")) return false;
+            if (segment.equals("assets")) return true;
         }
-        if (!isMigratableData(entryName)) return json;
+        return false;
+    }
+
+    /** Apply the data rewrites to one entry for the loader running this game, or return it unchanged. */
+    public static byte[] migrate(String entryName, byte[] json, String targetMcVersion) {
+        return migrate(entryName, json, targetMcVersion, MigrationContext.Loader.host());
+    }
+
+    /** Apply the data rewrites to one JSON entry for {@code targetLoader}. */
+    public static byte[] migrate(String entryName, byte[] json, String targetMcVersion,
+                                 MigrationContext.Loader targetLoader) {
+        // Forge and NeoForge read global loot modifiers in different shapes, so the loader the
+        // transform writes for decides, never the one it runs on: the CLI and AOT run without one.
+        return migrate(entryName, json, null, targetMcVersion, targetLoader);
+    }
+
+    /** Apply the data rewrites to one entry of a mod built for {@code sourceMcVersion}, which may be null. */
+    public static byte[] migrate(String entryName, byte[] json, String sourceMcVersion,
+                                 String targetMcVersion, MigrationContext.Loader targetLoader) {
+        // Many format changes since 1.17 are data-only. Each rewrite runs from the release that
+        // changed its format, never from 26.x as a stand-in, since 1.21.x rejects an old shape too.
+        if (targetMcVersion == null || RetromodVersion.compareMcVersions(targetMcVersion, "1.20") < 0
+                || !isMigratableData(entryName)) {
+            return json;
+        }
         if (isLegacyItemVertexShader(entryName)) {
-            return migrateLegacyItemVertexShader(json, targetMcVersion);
+            return RetromodVersion.isUnobfuscatedTarget(targetMcVersion)
+                    ? migrateLegacyItemVertexShader(json, targetMcVersion) : json;
+        }
+        // A function file only needs the ids its commands name renamed.
+        if (entryName.endsWith(".mcfunction")) {
+            return VanillaIdRenames.migrateFunction(json, sourceMcVersion, targetMcVersion);
         }
 
         try {
@@ -128,47 +122,72 @@ public final class ModDataMigrator {
             return json;
         }
 
-        // Make the file parse under 26.1's strict gson (strip // /* */ comments and trailing
-        // commas). A clean file comes back as the same array, so the rewrites below still see
-        // the original bytes.
-        byte[] normalized = normalizeLenientJson(json);
+        // From 1.21.6 a comment or trailing comma leaves the file unbound, and one unbound
+        // template_pool is a FatalStartupException that aborts the shared worldgen registry load,
+        // so co-loaded structure mods look like they never registered their own types. A clean
+        // file comes back as the same array, so the rewrites below still see the original bytes.
+        byte[] normalized = parsesDataJsonStrictly(targetMcVersion) ? normalizeLenientJson(json) : json;
 
-        // 26.x turned EntityPredicate into a registry-keyed map: the 1.21.x field names
-        // ("type", "flags", ...) are now sub-predicate REGISTRY IDS ("minecraft:entity_type",
-        // "minecraft:flags", ...), so an old predicate fails with "Unknown registry key in
-        // entity_sub_predicate_type: minecraft:type" (#114, Apollo's Enchantment Rebalance:
-        // every enchantment referencing an entity_properties condition failed to parse).
-        // Structure-aware (Gson), so nothing outside a predicate object is touched.
+        // The rename table lists the thrown potion entity as removed, which would only make it
+        // optional, so its 1.21.5 split into two entities runs first. Only entity_type tags
+        // change, since the potion item kept its id.
+        if (atLeast(targetMcVersion, FIRST_SPLIT_POTION_ENTITY_HOST)
+                && entryName.contains("/tags/entity_type/")) {
+            normalized = splitPotionEntity(normalized);
+        }
+
+        // Minecraft's renamed ids, such as minecraft:chain to minecraft:iron_chain in 1.21.9.
+        normalized = VanillaIdRenames.migrate(entryName, normalized, sourceMcVersion, targetMcVersion);
+
+        // 1.21 made painting variants data sized in blocks. One out-of-range size failed the
+        // whole registry load, so a size that can only be pixels is read as pixels.
+        if (atLeast(targetMcVersion, "1.21") && PAINTING_VARIANT.matcher(entryName).matches()) {
+            normalized = paintingSizeInBlocks(normalized);
+        }
+
+        // Item stacks, item predicates and loot functions, each from the release that changed
+        // them. They read the old condition and function keys, so they run before the 26.x
+        // rewrites below replace those keys.
+        normalized = ItemStackDataMigrator.migrate(entryName, normalized, sourceMcVersion, targetMcVersion);
+
+        // 26.2 turned EntityPredicate into a registry-keyed map: the old field names ("type",
+        // "flags", ...) are now sub-predicate registry ids ("minecraft:entity_type", ...), so an
+        // old predicate fails with "Unknown registry key in entity_sub_predicate_type" (#114).
+        // 26.1 still reads the old names and ignores the new ones, so the rewrite waits for 26.2.
+        // It parses the JSON, so nothing outside a predicate object is touched.
         boolean advancementLike = entryName.contains("/advancement") || entryName.contains("/predicates/");
         String probe = new String(normalized, StandardCharsets.UTF_8);
-        if (probe.contains("entity_properties") || (advancementLike && probe.contains("\"type\""))) {
+        if (atLeast(targetMcVersion, FIRST_KEYED_ENTITY_PREDICATE_HOST)
+                && (probe.contains("entity_properties") || (advancementLike && probe.contains("\"type\"")))) {
             normalized = migrateEntityPredicates(normalized, advancementLike);
         }
 
+        // 1.20 renamed the loot condition alternative to any_of.
         normalized = renameAlternativeConditions(normalized);
 
-        // 26.3 renamed the recipe_unlocked condition "recipe" to "recipes", and advancements are
-        // loaded with the registries, so one old file stopped the world from loading.
-        if (entryName.contains("/advancement") && probe.contains("recipe_unlocked")
-                && !RetromodVersion.mcVersionExceeds("26.3", targetMcVersion)) {
-            normalized = migrateRecipeUnlockedConditions(normalized);
+        // 26.3 renamed seven trigger condition fields, such as recipe_unlocked's "recipe" to
+        // "recipes", and advancements are loaded with the registries, so one old file stopped the
+        // world from loading. An old enter_block "block" was worse: ignored, it matched any block.
+        if (entryName.contains("/advancement") && probe.contains("\"criteria\"")
+                && atLeast(targetMcVersion, "26.3")) {
+            normalized = migrateRenamedTriggerFields(normalized);
         }
 
         // 26.3 reads a number provider only with its type, so an untyped {"min", "max"} roll or
         // count, accepted since 1.17, failed the loot table with "No key type". It reads the old
         // "functions" and "conditions" keys, so it runs before the rewrite below.
-        if (!RetromodVersion.mcVersionExceeds("26.3", targetMcVersion)
+        if (atLeast(targetMcVersion, "26.3")
                 && LegacyLootConditionMigrator.isLootFile(entryName) && probe.contains("\"min\"")) {
             normalized = typeUntypedUniforms(normalized);
         }
 
         // 26.3 rewrote loot condition and function syntax and ignores the old keys, so an old
         // door dropped from both halves and old drops lost their counts and bonuses.
-        boolean neoForgeHost = com.retromod.util.McReflect.isNeoForge();
-        boolean forgeHost = !neoForgeHost && com.retromod.util.McReflect.isForge();
-        if (!RetromodVersion.mcVersionExceeds("26.3", targetMcVersion)
-                && LegacyLootConditionMigrator.mayContainOldConditions(entryName, probe,
-                        neoForgeHost || forgeHost)) {
+        boolean neoForgeHost = targetLoader == MigrationContext.Loader.NEOFORGE;
+        boolean forgeHost = targetLoader == MigrationContext.Loader.FORGE;
+        if (atLeast(targetMcVersion, "26.3")
+                && LegacyLootConditionMigrator.mayContainOldConditions(entryName,
+                        new String(normalized, StandardCharsets.UTF_8), neoForgeHost || forgeHost)) {
             normalized = LegacyLootConditionMigrator.migrate(normalized,
                     LegacyLootConditionMigrator.isLootFile(entryName),
                     forgeHost && LegacyLootConditionMigrator.isLootModifier(entryName));
@@ -176,35 +195,43 @@ public final class ModDataMigrator {
 
         // Between 1.20.1 and 1.21, int and float providers lost their "value" wrapper, so an old
         // dimension type or feature failed to parse its spawn light level, counts, or heights.
-        if (probe.contains("\"value\"") && (probe.contains("_inclusive") || probe.contains("\"plateau\"")
+        if (atLeast(targetMcVersion, "1.21") && probe.contains("\"value\"")
+                && (probe.contains("_inclusive") || probe.contains("\"plateau\"")
                 || probe.contains("\"deviation\"") || probe.contains("\"distribution\""))) {
             normalized = inlineLegacyProviderValues(normalized);
         }
 
+        boolean unobfuscated = RetromodVersion.isUnobfuscatedTarget(targetMcVersion);
         // 26.1 replaced a tree's dirt_provider and force_dirt with below_trunk_provider, so an old
         // tree failed to parse and left its feature unbound.
-        if (probe.contains("\"dirt_provider\"")) {
+        if (unobfuscated && probe.contains("\"dirt_provider\"")) {
             normalized = migrateTreeSoil(normalized);
         }
 
-        if (DimensionTypeMigrator.isDimensionType(entryName)) {
+        // 1.21.11 moved dimension types to environment attributes.
+        if (atLeast(targetMcVersion, "1.21.11") && DimensionTypeMigrator.isDimensionType(entryName)) {
             normalized = DimensionTypeMigrator.migrate(normalized, targetMcVersion);
         }
 
         // 1.21.9, 26.2, and 26.3 each changed noise settings and density functions, and one old mod
         // dimension stops the registry load.
-        if (NoiseSettingsMigrator.isTerrainData(entryName)) {
+        if (atLeast(targetMcVersion, "1.21") && NoiseSettingsMigrator.isTerrainData(entryName)) {
             normalized = NoiseSettingsMigrator.migrate(entryName, normalized, targetMcVersion);
         }
 
         // 26.1 deleted the random_patch and flower features, and one stale configured feature
         // fails the whole worldgen registry load. Both read the old "config" wrapper, so they
         // run before the 26.3 rewrite below removes it.
-        if (LegacyRandomPatchMigrator.mayContainPatch(entryName, probe)) {
+        if (unobfuscated && LegacyRandomPatchMigrator.mayContainPatch(entryName, probe)) {
             normalized = LegacyRandomPatchMigrator.migrate(normalized);
         }
-        if (LegacyDiskStateProviderMigrator.mayContainDisk(entryName, probe)) {
+        if (unobfuscated && LegacyDiskStateProviderMigrator.mayContainDisk(entryName, probe)) {
             normalized = LegacyDiskStateProviderMigrator.migrate(normalized);
+        }
+
+        // 26.3 changed mob spawn entries.
+        if (SpawnerDataMigrator.appliesTo(targetMcVersion) && SpawnerDataMigrator.holdsSpawns(entryName)) {
+            normalized = SpawnerDataMigrator.migrate(entryName, normalized);
         }
 
         if (Worldgen26_3Migrator.appliesTo(targetMcVersion) && Worldgen26_3Migrator.isWorldgen(entryName)) {
@@ -212,62 +239,59 @@ public final class ModDataMigrator {
         }
 
         // 1.21.2 replaced ingredient objects ({"item": ...}, {"tag": ...}) with a bare id or
-        // "#tag" string. 26.2 skipped such recipes; 26.3 loads recipes with the registries, so one
-        // old recipe stopped the world from loading.
-        if (isRecipeFile(entryName) && (probe.contains("\"item\"") || probe.contains("\"tag\""))) {
-            normalized = migrateRecipeIngredients(normalized);
+        // "#tag" string, and skips a recipe in the old shape. 26.3 loads recipes with the
+        // registries, so there one old recipe stopped the world from loading.
+        if (atLeast(targetMcVersion, FIRST_STRING_INGREDIENT_HOST) && isRecipeFile(entryName)
+                && (probe.contains("\"item\"") || probe.contains("\"tag\""))) {
+            normalized = migrateRecipeIngredients(normalized, targetLoader, sourceMcVersion, targetMcVersion);
         }
 
         String in = new String(normalized, StandardCharsets.UTF_8);
-        String out = in.replace(CHAIN_OLD, CHAIN_NEW);
-        out = DYED_COLOR.matcher(out).replaceAll("\"minecraft:dyed_color\":$1");
-        out = CMD_INT.matcher(out).replaceAll("\"minecraft:custom_model_data\":{\"floats\":[$1]}");
-        if (entryName.contains("/advancement")) {
-            out = ICON_ITEM.matcher(out).replaceAll("$1\"id\"$2");
+        String out = in;
+        // 1.21.5 reads dyed_color as a plain int instead of an {"rgb": N} object.
+        if (atLeast(targetMcVersion, ItemStackComponents.FIRST_INLINE_COMPONENT_HOST)) {
+            out = DYED_COLOR.matcher(out).replaceAll("\"minecraft:dyed_color\":$1");
         }
-        if (entryName.contains("/tags/entity_type/")) {
-            out = POTION_ENTITY_SPLIT.matcher(out).replaceAll(
-                    "$1\"minecraft:splash_potion\", \"minecraft:lingering_potion\"");
+        // 1.21.4 made custom_model_data {"floats": [...]}; the old int becomes the first float.
+        if (atLeast(targetMcVersion, ItemStackComponents.FIRST_FLOAT_MODEL_DATA_HOST)) {
+            out = CMD_INT.matcher(out).replaceAll("\"minecraft:custom_model_data\":{\"floats\":[$1]}");
         }
 
-        // No rewrite fired: return normalized, which is `json` when the file was already
-        // strict-clean, or the comment-stripped bytes otherwise.
+        // No string rewrite fired: return normalized, which is `json` when no earlier rewrite
+        // changed the file.
         if (out.equals(in)) return normalized;
-        LOGGER.debug("Migrated 26.x data formats in {}", entryName);
+        LOGGER.debug("Migrated data formats in {}", entryName);
         return out.getBytes(StandardCharsets.UTF_8);
     }
 
-    /**
-     * The data format changes of 1.21 to 1.21.11 hosts, which run none of the 26.x rewrites: 1.21
-     * dropped the providers' {@code value} wrapper, 1.21.9 replaced the noise router's surface
-     * density, and 1.21.11 moved dimension types to environment attributes. Each one stopped a
-     * world from loading on those hosts as it does on 26.x.
-     */
-    private static byte[] migrateFor1_21(String entryName, byte[] json, String targetMcVersion) {
-        if (targetMcVersion == null || RetromodVersion.compareMcVersions(targetMcVersion, "1.20") < 0
-                || !isMigratableData(entryName) || isLegacyItemVertexShader(entryName)) {
-            return json;
-        }
-        try {
-            JsonSecurity.validate(json, MAX_MIGRATABLE_FILE_BYTES, MAX_JSON_DEPTH, "Data pack JSON");
-        } catch (IOException refused) {
-            return json;
-        }
-        byte[] migrated = renameAlternativeConditions(json);
-        if (RetromodVersion.compareMcVersions(targetMcVersion, "1.21") < 0) return migrated;
-        String probe = new String(migrated, StandardCharsets.UTF_8);
-        if (probe.contains("\"value\"") && (probe.contains("_inclusive") || probe.contains("\"plateau\"")
-                || probe.contains("\"deviation\"") || probe.contains("\"distribution\""))) {
-            migrated = inlineLegacyProviderValues(migrated);
-        }
-        if (NoiseSettingsMigrator.isTerrainData(entryName)) {
-            migrated = NoiseSettingsMigrator.migrate(entryName, migrated, targetMcVersion);
-        }
-        if (RetromodVersion.compareMcVersions(targetMcVersion, "1.21.11") >= 0
-                && DimensionTypeMigrator.isDimensionType(entryName)) {
-            migrated = DimensionTypeMigrator.migrate(migrated, targetMcVersion);
-        }
-        return migrated;
+    /** Returns the same array when the tag names no thrown potion entity. */
+    private static byte[] splitPotionEntity(byte[] tag) {
+        String in = new String(tag, StandardCharsets.UTF_8);
+        String out = POTION_ENTITY_SPLIT.matcher(in).replaceAll(
+                "$1\"minecraft:splash_potion\", \"minecraft:lingering_potion\"");
+        return out.equals(in) ? tag : out.getBytes(StandardCharsets.UTF_8);
+    }
+
+    // The first host whose entity predicates are keyed by sub-predicate registry ids. 26.1.2's
+    // EntityPredicate still reads type, flags and equipment, and 26.2's vanilla loot tables use
+    // minecraft:entity_type 176 times where 26.1.2's use it none.
+    static final String FIRST_KEYED_ENTITY_PREDICATE_HOST = "26.2";
+
+    // The first host that reads a recipe ingredient only as an id, a #tag or a list of ids,
+    // checked in the 1.21 and 1.21.2 client jars' own recipes.
+    static final String FIRST_STRING_INGREDIENT_HOST = "1.21.2";
+
+    // The first host that registers the thrown potion as splash_potion and lingering_potion:
+    // 1.21.4's entity type registry still names potion, and 1.21.5's names the two new ids.
+    static final String FIRST_SPLIT_POTION_ENTITY_HOST = "1.21.5";
+
+    private static boolean atLeast(String version, String floor) {
+        return version != null && RetromodVersion.compareMcVersions(version, floor) >= 0;
+    }
+    /** Whether {@code targetMcVersion} rejects comments and trailing commas in data JSON. */
+    static boolean parsesDataJsonStrictly(String targetMcVersion) {
+        return targetMcVersion != null
+                && RetromodVersion.compareMcVersions(targetMcVersion, FIRST_STRICT_DATA_JSON_HOST) >= 0;
     }
 
     private static final java.util.regex.Pattern ALTERNATIVE_CONDITION = java.util.regex.Pattern.compile(
@@ -317,17 +341,7 @@ public final class ModDataMigrator {
         return out.equals(in) ? shader : out.getBytes(StandardCharsets.UTF_8);
     }
 
-    /**
-     * Make a data-pack JSON parse under 26.1's strict Gson by removing the two lenient-only
-     * features old mods rely on: {@code //} / {@code /* *}{@code /} comments and trailing commas.
-     * A string-aware single pass, not a reserialize: a {@code //} or {@code ,} inside a string
-     * value is copied verbatim and the file's formatting is otherwise preserved. Hand-rolled
-     * because Gson's own lenient reader rejects trailing commas.
-     *
-     * <p>Other lenient quirks (single quotes, unquoted keys, NaN) are left for the loader to
-     * report. Returns the input array (same reference) when there's nothing to strip, so callers
-     * can detect a change by reference identity.
-     */
+    /** Removes the comments and trailing commas that the strict reader of 1.21.6 and newer rejects. */
     static byte[] normalizeLenientJson(byte[] json) {
         try {
             JsonSecurity.validate(json, MAX_MIGRATABLE_FILE_BYTES, MAX_JSON_DEPTH,
@@ -335,16 +349,22 @@ public final class ModDataMigrator {
         } catch (IOException refused) {
             return json;
         }
+        // Hand-written worldgen files (Jigsaw template_pools, processor_lists) often carry them,
+        // and each such file throws MalformedJsonException on a strict host.
         String in = new String(json, StandardCharsets.UTF_8);
         if (!LENIENT_JSON_HINT.matcher(in).find()) return json;   // already strict; cheap exit
         String out = stripLenientJson(in);
+        // Other lenient quirks (single quotes, unquoted keys, NaN) are left for the loader to
+        // report. The same array comes back when nothing changed, so callers compare references.
         if (out.equals(in)) return json;
         LOGGER.debug("Normalized lenient JSON (stripped comments / trailing commas)");
         return out.getBytes(StandardCharsets.UTF_8);
     }
 
-    /** String-aware strip of // and block comments plus trailing commas. See {@link #normalizeLenientJson}. */
+    /** String-aware strip of // and block comments plus trailing commas. */
     private static String stripLenientJson(String s) {
+        // One pass, not a reserialize: a // or , inside a string value is copied verbatim and the
+        // formatting is kept. Hand-rolled because Gson's own lenient reader rejects trailing commas.
         int n = s.length();
         StringBuilder out = new StringBuilder(n);
         boolean inStr = false;
@@ -405,8 +425,9 @@ public final class ModDataMigrator {
      * which extract a mod before repackaging; the byte-stream {@link #migrate} fits the offline
      * CLI's entry-by-entry copy instead.
      *
-     * <p>Returns 0 for a missing or empty root, or when no rewrite applies to the target. Entry names are normalized to
-     * forward slashes so {@link #isMigratableData} path checks match on every OS.
+     * <p>Returns 0 for a missing or empty root, or when no rewrite applies to the target. Entry
+     * names are normalized to forward slashes so {@link #isMigratableData} path checks match on
+     * every OS.
      *
      * @return the number of files rewritten.
      */
@@ -419,91 +440,85 @@ public final class ModDataMigrator {
         }
     }
 
-    /** Applies tree migration with bounded reads and fail-closed filesystem validation. */
+    /** Applies this class's content steps to an extracted tree, with bounded reads and fail-closed checks. */
     public static int migrateTreeChecked(Path root, String targetMcVersion) throws IOException {
-        // not gated on 26.x as a whole: the client item-definition split below applies from
-        // 1.21.4 (review finding - a 1.21.1 -> 1.21.11 translation also needs the definitions).
         if (root == null || !Files.exists(root, LinkOption.NOFOLLOW_LINKS)) return 0;
         if (Files.isSymbolicLink(root)
                 || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("Data migration root is not a regular directory: " + root);
         }
+        // Mod transforms run these same steps through ModResourceMigrations with the other resource
+        // converters. This entry point keeps the steps a caller without a MigrationContext always had.
+        ResourceTree tree = DirectoryResourceTree.open(root);
+        // Nothing here waits for 26.x. The item definitions apply from 1.21.4, so a 1.21.1 to 1.21.11
+        // translation needs them too.
+        return migrateContent(tree, null, targetMcVersion, MigrationContext.Loader.host())
+                + removeDanglingRecipeAdvancements(tree, targetMcVersion)
+                + writeItemDefinitions(tree, targetMcVersion, null)
+                + LegacyKeyCategoryNames.writeTree(tree, targetMcVersion, List.of(), name -> null)
+                + moveRelocatedWorldgen(tree, targetMcVersion);
+    }
 
+    /** Applies {@link #migrate} to every migratable file in the tree and counts the files rewritten. */
+    static int migrateContent(ResourceTree tree, String sourceMcVersion, String targetMcVersion,
+                              MigrationContext.Loader targetLoader) throws IOException {
         int changed = 0;
-        List<Path> files = new java.util.ArrayList<>();
-        for (Path path : PackArchive.collectBoundedPaths(
-                root, PackArchive.MAX_ARCHIVE_ENTRIES)) {
-            if (Files.isSymbolicLink(path)) {
-                throw new IOException("Data migration tree contains a symbolic link: " + path);
-            }
-            if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
-                files.add(path);
-            } else if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
-                throw new IOException("Data migration entry is not a regular file: " + path);
-            }
-        }
-
-        java.util.Set<String> relNames = new java.util.HashSet<>();
-        for (Path p : files) {
-            String rel = root.relativize(p).toString().replace(File.separatorChar, '/');
-            relNames.add(rel);
-            if (!isMigratableData(rel)) continue; // migrate() picks the rewrites for the target
-            byte[] before;
-            try (InputStream input = Files.newInputStream(p)) {
-                before = ZipSecurity.safeReadAllBytes(input, MAX_MIGRATABLE_FILE_BYTES);
-            }
-            byte[] after = migrate(rel, before, targetMcVersion);
+        for (String name : tree.names()) {
+            if (!isMigratableData(name)) continue; // migrate() picks the rewrites for the target
+            // A file over the size limit fails the migration, as it always has, rather than
+            // reaching the host unconverted.
+            byte[] before = tree.read(name, MAX_MIGRATABLE_FILE_BYTES);
+            byte[] after = migrate(name, before, sourceMcVersion, targetMcVersion, targetLoader);
             if (after != before) {        // same array back means nothing matched
-                Files.write(p, after);
+                tree.write(name, after);
                 changed++;
             }
         }
-
-        for (String advancement : danglingRecipeAdvancements(relNames, rel -> {
-            try (InputStream input = Files.newInputStream(root.resolve(rel))) {
-                return ZipSecurity.safeReadAllBytes(input, MAX_MIGRATABLE_FILE_BYTES);
-            } catch (IOException unreadable) {
-                return null;
-            }
-        }, targetMcVersion)) {
-            Files.delete(root.resolve(advancement));
-            relNames.remove(advancement);
-            changed++;
-        }
-
-        // 1.21.4+ client item definitions: a pre-1.21.4 mod ships only models/item/*.json, and
-        // without an assets/<ns>/items/<id>.json per item everything renders as the purple/black
-        // missing model ("Missing item model for location <ns>:<id>").
-        for (var def : synthesizeItemDefinitionEntries(relNames, targetMcVersion).entrySet()) {
-            Path out = root.resolve(def.getKey()).normalize();
-            if (!out.startsWith(root.normalize())) {
-                throw new IOException("Generated data path escapes migration root: " + def.getKey());
-            }
-            Files.createDirectories(out.getParent());
-            Files.write(out, def.getValue());
-            changed++;
-        }
-        // 1.21.9 titles key binding categories by id; name the ones old mods made from a string.
-        changed += LegacyKeyCategoryNames.writeTree(root, targetMcVersion);
-        // 26.3 moved configured features and carvers into new folders. An entry already at the
-        // new path wins, as it is the mod's own 26.3 data.
-        for (String rel : relNames) {
-            String moved = migratedEntryName(rel, targetMcVersion);
-            if (moved.equals(rel)) continue;
-            Path from = root.resolve(rel).normalize();
-            Path to = root.resolve(moved).normalize();
-            if (!to.startsWith(root.normalize())) {
-                throw new IOException("Migrated data path escapes migration root: " + moved);
-            }
-            if (Files.exists(to)) {
-                Files.delete(from);
-            } else {
-                Files.createDirectories(to.getParent());
-                Files.move(from, to);
-            }
-            changed++;
-        }
         return changed;
+    }
+
+    /** Removes the files {@link #danglingRecipeAdvancements} names. */
+    static int removeDanglingRecipeAdvancements(ResourceTree tree, String targetMcVersion)
+            throws IOException {
+        int removed = 0;
+        for (String advancement : danglingRecipeAdvancements(tree.names(),
+                name -> readQuietly(tree, name), targetMcVersion)) {
+            if (tree.delete(advancement)) removed++;
+        }
+        return removed;
+    }
+
+    /** Writes the client item definitions 1.21.4 and newer need for a mod that ships only item models. */
+    static int writeItemDefinitions(ResourceTree tree, String targetMcVersion,
+            java.util.Set<String> ownNamespaces) throws IOException {
+        // Without assets/<ns>/items/<id>.json an item renders as the purple and black missing
+        // model. The shared migration runs this same writer, so old overrides, spawn eggs and
+        // code-rendered items match. A null ownNamespaces allows every namespace a mod may own.
+        return ClientItemDefinitionMigrator.write(tree, targetMcVersion, ownNamespaces);
+    }
+
+    /** Moves configured features and carvers into the folders 26.3 reads them from. */
+    static int moveRelocatedWorldgen(ResourceTree tree, String targetMcVersion) throws IOException {
+        int moved = 0;
+        for (String name : tree.names()) {
+            String target = migratedEntryName(name, targetMcVersion);
+            if (target.equals(name)) continue;
+            // An entry already at the new path wins, as it is the mod's own 26.3 data.
+            if (!tree.exists(target)) {
+                tree.write(target, tree.read(name));
+            }
+            tree.delete(name);
+            moved++;
+        }
+        return moved;
+    }
+
+    private static byte[] readQuietly(ResourceTree tree, String name) {
+        try {
+            return tree.read(name, MAX_MIGRATABLE_FILE_BYTES);
+        } catch (IOException unreadable) {
+            return null;
+        }
     }
 
     /** Where a data entry lives on {@code targetMcVersion}, which can differ from where it was built. */
@@ -619,8 +634,10 @@ public final class ModDataMigrator {
             "distance", "minecraft:distance",
             "stepping_on", "minecraft:stepping_on");
 
+    // Only the singular folder: this check runs for 26.3 and newer, which never read the plural
+    // one, so a plural original cannot dangle there and is left in the jar as it was shipped.
     private static final Pattern RECIPE_ADVANCEMENT =
-            Pattern.compile("data/([a-z0-9_.-]+)/advancements?/recipes/.+\\.json");
+            Pattern.compile("data/([a-z0-9_.-]+)/advancement/recipes/.+\\.json");
 
     /**
      * Recipe advancements that name a recipe from their own namespace which the jar does not ship.
@@ -651,8 +668,10 @@ public final class ModDataMigrator {
                 if (colon < 0 || !id.substring(0, colon).equals(m.group(1))) continue;
                 String path = id.substring(colon + 1);
                 String ns = m.group(1);
-                if (!names.contains("data/" + ns + "/recipe/" + path + ".json")
-                        && !names.contains("data/" + ns + "/recipes/" + path + ".json")) {
+                // 26.3 reads recipes only from the singular folder. A plural original is inert
+                // there, so it counts only through the copy the layout step made of it, and a
+                // copy the load gate kept out leaves the reward dangling.
+                if (!names.contains("data/" + ns + "/recipe/" + path + ".json")) {
                     dangling.add(name);
                     break;
                 }
@@ -689,15 +708,46 @@ public final class ModDataMigrator {
                 && !entryName.contains("/advancement");
     }
 
+    private static final Pattern PAINTING_VARIANT = Pattern.compile("data/[^/]+/painting_variant/.+\\.json");
+    /** The largest painting side 1.21 accepts, in blocks. */
+    private static final int MAX_PAINTING_BLOCKS = 16;
+
+    /**
+     * A painting variant written in pixels, as code sized paintings before 1.21, converted to the
+     * blocks 1.21 reads. Only a file with a side over 16 is converted, since that cannot be blocks;
+     * Scorched Guns ships its 64 by 32 painting this way. Both sides are pixels then.
+     */
+    static byte[] paintingSizeInBlocks(byte[] json) {
+        com.google.gson.JsonElement root;
+        try {
+            root = com.google.gson.JsonParser.parseString(new String(json, StandardCharsets.UTF_8));
+        } catch (RuntimeException unparsable) {
+            return json;
+        }
+        if (!(root instanceof com.google.gson.JsonObject painting)
+                || !(paintingSide(painting, "width") > MAX_PAINTING_BLOCKS
+                        || paintingSide(painting, "height") > MAX_PAINTING_BLOCKS)) {
+            return json;
+        }
+        for (String side : new String[] {"width", "height"}) {
+            int pixels = paintingSide(painting, side);
+            if (pixels > 0) {
+                painting.addProperty(side, Math.min(MAX_PAINTING_BLOCKS, Math.max(1, (pixels + 15) / 16)));
+            }
+        }
+        return new com.google.gson.GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create().toJson(root)
+                .getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static int paintingSide(com.google.gson.JsonObject painting, String side) {
+        com.google.gson.JsonElement value = painting.get(side);
+        return value instanceof com.google.gson.JsonPrimitive number && number.isNumber() ? number.getAsInt() : 0;
+    }
+
     /** Recipe fields that hold one ingredient, and the fields that hold a map or list of them. */
     private static final List<String> SINGLE_INGREDIENT_FIELDS =
             List.of("ingredient", "template", "base", "addition");
 
-    /**
-     * Convert pre-1.21.2 ingredient objects to the string form. Only an object whose sole key is
-     * {@code item} or {@code tag}, or an array made entirely of them, is converted; a loader's
-     * custom ingredient (anything with a {@code type}) is left alone.
-     */
     /**
      * A tree's {@code dirt_provider} becomes {@code below_trunk_provider}. With {@code force_dirt}
      * it is used as it is; without, it only replaces blocks outside
@@ -849,15 +899,28 @@ public final class ModDataMigrator {
         return PROVIDER_FIELDS.containsAll(value.keySet());
     }
 
+    /** Convert pre-1.21.2 ingredient objects to the string form. */
     static byte[] migrateRecipeIngredients(byte[] json) {
+        return migrateRecipeIngredients(json, null, null, null);
+    }
+
+    /** Convert pre-1.21.2 ingredients, including items with components or NBT for {@code loader}. */
+    static byte[] migrateRecipeIngredients(byte[] json, MigrationContext.Loader loader,
+                                           String sourceMcVersion, String targetMcVersion) {
         try {
             com.google.gson.JsonElement root = com.google.gson.JsonParser
                     .parseString(new String(json, StandardCharsets.UTF_8));
             if (!root.isJsonObject()) return json;
             com.google.gson.JsonObject recipe = root.getAsJsonObject();
+            // In a vanilla recipe type, an item that had to carry components or NBT becomes the
+            // target loader's component ingredient. Without one that loader reads, it stays as is.
+            String type = recipe.get("type") instanceof com.google.gson.JsonPrimitive primitive
+                    && primitive.isString() ? namespaced(primitive.getAsString()) : "";
+            ComponentIngredients components = type.startsWith("minecraft:") && loader != null
+                    ? new ComponentIngredients(loader, sourceMcVersion, targetMcVersion) : null;
             boolean changed = false;
             for (String field : SINGLE_INGREDIENT_FIELDS) {
-                com.google.gson.JsonElement converted = legacyIngredient(recipe.get(field));
+                com.google.gson.JsonElement converted = legacyIngredient(recipe.get(field), components);
                 if (converted != null) {
                     recipe.add(field, converted);
                     changed = true;
@@ -865,7 +928,7 @@ public final class ModDataMigrator {
             }
             if (recipe.has("key") && recipe.get("key").isJsonObject()) {
                 for (var entry : recipe.getAsJsonObject("key").entrySet()) {
-                    com.google.gson.JsonElement converted = legacyIngredient(entry.getValue());
+                    com.google.gson.JsonElement converted = legacyIngredient(entry.getValue(), components);
                     if (converted != null) {
                         entry.setValue(converted);
                         changed = true;
@@ -875,7 +938,7 @@ public final class ModDataMigrator {
             if (recipe.has("ingredients") && recipe.get("ingredients").isJsonArray()) {
                 com.google.gson.JsonArray list = recipe.getAsJsonArray("ingredients");
                 for (int i = 0; i < list.size(); i++) {
-                    com.google.gson.JsonElement converted = legacyIngredient(list.get(i));
+                    com.google.gson.JsonElement converted = legacyIngredient(list.get(i), components);
                     if (converted != null) {
                         list.set(i, converted);
                         changed = true;
@@ -889,12 +952,16 @@ public final class ModDataMigrator {
     }
 
     /** The string form of one legacy ingredient, or null when it is not a legacy ingredient. */
-    private static com.google.gson.JsonElement legacyIngredient(com.google.gson.JsonElement value) {
+    private static com.google.gson.JsonElement legacyIngredient(com.google.gson.JsonElement value,
+                                                                 ComponentIngredients components) {
         if (value == null) return null;
         if (value.isJsonObject()) {
             String id = legacyIngredientId(value.getAsJsonObject());
+            // An object that is not a plain item or tag may still be an item with components.
+            if (id == null && components != null) return components.convert(value.getAsJsonObject());
             return id == null ? null : new com.google.gson.JsonPrimitive(id);
         }
+        // An array converts only when every entry is a plain item.
         if (value.isJsonArray() && !value.getAsJsonArray().isEmpty()) {
             com.google.gson.JsonArray ids = new com.google.gson.JsonArray();
             for (com.google.gson.JsonElement alternative : value.getAsJsonArray()) {
@@ -908,7 +975,57 @@ public final class ModDataMigrator {
         return null;
     }
 
+    /** Turns an item ingredient with components or NBT into the target loader's component ingredient. */
+    private static final class ComponentIngredients {
+        private final MigrationContext.Loader loader;
+        private final String source;
+        private final String target;
+
+        ComponentIngredients(MigrationContext.Loader loader, String source, String target) {
+            this.loader = loader;
+            this.source = source;
+            this.target = target;
+        }
+
+        /** The loader's component ingredient, or null when there is none or the shape is other. */
+        com.google.gson.JsonElement convert(com.google.gson.JsonObject ingredient) {
+            // Vanilla read only the item and ignored the rest, and from 1.21.2 it rejects the object.
+            if (ingredient.size() != 2
+                    || !(ingredient.get("item") instanceof com.google.gson.JsonPrimitive item)
+                    || !item.isString()) {
+                return null;
+            }
+            // {"item", "components"} was written for 1.20.5 to 1.21.1, and {"item", "nbt"} before that.
+            com.google.gson.JsonObject components = null;
+            if (ingredient.get("components") instanceof com.google.gson.JsonObject given && !given.isEmpty()) {
+                components = given;
+            } else if (ingredient.has("nbt")) {
+                LegacyItemNbt.Compound tag = LegacyItemNbt.parseField(ingredient.get("nbt"));
+                components = tag == null ? null
+                        : ItemStackComponents.componentize(item.getAsString(), tag, source, target);
+            }
+            if (components == null || components.isEmpty()) return null;
+            // NeoForge and Fabric API each read a component ingredient that matches the item with
+            // those components. Checked in NeoForge 21.11.42 and 26.3.0.43, and in Fabric API
+            // 0.141.4 for 1.21.11 and for 26.3.
+            com.google.gson.JsonObject converted = new com.google.gson.JsonObject();
+            if (loader == MigrationContext.Loader.NEOFORGE) {
+                converted.addProperty("neoforge:ingredient_type", "neoforge:components");
+                converted.add("items", item);
+            } else if (loader.isFabricFamily()) {
+                converted.addProperty("fabric:type", "fabric:components");
+                converted.add("base", item);
+            } else {
+                return null;
+            }
+            converted.add("components", components);
+            return converted;
+        }
+    }
+
     private static String legacyIngredientId(com.google.gson.JsonObject ingredient) {
+        // Only an object whose sole key is item or tag. A loader's custom ingredient, anything
+        // with a type, is left alone.
         if (ingredient.size() != 1) return null;
         com.google.gson.JsonElement item = ingredient.get("item");
         if (item != null && item.isJsonPrimitive()) return item.getAsString();
@@ -917,12 +1034,20 @@ public final class ModDataMigrator {
         return null;
     }
 
-    /**
-     * Rename {@code conditions.recipe} to {@code conditions.recipes} in every
-     * {@code minecraft:recipe_unlocked} criterion. Returns the input array unchanged when nothing
-     * matched or the JSON doesn't parse.
-     */
-    static byte[] migrateRecipeUnlockedConditions(byte[] json) {
+    // The trigger condition fields 26.3 renamed, by trigger, read from the 26.2 and 26.3 trigger
+    // classes and their vanilla advancements.
+    private static final java.util.Map<String, java.util.Map<String, String>> TRIGGER_FIELDS_RENAMED_IN_26_3 =
+            java.util.Map.of(
+                    "minecraft:recipe_unlocked", java.util.Map.of("recipe", "recipes"),
+                    "minecraft:recipe_crafted", java.util.Map.of("recipe_id", "recipes"),
+                    "minecraft:crafter_recipe_crafted", java.util.Map.of("recipe_id", "recipes"),
+                    "minecraft:enter_block", java.util.Map.of("block", "blocks"),
+                    "minecraft:slide_down_block", java.util.Map.of("block", "blocks"),
+                    "minecraft:bee_nest_destroyed", java.util.Map.of("block", "blocks"),
+                    "minecraft:player_generates_container_loot", java.util.Map.of("loot_table", "loot_tables"));
+
+    /** Renames the trigger condition fields 26.3 renamed, or returns the same array when none matched. */
+    static byte[] migrateRenamedTriggerFields(byte[] json) {
         try {
             com.google.gson.JsonElement root = com.google.gson.JsonParser
                     .parseString(new String(json, StandardCharsets.UTF_8));
@@ -937,13 +1062,19 @@ public final class ModDataMigrator {
                 com.google.gson.JsonElement trigger = criterion.get("trigger");
                 if (trigger == null || !trigger.isJsonPrimitive()) continue;
                 String id = trigger.getAsString();
-                if (!id.equals("minecraft:recipe_unlocked") && !id.equals("recipe_unlocked")) continue;
+                // A trigger id without a namespace is a vanilla one.
+                var renamed = TRIGGER_FIELDS_RENAMED_IN_26_3.get(id.indexOf(':') < 0 ? "minecraft:" + id : id);
+                if (renamed == null) continue;
                 com.google.gson.JsonElement conditions = criterion.get("conditions");
                 if (conditions == null || !conditions.isJsonObject()) continue;
                 com.google.gson.JsonObject c = conditions.getAsJsonObject();
-                if (c.has("recipe") && !c.has("recipes")) {
-                    c.add("recipes", c.remove("recipe"));
-                    changed = true;
+                // Each new field takes one id as well as a list or a tag, so the old single value
+                // carries over as it is.
+                for (var field : renamed.entrySet()) {
+                    if (c.has(field.getKey()) && !c.has(field.getValue())) {
+                        c.add(field.getValue(), c.remove(field.getKey()));
+                        changed = true;
+                    }
                 }
             }
             return changed ? root.toString().getBytes(StandardCharsets.UTF_8) : json;
@@ -1034,6 +1165,11 @@ public final class ModDataMigrator {
         }
     }
 
+    /** Whether every key names an entity predicate field, in the old or the 26.2 spelling. */
+    static boolean isEntityPredicateVocabulary(java.util.Set<String> keys) {
+        return ENTITY_PREDICATE_VOCAB.containsAll(keys);
+    }
+
     /** At least one legacy key present, and every key within the EntityPredicate vocabulary. */
     private static boolean looksLikeEntityPredicate(com.google.gson.JsonObject obj) {
         boolean anyLegacy = false;
@@ -1062,24 +1198,24 @@ public final class ModDataMigrator {
         return out;
     }
 
-    /**
-     * 1.21.4 split "client item" definitions out of item models: every item id needs an
-     * {@code assets/<ns>/items/<id>.json} naming its model, and items without one render as the
-     * missing model. Pre-1.21.4 mods only ship {@code assets/<ns>/models/item/<id>.json}, so all
-     * their items are invisible on 26.x (verified on Macaw's: 146 item models, 0 definitions,
-     * every item purple/black in the creative tab).
-     *
-     * <p>Given a mod's entry names, returns the definitions to add: one per direct child of
-     * {@code models/item/} (item ids cannot contain {@code /}, so nested model files are parents or
-     * templates, never item models) whose {@code items/<id>.json} is absent. A definition for a
-     * model that isn't actually an item is inert (never queried), so over-synthesis is harmless;
-     * ids with characters an Identifier rejects are skipped.
-     */
+    /** The client item definitions to add for a mod's entry names, one per item model without one. */
     public static java.util.Map<String, byte[]> synthesizeItemDefinitionEntries(
             java.util.Set<String> entryNames, String targetMcVersion) {
-        // client item definitions exist from 1.21.4, not just 26.x
+        return synthesizeItemDefinitionEntries(entryNames, targetMcVersion, null);
+    }
+
+    /** The same, limited to {@code ownNamespaces}, or every namespace but the shared ones when null. */
+    public static java.util.Map<String, byte[]> synthesizeItemDefinitionEntries(
+            java.util.Set<String> entryNames, String targetMcVersion,
+            java.util.Set<String> ownNamespaces) {
+        // Client item definitions exist from 1.21.4, not just 26.x. 1.21.4 split them out of item
+        // models: an item without assets/<ns>/items/<id>.json renders as the missing model, and a
+        // pre-1.21.4 mod ships only models/item/<id>.json.
         if (RetromodVersion.mcVersionExceeds("1.21.4", targetMcVersion)) return java.util.Map.of();
         java.util.Map<String, byte[]> out = new java.util.LinkedHashMap<>();
+        java.util.Set<String> keptVanilla = new java.util.TreeSet<>();
+        // One definition per direct child of models/item/ with no items/<id>.json. A definition for
+        // a model that is not really an item is never queried, so writing too many is harmless.
         for (String name : entryNames) {
             if (!name.startsWith("assets/") || !name.endsWith(".json")) continue;
             int m = name.indexOf("/models/item/");
@@ -1087,14 +1223,27 @@ public final class ModDataMigrator {
             String ns = name.substring("assets/".length(), m);
             if (!ns.matches("[a-z0-9_.\\-]+")) continue;         // valid Identifier namespace
             String file = name.substring(m + "/models/item/".length());
-            if (file.indexOf('/') >= 0) continue;                 // nested = not an item id
+            if (file.indexOf('/') >= 0) continue;                 // ids have no '/': a parent or template
             String id = file.substring(0, file.length() - ".json".length());
             if (!id.matches("[a-z0-9_.\\-]+")) continue;          // must be a valid Identifier path
+            // Never write in the minecraft namespace. Vanilla's own definitions, often a condition
+            // or select on the item's state, are replaced rather than merged: a plain one for a
+            // mod's models/item/fishing_rod.json stopped every fishing rod from showing its cast model.
+            if (MigrationContext.SHARED_NAMESPACES.contains(ns)) {
+                if (ns.equals("minecraft")) keptVanilla.add(ns + ":" + id);
+                continue;
+            }
+            // A mod that ships models for another mod's items never shadows that mod's definitions.
+            if (ownNamespaces != null && !ownNamespaces.contains(ns)) continue;
             String defName = "assets/" + ns + "/items/" + id + ".json";
             if (entryNames.contains(defName)) continue;           // the mod already ships one
             String json = "{\n  \"model\": {\n    \"type\": \"minecraft:model\",\n    \"model\": \""
                     + ns + ":item/" + id + "\"\n  }\n}\n";
             out.put(defName, json.getBytes(StandardCharsets.UTF_8));
+        }
+        if (!keptVanilla.isEmpty()) {
+            LOGGER.info("Kept vanilla's item definitions for {}; the mod's own models for them "
+                    + "still apply, but their old overrides are not translated", keptVanilla);
         }
         return out;
     }

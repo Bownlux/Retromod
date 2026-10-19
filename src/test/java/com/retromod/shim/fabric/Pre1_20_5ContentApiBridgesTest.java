@@ -253,6 +253,9 @@ class Pre1_20_5ContentApiBridgesTest {
                 .filter(c -> c.owner.equals(Pre1_20_5ArmorMaterialBridge.MATERIALS)).map(c -> c.name).toList();
         assertTrue(bridged.contains("field_7892"), "vanilla IRON must become a legacy view: " + bridged);
         assertTrue(bridged.contains("armorItem"), "new ArmorItem(material, ...) must use the factory: " + bridged);
+        assertTrue(instructions(out).stream().noneMatch(insn -> insn.getOpcode() == CHECKCAST
+                        && ((org.objectweb.asm.tree.TypeInsnNode) insn).desc.equals("net/minecraft/class_1740")),
+                "1.21's ArmorMaterials is a holder class, so the view must not be cast to it");
 
         assertWellFormed(Pre1_20_5ArmorMaterialBridge.generateMaterials());
         assertWellFormed(Pre1_20_5ArmorMaterialBridge.generateView());

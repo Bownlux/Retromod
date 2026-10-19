@@ -12,7 +12,7 @@
 # Keep building after one target fails so the final report can list every failure.
 # set -e
 
-VERSION="1.4.0-snapshot.1"
+VERSION="1.4.0-snapshot.2"
 # Older mods are translated at runtime, so only 1.20 and newer need host jars.
 # Security-only updates for versions before 26.1.
 MC_VERSIONS=("1.20" "1.20.1" "1.20.2" "1.20.3" "1.20.4" "1.20.5" "1.20.6" "1.21" "1.21.1" "1.21.2" "1.21.3" "1.21.4" "1.21.5" "1.21.6" "1.21.7" "1.21.8" "1.21.9" "1.21.10" "1.21.11" "26.1" "26.1.1" "26.1.2" "26.2" "26.3")
@@ -111,6 +111,15 @@ if [ ! -f "$SHADED_JAR" ]; then
 fi
 
 echo "  Shaded JAR: $SHADED_JAR (with bundled dependencies)"
+
+# Forge and NeoForge dist jars are bootstraps around the runtime jar built below. Their locator
+# classes come from this versioned jar, so a stale build can never supply them.
+BOOT_JAR="target/retromod-${VERSION}-boot.jar"
+if [ ! -f "$BOOT_JAR" ]; then
+    echo "ERROR: Expected bootstrap JAR not found: $BOOT_JAR"
+    echo "Run mvn package so the boot-jar execution in pom.xml produces it."
+    exit 1
+fi
 
 # A dependency's own package shipped unrelocated can split a package the loader already
 # provides as a module. Gson 2.11+ brought com.google.errorprone along, and NeoForge 1.21.1
@@ -317,13 +326,14 @@ loader_supports_version() {
 # Inspect the packaged archive, not only the staging tree. A failed strip, metadata write, or
 # stale-output cleanup must never produce an artifact that still passes count and checksum gates.
 validate_loader_jar() {
-    python3 - "$1" "$2" "$3" "$4" "$5" <<'PY'
+    python3 - "$1" "$2" "$3" "$4" "$5" "$6" <<'PY'
 import json
 import re
 import sys
 import zipfile
 
-jar_path, loader, minecraft_version, retromod_version, java_requirement = sys.argv[1:]
+jar_path, loader, minecraft_version, retromod_version, java_requirement, host_toml = \
+    sys.argv[1:]
 
 
 def require(condition, message):
@@ -331,15 +341,17 @@ def require(condition, message):
         raise SystemExit(message)
 
 
+# A Forge or NeoForge runtime carries the one toml its host's FML reads, as named by
+# scripts/loader_bootstrap.py runtime-toml. NeoForge 1.20.2 to 1.20.4 read META-INF/mods.toml.
 primary_metadata_by_loader = {
     "fabric": "fabric.mod.json",
-    "forge": "META-INF/mods.toml",
-    "neoforge": "META-INF/neoforge.mods.toml",
+    "forge": host_toml,
+    "neoforge": host_toml,
 }
 expected_metadata_by_loader = {
     "fabric": {"fabric.mod.json", "quilt.mod.json"},
-    "forge": {"META-INF/mods.toml"},
-    "neoforge": {"META-INF/neoforge.mods.toml"},
+    "forge": {host_toml},
+    "neoforge": {host_toml},
 }
 
 with zipfile.ZipFile(jar_path) as jar:
@@ -350,7 +362,8 @@ with zipfile.ZipFile(jar_path) as jar:
     )
     names = set(jar.namelist())
     expected_metadata = primary_metadata_by_loader[loader]
-    loader_metadata = set(primary_metadata_by_loader.values()) | {"quilt.mod.json"}
+    loader_metadata = {"fabric.mod.json", "quilt.mod.json", "META-INF/mods.toml",
+                       "META-INF/neoforge.mods.toml"}
     present_metadata = names & loader_metadata
     require(
         present_metadata == expected_metadata_by_loader[loader],
@@ -479,6 +492,26 @@ create_mod_jar() {
     local ORIG_DIR="$(pwd)"
     local OUTPUT_PATH="${ORIG_DIR}/dist/${LOADER_DIR}/${MC_VERSION}/${OUTPUT_NAME}"
 
+    # Forge and NeoForge get a bootstrap jar that carries this runtime jar (see
+    # scripts/loader_bootstrap.py). RUNTIME_LOADER is the loader shape of the runtime itself:
+    # NeoForge 1.20.1 is a Forge fork that reads mods.toml and Forge's @Mod, so it carries the
+    # Forge runtime. RUNTIME_TOML is the toml the host's FML reads: NeoForge 1.20.2 to 1.20.4
+    # still read META-INF/mods.toml, and skip a runtime that only has neoforge.mods.toml.
+    local BOOT_GENERATION="none"
+    local RUNTIME_LOADER="$LOADER"
+    local RUNTIME_TOML=""
+    if [ "$LOADER" != "fabric" ]; then
+        if ! BOOT_GENERATION=$(python3 scripts/loader_bootstrap.py generation \
+                "$LOADER" "$MC_VERSION") \
+                || ! RUNTIME_LOADER=$(python3 scripts/loader_bootstrap.py runtime-loader \
+                "$LOADER" "$MC_VERSION") \
+                || ! RUNTIME_TOML=$(python3 scripts/loader_bootstrap.py runtime-toml \
+                "$LOADER" "$MC_VERSION"); then
+            echo "ERROR: Could not resolve the bootstrap layout for ${LOADER} ${MC_VERSION}."
+            return 1
+        fi
+    fi
+
     # Create version subdirectory
     if ! mkdir -p "${ORIG_DIR}/dist/${LOADER_DIR}/${MC_VERSION}"; then
         echo "ERROR: Could not create the output directory for ${LOADER} ${MC_VERSION}."
@@ -560,15 +593,13 @@ create_mod_jar() {
         fi
     fi
 
-    # NOTE (#90, was #78): the NeoForge mod-file locator SERVICE entry
-    # (META-INF/services/...IModFileCandidateLocator) has been REMOVED from the jar.
-    # Declaring it made FML claim the whole retromod jar as an early service and then
-    # SKIP it for @Mod scanning, so RetromodNeoForge never constructed and the runtime
-    # transform was inert on NeoForge 26.2 (confirmed in-game). Same trap as the Forge
-    # #102 fix (which removed the forgespi IModLocator service). The RetromodModLocator
-    # CLASS is KEPT, so com/retromod/** is identical across loaders and the one embedded
-    # self-hash still matches every per-loader dist jar. CF-export loading from
-    # mods/Retromod/ moves to a separate "Retromod Loader" stub jar (follow-up).
+    # NOTE (#90, #102): the runtime jar built here never declares a loader locator service.
+    # A mods/ jar that declares one is claimed as an early service and never scanned for
+    # @Mod, so RetromodNeoForge and RetromodForge would never construct. The Forge and
+    # NeoForge locators live only in the outer bootstrap jar that loader_bootstrap.py builds
+    # around this runtime, and that jar is never a mod. The unwired RetromodModLocator and
+    # RetromodForgeModLocator classes stay, so com/retromod/** is identical across loaders
+    # and the one embedded self-hash still matches every per-loader runtime.
 
     # Clean up any now-empty package directories left behind by the strips
     # above (e.g. org/objectweb/ after asm/ is removed, javax/ after
@@ -593,11 +624,13 @@ create_mod_jar() {
 
     # Per-MC Forge loader minimum. Each MC version ships a specific Forge
     # loader number; we previously hardcoded "[52,)" which silently rejected
-    # every Forge build for MC 1.20.x (Forge 47-50) - our Forge JARs for
+    # every Forge build for MC 1.20.x (Forge 46-50) - our Forge JARs for
     # those MC versions wouldn't actually load. Setting this per-MC fixes
-    # the mismatch.
+    # the mismatch. Minecraft 1.20 only has Forge 46.x (the last is
+    # 1.20-46.0.14); 47.x starts at 1.20.1.
     case $MC_VERSION in
-        1.20|1.20.1)            FORGE_LV="47" ;;
+        1.20)                   FORGE_LV="46" ;;
+        1.20.1)                 FORGE_LV="47" ;;
         1.20.2)                 FORGE_LV="48" ;;
         1.20.3|1.20.4)          FORGE_LV="49" ;;
         1.20.5|1.20.6)          FORGE_LV="50" ;;
@@ -648,7 +681,7 @@ create_mod_jar() {
     esac
 
     # Remove other loaders' files
-    case $LOADER in
+    case $RUNTIME_LOADER in
         fabric)
             for stale_path in \
                     "$TEMP_DIR/META-INF/neoforge.mods.toml" \
@@ -770,7 +803,8 @@ TOML
             for stale_path in \
                     "$TEMP_DIR/fabric.mod.json" \
                     "$TEMP_DIR/quilt.mod.json" \
-                    "$TEMP_DIR/META-INF/mods.toml"; do
+                    "$TEMP_DIR/META-INF/mods.toml" \
+                    "$TEMP_DIR/META-INF/neoforge.mods.toml"; do
                 if ! remove_staged_path "$stale_path"; then
                     echo "ERROR: Could not remove non-NeoForge metadata for ${MC_VERSION}."
                     rm -rf "$TEMP_DIR"
@@ -787,7 +821,15 @@ TOML
             # Their version numbers do not move together, so keep this range
             # permissive and enforce the real requirement in the neoforge
             # dependency below.
-            if ! cat > "$TEMP_DIR/META-INF/neoforge.mods.toml" << TOML
+            #
+            # FML 1 (NeoForge 1.20.2 and 1.20.3) requires "mandatory" in every
+            # dependency and ignores "type". FML 2 (1.20.4) reads "type" and only
+            # falls back to "mandatory" without it. FML 3 and newer read "type".
+            local REQUIRED_DEPENDENCY='type = "required"'
+            if [ "$RUNTIME_TOML" = "META-INF/mods.toml" ]; then
+                REQUIRED_DEPENDENCY=$'mandatory = true\ntype = "required"'
+            fi
+            if ! cat > "$TEMP_DIR/${RUNTIME_TOML}" << TOML
 modLoader = "javafml"
 loaderVersion = "[1,)"
 license = "MIT"
@@ -806,14 +848,14 @@ logoFile = "assets/retromod/icon.png"
 
 [[dependencies.retromod]]
 modId = "neoforge"
-type = "required"
+${REQUIRED_DEPENDENCY}
 versionRange = "[${NEOFORGE_LV},)"
 ordering = "NONE"
 side = "BOTH"
 
 [[dependencies.retromod]]
 modId = "minecraft"
-type = "required"
+${REQUIRED_DEPENDENCY}
 versionRange = "[${MC_VERSION}]"
 ordering = "NONE"
 side = "BOTH"
@@ -837,7 +879,7 @@ Manifest-Version: 1.0
 Implementation-Title: Retromod
 Implementation-Version: ${VERSION}
 Retromod-Target-MC: ${MC_VERSION}
-Retromod-Loader: ${LOADER}
+Retromod-Loader: ${RUNTIME_LOADER}
 Automatic-Module-Name: retromod
 
 MANIFEST
@@ -845,6 +887,14 @@ MANIFEST
         echo "ERROR: Could not write the manifest for ${LOADER} ${MC_VERSION}."
         rm -rf "$TEMP_DIR"
         return 1
+    fi
+
+    # A bootstrap host packages the runtime next to the staging folder, outside dist/, and
+    # only the finished bootstrap reaches OUTPUT_PATH.
+    local JAR_PATH="$OUTPUT_PATH"
+    if [ "$BOOT_GENERATION" != "none" ]; then
+        JAR_PATH="${TEMP_DIR}.runtime.jar"
+        rm -f -- "$JAR_PATH"
     fi
 
     # zip updates an existing archive instead of truncating it. Remove and verify the exact output
@@ -863,27 +913,43 @@ MANIFEST
     fi
 
     # Repackage JAR using zip (more compatible than jar command).
-    if ! (cd "$TEMP_DIR" && zip -qr "$OUTPUT_PATH" .); then
+    if ! (cd "$TEMP_DIR" && zip -qr "$JAR_PATH" .); then
         # A failed zip may leave a partial archive. The fallback must also start fresh.
-        if ! rm -f -- "$OUTPUT_PATH"; then
-            echo "ERROR: Could not remove partial output ${OUTPUT_PATH}."
+        if ! rm -f -- "$JAR_PATH"; then
+            echo "ERROR: Could not remove partial output ${JAR_PATH}."
             rm -rf "$TEMP_DIR"
             return 1
         fi
-        if ! (cd "$TEMP_DIR" && jar cfm "$OUTPUT_PATH" META-INF/MANIFEST.MF .); then
+        if ! (cd "$TEMP_DIR" && jar cfm "$JAR_PATH" META-INF/MANIFEST.MF .); then
             echo "ERROR: Failed to create JAR for ${LOADER} ${MC_VERSION}."
-            rm -f -- "$OUTPUT_PATH"
+            rm -f -- "$JAR_PATH"
             rm -rf "$TEMP_DIR"
             return 1
         fi
     fi
 
-    if ! validate_loader_jar \
-            "$OUTPUT_PATH" "$LOADER" "$MC_VERSION" "$VERSION" "$JAVA_REQ"; then
+    if ! validate_loader_jar "$JAR_PATH" "$RUNTIME_LOADER" "$MC_VERSION" "$VERSION" \
+            "$JAVA_REQ" "$RUNTIME_TOML"; then
         echo "ERROR: Packaged JAR validation failed for ${LOADER} ${MC_VERSION}."
-        rm -f -- "$OUTPUT_PATH"
+        rm -f -- "$JAR_PATH"
         rm -rf "$TEMP_DIR"
         return 1
+    fi
+
+    # Wrap the validated runtime in the bootstrap. assemble checks the outer layout, the nested
+    # runtime's hash and loader services, and that its self-hash equals the shaded jar's, and
+    # deletes the output again if any check fails.
+    if [ "$BOOT_GENERATION" != "none" ]; then
+        if ! python3 scripts/loader_bootstrap.py assemble \
+                --runtime "$JAR_PATH" --boot-jar "$BOOT_JAR" \
+                --loader "$LOADER" --minecraft "$MC_VERSION" --version "$VERSION" \
+                --self-hash "$COMPUTED_SELF_HASH" --output "$OUTPUT_PATH" > /dev/null; then
+            echo "ERROR: Bootstrap packaging failed for ${LOADER} ${MC_VERSION}."
+            rm -f -- "$JAR_PATH" "$OUTPUT_PATH"
+            rm -rf "$TEMP_DIR"
+            return 1
+        fi
+        rm -f -- "$JAR_PATH"
     fi
 
     # Cleanup

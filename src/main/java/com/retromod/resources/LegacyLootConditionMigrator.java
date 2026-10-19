@@ -12,27 +12,14 @@ import com.google.gson.JsonPrimitive;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.Set;
 
-/**
- * Rewrites loot conditions and functions written before Minecraft 26.3 into 26.3's format.
- *
- * <p>26.3 changed the syntax everywhere a loot condition appears. A condition names its kind in
- * {@code "type"} instead of {@code "condition"}, a {@code "conditions"} list became one
- * {@code "condition"} ({@code minecraft:all_of} for several), {@code block_state_property} became
- * {@code match_block} with {@code blocks} and {@code state}, loot functions name their kind in
- * {@code "type"} under {@code "modifier"}, tag entries name their tag in {@code "items"}, and
- * damage type tags carry a {@code #}. The old keys are ignored rather than rejected, so an old
- * door dropped from both halves, and old drops silently lost their counts and fortune bonuses.
- *
- * <p>Only objects in the old shape are rewritten: a string {@code "condition"} or
- * {@code "function"} with no {@code "type"} beside it. In 26.3's own format a string
- * {@code "condition"} names a predicate file and always sits beside a {@code "type"} or in a pool,
- * so data already written for 26.3 passes through unchanged. Loader condition keys such as
- * {@code fabric:load_conditions} are left alone.
- */
+/** Rewrites loot conditions and functions written before Minecraft 26.3 into 26.3's format. */
 final class LegacyLootConditionMigrator {
 
     private static final String ALL_OF = "minecraft:all_of";
+    private static final Set<String> LOOT_ENTRY_TYPES = Set.of(
+            "item", "tag", "loot_table", "empty", "dynamic", "alternatives", "sequence", "group");
 
     private LegacyLootConditionMigrator() {}
 
@@ -71,6 +58,8 @@ final class LegacyLootConditionMigrator {
      * inside it take the new format and the list stays.
      */
     static byte[] migrate(byte[] json, boolean lootFile, boolean keepConditionList) {
+        // 26.3 ignores the old keys instead of rejecting them, so an old door dropped from both
+        // halves and old drops quietly lost their counts and fortune bonuses.
         try {
             JsonElement original = JsonParser.parseString(new String(json, StandardCharsets.UTF_8));
             JsonElement migrated;
@@ -115,6 +104,11 @@ final class LegacyLootConditionMigrator {
             JsonElement value = field.getValue();
             if (isLoaderKey(key)) {
                 out.add(key, value);
+            } else if (lootFile && isStrayFunctionName(object, key, value)) {
+                // MCreator writes a "function" name onto drop entries beside their "type". No
+                // version ever read it there, and 26.3's load gate keeps out any field the host
+                // does not read, which would cost the whole table for a key the game ignored.
+                continue;
             } else if (key.equals("conditions") && value.isJsonArray()
                     && (value.getAsJsonArray().isEmpty() || isOldConditionList(value))) {
                 if (!value.getAsJsonArray().isEmpty()) {
@@ -132,6 +126,7 @@ final class LegacyLootConditionMigrator {
                 out.add(key, convert(value, lootFile));
             }
         }
+        // A tag entry names its tag in "items", with a #.
         if (lootFile && isTagEntry(out)) {
             String tag = out.remove("name").getAsString();
             out.addProperty("items", tag.startsWith("#") ? tag : "#" + tag);
@@ -140,6 +135,8 @@ final class LegacyLootConditionMigrator {
     }
 
     private static JsonObject convertCondition(JsonObject condition, boolean lootFile) {
+        // A condition names its kind in "type" instead of "condition", and block_state_property
+        // became match_block with "blocks" and "state".
         String type = condition.get("condition").getAsString();
         boolean matchBlock = type.equals("minecraft:block_state_property");
         JsonObject out = new JsonObject();
@@ -162,6 +159,7 @@ final class LegacyLootConditionMigrator {
     }
 
     private static JsonObject convertFunction(JsonObject function, boolean lootFile) {
+        // A loot function names its kind in "type"; convert moves a "functions" list to "modifier".
         JsonObject out = new JsonObject();
         out.addProperty("type", function.get("function").getAsString());
         for (Map.Entry<String, JsonElement> field : function.entrySet()) {
@@ -214,6 +212,8 @@ final class LegacyLootConditionMigrator {
     private static boolean isOldCondition(JsonElement element) {
         if (!element.isJsonObject()) return false;
         JsonObject object = element.getAsJsonObject();
+        // Only the old shape counts. In 26.3's own format a string "condition" names a predicate
+        // file and sits beside a "type" or in a pool, so 26.3 data passes through unchanged.
         return isString(object.get("condition")) && !object.has("type") && !object.has("entries");
     }
 
@@ -227,6 +227,15 @@ final class LegacyLootConditionMigrator {
 
     private static boolean isOldFunction(JsonObject object) {
         return isString(object.get("function")) && !object.has("type");
+    }
+
+    /** A {@code "function"} name on a loot entry, where no version read it. */
+    private static boolean isStrayFunctionName(JsonObject object, String key, JsonElement value) {
+        if (!key.equals("function") || !isString(value) || !isString(object.get("type"))) return false;
+        // Old set_contents and set_loot_table functions carry a block entity "type" beside their
+        // "function", so only an object whose type is a loot entry type qualifies.
+        String type = object.get("type").getAsString();
+        return LOOT_ENTRY_TYPES.contains(type.startsWith("minecraft:") ? type.substring(10) : type);
     }
 
     private static boolean isTagEntry(JsonObject object) {

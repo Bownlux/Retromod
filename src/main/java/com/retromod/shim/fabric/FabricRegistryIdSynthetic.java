@@ -10,36 +10,13 @@ import org.objectweb.asm.MethodVisitor;
 
 import static org.objectweb.asm.Opcodes.*;
 
-/**
- * Carries a block or item's registry id from the registration call into its {@code Properties}.
- *
- * <p>26.x made {@code BlockBehaviour.<init>} call {@code requireNonNull(properties.id)}, so a block
- * cannot be constructed until its id is stamped. NeoForge mods are covered by
- * {@link com.retromod.shim.forge.RegistryIdBridgeSynthetic}, which hangs the id off the deferred
- * register. Fabric has no deferred register: a mod calls
- * {@code Registry.register(BuiltInRegistries.BLOCK, id, block)} and builds the block in the argument
- * list. Every Fabric mod that adds a block died at its own class init with
- * {@code NullPointerException: Block id not set}.
- *
- * <p>The id is still reachable, because the arguments evaluate left to right: the id is on the stack
- * before the block expression runs. {@link FabricRegistryIdAdapter} stamps it into the thread local
- * here, and the {@code Properties} factories below read it back while the block is being built. The
- * id is popped as soon as the registration returns, so nothing leaks into the next one.
- *
- * <p>This class references only Minecraft and itself, because it is embedded into a Fabric mod where
- * no loader class of any other family exists.
- *
- * <p>Each mod gets its own embedded copy, but the registration and the construction are not always
- * in the same mod. A library can register on behalf of a content mod: NexusLib's
- * {@code registerBlock(name, Supplier)} builds Bountiful Fares' blocks, and Porting Lib's
- * {@code DeferredRegister} in a nested jar registers items that Sophisticated Core's own lambda
- * builds (#249). Every copy therefore shares one thread local, published once under
- * {@link #SHARED_SLOT_KEY}.
- */
+/** Carries a block or item's registry id from the registration call into its {@code Properties}. */
 public final class FabricRegistryIdSynthetic {
 
     private FabricRegistryIdSynthetic() {}
 
+    // Embedded into Fabric mods, where no other loader family exists, so the bridge references
+    // only Minecraft and itself.
     public static final String INTERNAL = "com/retromod/shim/fabric/embedded/FabricRegistryIdBridge";
 
     private static final String THREADLOCAL = "java/lang/ThreadLocal";
@@ -58,16 +35,28 @@ public final class FabricRegistryIdSynthetic {
     private static final String L_BBP = "L" + BBP + ";";
     private static final String L_IP = "L" + IP + ";";
 
-    /** Descriptor of the created class. */
+    /** Builds the bridge class each Fabric mod embeds. */
     public static byte[] generate() {
+        // 26.x blocks need properties.id in BlockBehaviour.<init>. Fabric has no deferred
+        // register: a mod builds the block inside Registry.register(BLOCK, id, block), so every
+        // Fabric mod that adds a block died at class init with "Block id not set". NeoForge mods
+        // use RegistryIdBridgeSynthetic, which hangs the id off the deferred register.
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, INTERNAL, null, "java/lang/Object", null);
         cw.visitField(ACC_PRIVATE | ACC_STATIC | ACC_FINAL, "CURRENT", "L" + THREADLOCAL + ";",
                 null, null).visitEnd();
 
         emitClinit(cw);
+        // Arguments evaluate left to right, so the id is on the stack before the block is built.
+        // FabricRegistryIdAdapter pushes it, the Properties factories read it back, and pop clears
+        // it as soon as the registration returns, so nothing leaks into the next one.
         emitPush(cw);
         emitPop(cw);
+        // enter and leave wrap the statement that fills a registered static field; isolate and
+        // restore set the current id aside and put it back.
+        emitEnter(cw);
+        emitLeave(cw);
+        com.retromod.shim.common.StaticFieldIdStamper.emitIsolation(cw, INTERNAL);
         emitStamp(cw, "stampBlock", BBP, L_BBP, "BLOCK");
         emitStamp(cw, "stampItem", IP, L_IP, "ITEM");
         emitBlockOf(cw);
@@ -85,8 +74,8 @@ public final class FabricRegistryIdSynthetic {
      * mod a private slot. A library that registers on behalf of a content mod (NexusLib's
      * {@code registerBlock(name, Supplier)} building Bountiful Fares' blocks) pushes the id into the
      * library's copy while the block constructor runs in the content mod and reads its own copy,
-     * which is empty. The JDK's system properties are the one map both copies can reach without a
-     * shared class.
+     * which is empty (#249). The JDK's system properties are the one map both copies can reach
+     * without a shared class.
      */
     static final String SHARED_SLOT_KEY = SHARED_ID_PROPERTY_PREFIX + "slot";
 
@@ -130,6 +119,8 @@ public final class FabricRegistryIdSynthetic {
         mv.visitVarInsn(ALOAD, 1);
         mv.visitTypeInsn(CHECKCAST, THREADLOCAL);
         mv.visitFieldInsn(PUTSTATIC, INTERNAL, "CURRENT", "L" + THREADLOCAL + ";");
+        // SAVED holds the ids isolate sets aside.
+        com.retromod.shim.common.StaticFieldIdStamper.emitSavedInit(mv, INTERNAL);
         mv.visitInsn(RETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
@@ -154,6 +145,43 @@ public final class FabricRegistryIdSynthetic {
         mv.visitCode();
         mv.visitFieldInsn(GETSTATIC, INTERNAL, "CURRENT", "L" + THREADLOCAL + ";");
         mv.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "remove", "()V", false);
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /** {@code static Object enter(Identifier id)}: sets the current id and returns the one it replaced. */
+    private static void emitEnter(ClassWriter cw) {
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "enter",
+                com.retromod.shim.common.StaticFieldIdStamper.ENTER_DESC, null, null);
+        mv.visitCode();
+        // The wrapped statement can run another class's static initializer, which stamps its own
+        // fields, so the replaced id goes back to leave to restore.
+        mv.visitFieldInsn(GETSTATIC, INTERNAL, "CURRENT", "L" + THREADLOCAL + ";");
+        mv.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "get", "()Ljava/lang/Object;", false);
+        mv.visitFieldInsn(GETSTATIC, INTERNAL, "CURRENT", "L" + THREADLOCAL + ";");
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "set", "(Ljava/lang/Object;)V", false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /** {@code static void leave(Object previous)}: restores the id enter replaced, or clears it. */
+    private static void emitLeave(ClassWriter cw) {
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "leave",
+                com.retromod.shim.common.StaticFieldIdStamper.LEAVE_DESC, null, null);
+        mv.visitCode();
+        Label restore = new Label();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitJumpInsn(IFNONNULL, restore);
+        mv.visitFieldInsn(GETSTATIC, INTERNAL, "CURRENT", "L" + THREADLOCAL + ";");
+        mv.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "remove", "()V", false);
+        mv.visitInsn(RETURN);
+        mv.visitLabel(restore);
+        mv.visitFieldInsn(GETSTATIC, INTERNAL, "CURRENT", "L" + THREADLOCAL + ";");
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "set", "(Ljava/lang/Object;)V", false);
         mv.visitInsn(RETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

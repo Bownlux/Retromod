@@ -87,24 +87,57 @@ class LegacyEquipmentBridgeTest {
 
     @Test
     @DisplayName("old armor and horse armor textures become one equipment asset with three layers")
-    void migratesArmorTextures(@TempDir Path jar) throws Exception {
-        Path armor = jar.resolve("assets/minecraft/textures/models/armor");
-        Files.createDirectories(armor);
-        Files.write(armor.resolve("amethyst_layer_1.png"), new byte[]{1});
-        Files.write(armor.resolve("amethyst_layer_2.png"), new byte[]{2});
-        Path horse = jar.resolve("assets/minecraft/textures/entity/horse/armor");
-        Files.createDirectories(horse);
-        Files.write(horse.resolve("horse_armor_amethyst.png"), new byte[]{3});
+    void migratesArmorTextures() {
+        Map<String, byte[]> jar = new java.util.LinkedHashMap<>();
+        jar.put("assets/minecraft/textures/models/armor/amethyst_layer_1.png", new byte[]{1});
+        jar.put("assets/minecraft/textures/models/armor/amethyst_layer_2.png", new byte[]{2});
+        jar.put("assets/minecraft/textures/entity/horse/armor/horse_armor_amethyst.png", new byte[]{3});
 
-        LegacyEquipmentBridge.migrateArmorTextures(jar);
+        Map<String, byte[]> added = LegacyEquipmentBridge.armorAssetEntries(jar.keySet(), jar::get);
 
-        String asset = Files.readString(jar.resolve("assets/minecraft/equipment/amethyst.json"));
+        String asset = new String(added.get("assets/minecraft/equipment/amethyst.json"));
         for (String layer : List.of("humanoid", "humanoid_leggings", "horse_body")) {
             assertTrue(asset.contains("\"" + layer + "\": [{\"texture\": \"minecraft:amethyst\"}]"), asset);
         }
-        Path equipment = jar.resolve("assets/minecraft/textures/entity/equipment");
-        assertArrayEquals(new byte[]{2}, Files.readAllBytes(equipment.resolve("humanoid_leggings/amethyst.png")));
-        assertArrayEquals(new byte[]{3}, Files.readAllBytes(equipment.resolve("horse_body/amethyst.png")));
+        String equipment = "assets/minecraft/textures/entity/equipment/";
+        assertArrayEquals(new byte[]{2}, added.get(equipment + "humanoid_leggings/amethyst.png"));
+        assertArrayEquals(new byte[]{3}, added.get(equipment + "horse_body/amethyst.png"));
+    }
+
+    @Test
+    @DisplayName("a retextured vanilla armor never replaces vanilla's equipment asset")
+    void keepsVanillaEquipmentAssets() {
+        Map<String, byte[]> jar = new java.util.LinkedHashMap<>();
+        jar.put("assets/minecraft/textures/models/armor/iron_layer_1.png", new byte[]{1});
+        jar.put("assets/minecraft/textures/models/armor/iron_layer_2.png", new byte[]{2});
+
+        Map<String, byte[]> added = LegacyEquipmentBridge.armorAssetEntries(jar.keySet(), jar::get, "26.3");
+
+        assertFalse(added.containsKey("assets/minecraft/equipment/iron.json"),
+                "vanilla's iron asset carries horse, baby and trim layers a copy would drop");
+        assertArrayEquals(new byte[]{1},
+                added.get("assets/minecraft/textures/entity/equipment/humanoid/iron.png"),
+                "the retextured layer still applies through vanilla's own asset");
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0} on {1} and {2}")
+    @org.junit.jupiter.params.provider.CsvSource({
+            "copper, 1.21.8, 1.21.9",
+            "saddle, 1.21.4, 1.21.5",
+            "red_harness, 1.21.5, 1.21.6",
+            "trader_llama_baby, 1.21.11, 26.1"
+    })
+    @DisplayName("an unnamespaced armor gets its own asset on hosts that predate vanilla's of that name")
+    void vanillaEquipmentAssetsAreSkippedOnlyWhereTheHostShipsThem(String name, String before,
+                                                                  String from) {
+        Map<String, byte[]> jar = new java.util.LinkedHashMap<>();
+        jar.put("assets/minecraft/textures/models/armor/" + name + "_layer_1.png", new byte[]{1});
+        String asset = "assets/minecraft/equipment/" + name + ".json";
+
+        assertTrue(LegacyEquipmentBridge.armorAssetEntries(jar.keySet(), jar::get, before).containsKey(asset),
+                "Minecraft " + before + " has no " + name + " asset, so the armor needs its own");
+        assertFalse(LegacyEquipmentBridge.armorAssetEntries(jar.keySet(), jar::get, from).containsKey(asset),
+                "Minecraft " + from + " ships its own " + name + " asset");
     }
 
     @Test

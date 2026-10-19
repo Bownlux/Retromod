@@ -2,6 +2,98 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
+## [1.4.0-snapshot.2] - 2026-10-18
+
+Second 1.4.0 snapshot. Loads old Forge and NeoForge mods straight from `mods/` without changing the files, translates the resources inside an old mod jar as well as its code, and fixes the reports filed against snapshot 1.
+
+In-place loading is new and on by default on Forge and NeoForge. If it misbehaves, set `write_translated_jars` to `true` in `config/retromod/config.json`, or turn on **Write translated jars to mods/** in Retromod's settings, to get the snapshot 1 behavior back on the next launch.
+
+### Added
+
+- Loads old Forge and NeoForge mods straight from `mods/` without changing the files. Retromod keeps translated copies in `retromod-cache/translated/` and gives them to the loader in place of the originals.
+- Translates a new old mod on its first launch and asks for one restart. Later launches load the cached copy, and a Retromod update or a change to `polyfills_enabled` or `transform_mixins` translates it again.
+- Keeps an old mod away from the loader when its metadata shows the loader would refuse it. When the loader stops on an old mod anyway, Retromod holds that mod back on the next launch and translates it.
+- Stops retrying a mod whose translation failed, or that stopped the game on three launches, until Retromod or the file changes.
+- Translates jars in `retromod-input/` into the cache as well, and no longer moves them. A mod's translation is removed when the mod leaves `mods/`.
+- Adds the `write_translated_jars` setting and **Write translated jars to mods/** in Retromod's settings on Forge and NeoForge. `true` restores the snapshot 1 behavior: translated jars go into `mods/` and inputs move to `retromod-input/processed/`.
+- Adds the CLI `export` command, which copies a game's translated mods to `retromod-output/mods/` for sharing, and `cache status` and `cache clear`. A game that loads an exported jar needs Retromod with the same loader and Minecraft version.
+- Shows on the Retromod screen how many mods loaded from the cache, how many load after a restart, and how many failed, and says in the restart prompt that the files in `mods/` were not changed.
+- Packages each Forge and NeoForge jar as a small loader bootstrap that carries Retromod inside, checked against a hash in the bootstrap jar. The newest Retromod file in `mods/` wins when there is more than one, and the log names the others to delete.
+- Runs one ordered set of resource converters on every transform path: the Fabric, Quilt, Forge, and NeoForge runtimes, the `transform`, `aot`, and `legacy` commands, and nested jars. Each path used to run its own subset in its own order, so a fix reached some paths and missed others, and the texture converters ran on resource packs but never on mod jars.
+- Copies a mod's data to the folders the host reads: 1.12 recipes and advancements under `assets/` to `data/`, and the plural folders 1.21 renamed (`recipes`, `loot_tables`, `advancements`, `tags/blocks`, `tags/items`, and the rest) to their singular names. The originals stay in the jar, and a copy is never written into `minecraft` or another shared namespace except as a tag.
+- Keeps a copied recipe, loot table, or advancement out of the game when its shape is not proven current for the host. A file that would fail to parse, or load with the wrong meaning, stays inert instead.
+- Converts 1.12 `.lang` files to the JSON language files 1.13 and newer read, and adds the modern keys for blocks, items, and entities whose registry names it can find.
+- Lowercases mixed-case identifiers in 1.12 mods and resource packs, and copies mixed-case files to their lowercase names while keeping the originals.
+- Copies Forge 1.12 recipes into the format the host reads. Constants, ore dictionary ingredients, `ore_shaped` and `ore_shapeless` types, and conditions become the tags and condition syntax of the host's loader.
+- Maps 1.12 item ids with data values to their flattened names in recipes, loot tables, and advancements.
+- Translates 1.12 and Forge `forge_marker` blockstates into vanilla blockstates and models, with inventory item models.
+- Points mod models at the current names of vanilla textures and model parents, and adds atlas entries for mod textures outside the `block` and `item` folders on 1.19.3 and newer. Vanilla texture paths in a mod's code follow one-to-one moves too.
+- Gives blocks drawn by a block entity renderer a loadable model on 1.21.4 and newer, and carries `shade` and `render_type` to the fields 26.x reads.
+- Writes 1.21.4 item definitions that keep old model overrides, spawn egg colors, and icons for code-rendered items.
+- Moves 1.21.2 equipment assets to the folder 1.21.4 reads.
+- Moves a Forge mod's biome, structure, and loot modifiers to NeoForge's names and folders, and maps `forge:` tags to `c:` tags where the host dropped them.
+- Updates item stacks, ingredients, item predicates, and loot functions to data components and the other shapes each release introduced, each gated to the release that changed it.
+- Renames vanilla ids that Minecraft renamed after the mod's version, such as `minecraft:grass` to `minecraft:short_grass`.
+- Rewrites spawn entries for the single `count` 26.3 reads.
+
+- Starts the Fabric API runtime for Minecraft 26.1 and newer: old Fabric API calls link to a working version on the host. This snapshot covers play-channel networking and typed packets, block render layers and block and item colors, and HUD, screen render and tooltip events.
+- Adds the `loader_api_runtime` setting. `"auto"`, the default, turns the runtime on in snapshot builds and off in release candidates and stable builds. `true` and `false` override it, and `-Dretromod.loaderApiRuntime` or the CLI flag `--loader-api-runtime` set it for one run. With it off, Retromod translates Fabric jars exactly as before.
+- Rebuilds translated Fabric jars from `retromod-input/processed/` when the runtime setting they were built with changes. The new copy waits in `retromod-input/pending/`, replaces the old jar when the game closes, and the usual restart loads it.
+- Repairs `ScreenEvents.beforeRender` and keeps `ItemTooltipCallback.EVENT` on the host's event, which earlier builds replaced with a stand-in for every mod.
+- Gives removed types that mods pass between each other, such as the old block and item color types and network handlers, one shared name, so a library and the mods built on it still link after translation.
+- Logs each Fabric API reference a translated jar still makes that the host lacks, and adds the `loader-api-coverage` CLI command, which reports old Fabric API coverage for each 26.x host.
+
+### Fixed
+
+- Links a translated addon to the rebuilt classes of the library mod it builds on, so its calls into the library no longer fail with `NoSuchMethodError`. A 1.12 block built on another mod's base block keeps its registry name and loses the removed `setHarvestLevel` call. Rockhounding (#362) is the reported case.
+- Reads a Forge or NeoForge mod's Minecraft version from its jar manifest when its `mods.toml` names none, and reads `[[mods]]` headers that end in a comment, so those mods are translated instead of loaded unchanged (#358).
+- Keeps loot numbers built in code working on 26.3. When an older mod passes the removed `ConstantValue`, `UniformGenerator`, or `NumberProvider` to a trade set, a loot pool's rolls, or an item count, Retromod converts it to the provider 26.3 expects. Chef's Delight (#340) is the reported case.
+- Keeps blocks that fill their codec with `simpleCodec` loading on 26.3, which removed block codecs, and bridges the 26.3 loot entry builders, nested loot table keys, `placeItemBackInInventory`, and model submission calls that mods built for 1.21.11 to 26.2 make. Tiny Dragons (#336) is the reported case.
+- Repairs Forge 1.20.1 Farmer's Delight addons on NeoForge 1.21.1: knives built with damage and speed use the library's 1.21 constructor, and reads of a library's retyped registry fields reach the entries the library registered (#302).
+- Gets more 1.20.1 Forge mods through registration on NeoForge 1.21 and newer: effect modifiers keyed by UUID text, old block, stair and cauldron constructors, `Rarity.create`, global loot modifiers, repeated `DeferredRegister` registration, vanilla armor material constants, client helpers in server-side event handlers, and pixel-sized painting files. Scorched Guns 2 (#283) now reaches recipe loading.
+- Bridges `EitherHolder`, which 26.1 removed, and 1.21.2 to 1.21.11 recipe serializers built from `CustomRecipe.Serializer`, and corrects intermediary entries that still carried names from before 1.21.11, such as `PlayerRenderer` for `AvatarRenderer`. A mixin selector now follows every class move, so a target 26.2 moved again still resolves. Minepathy (#271) starts on 26.2 and 26.3.
+- Loads Retromod on NeoForge 1.20.1, where the previous NeoForge 1.20.1 jar was ignored.
+- Loads Retromod on Forge 1.20 and on NeoForge 1.20.2 to 1.20.4. The Forge 1.20 jar required Forge 47, which Minecraft 1.20 never had, and the NeoForge jars carried their metadata under a file name those loaders do not read.
+- Stops a synthesized item definition from replacing a vanilla one. A mod that shipped a model for a vanilla item, such as `fishing_rod`, overwrote the game's own definition.
+- Strips comments and trailing commas from a mod's data JSON on 1.21.6 to 1.21.11 too. Those hosts already parse data strictly, and the cleanup ran only from 26.1.
+- Renames a recipe result's `item` to `id` for 1.20.5 and newer, and moves a cooking or stonecutting result into the object form those releases read.
+- Builds blocks and items with their registry id when a mod fills them into static fields of one class and registers them by name from another, the common multiloader layout. This covers Fabric, Quilt, and NeoForge 26.x hosts and Forge 26.2 and newer, and a name passed to the mod's own `id("name")` helper counts too.
+- Keeps a block or item built while another object is being registered from silently taking that object's name, drops, and model. A block the mod does not provably register now stops at `Block id not set` instead.
+- Keeps the old spawn egg constructor that took an entity type and two colors working on 26.2 and newer.
+- Bridges the 1.20.5 attribute holders and spawn placement types for older Fabric mods on 26.1 and newer, as NeoForge and Forge already did.
+- Builds old mods' entity types under the id they are registered with on 1.21.2 and newer, so their names and loot tables work again. A bare name in the old `EntityType.Builder.build(String)` call now takes the mod's own namespace instead of Minecraft's, so a mob such as Cake Cow (#346) showed `entity.minecraft.cake_cow` and dropped nothing.
+- Bridges the old `EntityType.Builder.build(String)` call on NeoForge and Forge 1.21.2 to 1.21.11 as well as 26.x.
+- Drops the stray `function` name MCreator writes onto loot table drop entries, which no version ever read. On 26.3 the load gate kept those tables out, so mobs such as Cake Cow (#346) dropped nothing.
+- Writes the biome modifier for a Forge mod's `BiomeLoadingEvent` handler in the `transform` and `aot` commands, as a normal launch already did.
+- Accepts 1.12 jars whose `mcmod.info` is an object or missing in the `transform` and `aot` commands.
+- Resolves a Forge mod's SRG names for the mod's own Minecraft version in the offline `transform` and `aot` commands, as a normal launch does.
+- Answers GLFW clock, key, mouse button, and cursor polls on 26.3, which ships SDL instead of GLFW. A mod that read the GLFW clock in a render hook closed the game before the title screen. Hold My Items (#344) is the reported case.
+- Keeps 1.20.1 and 1.21.1 mobs working on 1.21.2 and newer. Their tempt goals, food checks, offspring, spawn setup, and arm swing link again. Cake Cow (#346) is the reported case.
+- Gives an older mob the tempt range newer tempt goals read when the mod builds its attributes itself or registers them through Fabric API or Architectury. A value the mod sets itself is kept, and mods built for 1.21.2 or newer are left alone.
+- Keeps a mob's own override of a removed method running when a mod calls it, on the mob's own class or through a `Mob` or `LivingEntity` reference. This covers MCreator spawn procedures on summoned and bred mobs, custom arm swings, and custom damage handling, and the override's `super` call still reaches the game.
+- Bridges each old `swing` form only on a host that removed that form.
+- Keeps tooltip lines from pre-1.20.5 `appendHoverText` overrides that take a `Level`.
+- Converts `BlockState.getValues()` to the host's return type, which became a `Map` at 1.20.5 and a stream at 26.1. Cakes, pies, and other blocks that copy their properties to the next block work again. S33R More Food (#347) is the reported case.
+- Repairs old mods that build a `CommandSourceStack` with an int permission level, such as procedures that play a sound through a command. The level becomes the matching `PermissionSet`, and on 26.3 the stack takes its names from its entity.
+- Keeps `withPermission(int)`, `withMaximumPermission(int)`, and `hasPermission(int)` working from 1.21.11, where the int forms were removed.
+- Keeps `Inventory.clearOrCountMatchingItems(predicate, max, craftSlots)` working on 26.3, which added a count flag.
+- Keeps both old `drop` forms working on 26.3, which removed random throws from `drop` and added a swing prediction. A random throw is still thrown at random, and NeoForge can still capture it.
+- Bridges `ItemStack.hurt(amount, random, player)`, removed in 1.20.5, onto the host's durability damage. It still reports whether the item broke.
+- Bridges `Entity.hurt(source, amount)` and `Property.getPossibleValues()` across their 1.21.2 changes, including on Fabric 1.21.2 to 1.21.11.
+- Restores the pre-1.20.2 advancement calls `getAdvancement`, `getOrStartProgress`, and `award` on top of the `AdvancementHolder` the server keeps now.
+- Reads `ServerPlayer.server`, private since 1.21.6, through the player's level.
+- Replaces `ItemHandlerHelper.giveItemToPlayer` on NeoForge 26.3, which removed the class, for Forge and NeoForge mods alike.
+
+Fabric and Quilt keep the `retromod-input/` flow and ignore `write_translated_jars`, because Fabric checks every jar in `mods/` before any mod code runs. On Forge and NeoForge, an old mod that the loader accepts loads untranslated on its first launch, and the next launch loads the translated copy. A current mod that requires an old mod Retromod has not translated yet can stop the loader before Retromod runs; move that mod out of `mods/` for one launch. Old jars that are symbolic links load as they are, without translation. Jars made with the CLI `transform` or `batch` commands are translated a second time in the cache. Exported jars do not declare Retromod as a dependency. On NeoForge 1.20.2 to 1.20.4 Retromod starts, but in-place loading is off there and it does not yet translate Forge mods for those versions.
+
+The Fabric API runtime is new and covers only part of the old API so far; the coverage command lists what is done and what remains. Both sides of a connection need Retromod with the runtime on, and old channel handlers run on the game thread. Block colors cover tint indices 0 to 127, item colors apply only to plain item models, and pre-1.20 HUD and screen callbacks that draw with a `PoseStack` do not draw on 26.x. A jar whose original is missing from `retromod-input/processed/` cannot be rebuilt when the setting changes. No client run has checked the runtime's drawing, colors or networking yet.
+
+Rockhounding still registers only 18 of its 410 blocks on NeoForge 1.21.1, because 1.12 static Minecraft fields keep their old types. Project Rankine and Scorched Guns 2 still stop at later gaps: Rankine at 1.18 content bases such as `BiomeCategory`, and Scorched Guns 2 at 1.20.1 recipe serializers. About 73 classes that 26.1 moved to another package under the same name are not mapped yet, which leaves some 1.21.11 Fabric GUI code inert.
+
+Items drawn only by code still show the missing model when they have no icon of their own, because a 3D render needs a renderer registered in code. Recipes built on a mod's own ore dictionary names load but stay uncraftable unless another mod fills that tag. Armor assets from `getArmorTexture` do nothing on 1.21.5 and newer until 1.12 armor is bridged there. A copied loot table or advancement that uses a function or trigger the 26.3 load gate does not check stays out of the game, so some old mobs drop nothing on 26.3. Copied `.mcfunction` files are not translated. Resource packs of format 4 and later run only the texture moves.
+
+Only a literal block or item name counts, written out or passed to the mod's own `id()` helper, so a field registered under a computed name still stops at `Block id not set`. Forge 26.1 to 26.1.2, and every loader from 1.21.2 to 1.21.11, still stop there for multiloader mods. On NeoForge before 26.1 and Forge before 26.2, an entity whose old build name differs from its registered id is still named after the old build name. The game itself still does not call an old override, so a mob's five-argument `finalizeSpawn` does not run when it spawns naturally. Attributes another library builds for an old mod, and mobs built with `FabricEntityTypeBuilder`, still lack the tempt range. On Fabric before 26.1, the command source, advancement, item damage, and player server bridges are not available yet. On 26.3 a drop that is not a random throw swings the arm for other players. Joystick polls and GLFW window calls are still not bridged on 26.3.
+
 ## [1.4.0-snapshot.1] - 2026-10-10
 
 First 1.4.0 snapshot. Starts carrying the 1.3.x bridges forward to 26.3 and rebuilds removed systems on top of their replacements.

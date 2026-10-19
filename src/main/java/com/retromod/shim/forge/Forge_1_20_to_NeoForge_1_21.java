@@ -12,12 +12,7 @@ import com.retromod.util.McReflect;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Forge 1.20.x to NeoForge 1.21.x migration shim. The redirects are only valid on a NeoForge
- * runtime: on Forge they rewrite a mod's {@code @Mod} annotation to the NeoForge one, after which
- * Forge can't find {@code @Mod} and reports "has mods that were not found", so
- * {@link #registerRedirects(RetromodTransformer)} returns early off NeoForge.
- */
+/** Moves Forge 1.20 mods onto NeoForge 1.21. */
 public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-ForgeNeoMig");
@@ -52,6 +47,15 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         LegacyTabContentsBridge.register(transformer);
         LegacyEntityTemplateAdapter.register(transformer);
         LegacyFlowerBlockBridge.register(transformer);
+        LegacyStairBlockBridge.register(transformer);
+        // Rarity.create became a NeoForge enum extension.
+        LegacyRarityBridge.register(transformer);
+        // DropExperienceBlock, AmethystClusterBlock and cauldron constructors from 1.20.3.
+        com.retromod.shim.common.LegacyBlockConstructorBridge.register(transformer);
+        // Block methods later made protected, called through the state's public delegate.
+        com.retromod.shim.common.LegacyProtectedBlockCallBridge.register(transformer);
+        // 1.21 made painting variants data; the 26.1 chain registers the same bridge for its package.
+        com.retromod.shim.common.LegacyPaintingVariantBridge.register(transformer);
         LegacyTierBridge.register(transformer);
         LegacyDungeonHooksBridge.register(transformer);
         // RegisterHelper.register(String, value): Forge named it in the active mod's namespace.
@@ -86,6 +90,8 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         com.retromod.shim.common.LegacyFoodPropertiesBridge.register(transformer);
         com.retromod.shim.common.LegacyToolItemBridge.register(transformer);
         com.retromod.shim.common.Legacy1205MemberBridge.register(transformer);
+        // 1.20.2 split Advancement into its data and an AdvancementHolder.
+        com.retromod.shim.common.LegacyAdvancementBridge.register(transformer);
         com.retromod.shim.common.LegacyCodecTypeBridge.register(transformer);
         com.retromod.shim.common.LegacyRegistryNbtBridge.register(transformer);
         com.retromod.shim.common.LegacyTreeGrowerBridge.register(transformer);
@@ -98,7 +104,8 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         com.retromod.shim.common.LegacyHolderConstantBridge.register(transformer);
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.20.5");
 
-        // These only apply on a NeoForge runtime; on Forge they break @Mod lookup (see class javadoc).
+        // The rest only applies on a NeoForge runtime. On Forge it would rewrite a mod's @Mod to the
+        // NeoForge one, and Forge then reports "has mods that were not found".
         if (!McReflect.isNeoForge()) {
             LOGGER.debug("Skipping Forge → NeoForge migration redirects (runtime is not NeoForge)");
             return;
@@ -145,6 +152,12 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "net/minecraftforge/registries/RegistryObject",
             "net/neoforged/neoforge/registries/DeferredHolder"
         );
+        // An addon's library has its own NeoForge port, which declares the fields Forge typed
+        // RegistryObject as Supplier, Holder or DeferredHolder, so they are read by name instead.
+        String libraryFields = "com/retromod/shim/forge/embedded/LibraryRegistryFields";
+        SyntheticEmbedder.registerClassResource(transformer, libraryFields, Forge_1_20_to_NeoForge_1_21.class);
+        transformer.registerLibraryStaticFieldReader("Lnet/neoforged/neoforge/registries/DeferredHolder;",
+                libraryFields, "read");
 
         // Dist markers: the Dist enum moved from the Forge package to NeoForge. AnnotationPolyfill
         // maps these but doesn't run on the NeoForge path (Fabric + CLI only), so without this a Forge

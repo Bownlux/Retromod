@@ -22,8 +22,8 @@ The transform is iterative because one rewrite can expose another old reference.
 ## Loader Entry Points
 
 - Fabric: `RetromodPreLaunch` processes `retromod-input/` before Fabric scans normal mods.
-- NeoForge: `RetromodNeoForge` transforms input and supported jars in `mods/`.
-- Forge: `RetromodForge` follows the Forge path and registers Forge-specific bridges.
+- NeoForge: the dist jar is a bootstrap whose mod locator serves cached translations in place of old jars in `mods/`. `RetromodNeoForge` translates the rest into `retromod-cache/translated/`, or with `write_translated_jars` set, transforms input and supported jars in `mods/`.
+- Forge: the same bootstrap and cache, with `RetromodForge` following the Forge path and registering Forge-specific bridges.
 - CLI: `RetromodCli` runs the same core without a live loader.
 
 Quilt mods use the Fabric bytecode family. `QuiltModTransformer` handles jars whose authoritative metadata is `quilt.mod.json`, while the shared host artifact declares Fabric-compatible entrypoint keys for Quilt Loader. The artifact carries both loader metadata files. Retromod does not publish a separate Quilt artifact.

@@ -14,9 +14,7 @@ import com.retromod.util.McReflect;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Forge registry system API shim: DeferredRegister/RegistryObject and registry key changes.
- */
+/** Updates Forge registry calls: DeferredRegister, RegistryObject, and registry keys. */
 public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-ForgeRegistryApiShim");
@@ -103,6 +101,7 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
             // the shim self-contained: a redirect to a synthetic that isn't registered would be
             // dropped by the transformer's phantom-target sweep (#119) and silently no-op.
             transformer.registerSyntheticClass(B, RegistryIdBridgeSynthetic.generate());
+            RegistryIdBridgeSynthetic.registerWrapperHelpers(transformer);
             // The bridge builds and holds enchantments, which 26.x reads from data.
             com.retromod.shim.common.LegacyEnchantmentBridge.registerSynthetics(transformer);
             // dr.register(name, supplier) -> RegistryIdBridge.register(dr, name, supplier) [devirtualize: receiver becomes arg 0]
@@ -142,6 +141,10 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
             transformer.registerConstructorRedirect(
                 "net/minecraft/world/item/Item$Properties", "()V",
                 B, "itemProps", RegistryIdBridgeSynthetic.ITEM_PROPS_DESC);
+            // A block built into a registered static field is built outside any supplier, often
+            // by a different class than the one that registers it, so the statement that fills
+            // the field is stamped with the id the jar registers it under.
+            transformer.enablePostProcess(RegistryIdBridgeSynthetic.STATIC_FIELDS_FLAG);
         } else if (com.retromod.util.McReflect.isNeoForge()
                 && RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20.5") >= 0) {
             // NeoForge never builds a data-driven registry's entries, so a pre-1.19.3 mod's
@@ -150,6 +153,7 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
             boolean dataEnchantments = RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21") >= 0;
             if (dataEnchantments) com.retromod.shim.common.LegacyEnchantmentBridge.registerSynthetics(transformer);
             transformer.registerSyntheticClass(recorder, RegistryIdBridgeSynthetic.generateBiomeRecorder(dataEnchantments));
+            RegistryIdBridgeSynthetic.registerWrapperHelpers(transformer);
             transformer.registerMethodRedirect(
                 "net/neoforged/neoforge/registries/DeferredRegister", "register",
                 "(Ljava/lang/String;Ljava/util/function/Supplier;)Lnet/neoforged/neoforge/registries/DeferredHolder;",

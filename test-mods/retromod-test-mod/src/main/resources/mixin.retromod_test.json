@@ -5,14 +5,16 @@
   "compatibilityLevel": "JAVA_17",
   "mixins": [
     "LegacyBlockRandomTicksAccessor",
-    "LegacyChatOptionsSuperclassMixin",
-    "LegacyClientCommandParserAccessor",
-    "LegacyIntegratedServerPublishMixin",
     "LegacyMobEffectMixin",
     "LegacyPlayerModelPartsAccessor",
     "LegacyPoseInvokerMixin",
-    "LegacySoundSystemPrefixCaptureMixin",
     "LegacyTreeDecoratorTypeMixin"
+  ],
+  "client": [
+    "LegacyChatOptionsSuperclassMixin",
+    "LegacyClientCommandParserAccessor",
+    "LegacyIntegratedServerPublishMixin",
+    "LegacySoundSystemPrefixCaptureMixin"
   ],
   "injectors": {
     "defaultRequire": 1

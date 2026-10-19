@@ -778,8 +778,65 @@ public final class LegacyForgeEvents {
         if (entry == null) return null;
         Object name = NAMES.get(entry);
         if (name != null) return name;
+        name = nameFromAnotherMod(entry);
+        if (name != null) return name;
         Object own = callOwn(entry, "getRegistryName", new Class<?>[0]);
         return own == NOT_DECLARED ? builtInName(entry) : own;
+    }
+
+    /** The name this copy recorded for an entry, for another mod's copy to read. */
+    public static Object recordedName(Object entry) {
+        return entry == null ? null : NAMES.get(entry);
+    }
+
+    /** Each module's copy of this class, or {@link #NOT_DECLARED} when it has none. */
+    private static final Map<Module, Object> OTHER_COPIES = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * A 1.12 addon's block often extends its core mod's base block, whose constructor calls
+     * {@code setRegistryName}. That call reaches the core's copy of this class, so the addon's
+     * copy, which registers the block, asks the copy in each module the entry's classes come from.
+     */
+    private static Object nameFromAnotherMod(Object entry) {
+        Module own = LegacyForgeEvents.class.getModule();
+        for (Class<?> type = entry.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
+            Module module = type.getModule();
+            if (module == own || !module.isNamed()) continue;
+            ClassLoader loader = type.getClassLoader();
+            Object copy = OTHER_COPIES.computeIfAbsent(module, m -> copyIn(m, loader));
+            if (!(copy instanceof Method recorded)) continue;
+            try {
+                Object name = recorded.invoke(null, entry);
+                if (name != null) return name;
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                LOGGER.debug("Could not read a registry name from {}: {}", module.getName(), e.toString());
+            }
+        }
+        return null;
+    }
+
+    /** {@code recordedName} of the copy of this class embedded in a module, or NOT_DECLARED. */
+    private static Object copyIn(Module module, ClassLoader loader) {
+        String ownPackage = LegacyForgeEvents.class.getPackageName();
+        String embedded = "com.retromod.embedded.";
+        if (!ownPackage.startsWith(embedded)) return NOT_DECLARED;
+        int keyEnd = ownPackage.indexOf('.', embedded.length());
+        if (keyEnd < 0) return NOT_DECLARED;
+        String original = ownPackage.substring(keyEnd);
+        for (String candidate : module.getPackages()) {
+            if (!candidate.startsWith(embedded) || !candidate.endsWith(original)
+                    || candidate.indexOf('.', embedded.length()) != candidate.length() - original.length()) {
+                continue;
+            }
+            try {
+                Class<?> copy = Class.forName(candidate + "." + LegacyForgeEvents.class.getSimpleName(),
+                        false, loader);
+                return copy.getMethod("recordedName", Object.class);
+            } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
+                return NOT_DECLARED;
+            }
+        }
+        return NOT_DECLARED;
     }
 
     private static final String[] BUILT_IN_REGISTRIES = {"BLOCK", "ITEM", "ENTITY_TYPE", "BLOCK_ENTITY_TYPE",

@@ -1,4 +1,4 @@
-# source_pack_format_max	target_pack_format_min	source	destination
+# source_pack_format_max	target_pack_format_min	source	destination	[new_layout]
 #
 # Texture paths Minecraft moved after the Flattening, applied when a pack crosses the
 # boundary between the two formats on each row.
@@ -19,6 +19,13 @@
 # Content matching cannot pair a texture that was redrawn as it moved, which is how the
 # sign block missed it: 26.2 both moved entity/signs/ into block/ and redrew it. Those 24
 # rows were mapped by name instead, with both ends checked against the jars.
+#
+# The fifth column, new_layout, marks a row whose destination is new art in another layout
+# rather than the same file under a new name. 26.1.2 entity/signs/oak.png is a 64x32 sheet
+# for the sign entity model; 26.2 block/oak_sign.png is a 32x32 sprite for the block model.
+# A pack still moves its own file along such a row, but a model or renderer that drew
+# vanilla's old file would draw the wrong parts of the new one, so references to vanilla's
+# art stop there.
 #
 # Regenerate the derived half with scripts/harvest-texture-migrations.py.
 # 219 migrations.
@@ -217,27 +224,27 @@
 75	84	entity/witch.png	entity/witch/witch.png
 84	88	block/purpur_pillar.png	block/purpur_pillar_side.png
 84	88	block/quartz_pillar.png	block/quartz_pillar_side.png
-84	88	entity/signs/acacia.png	block/acacia_sign.png
-84	88	entity/signs/bamboo.png	block/bamboo_sign.png
-84	88	entity/signs/birch.png	block/birch_sign.png
-84	88	entity/signs/cherry.png	block/cherry_sign.png
-84	88	entity/signs/crimson.png	block/crimson_sign.png
-84	88	entity/signs/dark_oak.png	block/dark_oak_sign.png
-84	88	entity/signs/hanging/acacia.png	block/acacia_hanging_sign.png
-84	88	entity/signs/hanging/bamboo.png	block/bamboo_hanging_sign.png
-84	88	entity/signs/hanging/birch.png	block/birch_hanging_sign.png
-84	88	entity/signs/hanging/cherry.png	block/cherry_hanging_sign.png
-84	88	entity/signs/hanging/crimson.png	block/crimson_hanging_sign.png
-84	88	entity/signs/hanging/dark_oak.png	block/dark_oak_hanging_sign.png
-84	88	entity/signs/hanging/jungle.png	block/jungle_hanging_sign.png
-84	88	entity/signs/hanging/mangrove.png	block/mangrove_hanging_sign.png
-84	88	entity/signs/hanging/oak.png	block/oak_hanging_sign.png
-84	88	entity/signs/hanging/pale_oak.png	block/pale_oak_hanging_sign.png
-84	88	entity/signs/hanging/spruce.png	block/spruce_hanging_sign.png
-84	88	entity/signs/hanging/warped.png	block/warped_hanging_sign.png
-84	88	entity/signs/jungle.png	block/jungle_sign.png
-84	88	entity/signs/mangrove.png	block/mangrove_sign.png
-84	88	entity/signs/oak.png	block/oak_sign.png
-84	88	entity/signs/pale_oak.png	block/pale_oak_sign.png
-84	88	entity/signs/spruce.png	block/spruce_sign.png
-84	88	entity/signs/warped.png	block/warped_sign.png
+84	88	entity/signs/acacia.png	block/acacia_sign.png	new_layout
+84	88	entity/signs/bamboo.png	block/bamboo_sign.png	new_layout
+84	88	entity/signs/birch.png	block/birch_sign.png	new_layout
+84	88	entity/signs/cherry.png	block/cherry_sign.png	new_layout
+84	88	entity/signs/crimson.png	block/crimson_sign.png	new_layout
+84	88	entity/signs/dark_oak.png	block/dark_oak_sign.png	new_layout
+84	88	entity/signs/hanging/acacia.png	block/acacia_hanging_sign.png	new_layout
+84	88	entity/signs/hanging/bamboo.png	block/bamboo_hanging_sign.png	new_layout
+84	88	entity/signs/hanging/birch.png	block/birch_hanging_sign.png	new_layout
+84	88	entity/signs/hanging/cherry.png	block/cherry_hanging_sign.png	new_layout
+84	88	entity/signs/hanging/crimson.png	block/crimson_hanging_sign.png	new_layout
+84	88	entity/signs/hanging/dark_oak.png	block/dark_oak_hanging_sign.png	new_layout
+84	88	entity/signs/hanging/jungle.png	block/jungle_hanging_sign.png	new_layout
+84	88	entity/signs/hanging/mangrove.png	block/mangrove_hanging_sign.png	new_layout
+84	88	entity/signs/hanging/oak.png	block/oak_hanging_sign.png	new_layout
+84	88	entity/signs/hanging/pale_oak.png	block/pale_oak_hanging_sign.png	new_layout
+84	88	entity/signs/hanging/spruce.png	block/spruce_hanging_sign.png	new_layout
+84	88	entity/signs/hanging/warped.png	block/warped_hanging_sign.png	new_layout
+84	88	entity/signs/jungle.png	block/jungle_sign.png	new_layout
+84	88	entity/signs/mangrove.png	block/mangrove_sign.png	new_layout
+84	88	entity/signs/oak.png	block/oak_sign.png	new_layout
+84	88	entity/signs/pale_oak.png	block/pale_oak_sign.png	new_layout
+84	88	entity/signs/spruce.png	block/spruce_sign.png	new_layout
+84	88	entity/signs/warped.png	block/warped_sign.png	new_layout

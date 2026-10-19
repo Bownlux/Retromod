@@ -78,6 +78,8 @@ public class NeoForge_1_20_4_to_1_20_5 implements VersionShim {
         // NeoForge stopped opening MenuScreens.register; mods from before still call it.
         com.retromod.shim.forge.LegacyMenuScreensBridge.register(transformer);
         com.retromod.shim.common.LegacyAttributeApiBridge.register(transformer);
+        // Block methods later made protected, called through the state's public delegate.
+        com.retromod.shim.common.LegacyProtectedBlockCallBridge.register(transformer);
         com.retromod.shim.common.LegacyItemAttributeOverrideAdapter.register(transformer);
         com.retromod.shim.common.LegacyDispenserBridge.register(transformer);
         com.retromod.shim.common.LegacyToolItemBridge.register(transformer);

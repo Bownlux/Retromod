@@ -242,6 +242,67 @@ class ForgeNeoForgeApiBridgeTest {
         assertTrue(event.registered.isEmpty(), "NeoForge rejects a second registration for the same item");
     }
 
+    @Test
+    void aDeferredRegisterPutOnTheBusAgainIsRegisteredOnce() {
+        // #283: Scorched Guns calls ModRecipes.register(bus) three times. Forge tolerated it;
+        // NeoForge threw in the mod constructor.
+        OnceOnlyDeferredRegister deferred = new OnceOnlyDeferredRegister();
+        RecordingBus bus = new RecordingBus();
+
+        LegacyEventCalls.registerDeferredRegister(deferred, bus);
+        LegacyEventCalls.registerDeferredRegister(deferred, bus);
+
+        assertEquals(1, deferred.registrations, "the repeat must not reach NeoForge's register");
+    }
+
+    @Test
+    void separateDeferredRegistersEachReachTheBus() {
+        OnceOnlyDeferredRegister blocks = new OnceOnlyDeferredRegister();
+        OnceOnlyDeferredRegister items = new OnceOnlyDeferredRegister();
+        RecordingBus bus = new RecordingBus();
+
+        LegacyEventCalls.registerDeferredRegister(blocks, bus);
+        LegacyEventCalls.registerDeferredRegister(items, bus);
+
+        assertEquals(1, blocks.registrations);
+        assertEquals(1, items.registrations);
+    }
+
+    @Test
+    void deferredRegisterBusCallsGoToTheHelper() {
+        ForgeNeoForgeApiBridge.registerEventCalls(transformer);
+        String deferred = "net/neoforged/neoforge/registries/DeferredRegister";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, "test/mod/ModRecipes", null, "java/lang/Object", null);
+        MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "register",
+                "(L" + deferred + ";Lnet/neoforged/bus/api/IEventBus;)V", null, null);
+        m.visitCode();
+        m.visitVarInsn(ALOAD, 0);
+        m.visitVarInsn(ALOAD, 1);
+        m.visitMethodInsn(INVOKEVIRTUAL, deferred, "register", "(Lnet/neoforged/bus/api/IEventBus;)V", false);
+        m.visitInsn(RETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        cw.visitEnd();
+
+        MethodInsnNode call = firstCall(transformer.transformClass(cw.toByteArray(), "test/mod/ModRecipes.class"));
+
+        assertEquals(LegacyEventCancelAdapter.HELPER + ".registerDeferredRegister",
+                call.owner + "." + call.name);
+        assertEquals(INVOKESTATIC, call.getOpcode());
+    }
+
+    /** NeoForge's DeferredRegister: a second register(bus) throws. */
+    public static final class OnceOnlyDeferredRegister {
+        int registrations;
+
+        public void register(RecordingBus bus) {
+            if (registrations++ > 0) {
+                throw new IllegalStateException("Cannot register DeferredRegister to more than one event bus.");
+            }
+        }
+    }
+
     public static final class RejectingBus {
         private final String message;
         int attempts;

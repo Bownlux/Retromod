@@ -17,15 +17,12 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
-/**
- * Opens the native file picker from Minecraft and reports the update results
- * back in game. Minecraft UI calls use reflection because it is not on the
- * compile classpath.
- */
+/** Opens the native file picker from Minecraft and reports the update results in game. */
 public class RetromodScreen {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Screen");
 
+    // Minecraft is not on the compile classpath, so its UI is reached through reflection.
     private final Object minecraftClient;
 
     public record ModResult(String modName, Status status, String message) {
@@ -120,9 +117,19 @@ public class RetromodScreen {
                     continue;
                 }
 
+                // An outdated Forge or NeoForge mod goes in unchanged when in-place loading is on;
+                // otherwise an outdated mod is transformed, and a current one is copied as is.
                 ModCompatibilityChecker.IncompatibleMod analysis = checker.analyzeJar(modPath);
+                Optional<ModCompatibilityChecker.InPlaceInstall> inPlace = analysis != null
+                        ? checker.installInPlace(modPath) : Optional.empty();
 
-                if (analysis != null) {
+                if (inPlace.isPresent()) {
+                    boolean failed = inPlace.get().outcome()
+                            == com.retromod.inplace.InPlaceLaunch.ChosenOutcome.FAILED;
+                    results.add(new ModResult(name,
+                        failed ? ModResult.Status.FAILED : ModResult.Status.UPDATED,
+                        RetromodGui.inPlaceResultLine(name, inPlace.get().outcome())));
+                } else if (analysis != null) {
                     Path transformed = checker.transformAndInstall(modPath);
                     results.add(new ModResult(name, ModResult.Status.UPDATED,
                         "Updated as " + transformed.getFileName()));

@@ -1,0 +1,22 @@
+# Shaped like the Forge MDK template, comments included, for the #358 case: no minecraft
+# dependency, so the Minecraft version is only in the jar manifest's Implementation-Version.
+modLoader = "javafml" #mandatory
+loaderVersion = "[47,)" #mandatory
+license = "MIT"
+issueTrackerURL = "https://github.com/Bownlux/Retromod/issues"
+
+[[mods]] #mandatory
+modId = "retromod_test_lib_forge" #mandatory
+version = "0.1.0" #mandatory
+displayName = "Retromod Test Library (Forge)"
+authors = "Bownlux"
+description = '''
+A library for the Retromod test mod. Install it next to the test mod so the cross-jar case can run.
+'''
+
+[[dependencies.retromod_test_lib_forge]]
+modId = "forge"
+mandatory = true
+versionRange = "[47,)"
+ordering = "NONE"
+side = "BOTH"

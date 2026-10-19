@@ -88,10 +88,11 @@ class LegacyMobTypeBridgeTest {
     @Test
     void callsOnTheModsOwnMobClassUseTheStaticLookup() {
         RetromodTransformer transformer = registeredOn("1.21.1");
-        byte[] mob = mobCalling(Opcodes.INVOKEVIRTUAL, MOD_MOB, LIVING);
+        // The caller is not named getMobType: a mob that declares getMobType itself runs its own.
+        byte[] mob = mobCalling(Opcodes.INVOKEVIRTUAL, MOD_MOB, LIVING, "isUndead");
         transformer.setJarClassBytesProvider(name -> MOD_MOB.equals(name) ? mob : null);
         try {
-            MethodInsnNode call = first(method(transformer.transformClass(mob, MOD_MOB), "getMobType"),
+            MethodInsnNode call = first(method(transformer.transformClass(mob, MOD_MOB), "isUndead"),
                     MethodInsnNode.class);
             assertEquals(Opcodes.INVOKESTATIC, call.getOpcode(),
                     "the mod class inherits the removed method from LivingEntity");
@@ -182,10 +183,15 @@ class LegacyMobTypeBridgeTest {
 
     /** A mod mob extending {@code superName} whose {@code getMobType()} makes one call. */
     private static byte[] mobCalling(int opcode, String owner, String superName) {
+        return mobCalling(opcode, owner, superName, "getMobType");
+    }
+
+    /** A mod mob extending {@code superName} whose method {@code caller} calls {@code getMobType()}. */
+    private static byte[] mobCalling(int opcode, String owner, String superName, String caller) {
         String mobType = "L" + LegacyMobTypeBridge.OLD_TYPE + ";";
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, MOD_MOB, null, superName, null);
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "getMobType", "()" + mobType, null, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, caller, "()" + mobType, null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitMethodInsn(opcode, owner, "getMobType", "()" + mobType, false);

@@ -56,6 +56,54 @@ public class RetromodTestModForge {
                 buffer -> new PingMessage(buffer.readUtf()),
                 RetromodTestModForge::handlePing);
         net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener(this::sendPingOnLogin);
+        net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()
+                .addListener(this::checkMobAttributes);
+        net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()
+                .addListener(this::checkAttributeModification);
+        // A block built in a common class and registered from this loader class by id.
+        net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()
+                .addListener(CrossClassRegistration::register);
+        // #302: an addon's knife and registry reads against the installed Farmer's Delight.
+        net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()
+                .addListener(FarmersDelightAddon::register);
+        // An entity type built from its bare name in a deferred register's supplier.
+        EntityTypeKeys.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+    }
+
+    /**
+     * #346: a 1.20.1 mob's attributes come from {@code Mob.createMobAttributes()} or another host
+     * factory, none of which has the tempt range a 1.21.2+ {@code TemptGoal} reads, so Cake Cow
+     * crashed on its first tick. Attribute values are only bound once registration reaches this
+     * event, the point where mods build them, so the result is in the log rather than the summary.
+     */
+    private void checkMobAttributes(net.minecraftforge.event.entity.EntityAttributeCreationEvent event) {
+        String result;
+        try {
+            result = builtAttributesHaveTemptRange() ? "success" : "fail: assertion was false";
+        } catch (Throwable t) {
+            result = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} #346 attributes built from Mob, Monster and LivingEntity have the tempt range (attribute event): {}",
+                PREFIX, result);
+    }
+
+    /**
+     * #283: Scorched Guns adds its attributes to the player in this event with a bare attribute,
+     * which NeoForge 1.21 retyped to a holder. The event fires during registration, so the result
+     * is in the log rather than the summary.
+     */
+    private void checkAttributeModification(net.minecraftforge.event.entity.EntityAttributeModificationEvent event) {
+        String result;
+        try {
+            event.add(net.minecraft.world.entity.EntityType.PLAYER,
+                    net.minecraft.world.entity.ai.attributes.Attributes.LUCK);
+            result = event.has(net.minecraft.world.entity.EntityType.PLAYER,
+                    net.minecraft.world.entity.ai.attributes.Attributes.LUCK) ? "success" : "fail: luck was not added";
+        } catch (Throwable t) {
+            result = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} #283 EntityAttributeModificationEvent.add with a bare attribute (attribute event): {}",
+                PREFIX, result);
     }
 
     private void sendPingOnLogin(
@@ -116,6 +164,14 @@ public class RetromodTestModForge {
             } catch (NullPointerException expected) {
                 return true;
             }
+        });
+
+        // #349: 26.3 widened Axis.of to take the Vector3fc interface and dropped the Vector3f
+        // form this call was compiled against, the same JOML change 26.2 made elsewhere.
+        n++; passed += check(n, "#349 Axis.of(Vector3f) after the JOML widening", () -> {
+            org.joml.Vector3f turned = com.mojang.math.Axis.of(new org.joml.Vector3f(0f, 1f, 0f))
+                    .rotationDegrees(90f).transform(new org.joml.Vector3f(1f, 0f, 0f));
+            return Math.abs(turned.x) < 1.0e-4f && Math.abs(turned.z + 1f) < 1.0e-4f;
         });
 
         // ─── #85/#115: FMLJavaModLoadingContext Forge->NeoForge bridge ───
@@ -225,12 +281,205 @@ public class RetromodTestModForge {
         });
         // #338: 1.20.5 split Block.use, so an old override and its super.use need a bridge.
         n++; passed += check(n, "#338 pre-1.20.5 Block.use override", RetromodTestModForge::oldUseOverrideRuns);
+        // #344: 26.3 ships no GLFW, so a mod's own GLFW clock read failed with
+        // NoClassDefFoundError. Clients only: a dedicated server never had GLFW.
+        n++; passed += check(n, "#344 GLFW clock on a host without GLFW", () ->
+            !net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()
+                || org.lwjgl.glfw.GLFW.glfwGetTime() >= 0.0);
+
+        // #346: what a 1.20.1 mob calls for its goals, food, offspring and milking, against the
+        // members later hosts removed. Cake Cow crashed as soon as it was spawned. Calls on a null
+        // mob prove linkage only: the bridge links, then forwards to the missing receiver.
+        n++; passed += check(n, "#346 TemptGoal with an Ingredient", () -> linksWithoutInheritanceError(() ->
+            new net.minecraft.world.entity.ai.goal.TemptGoal(null, 1.0,
+                    net.minecraft.world.item.crafting.Ingredient.of(Items.WHEAT), false)));
+        n++; passed += check(n, "#346 Ingredient.of(ItemStack...)", () -> linksWithoutInheritanceError(() ->
+            net.minecraft.world.item.crafting.Ingredient.of(new ItemStack(Items.WHEAT))));
+        n++; passed += check(n, "#346 EntityType.create(Level)", () -> linksWithoutInheritanceError(() ->
+            net.minecraft.world.entity.EntityType.COW.create((net.minecraft.world.level.Level) null)));
+        n++; passed += check(n, "#346 Mob.finalizeSpawn with a CompoundTag", () -> linksWithoutInheritanceError(() ->
+            ((net.minecraft.world.entity.Mob) null).finalizeSpawn(null, null,
+                    net.minecraft.world.entity.MobSpawnType.BREEDING, null, null)));
+        n++; passed += check(n, "#346 LivingEntity.swing(hand, send)", () -> linksWithoutInheritanceError(() ->
+            ((LivingEntity) null).swing(net.minecraft.world.InteractionHand.MAIN_HAND, true)));
+        // A mob's own override of those removed methods still runs when it calls them on itself.
+        n++; passed += check(n, "#346 a mob's own five-argument finalizeSpawn runs for its offspring",
+                OwnOverrideMob::breedReachesOwnOverride);
+        n++; passed += check(n, "#346 an entity's own swing(hand, send) runs when it swings",
+                OwnOverrideMob::swingReachesOwnOverride);
+        n++; passed += check(n, "#346 calls through Mob and LivingEntity reach the mob's own overrides",
+                OwnOverrideMob::hostTypedCallsReachOwnOverrides);
+        // #347: getValues() returned an ImmutableMap here, a Map from 1.20.5 and a stream from 26.1,
+        // so MCreator's copy of a block's properties onto the next block failed on newer hosts.
+        n++; passed += check(n, "#347 BlockState.getValues() copies a block's properties",
+                RetromodTestModForge::stateValuesCopy);
+        // This mod ships only pre-1.21.4 item models, which 1.21.4 reads through item definitions.
+        n++; passed += check(n, "Legacy item models get 1.21.4 item definitions",
+                RetromodTestModForge::legacyItemDefinitions);
+        // #347: the other members its procedures call that later hosts changed. Calls on a null
+        // receiver prove linkage only: the bridge links, then fails on the missing receiver.
+        n++; passed += check(n, "#347 CommandSourceStack with an int permission level",
+                RetromodTestModForge::legacyCommandSource);
+        n++; passed += check(n, "#347 Inventory.clearOrCountMatchingItems(predicate, max, craftSlots)", () ->
+            linksWithoutInheritanceError(() -> ((net.minecraft.world.entity.player.Inventory) null)
+                    .clearOrCountMatchingItems(stack -> true, 0, null)));
+        n++; passed += check(n, "#347 Player.drop(stack, retainOwnership)", () -> linksWithoutInheritanceError(() ->
+            ((net.minecraft.world.entity.player.Player) null).drop(ItemStack.EMPTY, false)));
+        n++; passed += check(n, "#347 Player.drop(stack, throwRandomly, retainOwnership)", () ->
+            linksWithoutInheritanceError(() ->
+                ((net.minecraft.world.entity.player.Player) null).drop(ItemStack.EMPTY, true, false)));
+        n++; passed += check(n, "#347 LivingEntity.hurt(source, amount)", () -> linksWithoutInheritanceError(() ->
+            ((LivingEntity) null).hurt(null, 1f)));
+        n++; passed += check(n, "#347 IntegerProperty.getPossibleValues()", () ->
+            net.minecraft.world.level.block.state.properties.BlockStateProperties.AGE_3.getPossibleValues().size() == 4);
+        // An empty stack takes no damage, so this one also checks the answer.
+        n++; passed += check(n, "#347 ItemStack.hurt(amount, random, player)", () ->
+            !ItemStack.EMPTY.hurt(1, net.minecraft.util.RandomSource.create(), null));
+        n++; passed += check(n, "#347 ServerAdvancementManager.getAdvancement and PlayerAdvancements.award", () ->
+            linksWithoutInheritanceError(() -> ((net.minecraft.server.ServerAdvancementManager) null)
+                    .getAdvancement(new ResourceLocation("retromod", "tea")))
+                && linksWithoutInheritanceError(() -> ((net.minecraft.server.PlayerAdvancements) null)
+                    .award((net.minecraft.advancements.Advancement) null, "drank")));
+        n++; passed += check(n, "#347 ServerPlayer.server", () -> linksWithoutInheritanceError(() -> {
+            net.minecraft.server.MinecraftServer server = ((net.minecraft.server.level.ServerPlayer) null).server;
+        }));
+        n++; passed += check(n, "#347 ItemHandlerHelper.giveItemToPlayer", () -> linksWithoutInheritanceError(() ->
+            net.minecraftforge.items.ItemHandlerHelper.giveItemToPlayer(null, ItemStack.EMPTY)));
+
+        // #349: 26.3 removed LivingEntity.swinging, which a physics mod reads to react to the arm
+        // swing. A read asks isSwinging() instead, also through a player, which javac names as the
+        // owner. Reads on a null receiver prove linkage only.
+        n++; passed += check(n, "#349 LivingEntity.swinging read after 26.3 removed the field", () ->
+            linksWithoutInheritanceError(() -> {
+                boolean swinging = ((LivingEntity) null).swinging;
+            }));
+        n++; passed += check(n, "#349 Player.swinging read through the player", () ->
+            linksWithoutInheritanceError(() -> {
+                boolean swinging = ((net.minecraft.world.entity.player.Player) null).swinging;
+            }));
+        // #349: 26.3 removed the armor trim atlas, and Retromod rebuilds it under its own id. The
+        // read reaches that id even on a dedicated server, where Sheets itself is absent. A server
+        // before 26.3 still has the atlas but no client classes, so it has nothing to check.
+        n++; passed += check(n, "#349 Sheets.ARMOR_TRIMS_SHEET on a 26.3 dedicated server", () ->
+            net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient() || !trimsUsePalettes()
+                || "retromod".equals(net.minecraft.client.renderer.Sheets.ARMOR_TRIMS_SHEET.getNamespace()));
+
+        n++; passed += check(n, "In-place loading runs the cached copy and leaves the original unchanged",
+            () -> inPlaceCopyAndUntouchedOriginal(RetromodTestModForge.class));
+
+        // #362: the companion library jar (retromod-test-lib-forge) takes these types in its API.
+        // Retromod rebuilds them inside every translated jar on newer hosts, so the calls only
+        // link when the test mod reuses the library's copies instead of its own.
+        n++; passed += check(n, "#362 a library's API taking Forge's LazyOptional links across jars",
+            LibraryCalls::lazyOptionalLinks);
+        n++; passed += check(n, "#362 a library's API taking the removed tool Tier links across jars",
+            LibraryCalls::tierLinks);
+        // #358: the library declares no minecraft dependency, so its Minecraft version is only in
+        // its manifest, as Project Rankine ships it. Built for the same version as this mod, it
+        // must be translated exactly when this mod is.
+        n++; passed += check(n, "#358 a library versioned only by its manifest is translated with this mod",
+            () -> LibraryCalls.manifestVersionedLibraryTranslatedLike(RetromodTestModForge.class,
+                    "retromod-test-mod-forge"));
+
+        // #340: 26.3 removed NumberProvider, ConstantValue and UniformGenerator, and its loot pools
+        // and count functions take int or float providers.
+        n++; passed += check(n, "#340 loot numbers built in code reach a loot pool and a set count function",
+            LootNumbers::poolAndCountBuild);
+        // #336: 26.3 rebuilt the loot entry builders, and its inventory takes a prediction when a
+        // menu hands items back as it closes. The inventory call on a null receiver proves linkage only.
+        n++; passed += check(n, "#336 loot entries built in code reach a loot pool",
+            LootEntries::itemAndEmptyEntriesBuild);
+        n++; passed += check(n, "#336 Inventory.placeItemBackInInventory(stack)", () -> linksWithoutInheritanceError(() ->
+            ((net.minecraft.world.entity.player.Inventory) null).placeItemBackInInventory(ItemStack.EMPTY)));
+
+        // #283: this mod declares minecraft [1.20,), like Scorched Guns, whose 1.20 lower bound took
+        // the 1.19.4 SRG names, so level() and onGround() became getLevel() and isOnGround(). This
+        // jar ships official names, so the case is a smoke check; SrgVersionDriftTest covers the ids.
+        n++; passed += check(n, "#283 Entity.level() and onGround() in a mod built from 1.20", () ->
+            linksWithoutInheritanceError(() -> ((net.minecraft.world.entity.Entity) null).level())
+                && linksWithoutInheritanceError(() -> ((net.minecraft.world.entity.Entity) null).onGround()));
+        // #283: the rest of Scorched Guns' registration shapes, each of which stopped its
+        // registration on NeoForge 1.21.1. Blocks built outside registration only prove linkage.
+        n++; passed += check(n, "#283 a MobEffect declaring its modifier with a UUID string",
+            LegacyRegistrationShapes::effectDeclaresItsModifier);
+        n++; passed += check(n, "#283 DropExperienceBlock, AmethystClusterBlock, StairBlock and cauldron constructors",
+            () -> linksWithoutInheritanceError(LegacyRegistrationShapes::buildOldBlocks));
+        n++; passed += check(n, "#283 CauldronInteraction.EMPTY as a map", () ->
+            linksWithoutInheritanceError(LegacyRegistrationShapes::readEmptyCauldronTable));
+        n++; passed += check(n, "#283 Rarity.create is added as a rarity", LegacyRegistrationShapes::rarityWasAdded);
+        n++; passed += check(n, "#283 a vanilla ArmorMaterials constant read as an ArmorMaterial",
+            LegacyRegistrationShapes::vanillaArmorIsAMaterial);
+        n++; passed += check(n, "#283 a block's menu provider asked through another block", () ->
+            linksWithoutInheritanceError(LegacyRegistrationShapes::menuThroughAnotherBlock));
+        n++; passed += check(n, "#283 a DeferredRegister put on the mod bus twice", () -> {
+            net.minecraftforge.registries.DeferredRegister<net.minecraft.world.item.Item> twice =
+                    net.minecraftforge.registries.DeferredRegister.create(
+                            net.minecraftforge.registries.ForgeRegistries.ITEMS, "retromod_test_mod_forge");
+            net.minecraftforge.eventbus.api.IEventBus bus =
+                    net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus();
+            twice.register(bus);
+            twice.register(bus);
+            return true;
+        });
+
+        // #271: 26.1 removed EitherHolder.
+        n++; passed += check(n, "#271 an EitherHolder built from a key reports that key",
+            RemovedEitherHolder::keyReadsBack);
 
         LOG.info("{} SUMMARY: {}/{} passed", PREFIX, passed, n);
     }
 
     /**
-     * Whether a subclass of a removed base links, ignoring anything that happens after it does.
+     * In-place loading: when Retromod translated this mod, the loader runs the copy in
+     * Retromod's cache and the jar the player installed keeps its exact bytes. The bootstrap
+     * reports both in the status file it names in {@code retromod.inplace.status}. In rewrite
+     * mode, or when this mod needed no translation, it must not run from the cache.
+     */
+    private static boolean inPlaceCopyAndUntouchedOriginal(Class<?> self) throws Exception {
+        String location = java.net.URLDecoder.decode(String.valueOf(
+                self.getProtectionDomain().getCodeSource().getLocation()),
+                java.nio.charset.StandardCharsets.UTF_8);
+        boolean fromCache = location.contains("retromod-cache/");
+        String statusPath = System.getProperty("retromod.inplace.status");
+        if (statusPath == null || !"in-place".equals(System.getProperty("retromod.inplace.mode"))) {
+            return !fromCache;
+        }
+        com.google.gson.JsonObject status = com.google.gson.JsonParser.parseString(
+                java.nio.file.Files.readString(java.nio.file.Path.of(statusPath)))
+                .getAsJsonObject();
+        for (com.google.gson.JsonElement element : status.getAsJsonArray("served")) {
+            com.google.gson.JsonObject row = element.getAsJsonObject();
+            java.nio.file.Path source = java.nio.file.Path.of(row.get("source").getAsString());
+            String copy = java.nio.file.Path.of(row.get("file").getAsString())
+                    .getFileName().toString();
+            if (location.contains("/" + copy)) {
+                byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                        .digest(java.nio.file.Files.readAllBytes(source));
+                return fromCache && java.util.HexFormat.of().formatHex(digest)
+                        .equals(row.get("sha256").getAsString());
+            }
+            if (location.contains("/" + source.getFileName())) {
+                return false; // the untranslated original loaded although a copy was served
+            }
+        }
+        return !fromCache;
+    }
+
+    /**
+     * The command source an MCreator procedure builds to run a command, with an int permission
+     * level and both names. Without an entity, the names it reports are the ones it was given.
+     */
+    private static boolean legacyCommandSource() {
+        net.minecraft.commands.CommandSourceStack source = new net.minecraft.commands.CommandSourceStack(
+                net.minecraft.commands.CommandSource.NULL, net.minecraft.world.phys.Vec3.ZERO,
+                net.minecraft.world.phys.Vec2.ZERO, null, 4, "Retromod", Component.literal("Retromod"), null, null);
+        return source.getTextName().equals("Retromod") && source.getDisplayName().getString().equals("Retromod")
+                && source.hasPermission(2);
+    }
+
+    /**
+     * Whether the probe links, such as a subclass of a removed base, ignoring anything that happens
+     * after it does.
      *
      * <p>Building an item outside registration is fine on the version this mod is compiled for and
      * can be refused on later ones for reasons unrelated to the transform, so only a linkage failure
@@ -242,7 +491,7 @@ public class RetromodTestModForge {
             probe.run();
             return true;
         } catch (IncompatibleClassChangeError | NoClassDefFoundError | VerifyError e) {
-            LOG.warn("{} removed base did not link: {}: {}", PREFIX,
+            LOG.warn("{} probe did not link: {}: {}", PREFIX,
                     e.getClass().getSimpleName(), e.getMessage());
             return false;
         } catch (Throwable linkedButRefused) {
@@ -322,8 +571,108 @@ public class RetromodTestModForge {
         }
     }
 
+    /**
+     * Copies every property of a stair state onto a fresh one through {@code getValues()}, the way
+     * an MCreator procedure swaps one block for another. Each property is moved off its default
+     * first, so a copy that does nothing fails.
+     */
+    private static boolean stateValuesCopy() {
+        net.minecraft.world.level.block.state.BlockState source = Blocks.OAK_STAIRS.defaultBlockState();
+        for (net.minecraft.world.level.block.state.properties.Property<?> property : source.getProperties()) {
+            source = source.cycle(property);
+        }
+        net.minecraft.world.level.block.state.BlockState copy = Blocks.OAK_STAIRS.defaultBlockState();
+        for (java.util.Map.Entry<net.minecraft.world.level.block.state.properties.Property<?>, Comparable<?>> entry
+                : source.getValues().entrySet()) {
+            copy = withValue(copy, entry.getKey(), entry.getValue());
+        }
+        return copy != Blocks.OAK_STAIRS.defaultBlockState() && copy == source;
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static net.minecraft.world.level.block.state.BlockState withValue(
+            net.minecraft.world.level.block.state.BlockState state,
+            net.minecraft.world.level.block.state.properties.Property property, Comparable value) {
+        return state.setValue(property, value);
+    }
+
+    /**
+     * Whether attributes built from each host factory carry the tempt range a host's
+     * {@code TemptGoal} reads. Before 1.21.2 the goal had a fixed range and there is no attribute
+     * to look for.
+     */
+    private static boolean builtAttributesHaveTemptRange() throws Throwable {
+        java.lang.reflect.Field range;
+        try {
+            range = net.minecraft.world.entity.ai.attributes.Attributes.class.getField("TEMPT_RANGE");
+        } catch (NoSuchFieldException olderHost) {
+            return true;
+        }
+        Object temptRange = range.get(null);
+        for (net.minecraft.world.entity.ai.attributes.AttributeSupplier built : java.util.List.of(
+                net.minecraft.world.entity.Mob.createMobAttributes().build(),
+                net.minecraft.world.entity.monster.Monster.createMonsterAttributes().build(),
+                LivingEntity.createLivingAttributes().build())) {
+            boolean present = (boolean) built.getClass().getMethod("hasAttribute", range.getType())
+                    .invoke(built, temptRange);
+            if (!present) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Whether the host recolors armor trims from the palette its trim materials name, as 26.3 does
+     * in place of the trim atlas. Looked up by name, because the class moved after 1.20.1.
+     */
+    private static boolean trimsUsePalettes() {
+        try {
+            Class.forName("net.minecraft.world.item.equipment.trim.TrimMaterial", false,
+                    RetromodTestModForge.class.getClassLoader()).getMethod("paletteId");
+            return true;
+        } catch (ReflectiveOperationException olderHost) {
+            return false;
+        }
+    }
+
+    /**
+     * Old item models get the client item definitions 1.21.4 reads in their place. This mod ships
+     * only {@code models/item/} files: a spawn egg on vanilla's egg template and an item whose
+     * custom model data override picks a variant. A host before 1.21.4 needs no definition. A
+     * dedicated server ships no vanilla assets, so there only the shape of a written one is checked.
+     */
+    private static boolean legacyItemDefinitions() throws java.io.IOException {
+        String egg = resource("/assets/retromod_test_mod_forge/items/legacy_spawn_egg.json");
+        String variant = resource("/assets/retromod_test_mod_forge/items/legacy_variant.json");
+        ClassLoader loader = RetromodTestModForge.class.getClassLoader();
+        // A dedicated server jar ships the English lang file but no models, so only a model
+        // proves the client resources are there to compare against.
+        boolean vanillaAssets = loader.getResource("assets/minecraft/models/item/stick.json") != null;
+        boolean readsDefinitions = loader.getResource("assets/minecraft/items/stick.json") != null;
+        String problem = null;
+        if ((egg == null) != (variant == null)) {
+            problem = "only one definition was written: egg " + (egg != null) + ", variant " + (variant != null);
+        } else if (egg == null) {
+            if (vanillaAssets && readsDefinitions) problem = "this host reads items/ definitions, and none was written";
+        } else if (vanillaAssets && !readsDefinitions) {
+            problem = "definitions were written for a host that still reads model overrides";
+        } else if (!egg.contains("\"tints\"")) {
+            problem = "the egg definition carries no colors: " + egg;
+        } else if (!variant.contains("minecraft:custom_model_data") || !variant.contains("item/legacy_variant_one")) {
+            problem = "the custom model data override was not translated: " + variant;
+        }
+        if (problem != null) LOG.warn("{} legacy item models: {}", PREFIX, problem);
+        return problem == null;
+    }
+
+    private static String resource(String path) throws java.io.IOException {
+        try (java.io.InputStream in = RetromodTestModForge.class.getResourceAsStream(path)) {
+            return in == null ? null : new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
+
     @FunctionalInterface
     private interface BoolCheck { boolean run() throws Throwable; }
+
 
     private int check(int n, String description, BoolCheck body) {
         try {

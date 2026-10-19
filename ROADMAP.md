@@ -8,7 +8,7 @@ Last reviewed: 2026-10-12
 
 ## Current Work
 
-Retromod 1.3.4 is the current stable release, and 1.4.0-snapshot.1 is the current snapshot. The 1.3 line's goal was mixin translation, and it is
+Retromod 1.3.4 is the current stable release, and 1.4.0-snapshot.2 is the current snapshot. The 1.3 line's goal was mixin translation, and it is
 met: every repair that line set out to build has shipped code and a passing test, so the list of
 what it does now lives in the [changelog](CHANGELOG.md). What follows is what 1.3 did not close.
 
@@ -111,11 +111,12 @@ Four groups are removed rather than moved, so no rename can cover them. Most of 
 configuration system, including `FeatureConfiguration` and its subclasses, `ConfiguredFeature`, and
 `SurfaceRules`. The last of the hardcoded item classes, `AxeItem`, `HoeItem`, `ShovelItem`,
 `BedItem`, and `SignItem`. The loot number providers: `NumberProvider` and `NumberProviders` are
-gone and the family split into int-valued and float-valued packages, and while three names exist in
-exactly one of the two and are carried, `ConstantValue`, `EnvironmentAttributeValue`,
-`StorageValue`, `Sum` and `UniformGenerator` exist in both, so nothing in the old name says which a
-mod meant and they are declined. And `Feature` itself became an interface, so a mod extending it
-needs a real port.
+gone and the family split into int-valued and float-valued packages. Three names exist in exactly
+one of the two and are carried. `ConstantValue` and `UniformGenerator` exist in both, so their
+factories build a stand-in that becomes an int or a float provider when a trade set, a loot pool's
+rolls, or `SetItemCountFunction` receives it. `EnvironmentAttributeValue`, `StorageValue`, and `Sum`
+are declined, and other consumers of the old type are not bridged. And `Feature` itself became an
+interface, so a mod extending it needs a real port.
 
 ### Minecraft 26.4
 
@@ -204,16 +205,15 @@ Older Forge mods on newer hosts:
 - A 1.18 `BiomeDictionary` read inside the `BiomeLoadingEvent` stand-in, and Forge's
   `PathResourcePack`, are not bridged (#311).
 - A rebuilt enchantment has no code-run effects such as `doPostAttack`.
-- Forge loot modifiers in `net/minecraftforge/common/loot`, a `DeferredRegister` registered to the
-  bus more than once, `MobEffect.addAttributeModifier` in its 1.20.1 shape, and client-only private
-  helpers that `ForgeDistCleaner` leaves in a server subscriber (#283).
+- 1.20.1 recipe serializers written with `fromJson` and `fromNetwork`, and recipes on the 1.20.1
+  `Recipe<Container>` interface, which 1.20.5 and 1.21 replaced with codecs and recipe inputs (#283).
 - Architectury `DeferredRegister`s for enchantments, `LootItemConditionalFunction$Serializer`, and
   `Item$Properties.maxStackSize` read through a mod's own subclass (#308).
-- Farmer's Delight's `KnifeItem(Tier, float, float, Properties)` (#302).
+- Farmer's Delight 1.20.1 addons that build `WildCropBlock` with a `MobEffect`, or use its removed
+  `KelpRollItem` and `ToolActionIngredient`, or Forge's `CompoundIngredient` (#302).
 - `AbstractArrow`'s removed constructors and `setKnockback`, `ModelPart.render` with float colors,
   GeckoLib's four-float `preRender`, and `BlockState.getValues()` returning `ImmutableMap`, all from
   MCreator templates (#326, #328, #330).
-- Painting variants registered in code before 26.1 on 1.21 hosts (#326).
 - The 1.12 post-remap pass runs on every Forge jar at run time; it should be limited to jars from
   before 1.13, as the offline paths already are.
 
@@ -233,13 +233,14 @@ Fabric:
 
 - The armor and tool rebuild on Fabric hosts from 1.21.2 to 1.21.11, Fabric API's removed trade
   helper, and Fabric mods' code-defined enchantments.
-- The bundled intermediary table names classes and members that 26.x renamed, such as
-  `PlayerRenderer` for `AvatarRenderer`, which leaves Minepathy's mixins unresolved (#271). A fix
-  must stay host-targeted: only an entry whose current name is absent on the host, and whose
-  1.21.11 name exists there, may change.
+- Classes 26.1 moved to another package under the same simple name, such as `GuiRenderState`,
+  still map to a path no 26.x host has, which leaves part of Minepathy's client code unresolved
+  (#271). Each move needs a reviewed entry in `mojang-class-moves-26.1.tsv`.
 
-- 26.3 removed `NumberProvider`, `ConstantValue`, and block codecs. A mod that builds loot or
-  trade sets in code, or calls `simpleCodec` on its block, fails on 26.3 (#336, #340).
+- 26.3 removed `NumberProvider`, `ConstantValue`, and block codecs. Trade sets, loot pool rolls,
+  and item counts built in code are bridged (#340), and so are blocks that fill their codec with
+  `simpleCodec` (#336). Other loot functions that take a number, and a mod's own `NumberProvider`,
+  still fail on 26.3.
 - A Fabric block built in one class and registered by name from another gets no id (#334), and
   1.21.1's armor material registry, `Registries.ARMOR_MATERIAL`, is not bridged (#332).
 - GeckoLib 4.5 and newer mods on 26.x, whose renderer and animation API GeckoLib 5 redesigned (#332).
@@ -264,19 +265,15 @@ Each of these came from a report with a log behind it, and each names one place 
 - The 26.2 `ItemEntity` merge signature swaps a `CallbackInfo` for a `CallbackInfoReturnable` and
   changes the parameter list, which the conservative repair rules decline. It is a candidate for a
   curated adapter rather than a relaxed rule.
-- 26.3 added a `Prediction` parameter to `Inventory.placeItemBackInInventory` and
-  `ServerPlayer.drop`. A bridge needs the value vanilla callers pass, which has not been checked.
 - Forge 66 split `InputEvent.InteractionKeyMappingTriggered` and `RenderBlockScreenEffectEvent` into
   per-kind subclasses with their own `BUS`, so a listener for the old type registers on nothing. It
   also removed the axe, shovel and hoe `ToolActions`, the brewing recipe API, and
   `ForgeRegistries.FEATURES`, which need a port.
 - Forge's `Lazy` allowed a null value and NeoForge's does not, so a Forge mod whose lazy value is
   null fails in its constructor. An embedded Forge-shaped `Lazy` would replace the current rename.
-- Some 1.20.1 Forge mods still stop during registration on the pre-1.20.5
-  `MobEffect.addAttributeModifier` shape and on `BlockBehaviour.Properties.copy`.
+- Some 1.20.1 Forge mods still stop during registration on `BlockBehaviour.Properties.copy`.
 - KubeJS 2001 on Fabric 1.21.1 stops on DataFixerUpper's removed `DataResult.get()`.
-- 1.21.1 Fabric mods on 26.x still meet `Ingredient.CODEC_NONEMPTY`, removed in 1.21.2, and
-  `EitherHolder`, removed after 1.21.11.
+- 1.21.1 Fabric mods on 26.x still meet `Ingredient.CODEC_NONEMPTY`, removed in 1.21.2.
 - A Forge `@Mod.EventBusSubscriber` class that mixes static and instance handlers loses its static
   handlers on NeoForge, because NeoForge rejects such a class and Forge only ever subscribed the
   static ones.

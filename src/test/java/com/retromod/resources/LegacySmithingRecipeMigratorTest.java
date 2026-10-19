@@ -55,15 +55,28 @@ class LegacySmithingRecipeMigratorTest {
     }
 
     @Test
-    @DisplayName("a mod built for 1.20, a host older than 1.20 or a 1.20.5+ host is left alone")
+    @DisplayName("a mod built for 1.20 or a host older than 1.20 is left alone")
     void versionGates(@TempDir Path jar) throws Exception {
         Path recipe = writeRecipe(jar, "dagger.json", OLD_RECIPE);
 
         assertEquals(0, LegacySmithingRecipeMigrator.migrate(jar, "1.20.1", "1.20.1"));
         assertEquals(0, LegacySmithingRecipeMigrator.migrate(jar, "1.19.2", "1.19.4"));
-        assertEquals(0, LegacySmithingRecipeMigrator.migrate(jar, "1.18.2", "1.21.1"),
-                "1.20.5 changed the result format, so this conversion would still fail there");
         assertEquals("minecraft:smithing", read(recipe).get("type").getAsString());
+    }
+
+    @Test
+    @DisplayName("1.20.5 to 1.21.1 keep the empty template, and 1.21.2 on leave it out")
+    void laterHostsGetTheirTemplateRule(@TempDir Path jar) throws Exception {
+        Path recipe = writeRecipe(jar, "dagger.json", OLD_RECIPE);
+        assertEquals(1, LegacySmithingRecipeMigrator.migrate(jar, "1.18.2", "1.21.1"));
+        assertTrue(read(recipe).getAsJsonArray("template").isEmpty(),
+                "1.21.1 still reads an empty ingredient");
+
+        writeRecipe(jar, "dagger.json", OLD_RECIPE);
+        assertEquals(1, LegacySmithingRecipeMigrator.migrate(jar, "1.18.2", "26.3"));
+        JsonObject converted = read(recipe);
+        assertEquals("minecraft:smithing_transform", converted.get("type").getAsString());
+        assertFalse(converted.has("template"), "26.3 rejects an empty ingredient; an absent template matches");
     }
 
     @Test

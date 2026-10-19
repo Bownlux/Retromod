@@ -27,25 +27,15 @@ import java.util.stream.Stream;
 
 import static org.objectweb.asm.Opcodes.*;
 
-/**
- * Posts a pre-1.19 mod's {@code BiomeLoadingEvent} again, through a Forge biome modifier.
- *
- * <p>Forge 1.19 replaced the event with data-driven biome modifiers, so the spawns and features a
- * 1.16 to 1.18 mod added from its handler were silently dropped. The mod's handler stays
- * subscribed to a stand-in event. This bridge gives each such mod a biome modifier that builds the
- * stand-in from the biome's name and Forge's spawn and generation builders, and posts it during
- * the add phase, so the handler edits the biome the way the old event let it.
- *
- * <p>A biome modifier needs a registered serializer and a data entry that names it. The serializer
- * is registered from the mod's own {@code @Mod} constructor, the one moment the mod's event bus
- * and namespace are both known, and the entry is written into the mod's data under its own id.
- * Both are added only to a mod that subscribes to the old event. The old {@code getCategory} and
- * climate accessors are not provided, because 1.19 removed biome categories.
- */
+/** Posts a pre-1.19 mod's {@code BiomeLoadingEvent} again, through a Forge biome modifier. */
 public final class LegacyBiomeLoadingBridge {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-BiomeLoading");
 
+    // Forge 1.19 replaced the event with data-driven biome modifiers, so the spawns and features a
+    // 1.16 to 1.18 mod added from its handler were silently dropped. The handler stays subscribed
+    // to a stand-in event, and a generated biome modifier builds that event from the biome's name
+    // and Forge's spawn and generation builders, then posts it during the add phase.
     static final String EVENT = LegacyForge119Bridge.BIOME_LOADING_STAND_IN;
     static final String MODIFIER = "com/retromod/generated/forge118/LegacyBiomeLoadingModifier";
     static final String SERIALIZER_NAME = "retromod_biome_loading";
@@ -104,6 +94,8 @@ public final class LegacyBiomeLoadingBridge {
         init.visitMaxs(0, 0);
         init.visitEnd();
 
+        // The old getCategory and climate accessors are not provided, because 1.19 removed biome
+        // categories.
         String[] getters = {"getName", "getGeneration", "getSpawns"};
         for (int i = 0; i < fields.length; i++) {
             MethodVisitor get = cw.visitMethod(ACC_PUBLIC, getters[i], "()L" + fields[i][1] + ";", null, null);
@@ -336,19 +328,73 @@ public final class LegacyBiomeLoadingBridge {
         }
         if (!subscribes || modClasses.isEmpty()) return 0;
 
+        // A biome modifier needs a registered serializer and a data entry that names it. The
+        // serializer is registered from the mod's own @Mod constructor, the one moment its event
+        // bus and namespace are both known, and the entry goes into the mod's data under its id.
         List<String> wired = new ArrayList<>();
         for (Map.Entry<Path, String> modClass : modClasses.entrySet()) {
             Files.write(modClass.getKey(), registerInConstructors(Files.readAllBytes(modClass.getKey())));
             String modId = modClass.getValue();
             if (wired.contains(modId)) continue;
-            Path entry = modRoot.resolve("data").resolve(modId).resolve("forge").resolve("biome_modifier")
-                    .resolve(SERIALIZER_NAME + ".json");
+            Path entry = modRoot.resolve(dataEntryName(modId));
             Files.createDirectories(entry.getParent());
-            Files.writeString(entry, "{\n  \"type\": \"" + modId + ":" + SERIALIZER_NAME + "\"\n}\n");
+            Files.write(entry, dataEntry(modId));
             wired.add(modId);
         }
         LOGGER.info("Posting the old BiomeLoadingEvent through a biome modifier for {}", wired);
         return wired.size();
+    }
+
+    /** The same wiring for a jar transformed in memory, as the CLI and AOT compiler do, or null if none. */
+    public static StreamingWiring forJar(RetromodTransformer transformer, Iterable<byte[]> originalClasses) {
+        if (!transformer.getSyntheticClasses().containsKey(MODIFIER)) return null;
+        // Whether the jar subscribes must be known before its first class is written, so it is
+        // decided from the classes as read. Those still name the old event, which the class
+        // redirect later turns into the stand-in.
+        byte[] oldEvent = LegacyForge119Bridge.BIOME_LOADING_EVENT.getBytes(StandardCharsets.ISO_8859_1);
+        byte[] standIn = EVENT.getBytes(StandardCharsets.ISO_8859_1);
+        for (byte[] classBytes : originalClasses) {
+            if (classBytes != null && (contains(classBytes, oldEvent) || contains(classBytes, standIn))) {
+                return new StreamingWiring();
+            }
+        }
+        return null;
+    }
+
+    /** Wiring for one jar on a streaming transform; see {@link #forJar}. */
+    public static final class StreamingWiring {
+        private final List<String> modIds = new ArrayList<>();
+
+        private StreamingWiring() {
+        }
+
+        /** Adds the registration call to a transformed {@code @Mod} class, and returns others as they are. */
+        public byte[] wireClass(byte[] classBytes) {
+            String modId = modId(classBytes);
+            if (modId == null) return classBytes;
+            if (!modIds.contains(modId)) modIds.add(modId);
+            return registerInConstructors(classBytes);
+        }
+
+        /** The data entry naming the modifier for every mod id wired, by entry name. */
+        public Map<String, byte[]> dataEntries() {
+            Map<String, byte[]> entries = new LinkedHashMap<>();
+            for (String modId : modIds) entries.put(dataEntryName(modId), dataEntry(modId));
+            if (!modIds.isEmpty()) {
+                LOGGER.info("Posting the old BiomeLoadingEvent through a biome modifier for {}", modIds);
+            }
+            return entries;
+        }
+    }
+
+    /** Where a mod's biome modifier entry goes. */
+    static String dataEntryName(String modId) {
+        return "data/" + modId + "/forge/biome_modifier/" + SERIALIZER_NAME + ".json";
+    }
+
+    /** The biome modifier entry that names the serializer registered under the mod's id. */
+    static byte[] dataEntry(String modId) {
+        return ("{\n  \"type\": \"" + modId + ":" + SERIALIZER_NAME + "\"\n}\n").getBytes(StandardCharsets.UTF_8);
     }
 
     /** The {@code @Mod} id a class declares, or null. */
@@ -367,7 +413,9 @@ public final class LegacyBiomeLoadingBridge {
                 };
             }
         }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        return id[0];
+        // An id that cannot be a resource namespace is ignored: its data entry would have no valid
+        // path, and Forge rejects such a mod anyway.
+        return id[0] != null && id[0].matches("[a-z0-9_.-]+") ? id[0] : null;
     }
 
     /** Calls the serializer registration first in every constructor. A static call may precede super(). */

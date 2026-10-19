@@ -7,7 +7,7 @@ package com.retromod.shim.neoforge;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
 
-/** NeoForge 1.20.2 to 1.20.3: no API breaks needing bytecode redirects. */
+/** NeoForge 1.20.2 to 1.20.3: the block constructors that 1.20.3 reshaped for block codecs. */
 public class NeoForge_1_20_2_to_1_20_3 implements VersionShim {
 
     @Override public String getShimName() { return "NeoForge 1.20.2 to 1.20.3"; }
@@ -17,6 +17,7 @@ public class NeoForge_1_20_2_to_1_20_3 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        com.retromod.shim.common.LegacyBlockConstructorBridge.register(transformer);
     }
 
     @Override

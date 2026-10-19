@@ -22,8 +22,8 @@ These need a manual port from the mod author.
 
 | Mod or family | Main reason |
 |---|---|
-| Custom worldgen on Minecraft 26.3 | 26.3 removed the worldgen configuration classes, so a feature, carver, or surface rule written against them has nothing to bind to |
-| Custom tools, beds, and signs on Minecraft 26.3 | 26.3 removed `AxeItem`, `HoeItem`, `ShovelItem`, `BedItem`, and `SignItem`, finishing the move to data-driven items |
+| Code that builds vanilla features on Minecraft 26.3 | 26.3 removed the worldgen configuration classes, so code that constructs `Feature.TREE`, `OreConfiguration`, or another vanilla feature configuration has nothing to bind to. A mod's own feature types and its worldgen data are converted |
+| Custom beds and signs on Minecraft 26.3 | 26.3 removed `BedItem` and `SignItem`, finishing the move to data-driven items. Tools that extend the removed `AxeItem`, `HoeItem`, or `ShovelItem` are rebuilt on item components |
 | Create and Flywheel | Custom rendering, contraption internals, and deep loader integration |
 | OptiFine | Proprietary coremod and renderer replacement |
 | VIC's Modern Warfare 1.12.2 | An FML core plugin rewrites the 1.12.2 camera, player model, and held-item renderers. Modern loaders never run core plugins, and those renderer classes no longer exist |
@@ -40,19 +40,21 @@ This list describes broad compatibility, not a judgment about those projects.
 ## Minecraft 26.3 Worldgen and Items
 
 26.3 deleted most of the worldgen configuration system rather than moving it. `FeatureConfiguration`
-and its roughly forty subclasses, `ConfiguredFeature`, `SurfaceRules`, `SurfaceSystem`,
-`BlockStateProviderType`, `PlacementModifierType`, and the carver configuration classes are all gone,
-with no successor to redirect to. A mod that registers its own features, carvers, or surface rules
-needs those parts rewritten against the new system.
+and its roughly forty subclasses, `ConfiguredFeature`, `SurfaceSystem`, `BlockStateProviderType`,
+`PlacementModifierType`, and the carver configuration classes are gone. Retromod converts a mod's
+worldgen data to the 26.3 format, keeps the mod's own feature types working, and follows the rename
+of `SurfaceRules` to `MaterialRules`. Code that constructs vanilla features itself, such as
+`Feature.TREE` with a `TreeConfiguration` or an `OreConfiguration`, has no successor to redirect to
+and still needs a port. A code-built biome that uses them falls back to a plain biome.
 
 Some neighbours only moved and are handled automatically: `DensityFunction` and `DensityFunctions`
 are now in `world/level/levelgen/densityfunction/`, and `RegistryCodecs` and `HolderSetCodec` are in
 `core/registries/codec/`.
 
 26.3 also finished the data-driven item migration by removing `AxeItem`, `HoeItem`, `ShovelItem`,
-`BedItem`, and `SignItem`. `PickaxeItem` and `SwordItem` had already gone in an earlier version. A
-mod whose tool class extends one of these needs porting to item components; there is no class to
-point the old name at.
+`BedItem`, and `SignItem`. `PickaxeItem` and `SwordItem` had already gone in an earlier version.
+Retromod rebuilds old tools and armor on item components, so a tool that extends one of the removed
+tool classes keeps working. Beds and signs that extend `BedItem` or `SignItem` still need porting.
 
 ## Large Version Jumps
 
@@ -60,7 +62,7 @@ Minecraft 1.13's flattening replaced major block, item, command, and registry AP
 
 Old Forge mods on modern NeoForge face another large API migration. Retromod bridges common 1.20.1 Forge registration, event-bus, networking, config, menu, capability, and custom registry paths. This is partial compatibility, not a complete Forge runtime. Data generation, rendering internals, or other deep Forge internals can still need a manual port. Use a Forge host when a mod depends heavily on those systems.
 
-Forge 1.21 also uses Mojang member names at runtime. Retromod can decode older SRG references and bridge the earlier networking surface, but Minecraft 1.21's data-driven enchantment system is not a member rename. A mod that subclasses the old `Enchantment` class or eagerly registers enchantment objects needs its data and behavior ported together.
+Forge 1.21 also uses Mojang member names at runtime. Retromod can decode older SRG references and bridge the earlier networking surface. Minecraft 1.21 made enchantments data-driven, and Retromod rebuilds an enchantment a Forge or NeoForge mod defines in code as data with its levels, costs, and flags. What the old class did in code, such as `doPostAttack`, does not run, so an enchantment whose effect lives there still needs a port.
 
 Fabric mods use intermediary names. On 26.1 and newer hosts, Retromod maps that namespace to Mojang names before applying later repairs. On pre-26.1 Fabric hosts, that global remap must stay off because the runtime is still intermediary-named. Retromod has curated intermediary bridges for common old text, entity, material, identifier, model, and entity-type changes, including real 1.16.5 to 1.20.1 launch coverage. It is not a complete translation of every redesigned pre-26 API.
 

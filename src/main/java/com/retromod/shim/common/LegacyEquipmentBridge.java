@@ -39,32 +39,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Rebuilds armor and tools from mods written before they became item components.
- *
- * <p>1.21.2 turned {@code ArmorMaterial} and {@code Tier} into records, and 1.21.5 deleted
- * {@code ArmorItem}, {@code SwordItem}, and the other tool classes in favor of
- * {@code Item.Properties.humanoidArmor}, {@code sword}, {@code pickaxe}, and so on. An older mod
- * then failed twice: its material enum implemented what is now a final record, which is
- * {@code IncompatibleClassChangeError} at load, and its items, rebased onto a plain {@code Item}, lost
- * their protection, damage, and mining speed.
- *
- * <p>In a jar written against the old interfaces they are renamed, before the remap, to generated
- * interfaces with the old methods, so the material classes load. The generated armor and tool bases
- * then pass their old constructor arguments to {@link LegacyEquipmentSupport}, which builds the
- * current record from the old methods once and applies the matching component, so the item is
- * armor or a tool again. Vanilla materials read through the old enums become views of the current
- * records. Old armor textures get the equipment asset the current renderer looks for.
- *
- * <p>Runs on hosts where {@code ArmorItem} is gone and {@code Item.Properties} has
- * {@code humanoidArmor}, read in Mojang names, so 26.x on every loader and NeoForge or Forge from
- * 1.21.5. A tool built from 1.20.5 to 1.21.1 that set its damage through {@code createAttributes}
- * keeps that attribute but gets no tool component. Dyeable armor loses its color layer.
- */
+/** Rebuilds armor and tools from mods written before they became item components. */
 public final class LegacyEquipmentBridge {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
 
+    // 1.21.2 turned ArmorMaterial and Tier into records, so an old material enum that implements
+    // them fails with IncompatibleClassChangeError at load. In a jar written against the old
+    // interfaces they are renamed, before the remap, to these generated ones with the old methods.
     static final String ARMOR_MATERIAL = "com/retromod/generated/LegacyEquipmentArmorMaterial";
     static final String TIER = "com/retromod/generated/LegacyEquipmentTier";
     static final String ARMOR_VIEW = "com/retromod/generated/LegacyEquipmentArmorView";
@@ -155,6 +137,12 @@ public final class LegacyEquipmentBridge {
         }
         registerSurvivingToolConstructors(transformer);
         registerDyeableBases(transformer);
+        // 1.21.5 deleted ArmorItem, SwordItem and the other tool classes, so an old item on a plain
+        // Item lost its protection, damage and mining speed. Each generated base passes its old
+        // constructor arguments to LegacyEquipmentSupport, which builds the current record once and
+        // applies the matching component. A 1.20.5 to 1.21.1 tool that set its damage through
+        // createAttributes keeps that attribute but gets no tool component. Dyeable armor loses
+        // its color layer.
         BASES.forEach((base, key) -> {
             if (transformer.getSyntheticClasses().containsKey(base)) {
                 String[] interfaces = base.contains("Dyeable") ? new String[]{DYEABLE} : new String[0];
@@ -292,7 +280,10 @@ public final class LegacyEquipmentBridge {
         return cw.toByteArray();
     }
 
+    /** Whether the host builds armor and tools from item components instead of the old classes. */
     static boolean hostUsesComponents() {
+        // ArmorItem gone and Item.Properties.humanoidArmor present, read in Mojang names: 26.x on
+        // every loader, and NeoForge or Forge from 1.21.5.
         ClassNode properties = ClassResourceInspector.read("net/minecraft/world/item/Item$Properties");
         if (properties == null) {
             // Offline, or a Fabric host before 26.1 whose runtime names are not Mojang's.
@@ -302,15 +293,9 @@ public final class LegacyEquipmentBridge {
                 && !ClassResourceInspector.exists("net/minecraft/world/item/ArmorItem");
     }
 
-    /**
-     * Renames the old interfaces in a jar written against them, before the class transform, and
-     * gives its old armor textures the equipment assets the current renderer reads.
-     *
-     * @return the number of classes rewritten
-     */
+    /** Renames the old interfaces in a jar written against them and returns how many classes changed. */
     public static int renameInLegacyJar(RetromodTransformer transformer, Path root) throws IOException {
         if (!isRegistered(transformer)) return 0;
-        migrateArmorTextures(root);
         List<Path> classFiles;
         try (var stream = Files.walk(root)) {
             classFiles = stream.filter(p -> p.toString().endsWith(".class")).toList();
@@ -545,44 +530,31 @@ public final class LegacyEquipmentBridge {
     private static final Pattern OLD_HORSE_TEXTURE =
             Pattern.compile("assets/([^/]+)/textures/entity/horse/armor/horse_armor_(.+)\\.png");
 
-    /**
-     * Gives old armor textures the equipment assets 1.21.2 renders from.
-     * {@code textures/models/armor/<name>_layer_1.png} and {@code _layer_2.png} become the
-     * {@code humanoid} and {@code humanoid_leggings} layers, and
-     * {@code textures/entity/horse/armor/horse_armor_<name>.png} becomes the {@code horse_body}
-     * layer, all described by {@code equipment/<name>.json}. A mod that already ships that asset is
-     * left alone.
-     */
-    static void migrateArmorTextures(Path root) throws IOException {
-        Path assets = root.resolve("assets");
-        if (!Files.isDirectory(assets)) return;
-        List<String> entries;
-        try (var stream = Files.walk(root)) {
-            entries = stream.filter(Files::isRegularFile)
-                    .map(p -> root.relativize(p).toString().replace('\\', '/')).toList();
-        }
-        Map<String, byte[]> added = armorAssetEntries(entries, name -> {
-            try {
-                return Files.readAllBytes(root.resolve(name));
-            } catch (IOException unreadable) {
-                return null;
-            }
-        });
-        for (Map.Entry<String, byte[]> entry : added.entrySet()) {
-            Path target = root.resolve(entry.getKey());
-            Files.createDirectories(target.getParent());
-            Files.write(target, entry.getValue());
-        }
-    }
-
-    /**
-     * The entries {@link #migrateArmorTextures} would add to a jar with these entries, for paths
-     * that write a jar entry by entry. Existing entries are never replaced.
-     */
+    /** The entries to add to a jar so its old armor textures get the equipment assets 1.21.2 renders from. */
     public static Map<String, byte[]> armorAssetEntries(java.util.Collection<String> entries,
                                                        java.util.function.Function<String, byte[]> read) {
+        // The shared resource migration writes these on every transform path, through the
+        // overload that names the host.
+        return armorAssetEntries(entries, read, RetromodVersion.TARGET_MC_VERSION);
+    }
+
+    /** The same entries for {@code targetMcVersion}, which decides the vanilla assets not to shadow. */
+    public static Map<String, byte[]> armorAssetEntries(java.util.Collection<String> entries,
+                                                       java.util.function.Function<String, byte[]> read,
+                                                       String targetMcVersion) {
+        return armorAssetEntries(entries, read, targetMcVersion, Map.of());
+    }
+
+    /** The same, plus assets for armor that chose its textures in code, as Forge's getArmorTexture did. */
+    public static Map<String, byte[]> armorAssetEntries(java.util.Collection<String> entries,
+                                                       java.util.function.Function<String, byte[]> read,
+                                                       String targetMcVersion,
+                                                       Map<String, Map<String, String>> chosenLayers) {
         Map<String, Map<String, String>> layersByAsset = new LinkedHashMap<>();
         Map<String, Map<String, String>> overlaysByAsset = new LinkedHashMap<>();
+        // textures/models/armor/<name>_layer_1.png and _layer_2.png become the humanoid and
+        // humanoid_leggings layers, and textures/entity/horse/armor/horse_armor_<name>.png becomes
+        // the horse_body layer, all described by equipment/<name>.json.
         for (String entry : entries) {
             Matcher armor = OLD_ARMOR_TEXTURE.matcher(entry);
             Matcher overlay = OLD_ARMOR_OVERLAY.matcher(entry);
@@ -598,12 +570,17 @@ public final class LegacyEquipmentBridge {
                         .put("horse_body", entry);
             }
         }
+        // chosenLayers maps an asset id (namespace:name) to the texture entry for each layer type.
+        // An asset the old textures/models/armor/ files already describe keeps those, since the
+        // material's own textures are what every piece without such code showed.
+        chosenLayers.forEach((asset, layers) -> layersByAsset.putIfAbsent(asset, new LinkedHashMap<>(layers)));
         Set<String> existing = new java.util.HashSet<>(entries);
         Map<String, byte[]> added = new LinkedHashMap<>();
         for (Map.Entry<String, Map<String, String>> asset : layersByAsset.entrySet()) {
             String namespace = asset.getKey().substring(0, asset.getKey().indexOf(':'));
             String name = asset.getKey().substring(namespace.length() + 1);
             String json = "assets/" + namespace + "/equipment/" + name + ".json";
+            // An entry the jar already has is never replaced.
             if (existing.contains(json)) continue;
             Map<String, String> overlays = overlaysByAsset.getOrDefault(asset.getKey(), Map.of());
             StringBuilder layers = new StringBuilder();
@@ -632,11 +609,48 @@ public final class LegacyEquipmentBridge {
                 layers.append("    \"").append(layer.getKey()).append("\": ").append(value);
             }
             if (layers.length() == 0) continue;
+            // Never shadow a vanilla asset the host ships. A resource asset replaces vanilla's
+            // instead of merging, so a mod retexturing iron armor would drop the layers vanilla
+            // gives iron for horses, babies and trims. The layer textures added above still apply
+            // through vanilla's own asset, as the old texture overrode vanilla's.
+            if (namespace.equals("minecraft") && hostShipsEquipmentAsset(name, targetMcVersion)) continue;
             added.put(json, ("{\n  \"layers\": {\n" + layers + "\n  }\n}\n").getBytes(StandardCharsets.UTF_8));
         }
         byte[] dyeableTag = dyeableTag(entries, existing, read);
         if (dyeableTag != null) added.put(DYEABLE_TAG, dyeableTag);
         return added;
+    }
+
+    /** Each vanilla equipment asset id, with the first version whose client jar ships it. */
+    private static final Map<String, String> VANILLA_EQUIPMENT_ASSETS = vanillaEquipmentAssets();
+
+    private static Map<String, String> vanillaEquipmentAssets() {
+        // Read from assets/minecraft/equipment/ in the 1.21.4, 1.21.5, 1.21.6, 1.21.8, 1.21.9,
+        // 1.21.10, 1.21.11, 26.1 and 26.3 client jars. Only the ids; nothing of vanilla's is copied.
+        Map<String, String> since = new java.util.HashMap<>();
+        for (String id : List.of("leather", "chainmail", "iron", "gold", "diamond", "netherite",
+                "turtle_scute", "armadillo_scute", "elytra", "trader_llama")) {
+            since.put(id, "1.21.4");
+        }
+        since.put("saddle", "1.21.5");
+        // Copper is vanilla only from 1.21.9, so an old minecraft:copper armor still needs its own
+        // asset on 1.21.5 to 1.21.8.
+        since.put("copper", "1.21.9");
+        since.put("trader_llama_baby", "26.1");
+        for (String color : List.of("white", "orange", "magenta", "light_blue", "yellow", "lime",
+                "pink", "gray", "light_gray", "cyan", "purple", "blue", "brown", "green", "red",
+                "black")) {
+            since.put(color + "_carpet", "1.21.4");
+            since.put(color + "_harness", "1.21.6");
+        }
+        return Map.copyOf(since);
+    }
+
+    /** Whether {@code targetMcVersion} ships the vanilla equipment asset {@code id}. */
+    static boolean hostShipsEquipmentAsset(String id, String targetMcVersion) {
+        String since = VANILLA_EQUIPMENT_ASSETS.get(id);
+        return since != null && targetMcVersion != null
+                && RetromodVersion.compareMcVersions(targetMcVersion, since) >= 0;
     }
 
     /** Leather's undyed color as an ARGB int, which the equipment asset expects. */

@@ -21,14 +21,7 @@ import java.util.jar.*;
 import java.util.zip.*;
 import java.util.regex.*;
 
-/**
- * Transforms Fabric mods to work on newer Minecraft versions.
- *
- * <p>We rewrite the mod's own fabric.mod.json to declare the target version
- * (fabric_loader_dependencies.json has timing issues), same as the
- * Forge/NeoForge path. Flow: extract JAR, transform bytecode, patch
- * fabric.mod.json, repackage with a -retromod suffix.
- */
+/** Transforms Fabric mods to work on newer Minecraft versions. */
 public class FabricModTransformer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-FabricTransform");
@@ -107,6 +100,8 @@ public class FabricModTransformer {
 
     private final String targetMcVersion;
     private final RetromodTransformer bytecodeTransformer;
+    /** Libraries translated before the current jar, whose stand-in copies it may reuse. */
+    private SyntheticLibraries syntheticLibraries = SyntheticLibraries.NONE;
 
     public FabricModTransformer(String targetMcVersion) {
         this.targetMcVersion = targetMcVersion;
@@ -121,7 +116,22 @@ public class FabricModTransformer {
      * @return the transformed JAR, or null if failed/skipped
      */
     public Path transformMod(Path sourceJar, Path outputDir) throws IOException {
-        return transformMod(sourceJar, outputDir, null, false);
+        return transformMod(sourceJar, outputDir, SyntheticLibraries.NONE);
+    }
+
+    /**
+     * Transforms a mod that may build on {@code libraries}, the translated jars handled before it.
+     * Fabric loads every mod through one class loader, but an addon still has to name its
+     * library's copy of a stand-in for a call into the library to link.
+     */
+    public Path transformMod(Path sourceJar, Path outputDir, SyntheticLibraries libraries)
+            throws IOException {
+        SyntheticLibraries previous = useLibraries(libraries);
+        try {
+            return transformMod(sourceJar, outputDir, null, false);
+        } finally {
+            syntheticLibraries = previous;
+        }
     }
 
     /**
@@ -130,9 +140,20 @@ public class FabricModTransformer {
      * <p>The supplied version remains authoritative even when it is {@code null}. This keeps a
      * Quilt input from falling back to a conflicting {@code fabric.mod.json} declaration.
      */
-    Path transformModWithAuthoritativeMinecraftVersion(
-            Path sourceJar, Path outputDir, String sourceMcVersion) throws IOException {
-        return transformMod(sourceJar, outputDir, sourceMcVersion, true);
+    Path transformModWithAuthoritativeMinecraftVersion(Path sourceJar, Path outputDir,
+            String sourceMcVersion, SyntheticLibraries libraries) throws IOException {
+        SyntheticLibraries previous = useLibraries(libraries);
+        try {
+            return transformMod(sourceJar, outputDir, sourceMcVersion, true);
+        } finally {
+            syntheticLibraries = previous;
+        }
+    }
+
+    private SyntheticLibraries useLibraries(SyntheticLibraries libraries) {
+        SyntheticLibraries previous = syntheticLibraries;
+        syntheticLibraries = libraries == null ? SyntheticLibraries.NONE : libraries;
+        return previous;
     }
 
     private Path transformMod(Path sourceJar, Path outputDir, String sourceMcVersion,
@@ -190,11 +211,19 @@ public class FabricModTransformer {
             LOGGER.debug("Could not check for OptiFine: {}", e.getMessage());
         }
 
+        // Extract the jar, transform its bytecode, patch fabric.mod.json, and repackage it with a
+        // -retromod suffix.
         Path tempDir = Files.createTempDirectory("retromod-fabric-");
 
         // For error reporting
         String modId = extractModId(sourceJar);
         String sourceVersion = modMcVersion;
+        // The bytecode pass reads the mod's own version until the finally block clears it.
+        bytecodeTransformer.setModSourceVersion(modMcVersion);
+        com.retromod.loaderapi.LoaderApiRuntime.prepare(bytecodeTransformer,
+                new com.retromod.loaderapi.LoaderApiContext("fabric", targetMcVersion,
+                        com.retromod.loaderapi.LoaderApiContext.TransformPath.FABRIC_JAR,
+                        modMcVersion));
 
         try {
             extractJar(sourceJar, tempDir);
@@ -214,22 +243,27 @@ public class FabricModTransformer {
             // Old mods bundle stale Fabric API modules that clash with the installed one.
             stripBundledFabricApiJars(tempDir);
 
+            // The mod's own fabric.mod.json declares the target version, as on the Forge and
+            // NeoForge path. fabric_loader_dependencies.json has timing issues.
             updateFabricModJson(tempDir);
 
-            // Data-only 1.21.x -> 26.x format changes the bytecode pass can't reach
-            // (chain -> iron_chain, dyed_color object -> int, advancement icon item -> id,
-            // custom_model_data int -> object, entity_type tag potion split). Gated to
-            // 26.x inside ModDataMigrator.
-            int dataMigrated = com.retromod.resources.ModDataMigrator.migrateTreeChecked(
-                    tempDir, targetMcVersion);
+            // The mod's own resources and data, through the same converters every path runs.
+            // The source version comes from the source jar, never the rewritten tree.
+            int dataMigrated = com.retromod.resources.ModResourceMigrations.migrateDirectory(
+                    tempDir, resourceContext(sourceJar, false));
             if (dataMigrated > 0) {
-                LOGGER.info("Migrated 26.x data formats in {} data file(s)", dataMigrated);
+                LOGGER.info("Updated {} resource and data file(s)", dataMigrated);
             }
 
             repackageJar(tempDir, outputJar, sourceJar,
                     originalName, 0, !nestedArchivesPrepared);
 
             LOGGER.info("Created transformed mod: {}", outputJar.getFileName());
+
+            // With the loader API runtime on, name each Fabric API reference it still cannot serve.
+            if (loaderApiIdentity() != null) {
+                reportMissingFabricApi(outputJar, originalName);
+            }
 
             if (!ModHealthChecker.validateTransformation(sourceJar, outputJar)) {
                 LOGGER.warn("Transformation validation failed for {}, but continuing anyway", originalName);
@@ -282,8 +316,42 @@ public class FabricModTransformer {
             throw new IOException("Transformation failed for " + originalName + ": " + e.getMessage(), e);
 
         } finally {
+            bytecodeTransformer.setModSourceVersion(null);
             deleteRecursively(tempDir);
         }
+    }
+
+    /** Logs the Fabric API references the host lacks, in the jar and the jars it nests; never fails the transform. */
+    private void reportMissingFabricApi(Path outputJar, String originalName) {
+        try {
+            com.retromod.loaderapi.fabric.v26.FabricApiLinkCheck.reportJar(
+                    Files.readAllBytes(outputJar), originalName, targetMcVersion);
+        } catch (IOException | RuntimeException e) {
+            LOGGER.debug("Could not check Fabric API references of {}: {}", originalName,
+                    e.getMessage());
+        }
+    }
+
+    /** The loader API runtime identity for jars this transformer writes, or null while it is off. */
+    private String loaderApiIdentity() {
+        return com.retromod.loaderapi.LoaderApiRuntime.translationIdentity("fabric", targetMcVersion);
+    }
+
+    /** The resource migration context for one jar on this host. */
+    private com.retromod.resources.MigrationContext resourceContext(Path sourceJar,
+            boolean nested) {
+        var source = com.retromod.resources.SourceVersionResolver.inspect(sourceJar);
+        // A Quilt mod keeps Quilt as its target loader, since it runs on a Quilt host, which reads
+        // Fabric's resource conditions.
+        return com.retromod.resources.MigrationContext.builder(targetMcVersion)
+                .source(source)
+                .targetLoader(source.loader() == com.retromod.resources.MigrationContext.Loader.QUILT
+                        ? com.retromod.resources.MigrationContext.Loader.QUILT
+                        : com.retromod.resources.MigrationContext.Loader.FABRIC)
+                .equipmentAssets(com.retromod.shim.common.LegacyEquipmentBridge
+                        .isRegistered(bytecodeTransformer))
+                .nested(nested)
+                .build();
     }
 
     /** Read the mod ID from fabric.mod.json. */
@@ -546,6 +614,10 @@ public class FabricModTransformer {
 
         // ASM needs the mod's own class hierarchy before those classes are on the classpath.
         bytecodeTransformer.setJarClassBytesProvider(originalClasses::get);
+        // A block filled into a static field of one class can be registered by another, so the
+        // jar's registry ids are indexed from all its classes before any is transformed.
+        bytecodeTransformer.setJarRegistryIds(
+                bytecodeTransformer.indexJarRegistryIds(originalClasses.values()));
         // Workers and Mixin both load ASM lazily under Knot; load it here so they cannot deadlock.
         com.retromod.core.parallel.SharedLibraryPreloader.preload(
                 FabricModTransformer.class.getClassLoader());
@@ -613,6 +685,7 @@ public class FabricModTransformer {
             });
         } finally {
             bytecodeTransformer.clearJarClassBytesProvider();
+            bytecodeTransformer.clearJarRegistryIds();
         }
 
         return counter.get();
@@ -1103,6 +1176,8 @@ public class FabricModTransformer {
             LOGGER.debug("Keeping bundled provider JAR unchanged: {}", jarFile.getFileName());
             return false;
         }
+        // A bundled library is built for whatever its own metadata says, read before it is rewritten.
+        com.retromod.resources.MigrationContext resources = resourceContext(jarFile, true);
         Path tempDir = Files.createTempDirectory("retromod-jij-");
         try {
             extractJar(jarFile, tempDir, nestedBudget);
@@ -1175,11 +1250,9 @@ public class FabricModTransformer {
                 }
                 if (unsealSealedSupertypes(tempDir)) metadataChanged = true;
 
-                // Migrate data-pack JSON inside the JIJ too; counts toward repackage.
-                int nestedDataMigrated =
-                        com.retromod.resources.ModDataMigrator.migrateTreeChecked(
-                                tempDir, targetMcVersion);
-                remapped += nestedDataMigrated;
+                // The nested jar's own resources and data; counts toward repackage.
+                remapped += com.retromod.resources.ModResourceMigrations.migrateDirectory(
+                        tempDir, resources);
 
                 if (remapped > 0 || metadataChanged) {
                     Path tempJar = Files.createTempFile(jarFile.getParent(),
@@ -1682,13 +1755,20 @@ public class FabricModTransformer {
         manifest.getMainAttributes().putValue("Retromod-Transformed", "true");
         manifest.getMainAttributes().putValue("Retromod-Target-Version",
                 ZipSecurity.sanitizeManifestValue(targetMcVersion));
+        // The runtime rows are part of the jar's translation identity; absent while it is off.
+        String loaderApiIdentity = depth == 0 ? loaderApiIdentity() : null;
+        if (loaderApiIdentity != null) {
+            manifest.getMainAttributes().putValue(
+                    com.retromod.loaderapi.LoaderApiRuntime.MANIFEST_ATTRIBUTE, loaderApiIdentity);
+        }
 
         // Fabric uses one Knot class loader for every mod. Keeping generated helpers at
         // their shared registration names lets an older transformed jar win class lookup
         // for every other mod. Relocate only the helpers this jar references, just as the
         // module-based loaders do, so their bytecode and listener types stay per-mod.
-        SyntheticEmbedder.embed(sourceDir, archiveKey,
-                bytecodeTransformer);
+        // Only the outer jar links to libraries; a nested jar keeps its own copies.
+        SyntheticEmbedder.embed(sourceDir, archiveKey, bytecodeTransformer,
+                depth == 0 ? syntheticLibraries : SyntheticLibraries.NONE);
         if (SyntheticEmbedder.hasRegisteredSyntheticReferences(
                 sourceDir, bytecodeTransformer)) {
             throw new IOException("could not relocate every generated compatibility class in "
@@ -1977,6 +2057,8 @@ public class FabricModTransformer {
             LOGGER.debug("Keeping bundled provider JAR unchanged: {}", name);
             return false;
         }
+        // A bundled library is built for whatever its own metadata says, read before it is rewritten.
+        com.retromod.resources.MigrationContext resources = resourceContext(jijJar, true);
         Path tempDir = Files.createTempDirectory("retromod-jij-");
         try {
                 extractJar(jijJar, tempDir, nestedBudget);
@@ -1993,9 +2075,12 @@ public class FabricModTransformer {
 
                 // Transform class files (intermediary→Mojang remapping)
                 Map<String, byte[]> hierarchyClassLookup = buildClassLookup(tempDir);
-                // The lookup is keyed by entry path, but the transformer asks by internal name.
+                // The lookup is keyed by entry path, but the transformer asks by internal name. The
+                // library's registry ids are indexed from all its classes before any is rewritten.
                 try (var hierarchyScope = bytecodeTransformer.pushJarClassBytesProvider(
                             internalName -> hierarchyClassLookup.get(internalName + ".class"));
+                     var registryIds = bytecodeTransformer.pushJarRegistryIds(
+                            bytecodeTransformer.indexJarRegistryIds(hierarchyClassLookup.values()));
                      var classStream = Files.walk(tempDir)) {
                     for (Path file : classStream.filter(f -> f.toString().endsWith(".class")).toList()) {
                         try {
@@ -2036,6 +2121,15 @@ public class FabricModTransformer {
                             }
                         }
                     }
+                }
+
+                // Pre-26.1 hosts reach nested jars only through this method, so their data and
+                // assets need the same migration as the outer mod's. It runs before the embed, as
+                // on every other path, so no converter reads Retromod's embedded classes as the
+                // library's own.
+                if (com.retromod.resources.ModResourceMigrations.migrateDirectory(
+                        tempDir, resources) > 0) {
+                    modified = true;
                 }
 
                 // Fabric Loader treats a JiJ as a separate mod, but it still shares Knot's

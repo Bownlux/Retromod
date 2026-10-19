@@ -11,9 +11,15 @@ public final class RetromodVersion {
     public static volatile String TARGET_MC_VERSION = "1.21.4";
 
     /** Retromod version used by loader metadata and transform cache keys. */
-    public static final String RETROMOD_VERSION = "1.4.0-snapshot.1";
+    public static final String RETROMOD_VERSION = "1.4.0-snapshot.2";
 
     private RetromodVersion() {}
+
+    /** Snapshot builds try new runtimes by default; release candidates and stable builds do not. */
+    public static boolean isSnapshotBuild(String retromodVersion) {
+        return retromodVersion != null
+                && retromodVersion.toLowerCase(java.util.Locale.ROOT).contains("-snapshot");
+    }
 
     private static volatile boolean bannerLogged = false;
 

@@ -71,11 +71,12 @@ class Mc26_2To26_3CoreMovesTest {
             assertFalse(present.contains(move.getKey()),
                     "26.3 still declares " + move.getKey()
                             + ", so redirecting it would hijack a live class");
-            // A removed base points at its generated stand-in, which Retromod embeds itself.
-            boolean generated = move.getValue().startsWith("com/retromod/generated/")
+            // A removed class may point at a stand-in, such as a generated base or the loot number
+            // provider, which Retromod embeds into the mod itself.
+            boolean standIn = move.getValue().startsWith("com/retromod/")
                     && RetromodTransformer.getInstance().getSyntheticClasses()
                             .containsKey(move.getValue());
-            assertTrue(present.contains(move.getValue()) || generated,
+            assertTrue(present.contains(move.getValue()) || standIn,
                     "26.3 does not declare " + move.getValue() + ", so the move points nowhere");
         }
     }

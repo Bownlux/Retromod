@@ -38,10 +38,51 @@ record PackFormat(int major, int minor) implements Comparable<PackFormat> {
         entry("26.3", 97, 1, 121, 0)
     );
 
+    // Data formats before 1.20, which TARGETS leaves out because Retromod does not run there. They
+    // only tell how old a data pack is, never pick a host. Data packs began at 1.13 with format 4.
+    private static final Map<String, Integer> LEGACY_DATA_FORMATS = Map.of(
+        "1.13", 4, "1.15", 5, "1.16.2", 6, "1.17", 7, "1.18", 8, "1.18.2", 9, "1.19", 10,
+        "1.19.4", 12);
+
+    // The last release that read each resource pack format before 1.13. Packs of these formats
+    // still used .lang files and case-insensitive identifiers.
+    private static final Map<Integer, String> PRE_1_13_RESOURCE_FORMATS = Map.of(
+        1, "1.8.9", 2, "1.10.2", 3, "1.12.2");
+
     PackFormat {
         if (major < 0 || minor < 0) {
             throw new IllegalArgumentException("Pack format components must be nonnegative");
         }
+    }
+
+    /** The newest release whose data packs declare {@code format} or an older one, or null below 4. */
+    static String minecraftVersionForData(PackFormat format) {
+        // A data pack built for an older game is migrated from that game's layout. No data pack
+        // used a format below 4, so nothing matches there.
+        String newest = null;
+        for (Map.Entry<String, TargetFormats> target : TARGETS.entrySet()) {
+            newest = newerIfWithin(newest, target.getKey(), target.getValue().data(), format);
+        }
+        for (Map.Entry<String, Integer> legacy : LEGACY_DATA_FORMATS.entrySet()) {
+            newest = newerIfWithin(newest, legacy.getKey(), new PackFormat(legacy.getValue(), 0),
+                format);
+        }
+        return newest;
+    }
+
+    /** The newest release that reads a pre-1.13 resource pack of {@code format}, or null from format 4. */
+    static String minecraftVersionForPre113Resources(PackFormat format) {
+        return PRE_1_13_RESOURCE_FORMATS.get(format.major());
+    }
+
+    private static String newerIfWithin(String newest, String version, PackFormat versionFormat,
+                                        PackFormat declared) {
+        if (versionFormat.compareTo(declared) > 0) return newest;
+        if (newest == null
+                || com.retromod.core.RetromodVersion.compareMcVersions(version, newest) > 0) {
+            return version;
+        }
+        return newest;
     }
 
     static PackFormat resourceTarget(String minecraftVersion) {
@@ -50,6 +91,15 @@ record PackFormat(int major, int minor) implements Comparable<PackFormat> {
 
     static PackFormat dataTarget(String minecraftVersion) {
         return target(minecraftVersion).data();
+    }
+
+    /** The host's resource format, or null for a host the format table does not cover. */
+    static PackFormat resourceTargetOrNull(String minecraftVersion) {
+        try {
+            return resourceTarget(minecraftVersion);
+        } catch (IllegalArgumentException unsupported) {
+            return null;
+        }
     }
 
     /**

@@ -13,33 +13,13 @@ import org.objectweb.asm.MethodVisitor;
 
 import static org.objectweb.asm.Opcodes.*;
 
-/**
- * MC 26.1 purged the single-argument {@code is(...)} convenience overloads that virtually every mod
- * calls (verified against the real 26.1 + 26.2 jars): {@code BlockStateBase} keeps only
- * {@code is(TagKey, Predicate)} (so {@code is(Block)}, {@code is(TagKey)}, {@code is(Holder)},
- * {@code is(ResourceKey)} are gone), {@code ItemStack} keeps only {@code is(Predicate<Holder>)}
- * (so {@code is(Item)}, {@code is(TagKey)}, {@code is(Holder)} are gone), and {@code FluidState}
- * lost all of its {@code is(...)} overloads. A 1.21.x mod dies at first use with
- * {@code NoSuchMethodError} - e.g. Macaw's Bridges crashed the server tick loop in
- * {@code Bridge_Block.onPlace} calling {@code BlockState.is(Block)} on block placement.
- *
- * <p>This synthetic carries static reimplementations of the removed overloads (each a faithful copy
- * of the old vanilla implementation, using only members verified present on 26.1/26.2:
- * {@code getBlock()}, {@code builtInRegistryHolder()}, {@code Holder.is(...)}, {@code getItem()},
- * {@code getType()}, {@code typeHolder()}). The old calls are rewritten to it with devirtualized
- * method redirects (receiver becomes argument 0). Registered from the 1.21.11 -> 26.1 shims (the
- * layer where the overloads died), so every chain targeting 26.1+ gets it on all three loaders;
- * the synthetic reaches the mod jar via the Fabric synthetic-writing pass or the NeoForge/Forge
- * {@link com.retromod.core.SyntheticEmbedder}.
- *
- * <p>The same synthetic also carries focused adapters for other direct API reshapes found in
- * real transformed mods. Keeping these small helpers together lets the embedder relocate only one
- * compatibility surface per mod, plus the predicate adapter when that specific bridge is used.
- */
+/** Restores the {@code is(...)} overloads 26.1 removed, plus a few other small vanilla reshapes. */
 public final class IsOverloadBridgeSynthetic {
 
     private IsOverloadBridgeSynthetic() {}
 
+    // One synthetic also holds small adapters for other direct API reshapes found in real mods, so
+    // the embedder relocates one compatibility surface per mod, plus the predicate adapter when used.
     public static final String INTERNAL = "com/retromod/shim/common/embedded/IsOverloadBridge";
 
     // Owners whose calls get redirected. javac emits the receiver's static type, which for mod code
@@ -82,6 +62,7 @@ public final class IsOverloadBridgeSynthetic {
     private static final String L_LIVING_ENTITY = "L" + LIVING_ENTITY + ";";
     private static final String L_PHANTOM = "L" + PHANTOM + ";";
     private static final String L_DAMAGE_SOURCE = "L" + DAMAGE_SOURCE + ";";
+    private static final String LIVING_HURT_CLIENT = "(" + L_LIVING_ENTITY + L_DAMAGE_SOURCE + "F)Z";
     private static final String L_TARGETING_CONDITIONS = "L" + TARGETING_CONDITIONS + ";";
     private static final String L_TARGETING_SELECTOR = "L" + TARGETING_SELECTOR + ";";
     private static final String L_LEVEL = "L" + LEVEL + ";";
@@ -114,10 +95,17 @@ public final class IsOverloadBridgeSynthetic {
 
     /** Register the synthetic classes and their exact removed-method rewrites. */
     public static void register(RetromodTransformer t) {
+        // The 1.21.11 to 26.1 shims register this, so every chain to 26.1+ gets it on all three
+        // loaders. The Fabric synthetic pass or the NeoForge and Forge SyntheticEmbedder puts the
+        // class in the mod jar.
         t.registerSyntheticClass(INTERNAL, generate());
         t.registerSyntheticClass(PREDICATE_SELECTOR_INTERNAL, generatePredicateSelector());
 
-        // BlockState.is(...) - both plausible call-site owners map to the same helpers.
+        // 26.1 removed the single-argument is(...) that nearly every mod calls, so a 1.21.x mod died
+        // with NoSuchMethodError at first use. Each old call becomes a static helper call, with the
+        // receiver as argument 0.
+        // BlockState.is(...) - both plausible call-site owners map to the same helpers. Only
+        // is(TagKey, Predicate) is left on BlockStateBase.
         for (String owner : new String[]{BS, BSB}) {
             t.registerMethodRedirect(owner, "is", "(" + L_BLOCK + ")Z",
                     INTERNAL, "blockStateIs", "(" + L_BSB + L_BLOCK + ")Z", true);
@@ -128,14 +116,14 @@ public final class IsOverloadBridgeSynthetic {
             t.registerMethodRedirect(owner, "is", "(" + L_RK + ")Z",
                     INTERNAL, "blockStateIsKey", "(" + L_BSB + L_RK + ")Z", true);
         }
-        // ItemStack.is(...)
+        // ItemStack.is(...); only is(Predicate<Holder>) is left.
         t.registerMethodRedirect(STACK, "is", "(" + L_ITEM + ")Z",
                 INTERNAL, "itemStackIs", "(" + L_STACK + L_ITEM + ")Z", true);
         t.registerMethodRedirect(STACK, "is", "(" + L_TAG + ")Z",
                 INTERNAL, "itemStackIsTag", "(" + L_STACK + L_TAG + ")Z", true);
         t.registerMethodRedirect(STACK, "is", "(" + L_HOLDER + ")Z",
                 INTERNAL, "itemStackIsHolder", "(" + L_STACK + L_HOLDER + ")Z", true);
-        // FluidState.is(...)
+        // FluidState.is(...); every overload is gone.
         t.registerMethodRedirect(FLUID_STATE, "is", "(" + L_FLUID + ")Z",
                 INTERNAL, "fluidStateIs", "(" + L_FS + L_FLUID + ")Z", true);
         t.registerMethodRedirect(FLUID_STATE, "is", "(" + L_TAG + ")Z",
@@ -148,10 +136,11 @@ public final class IsOverloadBridgeSynthetic {
 
         // The old combined hurt method was mapped onto hurtClient during intermediary remapping,
         // even though the amount proves it is the pre-split API. hurtOrSimulate is the modern
-        // dispatcher that preserves both server damage and client simulation behavior.
+        // dispatcher that preserves both server damage and client simulation behavior. A mob's
+        // own override of the old method runs first, as the call reached it on the mod's version.
         t.registerMethodRedirect(LIVING_ENTITY, "hurtClient", "(" + L_DAMAGE_SOURCE + "F)Z",
-                INTERNAL, "livingEntityHurtClient",
-                "(" + L_LIVING_ENTITY + L_DAMAGE_SOURCE + "F)Z", true);
+                INTERNAL, "livingEntityHurtClient", LIVING_HURT_CLIENT, true);
+        OwnOverrideCall.register(t, INTERNAL, "livingEntityHurtClient", LIVING_HURT_CLIENT);
 
         // LivingEntity.canAttack(target, conditions) was replaced by the level-aware
         // TargetingConditions.test call. Revamped Phantoms emits Phantom as the call owner, so
@@ -258,6 +247,7 @@ public final class IsOverloadBridgeSynthetic {
         };
     }
 
+    /** Builds the helper class; its is(...) helpers use only members present on 26.1 and 26.2. */
     public static byte[] generate() {
         ClassWriter cw = newWriter();
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL, INTERNAL, null, "java/lang/Object", null);
@@ -420,9 +410,22 @@ public final class IsOverloadBridgeSynthetic {
 
     /** Route the old combined damage call through the modern server-or-client dispatcher. */
     private static void emitLivingEntityHurtClient(ClassWriter cw) {
-        MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "livingEntityHurtClient",
-                "(" + L_LIVING_ENTITY + L_DAMAGE_SOURCE + "F)Z", null, null);
+        String name = "livingEntityHurtClient";
+        // The mob's own override of the old method runs first, when its class declares one.
+        OwnOverrideCall.declareLookup(cw, "ownHurtClient");
+        MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, name, LIVING_HURT_CLIENT, null, null);
         m.visitCode();
+        OwnOverrideCall.emitOwnCall(m, INTERNAL, "ownHurtClient", "hurtClient", LIVING_HURT_CLIENT,
+                OwnOverrideCall.ownArguments(LIVING_HURT_CLIENT));
+        emitHurtOrSimulate(m);
+        // The super$ twin answers that override's super call with the dispatcher only.
+        MethodVisitor superCall = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, OwnOverrideCall.superName(name),
+                LIVING_HURT_CLIENT, null, null);
+        superCall.visitCode();
+        emitHurtOrSimulate(superCall);
+    }
+
+    private static void emitHurtOrSimulate(MethodVisitor m) {
         m.visitVarInsn(ALOAD, 0);
         m.visitVarInsn(ALOAD, 1);
         m.visitVarInsn(FLOAD, 2);

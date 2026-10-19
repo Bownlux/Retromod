@@ -72,7 +72,7 @@ class LegacyToolAndMemberBridgeTest {
         RetromodTransformer transformer = RetromodTransformer.getInstance();
         transformer.clearRedirectsForTesting();
         Legacy1205MemberBridge.registerRedirects(transformer, Legacy1205MemberBridge.MEMBERS,
-                List.of(Legacy1205MemberBridge.CLASS_RENAMES), true);
+                List.of(Legacy1205MemberBridge.CLASS_RENAMES), true, Legacy1205MemberBridge.HostShape.AT_1_20_5);
 
         ClassNode node = node(transformer.transformClass(entityCaller(), "test/ModMob.class"));
         List<String> calls = calls(node, "setup");
@@ -95,7 +95,7 @@ class LegacyToolAndMemberBridgeTest {
         RetromodTransformer transformer = RetromodTransformer.getInstance();
         transformer.clearRedirectsForTesting();
         Legacy1205MemberBridge.registerRedirects(transformer, List.of(),
-                List.of(Legacy1205MemberBridge.CLASS_RENAMES), false);
+                List.of(Legacy1205MemberBridge.CLASS_RENAMES), false, Legacy1205MemberBridge.HostShape.AT_1_20_5);
 
         assertEquals("decode", transformer.registeredMethodRename("net/minecraft/network/FriendlyByteBuf$Reader", "apply"));
         assertEquals("encode", transformer.registeredMethodRename("net/minecraft/network/FriendlyByteBuf$Writer", "accept"));
@@ -103,7 +103,8 @@ class LegacyToolAndMemberBridgeTest {
 
     @Test
     void generatedMemberHelperIsStructurallyValid() throws Exception {
-        verify(Legacy1205MemberBridge.generateHelper(Legacy1205MemberBridge.MEMBERS));
+        verify(Legacy1205MemberBridge.generateHelper(Legacy1205MemberBridge.MEMBERS,
+                Legacy1205MemberBridge.HostShape.AT_1_20_5));
     }
 
     private static RetromodTransformer tools() {

@@ -1,0 +1,2 @@
+# Loader API runtimes. Each provider registers only where its setting and host gate allow.
+com.retromod.loaderapi.fabric.v26.FabricApi26Provider

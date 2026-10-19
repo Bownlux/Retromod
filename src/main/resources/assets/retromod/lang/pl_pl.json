@@ -6,6 +6,7 @@
   "retromod.main.subtitle": "Upu\u015b\u0107 lub wybierz pliki JAR mod\u00f3w do przekszta\u0142cenia",
   "retromod.main.add_mods": "Dodaj mody\u2026",
   "retromod.main.open_folder": "Otw\u00f3rz folder mod\u00f3w",
+  "retromod.main.inplace_status": "%s z pami\u0119ci podr\u0119cznej, %s po restarcie, %s nieudanych",
 
   "retromod.screen.title": "Retromod - Mened\u017cer mod\u00f3w",
   "retromod.screen.add_mods": "Dodaj mody do przekszta\u0142cenia",
@@ -31,6 +32,8 @@
   "retromod.settings.force_translate_complex": "Wymu\u015b z\u0142o\u017cone t\u0142umaczenie",
   "retromod.settings.log_transformations": "Loguj przekszta\u0142cenia",
   "retromod.settings.debug": "Tryb debugowania",
+  "retromod.settings.write_translated_jars": "Zapisuj przet\u0142umaczone jary w mods/",
+  "retromod.settings.next_launch": "Zadzia\u0142a po nast\u0119pnym uruchomieniu",
 
   "retromod.filepicker.title": "Retromod: Wybierz pliki JAR mod\u00f3w do przekszta\u0142cenia",
 

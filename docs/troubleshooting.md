@@ -9,11 +9,13 @@ Start with `logs/latest.log`. The first Retromod, loader, or mixin error is usua
 
 ## Mods Were Added but Nothing Loaded
 
-Restart after transformation. Fabric needs one launch to transform the jars and another to load them.
+Restart after transformation. Every loader needs one launch to translate a new old mod and another to load it.
 
 Old Fabric mods belong directly in `retromod-input/`, not `mods/` or `retromod-input/processed/`. Successfully transformed jars move to `mods/`.
 
-Use `retromod-input/` for Forge and NeoForge mods whose declared Minecraft range does not include the host. Those loaders can reject an incompatible jar during discovery, before Retromod can transform anything in place. A jar already accepted by the loader may still use the in-place path.
+On Forge and NeoForge, old mods can stay in `mods/`. Search `latest.log` for `In-place loading:`. That line counts the mods served from the cache, the ones waiting for translation, the failed ones, and the originals held back. A line starting `Not translating` names a mod whose translation failed before. Retromod does not try it again until Retromod or the jar changes. Update the mod or Retromod, or report the first error from the launch that failed.
+
+With `write_translated_jars` set to `true`, use `retromod-input/` for Forge and NeoForge mods whose declared Minecraft range does not include the host. Those loaders can reject an incompatible jar during discovery, before Retromod can rewrite anything in `mods/`.
 
 Do not put an old Fabric API jar in the input folder as a substitute for the host library. Install one Fabric API build made for the host version in `mods/`. Current Retromod builds archive a staged old Fabric API instead of translating and installing a duplicate.
 
@@ -105,15 +107,38 @@ Retromod refuses a jar whose contents exceed 500 MB unpacked, or that holds a si
 
 Current builds stamp AOT caches and invalidate mismatches automatically. During same-version development runs, delete `config/retromod/aot-cache/` to force a rebuild.
 
+The Forge and NeoForge translation cache is rebuilt after a Retromod or loader update, or a change to `polyfills_enabled` or `transform_mixins`. To force it, close the game and run `java -jar retromod-1.4.0-snapshot.2-cli.jar cache clear <game-dir>`. `cache status <game-dir>` shows what the cache holds and why a mod failed.
+
+## A Current Mod Requires an Old Mod
+
+On Forge and NeoForge, the first launch can stop with a missing dependency. A current mod requires an old mod that Retromod holds back until it is translated, and the loader checks dependencies before Retromod runs. `latest.log` names the current mod. Move it out of `mods/` for one launch, then put it back after the restart. After three launches that stop this way, Retromod shows the old mod to the loader once, so the loader's own message names it.
+
+## First Launch Stops on an Old Mod
+
+On Forge and NeoForge, the loader can reject an old mod in `mods/` before Retromod runs. Retromod keeps an old mod away from the loader when its metadata shows the loader would reject it, but it cannot check every rule. Launch again. Retromod holds that mod back on the next launch, translates it, and asks for one restart. Old jars that are symbolic links are left to the loader as they are, because Retromod only translates real files.
+
+## Restart After Every Retromod Update
+
+This is expected on Forge and NeoForge. An update translates every old mod in `mods/` again, and the copies load after one restart.
+
+## Translated for Another Minecraft Version
+
+`latest.log` says a jar was translated by Retromod for another Minecraft version. The jar came from another game, or this instance moved to a new version after Retromod wrote it. Retromod leaves it as it is. A jar translated for a newer version is rejected by the loader. One translated for an older version can load with that version's fixes and fail later. Put its original jar in `mods/` instead, so Retromod translates it for this game.
+
+## Turning In-Place Loading Off
+
+Set `write_translated_jars` to `true` in `config/retromod/config.json`, or start Java with `-Dretromod.writeTranslatedJars=true` for one launch. Retromod then rewrites jars in `mods/` as earlier versions did. Old originals that in-place mode handled are rewritten on that launch.
+
 ## Reporting a Bug
 
 Include:
 
 1. `logs/latest.log`
 2. The verify report, if present
-3. A link to the exact mod version
-4. `config/retromod/config.json`
-5. Minecraft, loader, loader version, Java, and Retromod versions
-6. What you expected and what happened
+3. On Forge and NeoForge, the CLI output of `cache status <game-dir>`
+4. A link to the exact mod version
+5. `config/retromod/config.json`
+6. Minecraft, loader, loader version, Java, and Retromod versions
+7. What you expected and what happened
 
 [Open an issue](https://github.com/Bownlux/Retromod/issues/new).

@@ -46,6 +46,12 @@ public class QuiltModTransformer {
     
     /** Runs the Fabric bytecode transform, then patches quilt.mod.json. */
     public Path transformMod(Path sourceJar, Path outputDir) throws IOException {
+        return transformMod(sourceJar, outputDir, SyntheticLibraries.NONE);
+    }
+
+    /** Like {@link #transformMod(Path, Path)}, reusing the stand-in classes of {@code libraries}. */
+    public Path transformMod(Path sourceJar, Path outputDir, SyntheticLibraries libraries)
+            throws IOException {
         validateArchiveInput(sourceJar);
         String originalName = sourceJar.getFileName().toString();
 
@@ -69,7 +75,7 @@ public class QuiltModTransformer {
         Path stagingDirectory = createOutputStagingDirectory(outputDir);
         try {
             Path transformed = fabricTransformer.transformModWithAuthoritativeMinecraftVersion(
-                sourceJar, stagingDirectory, modMcVersion);
+                sourceJar, stagingDirectory, modMcVersion, libraries);
             if (transformed == null || !Files.isRegularFile(
                     transformed, LinkOption.NOFOLLOW_LINKS)) {
                 return transformed;

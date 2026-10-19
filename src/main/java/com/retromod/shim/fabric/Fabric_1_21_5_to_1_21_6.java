@@ -10,10 +10,7 @@ package com.retromod.shim.fabric;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
 
-/**
- * Fabric 1.21.5 mods on 1.21.6+: HUD API rewrite, removed Material/CoreShaderRegistration
- * APIs, and the WorldRenderer method moves. https://fabricmc.net/2025/06/15/1216.html
- */
+/** Updates Fabric 1.21.5 mods for 1.21.6 and newer. */
 public class Fabric_1_21_5_to_1_21_6 implements VersionShim {
     
     @Override
@@ -38,6 +35,13 @@ public class Fabric_1_21_5_to_1_21_6 implements VersionShim {
     
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+
+        // ServerPlayer.server became private. The bridge matches Mojang names, which a Fabric
+        // mod only has after the 26.x remap.
+        if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            com.retromod.shim.common.LegacyPlayerServerBridge.register(transformer);
+        }
 
         // HUD API rewrite: HudRenderCallback -> HudElementRegistry
         transformer.registerClassRedirect(

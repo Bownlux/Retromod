@@ -80,6 +80,13 @@ public final class ForgeNeoForgeApiBridge {
             {"common/util/Lazy", "common/util/Lazy"},
             {"common/util/FakePlayer", "common/util/FakePlayer"},
             {"common/util/FakePlayerFactory", "common/util/FakePlayerFactory"},
+            // Global loot modifiers. NeoForge reads their serializers as MapCodecs, which
+            // LegacyLootModifierCodecs converts as the mod registers them.
+            {"common/loot/IGlobalLootModifier", "common/loot/IGlobalLootModifier"},
+            {"common/loot/LootModifier", "common/loot/LootModifier"},
+            {"common/loot/LootTableIdCondition", "common/loot/LootTableIdCondition"},
+            {"common/loot/LootTableIdCondition$Builder", "common/loot/LootTableIdCondition$Builder"},
+            {"common/loot/CanToolPerformAction", "common/loot/CanItemPerformAbility"},
             // Handler types. ForgeCapabilitiesShim maps these too, but only from 1.21.11.
             {"items/IItemHandler", "items/IItemHandler"},
             {"items/ItemStackHandler", "items/ItemStackHandler"},
@@ -187,8 +194,9 @@ public final class ForgeNeoForgeApiBridge {
 
     /**
      * Forge's {@code IEventBus.post} returned the cancel flag; NeoForge's returns the event. Forge's
-     * {@code register(instance)} skipped static handlers; NeoForge's rejects the instance. The
-     * cancellation calls themselves are rewritten by {@link LegacyEventCancelAdapter}.
+     * {@code register(instance)} skipped static handlers; NeoForge's rejects the instance, and it
+     * rejects a second {@code DeferredRegister.register(bus)}. The cancellation calls themselves
+     * are rewritten by {@link LegacyEventCancelAdapter}.
      */
     static void registerEventCalls(RetromodTransformer transformer) {
         com.retromod.core.SyntheticEmbedder.registerClassResource(transformer,
@@ -208,6 +216,11 @@ public final class ForgeNeoForgeApiBridge {
         transformer.registerMethodRedirect("net/neoforged/bus/api/IEventBus", "register",
                 "(Ljava/lang/Object;)V",
                 LegacyEventCancelAdapter.HELPER, "register", "(Ljava/lang/Object;Ljava/lang/Object;)V", true);
+        // Forge let a mod put the same DeferredRegister on its bus more than once; NeoForge throws.
+        transformer.registerMethodRedirect("net/neoforged/neoforge/registries/DeferredRegister", "register",
+                "(Lnet/neoforged/bus/api/IEventBus;)V",
+                LegacyEventCancelAdapter.HELPER, "registerDeferredRegister",
+                "(Ljava/lang/Object;Ljava/lang/Object;)V", true);
     }
 
     static int registerMoves(RetromodTransformer transformer,

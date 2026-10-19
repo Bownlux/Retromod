@@ -10,6 +10,23 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.4.0 Snapshot Line
 
+### Snapshot 2, October 18, 2026
+
+- Loads old Forge and NeoForge mods straight from `mods/` without changing the files, from a translation cache. Set `write_translated_jars` to `true` to get the snapshot 1 behavior back.
+- Adds the CLI `export` command to copy translated mods out for sharing.
+- Fixes more reported mods: library addons now link to their library's rebuilt classes, and Chef's Delight, Tiny Dragons, Minepathy, and Farmer's Delight addons get further on newer versions.
+- Starts a Fabric API runtime for 26.x hosts that gives old Fabric API calls a working version: networking, render layers and colors, and HUD, screen and tooltip events. It is on in snapshots and can be turned off with `loader_api_runtime`.
+- Loads Retromod on Forge 1.20 and on NeoForge 1.20.1 to 1.20.4.
+- Translates the resources inside old mod jars: data folders, language files, blockstates, models, textures, item definitions, recipes, loot tables, and advancements.
+- Runs the same resource steps on every loader and in the CLI, AOT compiler, and nested jars.
+- Keeps a copied recipe, loot table, or advancement out of the game until its format is current for the host.
+- Converts Forge 1.12 recipes, ore dictionary ingredients, and item ids with data values.
+- Moves a Forge mod's biome, structure, and loot modifiers to NeoForge's names.
+- Registers blocks and items that multiloader mods build in one class and register from another.
+- Answers GLFW input and clock calls on 26.3, which replaced GLFW with SDL.
+- Keeps older mobs working on 1.21.2 and newer: tempt goals, breeding, spawn setup, arm swings, the mob's own overrides, and their names and drops.
+- Keeps MCreator food blocks, commands, item drops, damage, and advancement calls working on 26.x.
+
 ### Snapshot 1, October 10, 2026
 
 - Keeps older blocks' right-click actions working on 1.20.5 and newer, on every loader.

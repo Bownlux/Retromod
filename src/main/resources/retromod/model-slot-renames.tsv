@@ -1,0 +1,20 @@
+# changed_in	model	added_slots
+#
+# Vanilla models that a release kept but whose geometry now reads its textures from other slots.
+# A mod model that inherits one and sets an old slot itself loses that texture on changed_in and
+# newer hosts, because nothing reads the old slot any more. The mod model that sets the old slot
+# gains "new": "#old" for each new=old pair, so the new slot draws what the mod set. A model
+# that leaves the old slot to vanilla is not touched, since vanilla sets the new slots itself.
+#
+# Each row was derived from the vanilla client jars: the model exists on both sides of changed_in,
+# its elements are the same apart from the slot names, and changed_in is the first release checked
+# whose geometry reads the new slots. Releases checked: 1.12.2, 1.13, 1.14.4, 1.15.2, 1.16.1, 1.16.2,
+# 1.16.5, 1.17.1, 1.18.2, 1.19, 1.19.2, 1.19.3, 1.20.1, 1.20.2, 1.20.3, 1.21.1, 1.21.2, 1.21.4,
+# 1.21.10, 1.21.11, 26.1, 26.2 and 26.3.
+#
+# 26.3 moved farmland onto block/template_cube_bottom_top_indented: farmland and farmland_moist
+# read bottom and side where 26.2 read dirt, and set both to vanilla dirt. The geometry is the
+# same as the 1.12.2 block/farmland template, so a 1.12 model keeps that parent and gets the
+# same slots.
+26.3	block/farmland	bottom=dirt,side=dirt
+26.3	block/farmland_moist	bottom=dirt,side=dirt

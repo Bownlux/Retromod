@@ -39,14 +39,25 @@ import com.retromod.testmod.tests.Test17BlockRandomTicksAccessor;
 import com.retromod.testmod.tests.Test18GameRulesField;
 import com.retromod.testmod.tests.Test20BlockUseOverride;
 import com.retromod.testmod.tests.Test21KeyCategoryName;
+import com.retromod.testmod.tests.Test22LegacyMobApi;
+import com.retromod.testmod.tests.Test23GlfwPolls;
+import com.retromod.testmod.tests.Test24JomlAxisWidening;
+import com.retromod.testmod.tests.Test25StateEntriesCopy;
+import com.retromod.testmod.tests.Test26LegacyItemModels;
+import com.retromod.testmod.tests.Test27OwnOverrideMob;
+import com.retromod.testmod.tests.Test28LegacyProcedureMembers;
+import com.retromod.testmod.tests.Test29OwnDamageOverride;
+import com.retromod.testmod.tests.Test30LegacySwinging;
+import com.retromod.testmod.tests.Test31LegacyTrimAtlas;
+import com.retromod.testmod.tests.Test32CrossClassRegistryId;
+import com.retromod.testmod.tests.Test33EntityTypeBuildKey;
 import com.retromod.testmod.tests.Test19RemovedItemBase;
+import com.retromod.testmod.tests.Test43ClientHostTints;
+import com.retromod.testmod.tests.Test45ClientHudAndScreenEvents;
 import com.retromod.testmod.tests.TextTests;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * Runs each test when the Minecraft APIs it uses are ready. Most tests run
@@ -54,9 +65,6 @@ import java.util.UUID;
  * a world is joined. Each phase logs a run ID so mixed logs remain traceable.
  */
 public final class TestRunner {
-
-    private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Test");
-    private static final String PREFIX = "[Retromod-Test]";
 
     private static final List<Test> IMMEDIATE      = buildImmediateSuite();
     private static final List<Test> CLIENT_STARTED = buildClientStartedSuite();
@@ -99,14 +107,30 @@ public final class TestRunner {
         all.add(new Test18GameRulesField());
         all.add(new Test20BlockUseOverride());
         all.add(new Test21KeyCategoryName());
+        all.add(new Test22LegacyMobApi());
+        all.add(new Test24JomlAxisWidening());
+        all.add(new Test25StateEntriesCopy());
+        all.add(new Test26LegacyItemModels());
+        all.add(new Test27OwnOverrideMob());
+        all.add(new Test28LegacyProcedureMembers());
+        all.add(new Test29OwnDamageOverride());
+        all.add(new Test30LegacySwinging());
+        // These register content, so they have to run before the registries freeze after initialization.
+        all.add(new Test32CrossClassRegistryId());
+        all.add(new Test33EntityTypeBuildKey());
         return List.copyOf(all);
     }
 
     private static List<Test> buildClientStartedSuite() {
         // The GLFW window is assigned after client entry points run during Minecraft
         // construction. CLIENT_STARTED is the first harness phase where its native handle
-        // can be read safely.
-        return List.of(new Test13WindowHandleShim());
+        // can be read safely, and the GLFW polls take that handle.
+        // The host builds its block colors during construction, after client entry points run.
+        // With newer Fabric API, Retromod applies old block colors at CLIENT_STARTED through a
+        // listener it registered when Test41 ran at common init, so ahead of this suite's.
+        // The old HUD and screen callbacks need the client's screens, which exist once it has started.
+        return List.of(new Test13WindowHandleShim(), new Test23GlfwPolls(), new Test43ClientHostTints(),
+                new Test45ClientHudAndScreenEvents());
     }
 
     private static List<Test> buildWorldJoinSuite() {
@@ -117,6 +141,8 @@ public final class TestRunner {
         all.add(Test14RevampedEntityBridges.entityTagMembership());
         all.add(new Test15InheritedEntityWorld());
         all.add(new Test19RemovedItemBase());
+        // The rebuilt armor trim atlas is uploaded once the client has loaded its own atlases.
+        all.add(new Test31LegacyTrimAtlas());
         return List.copyOf(all);
     }
 
@@ -140,40 +166,6 @@ public final class TestRunner {
     // Shared runner
 
     private static void runPhase(String phaseName, List<Test> tests) {
-        if (tests.isEmpty()) return;
-
-        String runId = UUID.randomUUID().toString().substring(0, 8);
-        LOGGER.info("{} RUN_ID={} phase={} ({} tests)", PREFIX, runId, phaseName, tests.size());
-
-        int passed = 0;
-        int failed = 0;
-        for (int i = 0; i < tests.size(); i++) {
-            Test test = tests.get(i);
-            int n = i + 1;
-            TestResult result;
-            try {
-                result = test.run();
-                if (result == null) {
-                    result = TestResult.fail("test returned null");
-                }
-            } catch (Throwable t) {
-                String msg = t.getMessage();
-                result = TestResult.fail(t.getClass().getSimpleName()
-                        + (msg != null ? ": " + msg : ""));
-            }
-            if (result.passed()) {
-                passed++;
-                LOGGER.info("{} [{}] {} ({}): success",
-                        PREFIX, phaseName, n, test.description());
-            } else {
-                failed++;
-                LOGGER.warn("{} [{}] {} ({}): fail: {}",
-                        PREFIX, phaseName, n, test.description(), result.reason());
-            }
-        }
-
-        LOGGER.info("{} [{}] SUMMARY: {}/{} passed{}",
-                PREFIX, phaseName, passed, tests.size(),
-                failed > 0 ? " (" + failed + " failed)" : "");
+        TestPhases.run(phaseName, tests);
     }
 }

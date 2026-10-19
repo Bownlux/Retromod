@@ -18,8 +18,7 @@ public final class LegacyPaintings {
 
     public static Object create(int widthPixels, int heightPixels) {
         try {
-            ClassLoader loader = LegacyPaintings.class.getClassLoader();
-            Class<?> variant = Class.forName("net.minecraft.world.entity.decoration.painting.PaintingVariant", true, loader);
+            Class<?> variant = variantClass();
             Constructor<?> widest = null;
             for (Constructor<?> constructor : variant.getConstructors()) {
                 if (widest == null || constructor.getParameterCount() > widest.getParameterCount()) widest = constructor;
@@ -35,6 +34,16 @@ public final class LegacyPaintings {
             return widest.newInstance(args);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Retromod could not build an old painting variant", e);
+        }
+    }
+
+    /** The 26.1 class, or the 1.21 to 1.21.11 one in the package it moved out of. */
+    private static Class<?> variantClass() throws ClassNotFoundException {
+        ClassLoader loader = LegacyPaintings.class.getClassLoader();
+        try {
+            return Class.forName("net.minecraft.world.entity.decoration.painting.PaintingVariant", true, loader);
+        } catch (ClassNotFoundException before26) {
+            return Class.forName("net.minecraft.world.entity.decoration.PaintingVariant", true, loader);
         }
     }
 }

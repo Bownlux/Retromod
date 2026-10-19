@@ -4,13 +4,20 @@
  */
 package com.retromod.resources;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.zip.ZipFile;
 
+import static com.retromod.resources.ResourceFixtures.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class ResourcePackTransformerTest {
@@ -67,5 +74,62 @@ public class ResourcePackTransformerTest {
             assertTrue(transformed.getEntry(
                 "assets/minecraft/textures/block/fire_0.mcmeta") == null);
         }
+    }
+
+    /** A pack that names a mod's mixed-case texture from its item model, in a 1.12 language file. */
+    private static Path legacyModPack(Path root, int packFormat, String textureFolder) throws Exception {
+        Path pack = root.resolve("format" + packFormat);
+        writeDirectory(pack, entries(
+            "pack.mcmeta", "{\"pack\":{\"pack_format\":" + packFormat + ",\"description\":\"Rubies\"}}",
+            "assets/somemod/lang/en_US.lang", "item.ruby.name=Shiny Ruby\n",
+            "assets/somemod/models/item/ruby.json",
+            "{\"parent\":\"item/generated\",\"textures\":{\"layer0\":\"somemod:" + textureFolder + "/Ruby\"}}",
+            "assets/somemod/textures/" + textureFolder + "/Ruby.png", "ruby"));
+        return pack;
+    }
+
+    private static Map<String, byte[]> transform(Path pack, String target, Path root) throws Exception {
+        Path output = Files.createDirectories(root.resolve("out-" + target));
+        return readJar(new ResourcePackTransformer(target).transformPack(pack, output));
+    }
+
+    private static String layer0(Map<String, byte[]> pack) {
+        JsonObject model = JsonParser.parseString(text(pack.get("assets/somemod/models/item/ruby.json")))
+            .getAsJsonObject();
+        return model.getAsJsonObject("textures").get("layer0").getAsString();
+    }
+
+    @ParameterizedTest(name = "on {0}")
+    @ValueSource(strings = {"1.21.1", "26.3"})
+    @DisplayName("A 1.12 pack gets JSON language files and lowercase ids, as a 1.12 mod does")
+    void legacyPackGetsLanguageJsonAndLowercaseIds(String target, @TempDir Path root) throws Exception {
+        Path source = legacyModPack(root, 3, "items");
+        // The pack is converted in a temporary folder, where a file system that ignores case
+        // cannot hold the lowercase copy beside the original.
+        boolean caseSensitive = !Files.exists(source.resolve("assets/somemod/textures/items/RUBY.png"));
+        Map<String, byte[]> pack = transform(source, target, root);
+
+        JsonObject lang = JsonParser.parseString(text(pack.get("assets/somemod/lang/en_us.json")))
+            .getAsJsonObject();
+        assertEquals("Shiny Ruby", lang.get("item.ruby.name").getAsString());
+        assertEquals("Shiny Ruby", lang.get("item.somemod.ruby").getAsString(),
+            "the pack's own item model shows the id");
+        assertTrue(pack.containsKey("assets/somemod/lang/en_US.lang"), "the original stays");
+        assertEquals("somemod:item/ruby", layer0(pack));
+        assertArrayEquals(bytes("ruby"), pack.get("assets/somemod/textures/item/Ruby.png"));
+        assertEquals(caseSensitive, pack.containsKey("assets/somemod/textures/item/ruby.png"),
+            pack.keySet().toString());
+        assertTrue(pack.keySet().stream().noneMatch(name -> name.startsWith("data/")),
+            "a resource pack carries no data, so the data steps add nothing: " + pack.keySet());
+    }
+
+    @Test
+    @DisplayName("A pack built for 1.13 or newer keeps its files, since its own game read them the same way")
+    void modernPackKeepsItsLanguageAndIds(@TempDir Path root) throws Exception {
+        Map<String, byte[]> pack = transform(legacyModPack(root, 4, "item"), "26.3", root);
+
+        assertFalse(pack.containsKey("assets/somemod/lang/en_us.json"), pack.keySet().toString());
+        assertEquals("somemod:item/Ruby", layer0(pack));
+        assertFalse(pack.containsKey("assets/somemod/textures/item/ruby.png"));
     }
 }

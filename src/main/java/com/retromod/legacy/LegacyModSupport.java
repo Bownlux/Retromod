@@ -17,16 +17,12 @@ import java.util.*;
 import java.util.jar.*;
 import java.util.zip.*;
 
-/**
- * Coordinates the larger transform steps needed by mods that cross a Minecraft API era.
- */
+/** Coordinates the larger transform steps needed by mods that cross a Minecraft API era. */
 public class LegacyModSupport {
 
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     
-    /**
-     * Minecraft version epochs for transformation grouping.
-     */
+    /** Minecraft version epochs for transformation grouping. */
     public enum Epoch {
         LEGACY_1_8_TO_1_12(1, "1.8", "1.12.2", 8, "Legacy Forge"),
         FLATTENING_1_13(2, "1.13", "1.13.2", 8, "The Flattening"),
@@ -85,9 +81,7 @@ public class LegacyModSupport {
         }
     }
     
-    /**
-     * Mod loader types across history.
-     */
+    /** Mod loader types across history. */
     public enum ModLoaderType {
         FORGE_LEGACY,      // Forge 1.8-1.12
         FORGE_MODERN,      // Forge 1.13-1.20
@@ -201,10 +195,24 @@ public class LegacyModSupport {
                 Set<String> inputNames = new HashSet<>();
                 ArchiveBudget inputBudget = new ArchiveBudget("legacy mod transform input");
                 ArchiveBudget outputBudget = new ArchiveBudget("legacy mod transform output");
+                // Game resources are held back and migrated after the loop by the converters every
+                // other transform path runs, so a 1.12 mod's data reaches the folders the host reads.
+                var resources = new com.retromod.resources.MapResourceTree();
+                Map<String, byte[]> writtenClasses = new LinkedHashMap<>();
                 Enumeration<JarEntry> entries = sourceJar.entries();
                 while (entries.hasMoreElements()) {
                     JarEntry entry = entries.nextElement();
                     String safeName = registerEntry(entry, inputNames, sourcePath);
+
+                    // Hold back a resource the converters migrate; it is written after the loop.
+                    if (!entry.isDirectory() && !safeName.endsWith(".class")
+                            && !isMetadataEntry(safeName)
+                            && com.retromod.resources.ModResourceMigrations.isMigratedResource(safeName)) {
+                        try (InputStream is = sourceJar.getInputStream(entry)) {
+                            resources.write(safeName, readEntry(is, inputBudget, safeName));
+                        }
+                        continue;
+                    }
 
                     outputStream.putNextEntry(new JarEntry(safeName));
                     if (!entry.isDirectory()) {
@@ -219,6 +227,7 @@ public class LegacyModSupport {
                                 } else {
                                     classesSkipped++;
                                 }
+                                writtenClasses.put(safeName, output);
                             } else if (isMetadataEntry(safeName)) {
                                 output = transformMetadata(input, safeName, analysis);
                             }
@@ -227,6 +236,15 @@ public class LegacyModSupport {
                             outputStream.write(output);
                         }
                     }
+                    outputStream.closeEntry();
+                }
+
+                // Migrate the held-back resources, then write them into the jar.
+                migrateResources(resources, writtenClasses, sourcePath, analysis);
+                for (Map.Entry<String, byte[]> resource : resources.entries().entrySet()) {
+                    outputBudget.reserveEntry(resource.getValue(), resource.getKey());
+                    outputStream.putNextEntry(new JarEntry(resource.getKey()));
+                    outputStream.write(resource.getValue());
                     outputStream.closeEntry();
                 }
 
@@ -257,6 +275,33 @@ public class LegacyModSupport {
         return outputJar;
     }
     
+    /** Runs the shared resource converters over the held-back resources. */
+    private void migrateResources(com.retromod.resources.MapResourceTree resources,
+            Map<String, byte[]> writtenClasses, Path sourceJar, LegacyModAnalysis analysis)
+            throws IOException {
+        // The source version comes from the original jar, and the classes are the ones this
+        // transform wrote.
+        var context = com.retromod.resources.MigrationContext.builder(targetMcVersion)
+                .source(com.retromod.resources.SourceVersionResolver.inspect(sourceJar))
+                .targetLoader(com.retromod.resources.MigrationContext.Loader
+                        .forTransform(loaderName(analysis.modLoader)))
+                .classes(writtenClasses.keySet(), writtenClasses::get)
+                .build();
+        com.retromod.resources.ModResourceMigrations.standard().run(resources, context);
+    }
+
+    /** The loader name the resource migration reads, or null for a loader it has no rules for. */
+    private static String loaderName(ModLoaderType loader) {
+        if (loader == null) return null;
+        return switch (loader) {
+            case FORGE_LEGACY, FORGE_MODERN -> "forge";
+            case NEOFORGE -> "neoforge";
+            case FABRIC -> "fabric";
+            case QUILT -> "quilt";
+            default -> null;
+        };
+    }
+
     /**
      * Transform a single class file.
      */
@@ -754,9 +799,7 @@ public class LegacyModSupport {
     
     // INNER CLASSES
     
-    /**
-     * Scanner for @Mod annotations.
-     */
+    /** Scanner for @Mod annotations. */
     private static class ModAnnotationScanner extends ClassVisitor {
         boolean hasForgeModAnnotation = false;
         boolean hasNeoForgeModAnnotation = false;

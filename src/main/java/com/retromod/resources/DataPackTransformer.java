@@ -15,36 +15,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Transforms Data Packs to work on newer Minecraft versions.
- * 
- * What changes between versions:
- * - pack.mcmeta "pack_format" number (same as resource packs, different values)
- * - JSON schema changes for recipes, loot tables, worldgen
- * - Namespace changes (some vanilla namespaces renamed)
- * - Feature additions/removals
- * 
- * Data Pack Format History:
- * - 4: 1.13 - 1.14.4
- * - 5: 1.15 - 1.16.1
- * - 6: 1.16.2 - 1.16.5
- * - 7: 1.17 - 1.17.1
- * - 8: 1.18 - 1.18.1
- * - 9: 1.18.2
- * - 10: 1.19 - 1.19.3
- * - 12: 1.19.4
- * - 15: 1.20 - 1.20.1
- * - 18: 1.20.2
- * - 26: 1.20.3 - 1.20.4
- * - 41: 1.20.5 - 1.20.6
- * - 48: 1.21 - 1.21.1
- * - 57: 1.21.2 - 1.21.3
- * - 61: 1.21.4
- * - 71: 1.21.5
- * - 80: 1.21.6
- * - 81: 1.21.7 - 1.21.8
- * - 88.0+: 1.21.9 and newer full-version metadata
- */
+/** Updates data packs to work on newer Minecraft versions. */
 public class DataPackTransformer {
     
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-DataPacks");
@@ -141,7 +112,8 @@ public class DataPackTransformer {
                 PackArchive.extractZip(sourcePack, tempDir, "Data pack");
             }
 
-            // Transform pack.mcmeta
+            // Rewrite pack.mcmeta. Data packs share the pack_format field with resource packs but
+            // use different numbers; PackFormat holds the version table.
             PackMetadata.rewrite(tempDir, targetDataFormat, targetDataFormat.major() >= 82);
 
             // Transform loot tables if needed
@@ -149,7 +121,13 @@ public class DataPackTransformer {
                 transformLootTables(tempDir);
             }
 
-            int migrated = ModDataMigrator.migrateTreeChecked(tempDir, targetMcVersion);
+            // The same converters a mod's own data goes through. A pack names no game version,
+            // so its layout follows the format it declares.
+            MigrationContext context = MigrationContext.builder(targetMcVersion)
+                .sourceMcVersion(PackFormat.minecraftVersionForData(oldFormat))
+                .targetLoader(MigrationContext.Loader.host())
+                .build();
+            int migrated = ModResourceMigrations.migrateDirectory(tempDir, context);
             if (migrated > 0) {
                 LOGGER.info("  Updated {} data file(s)", migrated);
             }

@@ -10,6 +10,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -22,6 +24,7 @@ class SrgVersionDriftTest {
 
     private static final String MATERIAL = "net/minecraft/world/item/ArmorMaterial";
     private static final String SLOT_DESC = "(Lnet/minecraft/world/entity/EquipmentSlot;)I";
+    private static final String ENTITY = "net/minecraft/world/entity/Entity";
 
     private RetromodTransformer transformer;
 
@@ -54,11 +57,40 @@ class SrgVersionDriftTest {
     }
 
     @Test
-    @DisplayName("a version between two harvested ones takes the range that started before it")
-    void gapVersionUsesThePrecedingRange() {
+    @DisplayName("a 1.19.3 mod's m_7366_ is still getDurabilityForSlot, which 1.19.4 replaced")
+    void lastVersionBeforeTheChangeKeepsTheOldName() {
         transformer.setSrgSourceVersion("1.19.3");
         assertEquals("getDurabilityForSlot",
                 transformer.remapQualifiedMethodName(MATERIAL, "m_7366_", SLOT_DESC));
+    }
+
+    @Test
+    @DisplayName("a version no range lists takes the range that started before it")
+    void gapVersionUsesThePrecedingRange() {
+        transformer.registerSrgVersionDrift("METHOD", "m_999999_", List.of(
+                new RetromodTransformer.SrgDrift("1.17.1", "1.18.2", "olderName"),
+                new RetromodTransformer.SrgDrift("1.19.4", "1.21.8", "newerName")));
+        transformer.setSrgSourceVersion("1.19.2");
+        assertEquals("olderName", transformer.remapQualifiedMethodName(ENTITY, "m_999999_", "()V"));
+    }
+
+    @Test
+    @DisplayName("#283: a mod whose minecraft range starts at 1.20 gets the 1.20 names, not 1.19.4's")
+    void modBuiltForMinecraft120UsesItsOwnNames() {
+        // Scorched Guns declares [1.20, 1.20.2). Without a 1.20 harvest, 1.20 fell back to the
+        // 1.17 to 1.19.4 range, so every level() call became getLevel() and failed to link.
+        transformer.setSrgSourceVersion("1.20");
+        assertEquals("level", transformer.remapQualifiedMethodName(
+                ENTITY, "m_9236_", "()Lnet/minecraft/world/level/Level;"));
+        assertEquals("onGround", transformer.remapQualifiedMethodName(ENTITY, "m_20096_", "()Z"));
+    }
+
+    @Test
+    @DisplayName("a 1.19 mod's m_214076_ is wasKilled, the name it had until 1.19.4")
+    void modBuiltForMinecraft119UsesItsOwnNames() {
+        transformer.setSrgSourceVersion("1.19");
+        assertEquals("wasKilled", transformer.remapQualifiedMethodName(ENTITY, "m_214076_",
+                "(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/entity/LivingEntity;)Z"));
     }
 
     @Test
@@ -66,6 +98,17 @@ class SrgVersionDriftTest {
     void unknownVersionUsesTheMainTable() {
         transformer.setSrgSourceVersion(null);
         assertEquals("getDefenseForType",
+                transformer.remapQualifiedMethodName(MATERIAL, "m_7366_", SLOT_DESC));
+    }
+
+    @Test
+    @DisplayName("selecting the offline namespace keeps the mod's version")
+    void offlineNamespaceSetupKeepsTheVersion() {
+        // The CLI transform command sets the version first, and its 26.x mapping step then
+        // rebuilds the SRG tables for the mod's loader.
+        transformer.setSrgSourceVersion("1.19.2");
+        OfflineLoaderNameMappings.configure(transformer, "forge", "26.1", false);
+        assertEquals("getDurabilityForSlot",
                 transformer.remapQualifiedMethodName(MATERIAL, "m_7366_", SLOT_DESC));
     }
 

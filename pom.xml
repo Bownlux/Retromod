@@ -6,7 +6,7 @@
 
     <groupId>com.retromod</groupId>
     <artifactId>retromod</artifactId>
-    <version>1.4.0-snapshot.1</version>
+    <version>1.4.0-snapshot.2</version>
     <packaging>jar</packaging>
 
     <name>Retromod</name>
@@ -254,6 +254,62 @@
                     <target>17</target>
                     <release>17</release>
                 </configuration>
+                <executions>
+                    <!--
+                        Forge and NeoForge bootstrap classes (com.retromod.boot). They ship only in
+                        the outer jar that build-all.sh assembles around the runtime jar, never in
+                        the main or -all jar: a jar that declares a loader locator service is never
+                        loaded as a mod (#90, #102), and the same package in both jars would split
+                        it across module layers. They compile on their own so the runtime jar, its
+                        self-hash, and LoaderIsolationTest stay exactly as they were.
+
+                        src/boot/stubs holds compile-only SPI stubs the main source set does not
+                        already provide. They land in boot-classes but the boot jar includes only
+                        com/retromod/boot/**, so no stub is ever packaged.
+                    -->
+                    <execution>
+                        <id>boot-compile</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                        <configuration>
+                            <compileSourceRoots>
+                                <compileSourceRoot>${project.basedir}/src/boot/java</compileSourceRoot>
+                                <compileSourceRoot>${project.basedir}/src/boot/stubs</compileSourceRoot>
+                            </compileSourceRoots>
+                            <outputDirectory>${project.build.directory}/boot-classes</outputDirectory>
+                            <generatedSourcesDirectory>${project.build.directory}/generated-sources/boot-annotations</generatedSourcesDirectory>
+                            <proc>none</proc>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+                Tests call the bootstrap directly, so the boot sources compile with them as well.
+                Declaring them as test source roots here, instead of overriding the test compile's
+                roots, lets IDEs that import Maven see them; main code still cannot reference them.
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <id>boot-test-sources</id>
+                        <phase>generate-test-sources</phase>
+                        <goals>
+                            <goal>add-test-source</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>${project.basedir}/src/boot/java</source>
+                                <source>${project.basedir}/src/boot/stubs</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
 
             <!-- JAR Plugin - Main JAR -->
@@ -342,6 +398,32 @@
                     </excludes>
                 </configuration>
                 <executions>
+                    <!--
+                        Forge and NeoForge bootstrap classes. build-all.sh copies the classes for
+                        each host's locator generation into the outer dist jar; this jar is a build
+                        intermediate and is never published on its own.
+                    -->
+                    <execution>
+                        <id>boot-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                        <configuration>
+                            <classifier>boot</classifier>
+                            <classesDirectory>${project.build.directory}/boot-classes</classesDirectory>
+                            <includes>
+                                <include>com/retromod/boot/**</include>
+                            </includes>
+                            <archive combine.self="override">
+                                <manifestEntries>
+                                    <Implementation-Title>${project.name}</Implementation-Title>
+                                    <Implementation-Version>${project.version}</Implementation-Version>
+                                </manifestEntries>
+                            </archive>
+                        </configuration>
+                    </execution>
+
                     <!-- Agent JAR -->
                     <execution>
                         <id>agent-jar</id>
@@ -492,6 +574,14 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.6</version>
+                <configuration>
+                    <!-- The suite runs with the loader API runtime off, whatever the version string
+                         says, so the same commit passes before and after an rc bump. Runtime-on tests
+                         turn it on themselves. -->
+                    <systemPropertyVariables>
+                        <retromod.loaderApiRuntime>false</retromod.loaderApiRuntime>
+                    </systemPropertyVariables>
+                </configuration>
             </plugin>
 
         </plugins>

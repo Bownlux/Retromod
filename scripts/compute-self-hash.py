@@ -14,12 +14,22 @@ Release flow:
   4. Rebuild - the verifier class is excluded from the hash, so re-embedding
      does not invalidate it; the release build then reports VERIFIED.
 
+Forge and NeoForge dist jars are bootstraps that carry the runtime at
+META-INF/retromod/runtime.jar. For those the hash is computed over the nested runtime,
+because that is the jar the game loads and the verifier reads. The bootstrap classes
+around it are outside the self-hash; the whole-jar SHA-256 in dist/SHA256SUMS.txt covers
+them. So one value matches the -all jar, every dist jar, and the CLI.
+
 Usage:
   python3 scripts/compute-self-hash.py target/retromod-<version>.jar
+  python3 scripts/compute-self-hash.py dist/Forge/<mc>/retromod-<version>+<mc>.jar
 """
 import hashlib
+import io
 import sys
 import zipfile
+
+NESTED_RUNTIME = "META-INF/retromod/runtime.jar"
 
 SELF_ENTRY = "com/retromod/security/SignatureVerifier.class"
 HASH_DOMAIN = b"RETROMOD-SELF-HASH\x00V2"
@@ -44,9 +54,17 @@ def is_hashed_entry(name: str) -> bool:
     )
 
 
-def compute_self_hash(jar_path: str) -> str:
+def compute_self_hash(jar_path) -> str:
+    """Self-hash of a runtime jar, or of the runtime nested in a bootstrap jar."""
+    with zipfile.ZipFile(jar_path) as outer:
+        if NESTED_RUNTIME in outer.namelist():
+            return _hash_archive(io.BytesIO(outer.read(NESTED_RUNTIME)))
+    return _hash_archive(jar_path)
+
+
+def _hash_archive(source) -> str:
     names = []
-    with zipfile.ZipFile(jar_path) as z:
+    with zipfile.ZipFile(source) as z:
         seen = set()
         for n in z.namelist():
             if n.endswith("/"):

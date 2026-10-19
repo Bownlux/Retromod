@@ -1,0 +1,177 @@
+# Forge 1.12 ore dictionary names and what replaced each one, per tag family.
+#
+# Format: ORE_NAME<TAB>FORGE<TAB>CONVENTION
+#   FORGE       for hosts that read Forge's own tags (forge:...)
+#   CONVENTION  for hosts that read the common convention tags (c:...)
+# Each value is a #tag, a single vanilla item id where the family has no tag for the name, or -
+# when nothing replaces it and the ingredient is left as shipped.
+#
+# Every tag and item here is one the host ships itself, so a recipe naming it never needs a guard:
+#   #forge:     present in the Forge 1.19.2, 1.20.1, 1.20.2, 1.20.4, 1.20.6, 1.21.1, 1.21.10 and
+#               1.21.11 universal jars
+#   #c:         present in every one of the NeoForge 21.1, 21.11 and 26.3, Fabric API 1.21.11
+#               and 26.3, and Forge 26.1, 26.1.2, 26.2 and 26.3 jars
+#   #minecraft: and items present in every vanilla client from 1.13 through 26.3
+# The names are the ones Forge 1.12.2's OreDictionary registered for vanilla items, plus copper and
+# cropBeetroot, which follow the same naming and name tags every loader ships. A name not listed
+# here that starts with ore, ingot, nugget, gem, dust, block, plate or gear is mapped by its
+# material instead, and those tags are guarded because only other mods fill them.
+logWood	#minecraft:logs	#minecraft:logs
+plankWood	#minecraft:planks	#minecraft:planks
+slabWood	#minecraft:wooden_slabs	#minecraft:wooden_slabs
+stairWood	#minecraft:wooden_stairs	#minecraft:wooden_stairs
+doorWood	#minecraft:wooden_doors	#minecraft:wooden_doors
+fenceWood	#forge:fences/wooden	#c:fences/wooden
+fenceGateWood	#forge:fence_gates/wooden	#c:fence_gates/wooden
+stickWood	#forge:rods/wooden	#c:rods/wooden
+treeSapling	#minecraft:saplings	#minecraft:saplings
+treeLeaves	#minecraft:leaves	#minecraft:leaves
+wool	#minecraft:wool	#minecraft:wool
+woolBlack	minecraft:black_wool	minecraft:black_wool
+woolRed	minecraft:red_wool	minecraft:red_wool
+woolGreen	minecraft:green_wool	minecraft:green_wool
+woolBrown	minecraft:brown_wool	minecraft:brown_wool
+woolBlue	minecraft:blue_wool	minecraft:blue_wool
+woolPurple	minecraft:purple_wool	minecraft:purple_wool
+woolCyan	minecraft:cyan_wool	minecraft:cyan_wool
+woolLightGray	minecraft:light_gray_wool	minecraft:light_gray_wool
+woolGray	minecraft:gray_wool	minecraft:gray_wool
+woolPink	minecraft:pink_wool	minecraft:pink_wool
+woolLime	minecraft:lime_wool	minecraft:lime_wool
+woolYellow	minecraft:yellow_wool	minecraft:yellow_wool
+woolLightBlue	minecraft:light_blue_wool	minecraft:light_blue_wool
+woolMagenta	minecraft:magenta_wool	minecraft:magenta_wool
+woolOrange	minecraft:orange_wool	minecraft:orange_wool
+woolWhite	minecraft:white_wool	minecraft:white_wool
+oreCoal	#forge:ores/coal	#c:ores/coal
+oreIron	#forge:ores/iron	#c:ores/iron
+oreGold	#forge:ores/gold	#c:ores/gold
+oreLapis	#forge:ores/lapis	#c:ores/lapis
+oreDiamond	#forge:ores/diamond	#c:ores/diamond
+oreRedstone	#forge:ores/redstone	#c:ores/redstone
+oreEmerald	#forge:ores/emerald	#c:ores/emerald
+oreQuartz	#forge:ores/quartz	#c:ores/quartz
+oreCopper	#forge:ores/copper	#c:ores/copper
+ingotIron	#forge:ingots/iron	#c:ingots/iron
+ingotGold	#forge:ingots/gold	#c:ingots/gold
+ingotCopper	#forge:ingots/copper	#c:ingots/copper
+ingotBrick	#forge:ingots/brick	#c:bricks/normal
+ingotBrickNether	#forge:ingots/nether_brick	#c:bricks/nether
+nuggetIron	#forge:nuggets/iron	#c:nuggets/iron
+nuggetGold	#forge:nuggets/gold	#c:nuggets/gold
+gemDiamond	#forge:gems/diamond	#c:gems/diamond
+gemEmerald	#forge:gems/emerald	#c:gems/emerald
+gemLapis	#forge:gems/lapis	#c:gems/lapis
+gemQuartz	#forge:gems/quartz	#c:gems/quartz
+gemPrismarine	#forge:gems/prismarine	#c:gems/prismarine
+dustPrismarine	#forge:dusts/prismarine	minecraft:prismarine_crystals
+dustRedstone	#forge:dusts/redstone	#c:dusts/redstone
+dustGlowstone	#forge:dusts/glowstone	#c:dusts/glowstone
+blockCoal	#forge:storage_blocks/coal	#c:storage_blocks/coal
+blockIron	#forge:storage_blocks/iron	#c:storage_blocks/iron
+blockGold	#forge:storage_blocks/gold	#c:storage_blocks/gold
+blockLapis	#forge:storage_blocks/lapis	#c:storage_blocks/lapis
+blockDiamond	#forge:storage_blocks/diamond	#c:storage_blocks/diamond
+blockRedstone	#forge:storage_blocks/redstone	#c:storage_blocks/redstone
+blockEmerald	#forge:storage_blocks/emerald	#c:storage_blocks/emerald
+blockQuartz	#forge:storage_blocks/quartz	minecraft:quartz_block
+blockCopper	#forge:storage_blocks/copper	#c:storage_blocks/copper
+blockSlime	minecraft:slime_block	#c:storage_blocks/slime
+cropWheat	#forge:crops/wheat	#c:crops/wheat
+cropPotato	#forge:crops/potato	#c:crops/potato
+cropCarrot	#forge:crops/carrot	#c:crops/carrot
+cropBeetroot	#forge:crops/beetroot	#c:crops/beetroot
+cropNetherWart	#forge:crops/nether_wart	#c:crops/nether_wart
+sugarcane	minecraft:sugar_cane	#c:crops/sugar_cane
+blockCactus	minecraft:cactus	#c:crops/cactus
+dye	#forge:dyes	#c:dyes
+dyeBlack	#forge:dyes/black	#c:dyes/black
+dyeRed	#forge:dyes/red	#c:dyes/red
+dyeGreen	#forge:dyes/green	#c:dyes/green
+dyeBrown	#forge:dyes/brown	#c:dyes/brown
+dyeBlue	#forge:dyes/blue	#c:dyes/blue
+dyePurple	#forge:dyes/purple	#c:dyes/purple
+dyeCyan	#forge:dyes/cyan	#c:dyes/cyan
+dyeLightGray	#forge:dyes/light_gray	#c:dyes/light_gray
+dyeGray	#forge:dyes/gray	#c:dyes/gray
+dyePink	#forge:dyes/pink	#c:dyes/pink
+dyeLime	#forge:dyes/lime	#c:dyes/lime
+dyeYellow	#forge:dyes/yellow	#c:dyes/yellow
+dyeLightBlue	#forge:dyes/light_blue	#c:dyes/light_blue
+dyeMagenta	#forge:dyes/magenta	#c:dyes/magenta
+dyeOrange	#forge:dyes/orange	#c:dyes/orange
+dyeWhite	#forge:dyes/white	#c:dyes/white
+slimeball	#forge:slimeballs	#c:slime_balls
+enderpearl	#forge:ender_pearls	#c:ender_pearls
+bone	#forge:bones	#c:bones
+gunpowder	#forge:gunpowder	#c:gunpowders
+string	#forge:string	#c:strings
+netherStar	#forge:nether_stars	#c:nether_stars
+leather	#forge:leather	#c:leathers
+feather	#forge:feathers	#c:feathers
+egg	#forge:eggs	#c:eggs
+record	-	#c:music_discs
+stone	#forge:stone	#c:stones
+cobblestone	#forge:cobblestone	#c:cobblestones
+gravel	#forge:gravel	#c:gravels
+sand	#forge:sand	#c:sands
+sandstone	#forge:sandstone	#c:sandstone/blocks
+netherrack	#forge:netherrack	#c:netherracks
+obsidian	#forge:obsidian	#c:obsidians
+endstone	#forge:end_stones	#c:end_stones
+workbench	minecraft:crafting_table	#c:player_workstations/crafting_tables
+blockGlass	#forge:glass	#c:glass_blocks
+blockGlassColorless	#forge:glass/colorless	#c:glass_blocks/colorless
+paneGlass	#forge:glass_panes	#c:glass_panes
+paneGlassColorless	#forge:glass_panes/colorless	#c:glass_panes/colorless
+chest	#forge:chests	#c:chests
+chestWood	#forge:chests/wooden	#c:chests/wooden
+chestEnder	#forge:chests/ender	#c:chests/ender
+chestTrapped	#forge:chests/trapped	#c:chests/trapped
+blockGlassBlack	#forge:glass/black	minecraft:black_stained_glass
+blockGlassRed	#forge:glass/red	minecraft:red_stained_glass
+blockGlassGreen	#forge:glass/green	minecraft:green_stained_glass
+blockGlassBrown	#forge:glass/brown	minecraft:brown_stained_glass
+blockGlassBlue	#forge:glass/blue	minecraft:blue_stained_glass
+blockGlassPurple	#forge:glass/purple	minecraft:purple_stained_glass
+blockGlassCyan	#forge:glass/cyan	minecraft:cyan_stained_glass
+blockGlassLightGray	#forge:glass/light_gray	minecraft:light_gray_stained_glass
+blockGlassGray	#forge:glass/gray	minecraft:gray_stained_glass
+blockGlassPink	#forge:glass/pink	minecraft:pink_stained_glass
+blockGlassLime	#forge:glass/lime	minecraft:lime_stained_glass
+blockGlassYellow	#forge:glass/yellow	minecraft:yellow_stained_glass
+blockGlassLightBlue	#forge:glass/light_blue	minecraft:light_blue_stained_glass
+blockGlassMagenta	#forge:glass/magenta	minecraft:magenta_stained_glass
+blockGlassOrange	#forge:glass/orange	minecraft:orange_stained_glass
+blockGlassWhite	#forge:glass/white	minecraft:white_stained_glass
+paneGlassBlack	#forge:glass_panes/black	minecraft:black_stained_glass_pane
+paneGlassRed	#forge:glass_panes/red	minecraft:red_stained_glass_pane
+paneGlassGreen	#forge:glass_panes/green	minecraft:green_stained_glass_pane
+paneGlassBrown	#forge:glass_panes/brown	minecraft:brown_stained_glass_pane
+paneGlassBlue	#forge:glass_panes/blue	minecraft:blue_stained_glass_pane
+paneGlassPurple	#forge:glass_panes/purple	minecraft:purple_stained_glass_pane
+paneGlassCyan	#forge:glass_panes/cyan	minecraft:cyan_stained_glass_pane
+paneGlassLightGray	#forge:glass_panes/light_gray	minecraft:light_gray_stained_glass_pane
+paneGlassGray	#forge:glass_panes/gray	minecraft:gray_stained_glass_pane
+paneGlassPink	#forge:glass_panes/pink	minecraft:pink_stained_glass_pane
+paneGlassLime	#forge:glass_panes/lime	minecraft:lime_stained_glass_pane
+paneGlassYellow	#forge:glass_panes/yellow	minecraft:yellow_stained_glass_pane
+paneGlassLightBlue	#forge:glass_panes/light_blue	minecraft:light_blue_stained_glass_pane
+paneGlassMagenta	#forge:glass_panes/magenta	minecraft:magenta_stained_glass_pane
+paneGlassOrange	#forge:glass_panes/orange	minecraft:orange_stained_glass_pane
+paneGlassWhite	#forge:glass_panes/white	minecraft:white_stained_glass_pane
+paper	minecraft:paper	minecraft:paper
+glowstone	minecraft:glowstone	minecraft:glowstone
+torch	minecraft:torch	minecraft:torch
+vine	minecraft:vine	minecraft:vine
+grass	minecraft:grass_block	minecraft:grass_block
+dirt	minecraft:dirt	minecraft:dirt
+stoneGranite	minecraft:granite	minecraft:granite
+stoneGranitePolished	minecraft:polished_granite	minecraft:polished_granite
+stoneDiorite	minecraft:diorite	minecraft:diorite
+stoneDioritePolished	minecraft:polished_diorite	minecraft:polished_diorite
+stoneAndesite	minecraft:andesite	minecraft:andesite
+stoneAndesitePolished	minecraft:polished_andesite	minecraft:polished_andesite
+blockPrismarine	minecraft:prismarine	minecraft:prismarine
+blockPrismarineBrick	minecraft:prismarine_bricks	minecraft:prismarine_bricks
+blockPrismarineDark	minecraft:dark_prismarine	minecraft:dark_prismarine

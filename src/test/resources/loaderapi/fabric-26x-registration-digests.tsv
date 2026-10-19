@@ -1,0 +1,12 @@
+# SHA-256 of the transformer table lines the Fabric loader API runtime adds or removes on each
+# indexed host, by rows_version. RowsVersionDigestTest fails when those lines change while
+# rows_version stays the same. Add a block for each new rows_version and keep the older ones.
+rows_version	host	sha256
+7	26.1	ecf7f60e8a465f0de5fc885c13fb6b404e9d0d37da08e52ae346322e703c52b0
+7	26.2	ecf7f60e8a465f0de5fc885c13fb6b404e9d0d37da08e52ae346322e703c52b0
+7	26.3	ecf7f60e8a465f0de5fc885c13fb6b404e9d0d37da08e52ae346322e703c52b0
+7	26.4	ecf7f60e8a465f0de5fc885c13fb6b404e9d0d37da08e52ae346322e703c52b0
+8	26.1	67cf8177730b2cea2f72554bc4ded3b525dc72e6694249a792cce4d7908ab334
+8	26.2	67cf8177730b2cea2f72554bc4ded3b525dc72e6694249a792cce4d7908ab334
+8	26.3	67cf8177730b2cea2f72554bc4ded3b525dc72e6694249a792cce4d7908ab334
+8	26.4	67cf8177730b2cea2f72554bc4ded3b525dc72e6694249a792cce4d7908ab334

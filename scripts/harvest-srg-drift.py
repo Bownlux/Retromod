@@ -11,6 +11,11 @@ writes the version range each name covers, using the same per-version join as
 harvest-srg-union.py. Retromod picks the range that contains the mod's own
 Minecraft version and falls back to srg-to-mojang.tsv everywhere else.
 
+This harvests every MCPConfig release, not only the stable targets the union
+uses. A mod reports the lower bound of its minecraft range, such as 1.20 for
+[1.20,1.20.2), and a version missing here falls back to the range before it:
+1.20 then got the 1.19.4 names, so m_9236_ became getLevel instead of level.
+
 Usage:  python3 scripts/harvest-srg-drift.py
 Output: src/main/resources/retromod/srg-version-drift.tsv
 """
@@ -26,20 +31,34 @@ union = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(union)
 
 
+# Every MCPConfig release from 1.16.5 to the last version the union harvests, in order.
+DRIFT_VERSIONS = ["1.16.5", "1.17", "1.17.1", "1.18", "1.18.1", "1.18.2",
+                  "1.19", "1.19.1", "1.19.2", "1.19.3", "1.19.4",
+                  "1.20", "1.20.1", "1.20.2", "1.20.3", "1.20.4", "1.20.5", "1.20.6",
+                  "1.21", "1.21.1", "1.21.2", "1.21.3", "1.21.4", "1.21.5",
+                  "1.21.6", "1.21.7", "1.21.8"]
+assert set(union.VERSIONS) <= set(DRIFT_VERSIONS), "drift must cover every union version"
+
+# Ids with one name in every harvested version that srg-to-mojang.tsv still lacks: the union
+# skipped m_142469_ because the shipped table once called it createRenamer, so only this file
+# gives Entity.getBoundingBox to the versions that had it.
+SINGLE_NAME_ROWS = {("METHOD", "m_142469_")}
+
+
 def main():
     per_version = {}
-    for version in union.VERSIONS:
+    for version in DRIFT_VERSIONS:
         print(f"[{version}] joining...", flush=True)
         per_version[version] = union.join_version(version)
 
     names = {}
-    for version in union.VERSIONS:
+    for version in DRIFT_VERSIONS:
         for key, mojang in per_version[version].items():
             names.setdefault(key, []).append((version, mojang))
 
     rows = []
     for (kind, srg), history in sorted(names.items()):
-        if len({mojang for _, mojang in history}) < 2:
+        if len({mojang for _, mojang in history}) < 2 and (kind, srg) not in SINGLE_NAME_ROWS:
             continue
         # Contiguous runs of the same name become one range.
         start, current, last = history[0][0], history[0][1], history[0][0]

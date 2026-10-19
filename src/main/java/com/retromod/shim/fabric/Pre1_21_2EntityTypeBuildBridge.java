@@ -9,21 +9,7 @@ import com.retromod.core.ClassResourceInspector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * #162: {@code EntityType$Builder.build(String)} -> {@code build(ResourceKey)} bridge for
- * intermediary-namespace Fabric mods on pre-26.1 hosts. MC 1.21.2 flipped the descriptor of
- * {@code method_5905} from {@code (Ljava/lang/String;)Lclass_1299;} to
- * {@code (Lclass_5321;)Lclass_1299;}; a 1.20.1-1.21.1 mod registering an entity dies
- * {@code NoSuchMethodError} at {@code <clinit>} on a 1.21.2-1.21.11 host (ENGRAM 0.8.0-beta).
- *
- * <p>Host-probing (pitfall 9 in spirit): registers only when the host's
- * {@code class_1299$class_1300.method_5905} takes {@code class_5321}. On a &le;1.21.1 host the
- * String form still exists and the bridge must not fire; on a 26.1+ host the classes are
- * Mojang-named and the intermediary remap handles the mod instead. The rewritten call goes
- * receiver-as-arg0 to the embedded reflective
- * {@link com.retromod.polyfill.minecraft.RetroEntityTypeBuild}, which reconstructs the key the way
- * vanilla's own 1.21.2 migration did.
- */
+/** Bridges the old {@code EntityType.Builder.build(String)} for Fabric mods on pre-26.1 hosts. */
 public final class Pre1_21_2EntityTypeBuildBridge {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
@@ -36,11 +22,16 @@ public final class Pre1_21_2EntityTypeBuildBridge {
 
     /** Probe the host builder's {@code method_5905} shape; bridge only the renamed-desc host. */
     public static void register(RetromodTransformer transformer) {
+        // 1.21.2 changed method_5905 from (String) to (class_5321), so a 1.20.1 to 1.21.1 mod that
+        // registers an entity dies with NoSuchMethodError in <clinit> on a 1.21.2 to 1.21.11 host
+        // (#162). A 26.1+ host has no intermediary classes; the full remap handles the mod there.
         var builder = ClassResourceInspector.read(BUILDER);
         if (builder == null || !ClassResourceInspector.exists("net/minecraft/class_5321")) {
             LOGGER.debug("EntityType.Builder support is not needed because intermediary host classes are unavailable");
             return;
         }
+        // Bridge only when the host takes the key and the String form is gone. A 1.21.1 or older
+        // host still has the String form, so the bridge must not fire there (pitfall #9).
         boolean takesKey = builder.methods.stream()
                 .anyMatch(m -> m.name.equals("method_5905")
                         && m.desc.startsWith("(Lnet/minecraft/class_5321;)"));
@@ -68,7 +59,8 @@ public final class Pre1_21_2EntityTypeBuildBridge {
             // jar-resident copy still serves on Fabric
         }
         // Receiver-as-arg0: auto-devirtualized to INVOKESTATIC; the Object return CHECKCASTs back
-        // to class_1299 at the call site.
+        // to class_1299 at the call site. The polyfill builds under the id the type is registered
+        // under when EntityTypeBuildKeyAdapter finds it.
         transformer.registerMethodRedirect(
                 BUILDER, "method_5905", "(Ljava/lang/String;)L" + ENTITY_TYPE + ";",
                 POLY, "build", "(Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/Object;");

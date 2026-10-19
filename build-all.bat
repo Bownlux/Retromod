@@ -5,7 +5,7 @@ REM Builds Fabric, Forge, NeoForge, and the standalone CLI.
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
-set "VERSION=1.4.0-snapshot.1"
+set "VERSION=1.4.0-snapshot.2"
 set "MC_VERSIONS=1.20 1.20.1 1.20.2 1.20.3 1.20.4 1.20.5 1.20.6 1.21 1.21.1 1.21.2 1.21.3 1.21.4 1.21.5 1.21.6 1.21.7 1.21.8 1.21.9 1.21.10 1.21.11 26.1 26.1.1 26.1.2 26.2 26.3"
 set "LOADERS=fabric forge neoforge"
 set "EXPECTED_FABRIC=24"
@@ -87,6 +87,14 @@ if "%SKIP_BUILD%"=="0" (
 set "SHADED_JAR=target\retromod-%VERSION%-all.jar"
 if not exist "%SHADED_JAR%" (
     echo ERROR: Expected shaded JAR not found: %SHADED_JAR%
+    exit /b 1
+)
+
+REM Forge and NeoForge dist jars are bootstraps around the runtime jar; their locator classes
+REM come from this versioned jar so a stale build can never supply them.
+set "BOOT_JAR=target\retromod-%VERSION%-boot.jar"
+if not exist "%BOOT_JAR%" (
+    echo ERROR: Expected bootstrap JAR not found: %BOOT_JAR%
     exit /b 1
 )
 
@@ -276,6 +284,33 @@ if not defined LOADER_DIR exit /b 1
 
 call :set_version_requirements "%MC_VERSION%"
 
+REM Forge and NeoForge get a bootstrap around this runtime (scripts\loader_bootstrap.py).
+REM RUNTIME_LOADER is the runtime's own loader shape: NeoForge 1.20.1 carries the Forge runtime.
+REM RUNTIME_TOML is the toml the host's FML reads: NeoForge 1.20.2 to 1.20.4 still read
+REM META-INF/mods.toml, and skip a runtime that only has neoforge.mods.toml.
+set "BOOT_GENERATION=none"
+set "RUNTIME_LOADER=%LOADER%"
+set "RUNTIME_TOML="
+if /I not "%LOADER%"=="fabric" (
+    set "BOOT_GENERATION="
+    set "RUNTIME_LOADER="
+    for /f "usebackq delims=" %%G in (`!PYTHON_CMD! "%~dp0scripts\loader_bootstrap.py" generation %LOADER% %MC_VERSION%`) do set "BOOT_GENERATION=%%G"
+    for /f "usebackq delims=" %%G in (`!PYTHON_CMD! "%~dp0scripts\loader_bootstrap.py" runtime-loader %LOADER% %MC_VERSION%`) do set "RUNTIME_LOADER=%%G"
+    for /f "usebackq delims=" %%G in (`!PYTHON_CMD! "%~dp0scripts\loader_bootstrap.py" runtime-toml %LOADER% %MC_VERSION%`) do set "RUNTIME_TOML=%%G"
+)
+if not defined BOOT_GENERATION (
+    echo ERROR: Could not resolve the bootstrap layout for %LOADER% %MC_VERSION%.
+    exit /b 1
+)
+if not defined RUNTIME_LOADER (
+    echo ERROR: Could not resolve the runtime loader for %LOADER% %MC_VERSION%.
+    exit /b 1
+)
+if /I not "%LOADER%"=="fabric" if not defined RUNTIME_TOML (
+    echo ERROR: Could not resolve the runtime metadata for %LOADER% %MC_VERSION%.
+    exit /b 1
+)
+
 set "OUTPUT_NAME=retromod-%VERSION%+%MC_VERSION%.jar"
 set "OUTPUT_DIR=%CD%\dist\%LOADER_DIR%\%MC_VERSION%"
 set "OUTPUT_PATH=!OUTPUT_DIR!\!OUTPUT_NAME!"
@@ -331,7 +366,7 @@ if /I "%LOADER%"=="fabric" (
     )
 )
 
-if /I "%LOADER%"=="forge" (
+if /I "!RUNTIME_LOADER!"=="forge" (
     set "METADATA_DELETE_FAILED=0"
     for %%M in (fabric.mod.json quilt.mod.json META-INF\neoforge.mods.toml) do (
         if exist "%%M" del /q "%%M" >nul 2>nul
@@ -359,9 +394,9 @@ if /I "%LOADER%"=="forge" (
     )
 )
 
-if /I "%LOADER%"=="neoforge" (
+if /I "!RUNTIME_LOADER!"=="neoforge" (
     set "METADATA_DELETE_FAILED=0"
-    for %%M in (fabric.mod.json quilt.mod.json META-INF\mods.toml) do (
+    for %%M in (fabric.mod.json quilt.mod.json META-INF\mods.toml META-INF\neoforge.mods.toml) do (
         if exist "%%M" del /q "%%M" >nul 2>nul
         if exist "%%M" set "METADATA_DELETE_FAILED=1"
     )
@@ -378,7 +413,7 @@ if /I "%LOADER%"=="neoforge" (
         echo ERROR: Could not prepare NeoForge metadata for !MC_VERSION!.
         exit /b 1
     )
-    call :write_neoforge_toml "%TEMP_DIR%\META-INF\neoforge.mods.toml"
+    call :write_neoforge_toml "%TEMP_DIR%\!RUNTIME_TOML:/=\!"
     if errorlevel 1 (
         popd
         rmdir /s /q "!TEMP_DIR!"
@@ -393,7 +428,7 @@ if not exist META-INF mkdir META-INF
     echo Implementation-Title: Retromod
     echo Implementation-Version: %VERSION%
     echo Retromod-Target-MC: %MC_VERSION%
-    echo Retromod-Loader: %LOADER%
+    echo Retromod-Loader: !RUNTIME_LOADER!
     echo Automatic-Module-Name: retromod
     echo.
 ) > META-INF\MANIFEST.MF
@@ -417,21 +452,41 @@ if exist "!OUTPUT_PATH!" (
     echo ERROR: Could not remove stale output !OUTPUT_PATH!.
     exit /b 1
 )
-jar cfm "!OUTPUT_PATH!" META-INF\MANIFEST.MF .
+REM A bootstrap host packages the runtime next to the staging folder, outside dist\.
+set "JAR_PATH=!OUTPUT_PATH!"
+if not "!BOOT_GENERATION!"=="none" set "JAR_PATH=!TEMP_DIR!.runtime.jar"
+if exist "!JAR_PATH!" del /q "!JAR_PATH!" >nul 2>nul
+jar cfm "!JAR_PATH!" META-INF\MANIFEST.MF .
 if errorlevel 1 (
+    del /q "!JAR_PATH!" >nul 2>nul
     popd
     rmdir /s /q "!TEMP_DIR!"
     echo ERROR: Could not create !OUTPUT_NAME!.
     exit /b 1
 )
 
-call :validate_loader_jar "!OUTPUT_PATH!" "!LOADER!" "!MC_VERSION!" "%VERSION%" "!JAVA_REQ!"
+call :validate_loader_jar "!JAR_PATH!" "!RUNTIME_LOADER!" "!MC_VERSION!" "%VERSION%" "!JAVA_REQ!" "!RUNTIME_TOML!"
 if errorlevel 1 (
-    del /q "!OUTPUT_PATH!" >nul 2>nul
+    del /q "!JAR_PATH!" >nul 2>nul
     popd
     rmdir /s /q "!TEMP_DIR!"
     echo ERROR: Packaged JAR validation failed for !LOADER! !MC_VERSION!.
     exit /b 1
+)
+
+REM assemble checks the outer layout, the nested runtime, and its self-hash, and deletes the
+REM output again if any check fails.
+if not "!BOOT_GENERATION!"=="none" (
+    !PYTHON_CMD! "%~dp0scripts\loader_bootstrap.py" assemble --runtime "!JAR_PATH!" --boot-jar "%~dp0%BOOT_JAR%" --loader !LOADER! --minecraft !MC_VERSION! --version %VERSION% --self-hash "!COMPUTED_SELF_HASH!" --output "!OUTPUT_PATH!" >nul
+    if errorlevel 1 (
+        del /q "!JAR_PATH!" >nul 2>nul
+        del /q "!OUTPUT_PATH!" >nul 2>nul
+        popd
+        rmdir /s /q "!TEMP_DIR!"
+        echo ERROR: Bootstrap packaging failed for !LOADER! !MC_VERSION!.
+        exit /b 1
+    )
+    del /q "!JAR_PATH!" >nul 2>nul
 )
 
 popd
@@ -447,8 +502,9 @@ if "%MC_VERSION%"=="1.20.6" set "JAVA_REQ=>=21"
 if "%MC_VERSION:~0,4%"=="1.21" set "JAVA_REQ=>=21"
 if "%MC_VERSION:~0,3%"=="26." set "JAVA_REQ=>=25"
 
+REM Minecraft 1.20 only has Forge 46.x (the last is 1.20-46.0.14); 47.x starts at 1.20.1.
 set "FORGE_LV=40"
-if "%MC_VERSION%"=="1.20" set "FORGE_LV=47"
+if "%MC_VERSION%"=="1.20" set "FORGE_LV=46"
 if "%MC_VERSION%"=="1.20.1" set "FORGE_LV=47"
 if "%MC_VERSION%"=="1.20.2" set "FORGE_LV=48"
 if "%MC_VERSION%"=="1.20.3" set "FORGE_LV=49"
@@ -536,6 +592,11 @@ if not exist "%~1" exit /b 1
 exit /b 0
 
 :write_neoforge_toml
+REM FML 1 (NeoForge 1.20.2 and 1.20.3) requires "mandatory" in every dependency and ignores
+REM "type". FML 2 (1.20.4) reads "type" and only falls back to "mandatory" without it. FML 3
+REM and newer read "type".
+set "LEGACY_MANDATORY=0"
+if /I "!RUNTIME_TOML!"=="META-INF/mods.toml" set "LEGACY_MANDATORY=1"
 (
     echo modLoader = "javafml"
     echo loaderVersion = "[1,^)"
@@ -555,6 +616,7 @@ exit /b 0
     echo.
     echo [[dependencies.retromod]]
     echo modId = "neoforge"
+    if "!LEGACY_MANDATORY!"=="1" echo mandatory = true
     echo type = "required"
     echo versionRange = "[!NEOFORGE_LV!,^)"
     echo ordering = "NONE"
@@ -562,6 +624,7 @@ exit /b 0
     echo.
     echo [[dependencies.retromod]]
     echo modId = "minecraft"
+    if "!LEGACY_MANDATORY!"=="1" echo mandatory = true
     echo type = "required"
     echo versionRange = "[!MC_VERSION!]"
     echo ordering = "NONE"
@@ -572,7 +635,9 @@ if not exist "%~1" exit /b 1
 exit /b 0
 
 :validate_loader_jar
-!PYTHON_CMD! -c "import json,sys,zipfile; p,l,mc,v,j=sys.argv[1:]; z=zipfile.ZipFile(p); crc=z.testzip(); n=set(z.namelist()); e={'fabric':'fabric.mod.json','forge':'META-INF/mods.toml','neoforge':'META-INF/neoforge.mods.toml'}; expected={'fabric':{'fabric.mod.json','quilt.mod.json'},'forge':{e['forge']},'neoforge':{e['neoforge']}}; lm=set(e.values()).union({'quilt.mod.json'}); mf=z.read('META-INF/MANIFEST.MF').decode('utf-8').replace('\r','').splitlines(); data=z.read(e[l]).decode('utf-8'); f=json.loads(data) if l=='fabric' else {}; d=f.get('depends',{}) if isinstance(f,dict) else {}; quilt=json.loads(z.read('quilt.mod.json')) if l=='fabric' and 'quilt.mod.json' in n else {}; ql=quilt.get('quilt_loader',{}) if isinstance(quilt,dict) else {}; qdeps=ql.get('depends',[]) if isinstance(ql,dict) else []; qmap={x.get('id'):x.get('versions') for x in qdeps if isinstance(x,dict)}; qe=ql.get('entrypoints') if isinstance(ql,dict) else None; qexpected={'main':'com.retromod.core.Retromod','client':'com.retromod.core.RetromodClient','server':'com.retromod.core.RetromodServer','preLaunch':'com.retromod.core.RetromodPreLaunch'}; lines={x.strip() for x in data.splitlines()}; q=chr(34); checks=[(crc is None,'corrupt archive entry: '+str(crc)),(n.intersection(lm)==expected[l],'wrong loader metadata'),(not any(x.startswith('org/objectweb/asm/') for x in n),'bundled ASM remains'),(l=='fabric' or not any(x.startswith('javax/annotation/') for x in n),'bundled javax.annotation remains'),('Implementation-Version: '+v in mf,'manifest version mismatch'),('Retromod-Target-MC: '+mc in mf,'manifest Minecraft target mismatch'),('Retromod-Loader: '+l in mf,'manifest loader mismatch'),(l!='fabric' or (f.get('version')==v and d.get('minecraft')==mc and d.get('java')==j),'Fabric metadata mismatch'),(l!='fabric' or (ql.get('version')==v and qmap.get('minecraft')=='='+mc and qmap.get('java')==j),'Quilt metadata mismatch'),(l!='fabric' or qe==qexpected,'Quilt entrypoints mismatch'),(l=='fabric' or ('version = '+q+v+q in lines and 'versionRange = '+q+'['+mc+']'+q in lines and 'modId = '+q+l+q in lines),'Forge metadata mismatch')]; bad=next((message for valid,message in checks if not valid),None); z.close(); raise SystemExit(bad or 0)" "%~1" "%~2" "%~3" "%~4" "%~5"
+REM The sixth argument is the toml a Forge or NeoForge runtime carries, from
+REM loader_bootstrap.py runtime-toml.
+!PYTHON_CMD! -c "import json,sys,zipfile; p,l,mc,v,j,t=sys.argv[1:]; z=zipfile.ZipFile(p); crc=z.testzip(); n=set(z.namelist()); e={'fabric':'fabric.mod.json','forge':t,'neoforge':t}; expected={'fabric':{'fabric.mod.json','quilt.mod.json'},'forge':{e['forge']},'neoforge':{e['neoforge']}}; lm={'fabric.mod.json','quilt.mod.json','META-INF/mods.toml','META-INF/neoforge.mods.toml'}; mf=z.read('META-INF/MANIFEST.MF').decode('utf-8').replace('\r','').splitlines(); data=z.read(e[l]).decode('utf-8'); f=json.loads(data) if l=='fabric' else {}; d=f.get('depends',{}) if isinstance(f,dict) else {}; quilt=json.loads(z.read('quilt.mod.json')) if l=='fabric' and 'quilt.mod.json' in n else {}; ql=quilt.get('quilt_loader',{}) if isinstance(quilt,dict) else {}; qdeps=ql.get('depends',[]) if isinstance(ql,dict) else []; qmap={x.get('id'):x.get('versions') for x in qdeps if isinstance(x,dict)}; qe=ql.get('entrypoints') if isinstance(ql,dict) else None; qexpected={'main':'com.retromod.core.Retromod','client':'com.retromod.core.RetromodClient','server':'com.retromod.core.RetromodServer','preLaunch':'com.retromod.core.RetromodPreLaunch'}; lines={x.strip() for x in data.splitlines()}; q=chr(34); checks=[(crc is None,'corrupt archive entry: '+str(crc)),(n.intersection(lm)==expected[l],'wrong loader metadata'),(not any(x.startswith('org/objectweb/asm/') for x in n),'bundled ASM remains'),(l=='fabric' or not any(x.startswith('javax/annotation/') for x in n),'bundled javax.annotation remains'),('Implementation-Version: '+v in mf,'manifest version mismatch'),('Retromod-Target-MC: '+mc in mf,'manifest Minecraft target mismatch'),('Retromod-Loader: '+l in mf,'manifest loader mismatch'),(l!='fabric' or (f.get('version')==v and d.get('minecraft')==mc and d.get('java')==j),'Fabric metadata mismatch'),(l!='fabric' or (ql.get('version')==v and qmap.get('minecraft')=='='+mc and qmap.get('java')==j),'Quilt metadata mismatch'),(l!='fabric' or qe==qexpected,'Quilt entrypoints mismatch'),(l=='fabric' or ('version = '+q+v+q in lines and 'versionRange = '+q+'['+mc+']'+q in lines and 'modId = '+q+l+q in lines),'Forge metadata mismatch')]; bad=next((message for valid,message in checks if not valid),None); z.close(); raise SystemExit(bad or 0)" "%~1" "%~2" "%~3" "%~4" "%~5" "%~6"
 if errorlevel 1 exit /b 1
 exit /b 0
 

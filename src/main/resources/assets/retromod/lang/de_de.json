@@ -6,6 +6,7 @@
   "retromod.main.subtitle": "Mod-JARs ablegen oder ausw\u00e4hlen",
   "retromod.main.add_mods": "Mods hinzuf\u00fcgen\u2026",
   "retromod.main.open_folder": "Mods-Ordner \u00f6ffnen",
+  "retromod.main.inplace_status": "%s aus dem Cache, %s nach Neustart, %s fehlgeschlagen",
 
   "retromod.screen.title": "Retromod - Mod-Manager",
   "retromod.screen.add_mods": "Mods zum Umwandeln hinzuf\u00fcgen",
@@ -31,6 +32,8 @@
   "retromod.settings.force_translate_complex": "Komplexe Umwandlung erzwingen",
   "retromod.settings.log_transformations": "Umwandlungen protokollieren",
   "retromod.settings.debug": "Debug-Modus",
+  "retromod.settings.write_translated_jars": "\u00dcbersetzte Jars in mods/ schreiben",
+  "retromod.settings.next_launch": "Gilt ab dem n\u00e4chsten Start",
 
   "retromod.filepicker.title": "Retromod: Mod-JARs zum Umwandeln ausw\u00e4hlen",
 

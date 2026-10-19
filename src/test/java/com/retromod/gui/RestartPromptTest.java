@@ -59,4 +59,27 @@ class RestartPromptTest {
     void configEnabledDefaultsOn() {
         assertTrue(RestartPrompt.configEnabled());
     }
+
+    @Test
+    @DisplayName("In-place mode says the files in mods/ were not changed")
+    void inPlaceWordingDoesNotClaimChangedFiles() {
+        String cache = RestartPrompt.message(2, true);
+        assertTrue(cache.contains("not changed"), cache);
+        assertFalse(cache.contains("converted"), cache);
+        assertTrue(RestartPrompt.message(1, false).contains("converted 1 mod "),
+                "rewrite mode keeps its wording");
+        assertTrue(RestartPrompt.cacheRestartPopupText(1).contains("not changed"));
+        assertFalse(RestartPrompt.cacheRestartPopupText(3).contains("first time"),
+                "a Retromod update clears the cache, so the restart is not one-time");
+    }
+
+    @Test
+    @DisplayName("Translations into the cache arm the prompt like converted mods")
+    void cacheTranslationsArmThePrompt() {
+        RestartPrompt.markTranslatedIntoCache(2);
+        assertEquals(2, RestartPrompt.pendingForTesting());
+        assertTrue(RestartPrompt.shouldShow());
+        RestartPrompt.markTranslatedIntoCache(0);
+        assertEquals(2, RestartPrompt.pendingForTesting(), "zero is a no-op");
+    }
 }

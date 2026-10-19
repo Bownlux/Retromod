@@ -70,6 +70,10 @@ public final class LegacyAttributeApiBridge {
     static final String SUPPLIER_BUILDER = SUPPLIER + "$Builder";
     static final String LIVING_ENTITY = "net/minecraft/world/entity/LivingEntity";
     static final String EFFECT_INSTANCE = "net/minecraft/world/effect/MobEffectInstance";
+    /** The loaders' event for adding attributes to existing entities, under both package roots. */
+    static final List<String> MODIFICATION_EVENTS = List.of(
+            "net/neoforged/neoforge/event/entity/EntityAttributeModificationEvent",
+            "net/minecraftforge/event/entity/EntityAttributeModificationEvent");
 
     static final String RESOURCE_LOCATION = "net/minecraft/resources/ResourceLocation";
     static final String OFFLINE_FIRST_VERSION = "1.21";
@@ -94,6 +98,7 @@ public final class LegacyAttributeApiBridge {
 
     private static final String UUID = "java/util/UUID";
     private static final String L_UUID = "Ljava/util/UUID;";
+    private static final String L_STRING = "Ljava/lang/String;";
     private static final String L_ATTRIBUTE = "L" + ATTRIBUTE + ";";
     private static final String L_EFFECT = "L" + MOB_EFFECT + ";";
     private static final String L_HOLDER = "L" + HOLDER + ";";
@@ -102,6 +107,7 @@ public final class LegacyAttributeApiBridge {
     private static final String L_INSTANCE = "L" + INSTANCE + ";";
     private static final String L_EFFECT_INSTANCE = "L" + EFFECT_INSTANCE + ";";
     private static final String L_BUILDER = "L" + SUPPLIER_BUILDER + ";";
+    private static final String L_ENTITY_TYPE = "Lnet/minecraft/world/entity/EntityType;";
 
     /**
      * One removed member and its replacement. Parameters and the return value are converted by
@@ -112,8 +118,14 @@ public final class LegacyAttributeApiBridge {
     record Rewrite(String owner, String oldName, String oldDesc, String newName, String newDesc,
                    boolean constructor) {
         String adapterName() {
-            return constructor ? "new$" + simpleName(owner) + "$" + Integer.toHexString(oldDesc.hashCode())
-                    : simpleName(owner) + "$" + oldName + "$" + Integer.toHexString(oldDesc.hashCode());
+            return constructor ? "new$" + ownerTag() + "$" + Integer.toHexString(oldDesc.hashCode())
+                    : ownerTag() + "$" + oldName + "$" + Integer.toHexString(oldDesc.hashCode());
+        }
+
+        /** The owner's simple name, plus its full name's hash for a loader class, whose simple name repeats. */
+        private String ownerTag() {
+            return owner.startsWith("net/minecraft/") ? simpleName(owner)
+                    : simpleName(owner) + "$" + Integer.toHexString(owner.hashCode());
         }
 
         String adapterDesc() {
@@ -132,7 +144,24 @@ public final class LegacyAttributeApiBridge {
 
     /** The members a 1.20.1 mod calls, in 1.21.1 shape. {@code ID} stands for the host id type. */
     static List<Rewrite> candidates(String id) {
+        List<Rewrite> candidates = new ArrayList<>(vanillaCandidates(id));
+        // The loader event that adds attributes to existing entities, as Forge 1.20.1 named it on
+        // both loaders. Each host keeps only the owner it has.
+        for (String event : MODIFICATION_EVENTS) {
+            candidates.add(call(event, "add", "(" + L_ENTITY_TYPE + L_ATTRIBUTE + ")V",
+                    "add", "(" + L_ENTITY_TYPE + L_HOLDER + ")V"));
+            candidates.add(call(event, "add", "(" + L_ENTITY_TYPE + L_ATTRIBUTE + "D)V",
+                    "add", "(" + L_ENTITY_TYPE + L_HOLDER + "D)V"));
+            candidates.add(call(event, "has", "(" + L_ENTITY_TYPE + L_ATTRIBUTE + ")Z",
+                    "has", "(" + L_ENTITY_TYPE + L_HOLDER + ")Z"));
+        }
+        return candidates;
+    }
+
+    private static List<Rewrite> vanillaCandidates(String id) {
         String lId = "L" + id + ";";
+        // An effect's modifier key: the UUID text until 1.20.6, the modifier id from 1.21.
+        String effectModifierKey = id.equals(UUID) ? L_STRING : lId;
         return List.of(
             call(LIVING_ENTITY, "getAttribute", "(" + L_ATTRIBUTE + ")" + L_INSTANCE,
                     "getAttribute", "(" + L_HOLDER + ")" + L_INSTANCE),
@@ -183,6 +212,12 @@ public final class LegacyAttributeApiBridge {
             call(MODIFIER, "getAmount", "()D", "amount", "()D"),
             call(MODIFIER, "getOperation", "()" + L_OPERATION, "operation", "()" + L_OPERATION),
             call(EFFECT_INSTANCE, "getEffect", "()" + L_EFFECT, "getEffect", "()" + L_HOLDER),
+            // An effect's own constructor declares its modifiers, so a failure here stops the
+            // whole mob effect registration.
+            call(MOB_EFFECT, "addAttributeModifier",
+                    "(" + L_ATTRIBUTE + L_STRING + "D" + L_OPERATION + ")" + L_EFFECT,
+                    "addAttributeModifier",
+                    "(" + L_HOLDER + effectModifierKey + "D" + L_OPERATION + ")" + L_EFFECT),
             construct(EFFECT_INSTANCE, "(" + L_EFFECT + ")V", "(" + L_HOLDER + ")V"),
             construct(EFFECT_INSTANCE, "(" + L_EFFECT + "I)V", "(" + L_HOLDER + "I)V"),
             construct(EFFECT_INSTANCE, "(" + L_EFFECT + "II)V", "(" + L_HOLDER + "II)V"),
@@ -502,6 +537,11 @@ public final class LegacyAttributeApiBridge {
             String holder = fromDesc.equals(L_EFFECT) ? "mobEffectHolder" : "attributeHolder";
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, HELPER, holder, "(Ljava/lang/Object;)" + L_HOLDER, false);
         } else if (fromDesc.equals(L_UUID)) {
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, HELPER, "idOf", "(" + L_UUID + ")L" + id + ";", false);
+        } else if (fromDesc.equals(L_STRING)) {
+            // A UUID written as text. 1.20.1 parsed it with UUID.fromString too, so a malformed one
+            // still throws, and a well-formed one gets the id every other bridged call derives.
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, UUID, "fromString", "(" + L_STRING + ")" + L_UUID, false);
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, HELPER, "idOf", "(" + L_UUID + ")L" + id + ";", false);
         } else if (fromDesc.equals(L_MODIFIER)) {
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, MODIFIER, "id", "()L" + id + ";", false);

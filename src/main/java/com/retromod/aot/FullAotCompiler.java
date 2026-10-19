@@ -27,11 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.*;
 import java.util.zip.*;
 
-/**
- * One-time heavy compilation: transforms every class in the given mods upfront and caches the
- * result, so later launches read cached bytecode instead of transforming on the fly. Triggered
- * from the Fabric first-launch dialog or the Forge/NeoForge add-mods GUI.
- */
+/** Transforms every class in the given mods once and caches it, so later launches skip the work. */
 public class FullAotCompiler {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-FullAOT");
@@ -174,6 +170,8 @@ public class FullAotCompiler {
 
                 com.retromod.core.RetromodTransformer transformer =
                     com.retromod.core.RetromodTransformer.getInstance();
+                com.retromod.loaderapi.LoaderApiRuntime.prepareForProcess(transformer,
+                        com.retromod.loaderapi.LoaderApiContext.TransformPath.FULL_AOT);
                 ExpandedByteBudget expandedInputBudget =
                         new ExpandedByteBudget(MAX_EXPANDED_BYTES);
                 ExpandedByteBudget cacheOutputBudget =
@@ -396,6 +394,9 @@ public class FullAotCompiler {
             List<Map.Entry<String, byte[]>> classEntryList = new ArrayList<>(classEntries.entrySet());
             Map<String, String> equipmentRenames = com.retromod.shim.common.LegacyEquipmentBridge
                     .legacyRenames(transformer, classEntries.values());
+            // A block filled into a static field of one class can be registered by another.
+            final com.retromod.shim.common.StaticFieldRegistryIds jarRegistryIds =
+                    transformer.indexJarRegistryIds(classEntries.values());
             java.util.concurrent.atomic.AtomicReference<IOException> fatalFailure =
                     new java.util.concurrent.atomic.AtomicReference<>();
             
@@ -408,7 +409,8 @@ public class FullAotCompiler {
                 
                 futures.add(executor.submit(() -> {
                     try (var hierarchyScope = transformer
-                            .pushJarClassBytesProvider(classBytesProvider)) {
+                            .pushJarClassBytesProvider(classBytesProvider);
+                         var registryIdScope = transformer.pushJarRegistryIds(jarRegistryIds)) {
                     for (Map.Entry<String, byte[]> entry : batch) {
                         if (wasCancelled || fatalFailure.get() != null) return;
                         
@@ -827,7 +829,7 @@ public class FullAotCompiler {
         listeners.remove(listener);
     }
 
-    /** Run compilation behind a Swing progress dialog, or headless if no GUI is available. */
+    /** Compiles behind a Swing progress dialog, or headless without a GUI. The add-mods GUI calls it. */
     public void showProgressDialog(List<Path> modsToCompile) {
         if (!EnvironmentDetector.canShowGui()) {
             runFullCompilation(modsToCompile);

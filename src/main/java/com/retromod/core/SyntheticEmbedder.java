@@ -114,6 +114,18 @@ public final class SyntheticEmbedder {
     }
 
     public static int embed(Path modDir, String uniqueKey, RetromodTransformer transformer) {
+        return embed(modDir, uniqueKey, transformer, SyntheticLibraries.NONE);
+    }
+
+    /**
+     * Like {@link #embed(Path, String, RetromodTransformer)}, but a stand-in this mod hands to or
+     * takes from a library it builds on is taken from that library instead of embedded. See
+     * {@link SyntheticLibraries}.
+     *
+     * @return number of synthetics embedded into this mod; reused ones are not counted
+     */
+    public static int embed(Path modDir, String uniqueKey, RetromodTransformer transformer,
+            SyntheticLibraries libraries) {
         Map<String, byte[]> synthetics = transformer.getSyntheticClasses();
         if (synthetics == null || synthetics.isEmpty()) return 0;
         try {
@@ -126,9 +138,17 @@ public final class SyntheticEmbedder {
 
             // which registered synthetics does this mod reference?
             Set<String> referenced = new HashSet<>();
+            // The mod's classes are kept only when a library could lend it stand-ins.
+            boolean linking = libraries != null && !libraries.isEmpty();
+            Map<String, byte[]> ownClasses = new HashMap<>();
             for (Path cf : classFiles) {
                 try {
-                    referenced.addAll(referencedClasses(Files.readAllBytes(cf)));
+                    byte[] bytes = Files.readAllBytes(cf);
+                    if (linking) {
+                        String relative = modDir.relativize(cf).toString().replace('\\', '/');
+                        ownClasses.put(relative.substring(0, relative.length() - ".class".length()), bytes);
+                    }
+                    referenced.addAll(referencedClasses(bytes));
                 } catch (IOException ignored) {
                 }
             }
@@ -137,12 +157,13 @@ public final class SyntheticEmbedder {
             expandTransitively(referenced, synthetics);
 
             String base = embeddedBase(uniqueKey);
-            Map<String, String> rename = relocationMap(base, referenced);
+            Relocation relocation = relocate(base, referenced, ownClasses, synthetics, libraries);
+            Map<String, String> rename = relocation.names();
             Remapper remapper = new SimpleRemapper(syntheticRemapping(rename, transformer));
             Remapper syntheticRemapper = memberAware(remapper, synthetics, transformer);
 
             Map<Path, byte[]> embeddedOutputs = new HashMap<>();
-            for (String n : referenced) {
+            for (String n : relocation.local()) {
                 byte[] renamed = remap(synthetics.get(n), syntheticRemapper);
                 Path target = ZipSecurity.safeResolve(modDir, rename.get(n) + ".class");
                 if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
@@ -164,9 +185,13 @@ public final class SyntheticEmbedder {
             for (Map.Entry<Path, byte[]> output : rewrittenClasses.entrySet()) {
                 Files.write(output.getKey(), output.getValue());
             }
-            LOGGER.info("Embedded {} referenced synthetic class(es) into '{}' under {}",
-                    referenced.size(), uniqueKey, base);
-            return referenced.size();
+            if (!relocation.borrowed().isEmpty()) {
+                Path links = ZipSecurity.safeResolve(modDir, SyntheticLibraries.LINKS_ENTRY);
+                Files.createDirectories(links.getParent());
+                Files.write(links, SyntheticLibraries.linksFile(relocation.borrowed()));
+            }
+            relocation.log("'" + uniqueKey + "'", base);
+            return relocation.local().size();
         } catch (Exception e) {
             LOGGER.warn("Synthetic embedding skipped for '{}': {}", uniqueKey, e.toString());
             return 0;
@@ -214,6 +239,12 @@ public final class SyntheticEmbedder {
      * {@code META-INF/MANIFEST.MF} and every other entry survive.
      */
     public static int embedIntoJar(Path jarPath, String uniqueKey, RetromodTransformer transformer) {
+        return embedIntoJar(jarPath, uniqueKey, transformer, SyntheticLibraries.NONE);
+    }
+
+    /** Jar-based {@link #embed(Path, String, RetromodTransformer, SyntheticLibraries)}. */
+    public static int embedIntoJar(Path jarPath, String uniqueKey, RetromodTransformer transformer,
+            SyntheticLibraries libraries) {
         Map<String, byte[]> synthetics = transformer.getSyntheticClasses();
         if (synthetics == null || synthetics.isEmpty()) return 0;
         try {
@@ -248,15 +279,22 @@ public final class SyntheticEmbedder {
                 }
             }
             Set<String> referenced = new HashSet<>();
+            Map<String, byte[]> ownClasses = new HashMap<>();
             for (var en : entries.entrySet()) {
-                if (en.getKey().endsWith(".class")) referenced.addAll(referencedClasses(en.getValue()));
+                if (!en.getKey().endsWith(".class")) continue;
+                referenced.addAll(referencedClasses(en.getValue()));
+                if (!en.getKey().startsWith("META-INF/")) {
+                    ownClasses.put(en.getKey().substring(0, en.getKey().length() - ".class".length()),
+                            en.getValue());
+                }
             }
             referenced.retainAll(synthetics.keySet());
             if (referenced.isEmpty()) return 0;
             expandTransitively(referenced, synthetics);
 
             String base = embeddedBase(uniqueKey);
-            Map<String, String> rename = relocationMap(base, referenced);
+            Relocation relocation = relocate(base, referenced, ownClasses, synthetics, libraries);
+            Map<String, String> rename = relocation.names();
             Remapper remapper = new SimpleRemapper(syntheticRemapping(rename, transformer));
             Remapper syntheticRemapper = memberAware(remapper, synthetics, transformer);
 
@@ -266,7 +304,10 @@ public final class SyntheticEmbedder {
                 if (en.getKey().endsWith(".class")) v = remap(v, remapper);
                 out.put(en.getKey(), v);
             }
-            for (String n : referenced) {
+            if (!relocation.borrowed().isEmpty()) {
+                out.put(SyntheticLibraries.LINKS_ENTRY, SyntheticLibraries.linksFile(relocation.borrowed()));
+            }
+            for (String n : relocation.local()) {
                 if (out.size() >= MAX_ARCHIVE_ENTRIES) {
                     throw new IOException("synthetic output would exceed the jar entry limit");
                 }
@@ -305,9 +346,8 @@ public final class SyntheticEmbedder {
             } finally {
                 Files.deleteIfExists(tmp);
             }
-            LOGGER.info("Embedded {} referenced synthetic class(es) into jar '{}' under {}",
-                    referenced.size(), uniqueKey, base);
-            return referenced.size();
+            relocation.log("jar '" + uniqueKey + "'", base);
+            return relocation.local().size();
         } catch (Exception e) {
             LOGGER.warn("Synthetic embedding (jar) skipped for '{}': {}", uniqueKey, e.toString());
             return 0;
@@ -539,6 +579,36 @@ public final class SyntheticEmbedder {
             }
             return super.visitField(access, name, descriptor, signature, value);
         }
+    }
+
+    /**
+     * Where each referenced stand-in goes: the copy in a library the mod builds on, when the
+     * stand-in crosses into that library, otherwise this mod's own package.
+     */
+    private record Relocation(Map<String, String> names, Set<String> local,
+            Map<String, String> borrowed) {
+        void log(String target, String base) {
+            if (!local.isEmpty()) {
+                LOGGER.info("Embedded {} referenced synthetic class(es) into {} under {}",
+                        local.size(), target, base);
+            }
+            if (!borrowed.isEmpty()) {
+                LOGGER.info("{} reuses {} synthetic class(es) from the libraries it builds on",
+                        target, borrowed.size());
+            }
+        }
+    }
+
+    private static Relocation relocate(String base, Set<String> referenced,
+            Map<String, byte[]> ownClasses, Map<String, byte[]> synthetics,
+            SyntheticLibraries libraries) throws IOException {
+        Map<String, String> borrowed = libraries == null ? Map.of()
+                : libraries.borrowable(ownClasses, referenced, synthetics::get);
+        Set<String> local = new HashSet<>(referenced);
+        local.removeAll(borrowed.keySet());
+        Map<String, String> names = relocationMap(base, local);
+        names.putAll(borrowed);
+        return new Relocation(names, local, borrowed);
     }
 
     private static Map<String, String> relocationMap(String base, Set<String> referenced)

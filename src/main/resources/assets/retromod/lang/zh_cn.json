@@ -6,6 +6,7 @@
   "retromod.main.subtitle": "\u62d6\u5165\u6216\u9009\u62e9\u8981\u8f6c\u6362\u7684\u6a21\u7ec4 JAR",
   "retromod.main.add_mods": "\u6dfb\u52a0\u6a21\u7ec4\u2026",
   "retromod.main.open_folder": "\u6253\u5f00\u6a21\u7ec4\u6587\u4ef6\u5939",
+  "retromod.main.inplace_status": "\u7f13\u5b58 %s \u4e2a\uff0c\u91cd\u542f\u540e %s \u4e2a\uff0c\u5931\u8d25 %s \u4e2a",
 
   "retromod.screen.title": "Retromod - \u6a21\u7ec4\u7ba1\u7406\u5668",
   "retromod.screen.add_mods": "\u6dfb\u52a0\u8981\u8f6c\u6362\u7684\u6a21\u7ec4",
@@ -31,6 +32,8 @@
   "retromod.settings.force_translate_complex": "\u5f3a\u5236\u590d\u6742\u8f6c\u6362",
   "retromod.settings.log_transformations": "\u8bb0\u5f55\u8f6c\u6362",
   "retromod.settings.debug": "\u8c03\u8bd5\u6a21\u5f0f",
+  "retromod.settings.write_translated_jars": "\u5c06\u7ffb\u8bd1\u540e\u7684 jar \u5199\u5165 mods/",
+  "retromod.settings.next_launch": "\u4e0b\u6b21\u542f\u52a8\u65f6\u751f\u6548",
 
   "retromod.filepicker.title": "Retromod: \u9009\u62e9\u8981\u8f6c\u6362\u7684\u6a21\u7ec4 JAR",
 

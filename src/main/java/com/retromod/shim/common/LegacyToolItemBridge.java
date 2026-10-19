@@ -7,6 +7,7 @@ package com.retromod.shim.common;
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.McReflect;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -36,7 +37,8 @@ import java.util.List;
  * same way as before.
  *
  * <p>Registered only where the host has the 1.20.5 constructors. 1.21.5 removed the tool classes
- * themselves, which {@code RemovedItemBaseBridge} handles.
+ * themselves, which {@code RemovedItemBaseBridge} handles. A library tool that made the same change
+ * in its own 1.21 port is bridged the same way, for the addons built against its older shape.
  */
 public final class LegacyToolItemBridge {
 
@@ -51,6 +53,7 @@ public final class LegacyToolItemBridge {
     static final String TAG_KEY = "net/minecraft/tags/TagKey";
     static final String DIGGER = ITEM + "DiggerItem";
     static final String SWORD = ITEM + "SwordItem";
+    static final String FARMERS_DELIGHT_KNIFE = "vectorwing/farmersdelight/common/item/KnifeItem";
 
     private static final String L_TIER = "L" + TIER + ";";
     private static final String L_PROPERTIES = "L" + PROPERTIES + ";";
@@ -95,11 +98,26 @@ public final class LegacyToolItemBridge {
                     "(" + L_TIER + L_TAG + L_PROPERTIES + ")V", DIGGER, floatFactory, false));
     }
 
+    /**
+     * Library tools whose 1.21 port only exists for NeoForge. Farmer's Delight's knife is a
+     * {@code DiggerItem} that took damage and speed through its 1.20.1 build, and only a tier and
+     * properties from its first 1.21 build on. Its addons build knives while items register, so the
+     * old constructor stopped the whole addon. The library's 1.21 builds are its only ones from
+     * 1.20.5 to 1.21.1, which keeps the offline version check below exact for it.
+     */
+    static List<Tool> neoForgeLibraryTools() {
+        String floatFactory = "(" + L_TIER + "FF)L" + ATTRIBUTES + ";";
+        return List.of(new Tool(FARMERS_DELIGHT_KNIFE, "(" + L_TIER + "FF" + L_PROPERTIES + ")V",
+                "(" + L_TIER + L_PROPERTIES + ")V", DIGGER, floatFactory, true));
+    }
+
     private LegacyToolItemBridge() {}
 
     public static void register(RetromodTransformer transformer) {
+        List<Tool> candidates = new ArrayList<>(candidates());
+        if (McReflect.isNeoForge()) candidates.addAll(neoForgeLibraryTools());
         List<Tool> tools = new ArrayList<>();
-        for (Tool tool : candidates()) {
+        for (Tool tool : candidates) {
             if (replacedOnHost(tool)) tools.add(tool);
         }
         if (tools.isEmpty()) {

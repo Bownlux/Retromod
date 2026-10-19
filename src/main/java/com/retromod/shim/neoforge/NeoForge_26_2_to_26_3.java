@@ -8,11 +8,7 @@ import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
 import com.retromod.shim.common.Mc26_2To26_3CoreMoves;
 
-/**
- * NeoForge 26.2 to 26.3 shim. Both versions are Mojang named, so this is class moves only
- * ({@link Mc26_2To26_3CoreMoves}), dominated by {@code com/mojang/blaze3d} becoming
- * {@code com/mojang/renderpearl}. NeoForge API renames land here once a NeoForge build targets 26.3.
- */
+/** Updates NeoForge 26.2 mods for NeoForge 26.3. */
 public class NeoForge_26_2_to_26_3 implements VersionShim {
 
     @Override
@@ -37,11 +33,15 @@ public class NeoForge_26_2_to_26_3 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // Both versions are Mojang named, so the Minecraft side is class moves only, mostly
+        // com/mojang/blaze3d becoming com/mojang/renderpearl.
         Mc26_2To26_3CoreMoves.register(transformer);
         if (hasNewDatapackRegistryEvent()) {
             registerDatapackRegistryEventRename(transformer);
         }
+        // NeoForge API removals: the tool ability constants and ItemHandlerHelper.
         LegacyItemAbilitiesBridge.register(transformer);
+        LegacyItemHandlerHelperBridge.register(transformer);
     }
 
     private static final String REGISTRIES = "net/neoforged/neoforge/registries/";

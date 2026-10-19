@@ -7,6 +7,7 @@ package com.retromod.shim.forge;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
 
+/** Updates Forge 1.21.1 mods for the vanilla 1.21.2 changes. */
 public class Forge_1_21_1_to_1_21_2 implements VersionShim {
     @Override public String getShimName() { return "Forge 1.21.1 to 1.21.2"; }
     @Override public String getSourceVersion() { return "1.21.1"; }
@@ -25,6 +26,11 @@ public class Forge_1_21_1_to_1_21_2 implements VersionShim {
         com.retromod.shim.common.LegacyChestBlockBridge.register(transformer);
         com.retromod.shim.common.LegacyFoodConsumableBridge.register(transformer);
         com.retromod.shim.common.LegacyItemConstructorBridge.register(transformer);
+        // Entity and recipe members that 1.21.2 removed or made stricter.
+        com.retromod.shim.common.Legacy1212MemberBridge.register(transformer);
+        // EntityType.Builder.build(String) became build(ResourceKey).
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
+            .registerOfficialEntityTypeBuildBridge(transformer);
     }
     @Override public String[] getShimClasses() { return new String[0]; }
 }

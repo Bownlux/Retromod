@@ -9,7 +9,7 @@ package com.retromod.shim.fabric;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
 
-/** Fabric 1.21.1 mods on 1.21.2. */
+/** Updates Fabric 1.21.1 mods for 1.21.2. */
 public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
     
     @Override
@@ -32,6 +32,20 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
         return "fabric";
     }
     
+    /** Two 1.21.2 member changes, in the intermediary names a Fabric host before 26.1 runs. */
+    private static void registerIntermediaryMemberChanges(RetromodTransformer transformer) {
+        // Property.getPossibleValues() now returns a List, which is still the Collection the old
+        // call returned.
+        String property = "net/minecraft/class_2769";
+        transformer.registerInheritedMethodRedirect(property, "method_11898", "()Ljava/util/Collection;",
+                property, "method_11898", "()Ljava/util/List;");
+        // Entity.hurt(source, amount) split into server and client halves, and hurtOrSimulate is
+        // the old call; the old intermediary id now names the one-argument client half.
+        // A helper rather than a rename: a mob's own override of the old method must still run,
+        // and that override's super call, which names its direct superclass, must still link.
+        com.retromod.shim.common.Legacy1212MemberBridge.registerIntermediaryHurt(transformer);
+    }
+
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
 
@@ -190,6 +204,27 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
             // this bridge from their 1.20.5 shims; Fabric has no earlier Mojang-named shim for it.
             com.retromod.shim.common.LegacyHolderConstantBridge.register(transformer);
             com.retromod.shim.common.LegacyItemConstructorBridge.register(transformer);
+            // Entity, goal and level members 1.20.5 and 1.21.2 changed. NeoForge and Forge
+            // register the 1.20.5 bridge from their 1.20.5 shims, which Fabric lacks.
+            com.retromod.shim.common.Legacy1205MemberBridge.register(transformer);
+            com.retromod.shim.common.Legacy1212MemberBridge.register(transformer);
+            // 1.20.5 made the Attributes constants holders, which NeoForge and Forge also bridge
+            // from their 1.20.5 shims. Without it a mob's createAttributes() failed with
+            // NoSuchFieldError: Attributes.MAX_HEALTH in the mod's entry point.
+            com.retromod.shim.common.LegacyAttributeApiBridge.register(transformer);
+            // 1.20.5 turned the SpawnPlacements.Type enum into SpawnPlacementTypes, bridged the same
+            // way on NeoForge and Forge. The entry point otherwise stopped at a biome spawn rule.
+            com.retromod.shim.common.LegacySpawnPlacementTypeBridge.register(transformer);
+            // 1.20.2 split Advancement into its data and an AdvancementHolder.
+            com.retromod.shim.common.LegacyAdvancementBridge.register(transformer);
+            // Block constructors 1.20.3 reshaped. Pre-26.1 Fabric has the intermediary
+            // Pre1_20_3BlockConstructorBridge instead.
+            com.retromod.shim.common.LegacyBlockConstructorBridge.register(transformer);
+            com.retromod.shim.common.LegacyProtectedBlockCallBridge.register(transformer);
+        } else {
+            // Before 26.x these two calls keep intermediary names, so they are bridged here. On 26.x
+            // the Mojang-named bridges above own them.
+            registerIntermediaryMemberChanges(transformer);
         }
 
         // Registry getter renames

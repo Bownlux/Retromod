@@ -34,6 +34,27 @@ class VersionedTexturePathMappingsTest {
     }
 
     @Test
+    void marksOnlyTheRedrawnSignSpritesAsANewLayout() {
+        // 26.1.2 entity/signs/<wood>.png is a 64x32 entity sheet; 26.2 block/<wood>_sign.png a 32x32 sprite.
+        var newLayout = VersionedTexturePathMappings.migrations().stream()
+            .filter(migration -> !migration.keepsLayout())
+            .toList();
+        assertEquals(24, newLayout.size());
+        for (var migration : newLayout) {
+            assertTrue(migration.source().startsWith("entity/signs/"), migration.source());
+            assertEquals(88, migration.requiredFormat().major(), migration.source());
+        }
+
+        PackFormat host = PackFormat.resourceTarget("26.3");
+        var sign = VersionedTexturePathMappings.follow("entity/sign.png", new PackFormat(4, 0), host);
+        assertEquals("block/oak_sign.png", sign.path(), "a pack's own sheet still moves the whole way");
+        assertFalse(sign.keepsLayout());
+        var pillar = VersionedTexturePathMappings.follow("block/purpur_pillar.png", new PackFormat(34, 0), host);
+        assertEquals("block/purpur_pillar_side.png", pillar.path());
+        assertTrue(pillar.keepsLayout(), "26.2 moved the pillar texture without redrawing it");
+    }
+
+    @Test
     void movesEveryCatalogEntryAtItsFormatBoundary() throws Exception {
         int index = 0;
         for (var migration : VersionedTexturePathMappings.migrations()) {

@@ -97,6 +97,12 @@ public class ApiEmbedder {
      * Analyze a mod and embed all required shims for removed APIs.
      */
     public void embedRequiredShims(Path modJarPath, ModVersionInfo modInfo) {
+        com.retromod.loaderapi.LoaderApiRuntime.prepare(RetromodTransformer.getInstance(),
+                new com.retromod.loaderapi.LoaderApiContext(
+                        modInfo == null ? null : modInfo.modLoaderType(),
+                        com.retromod.core.RetromodVersion.TARGET_MC_VERSION,
+                        com.retromod.loaderapi.LoaderApiContext.TransformPath.API_EMBEDDER,
+                        modInfo == null ? null : modInfo.targetMcVersion()));
         try {
             // Step 1: Find all API dependencies in the mod
             Set<ApiDependency> dependencies = analyzeModDependencies(modJarPath);

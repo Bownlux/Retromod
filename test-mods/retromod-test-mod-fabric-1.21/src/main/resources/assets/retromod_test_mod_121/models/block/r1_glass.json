@@ -1,0 +1,4 @@
+{
+  "parent": "minecraft:block/leaves",
+  "textures": { "all": "minecraft:block/glass" }
+}

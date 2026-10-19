@@ -11,8 +11,6 @@ import org.slf4j.LoggerFactory;
 import java.util.*;
 
 /**
- * Bridges method signature changes (not just renames) between MC versions.
- *
  * <p>When MC changes a method's parameter types, an old mod's body still uses the old
  * types and a plain rename fails JVM verification. So the original is renamed to
  * {@code methodName$bridge_old} and a new bridge method takes the original name with the

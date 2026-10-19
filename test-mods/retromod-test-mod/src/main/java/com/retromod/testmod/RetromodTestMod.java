@@ -67,5 +67,8 @@ public class RetromodTestMod implements ClientModInitializer {
         // server. Dynamic registries are populated by then. Idempotent: if
         // you join multiple worlds the suite just runs each time.
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> TestRunner.runOnWorldJoin());
+
+        // The client half of the old channel echo; the server half runs at server start.
+        com.retromod.testmod.tests.Test38ClientChannelEcho.install();
     }
 }

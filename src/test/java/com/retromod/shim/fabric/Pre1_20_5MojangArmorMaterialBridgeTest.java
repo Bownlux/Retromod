@@ -136,6 +136,10 @@ class Pre1_20_5MojangArmorMaterialBridgeTest {
                 .filter(c -> c.owner.equals(Pre1_20_5ArmorMaterialBridge.MATERIALS)).map(c -> c.name).toList();
         assertTrue(bridged.contains("IRON"), "vanilla IRON must become a legacy view: " + bridged);
         assertTrue(bridged.contains("armorItem"), "new ArmorItem(material, ...) must use the factory: " + bridged);
+        // #283: 1.21's ArmorMaterials is a holder class, so a cast of the view to it threw.
+        assertTrue(instructions(itemsOut).stream().noneMatch(insn -> insn.getOpcode() == CHECKCAST
+                        && ((org.objectweb.asm.tree.TypeInsnNode) insn).desc.equals(MATERIALS)),
+                "the view stands in for the old enum constant and must not be cast to ArmorMaterials");
     }
 
     @Test

@@ -139,6 +139,55 @@ class MixinSelectorRemapRegressionTest {
     }
 
     @Test
+    @DisplayName("An @At owner follows a class that a later version moved again")
+    void atOwnerFollowsEveryClassMove() {
+        // #271: Minepathy's ConsumeItemTrigger call. The table gives the 26.1 package and 26.2
+        // moved the class on, which the handler's own descriptor already reflected.
+        String criterion = "net/minecraft/advancements/criterion/ConsumeItemTrigger";
+        String triggers = "net/minecraft/advancements/triggers/ConsumeItemTrigger";
+        transformer.registerClassRedirect("net/minecraft/class_2010", criterion);
+        transformer.registerClassRedirect(criterion, triggers);
+        transformer.registerIntermediaryNameMappings(Map.of("method_8821", "trigger"), Map.of());
+        byte[] in = mixinWith(REDIRECT, av -> {
+            AnnotationVisitor arr = av.visitArray("method");
+            arr.visit(null, "someHandler");
+            arr.visitEnd();
+            AnnotationVisitor at = av.visitAnnotation("at", AT);
+            at.visit("value", "INVOKE");
+            at.visit("target", "Lnet/minecraft/class_2010;method_8821(Lnet/minecraft/class_2010;)V");
+            at.visitEnd();
+        });
+
+        byte[] out = new MixinCompatibilityTransformer(transformer).transformMixinClass(in);
+
+        AnnotationNode at = (AnnotationNode) annVal(handlerAnnotation(out, REDIRECT), "at");
+        assertEquals("L" + triggers + ";trigger(L" + triggers + ";)V", annVal(at, "target"),
+                "the owner and the descriptor must name the class where the host has it");
+    }
+
+    @Test
+    @DisplayName("An @At owner stops at the host class instead of following it into a Retromod stand-in")
+    void atOwnerStopsBeforeAStandIn() {
+        String host = "net/minecraft/world/level/block/Block";
+        transformer.registerClassRedirect(host, "com/retromod/generated/LegacyBlockStandIn");
+        byte[] in = mixinWith(REDIRECT, av -> {
+            AnnotationVisitor arr = av.visitArray("method");
+            arr.visit(null, "someHandler");
+            arr.visitEnd();
+            AnnotationVisitor at = av.visitAnnotation("at", AT);
+            at.visit("value", "INVOKE");
+            at.visit("target", "Lnet/minecraft/class_2248;method_18303()V");
+            at.visitEnd();
+        });
+
+        byte[] out = new MixinCompatibilityTransformer(transformer).transformMixinClass(in);
+
+        AnnotationNode at = (AnnotationNode) annVal(handlerAnnotation(out, REDIRECT), "at");
+        assertEquals("L" + host + ";test()V", annVal(at, "target"),
+                "Minecraft's own code calls Block, so the selector has to keep naming it");
+    }
+
+    @Test
     @DisplayName("FIELD-pattern @At target (Lowner;name:Ldesc;) is remapped like its method siblings")
     void fieldSelectorRemapped() {
         byte[] in = mixinWith(REDIRECT, av -> {

@@ -87,6 +87,7 @@ public final class ForgeNeoForgeSynthetics {
     public static void registerAll(RetromodTransformer t) {
         try {
             t.registerSyntheticClass(RegistryIdBridgeSynthetic.INTERNAL, RegistryIdBridgeSynthetic.generate());
+            RegistryIdBridgeSynthetic.registerWrapperHelpers(t);
             t.registerSyntheticClass(FMLJMLC, generateFmlJavaModLoadingContext());
             t.registerSyntheticClass(DSEI, generateDeferredSpawnEggItem());
             t.registerSyntheticClass(IFORGE_REGISTRY, generateIForgeRegistry());
@@ -104,6 +105,7 @@ public final class ForgeNeoForgeSynthetics {
     private static void registerRegistryIdBridge(RetromodTransformer t) {
         try {
             t.registerSyntheticClass(RegistryIdBridgeSynthetic.INTERNAL, RegistryIdBridgeSynthetic.generate());
+            RegistryIdBridgeSynthetic.registerWrapperHelpers(t);
         } catch (Throwable e) {
             LOGGER.warn("Could not register registry-id bridge: {}", e.toString());
         }

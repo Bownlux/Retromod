@@ -7,27 +7,22 @@ package com.retromod.shim.common;
 import com.retromod.core.RetromodTransformer;
 import org.objectweb.asm.Opcodes;
 
-/**
- * Loader-agnostic Mojang->Mojang vanilla class moves/renames for the 1.21.11 -> 26.1 jump (#64).
- *
- * <p>Scope is vanilla {@code net/minecraft/**} and {@code com/mojang/blaze3d/**} only; loader-API
- * renames live in each loader's shim. Called from {@code Fabric_1_21_11_to_26_1} and
- * {@code NeoForge_1_21_11_to_26_1}.</p>
- */
+/** Maps the vanilla classes Mojang moved or renamed from 1.21.11 to 26.1, for every loader (#64). */
 public final class Common_1_21_11_to_26_1_ClassMoves {
 
     private Common_1_21_11_to_26_1_ClassMoves() {}
 
-    /** The sprite particle factory moved from {@code ParticleEngine} into {@code ParticleResources}, same method. */
+    /** Moves the sprite particle factory from {@code ParticleEngine} to {@code ParticleResources}. */
     public static void registerParticleRegistrationMove(RetromodTransformer transformer) {
         transformer.registerClassRedirect("net/minecraft/client/particle/ParticleEngine$SpriteParticleRegistration",
                 "net/minecraft/client/particle/ParticleResources$SpriteParticleRegistration");
     }
 
+    /** Registers every vanilla and blaze3d move; loader API renames stay in each loader's shim. */
     public static void register(RetromodTransformer transformer) {
-        // 26.1 removed the single-arg is() overloads from BlockState/ItemStack/FluidState
-        // (NoSuchMethodError on block placement, tag checks, item comparisons - the Macaw's
-        // Bridge_Block.onPlace crash). Bridged by a per-mod synthetic.
+        // 26.1 removed the single-argument is() overloads from BlockState, ItemStack and FluidState,
+        // so block placement, tag checks and item comparisons failed with NoSuchMethodError. A per-mod
+        // synthetic bridges them.
         IsOverloadBridgeSynthetic.register(transformer);
 
         // Deleted item bases that mods extend. A class move cannot express a deletion, and
@@ -42,6 +37,7 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         LegacyPaintingVariantBridge.register(transformer);
         LegacyArmorLayerBridge.register(transformer);
         LegacyPoseGuiBridge.register(transformer);
+        LegacyEitherHolderBridge.register(transformer);
         registerParticleRegistrationMove(transformer);
 
         registerOfficialEntityTypeBuildBridge(transformer);
@@ -220,15 +216,12 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         }
     }
 
-    /**
-     * Register the official-name half of the EntityType builder descriptor bridge. Kept as a
-     * focused entry point because Forge mirrors the common vanilla table rather than calling
-     * {@link #register(RetromodTransformer)} wholesale.
-     */
+    /** Registers the official-name EntityType build bridge. Forge and the 1.21.2 shims call it directly. */
     public static void registerOfficialEntityTypeBuildBridge(RetromodTransformer transformer) {
-        // EntityType.Builder.build(String) changed to build(ResourceKey) before 26.1. Fabric mods
-        // remapped into the official namespace and Mojang-named loader mods still carry the old
-        // call, so reconstruct the key through the embedded reflective bridge (#162).
+        // 1.21.2 changed EntityType.Builder.build(String) to build(ResourceKey). Fabric mods remapped
+        // to official names and Mojang-named loader mods still make the old call, so the embedded
+        // bridge rebuilds the key (#162). The key sets the translation key and loot table, so
+        // EntityTypeBuildKeyAdapter passes the id the type is registered under.
         ensureSyntheticRegistered(transformer,
                 "com/retromod/polyfill/minecraft/RetroEntityTypeBuild");
         transformer.registerMethodRedirect(
@@ -744,6 +737,10 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         t.registerMethodRedirect(rt, "entityTranslucent", idArg, rts, "entityTranslucent", idArg);
         t.registerMethodRedirect(rt, "entityTranslucent", idBoolArg, rts, "entityTranslucent", idBoolArg);
         t.registerMethodRedirect(rt, "text", idArg, rts, "text", idArg);
+        // Glint getters: same names, new owner. 26.3 renames two of them, which its own shim maps.
+        for (String glint : new String[]{"glint", "glintTranslucent", "entityGlint", "armorEntityGlint"}) {
+            t.registerMethodRedirect(rt, glint, rtRet, rts, glint, rtRet);
+        }
 
         // ItemBlockRenderTypes deleted in the same rewrite (12 corpus mods): the static
         // block-to-layer table became per-quad model data. Bridged to the embedded reflective

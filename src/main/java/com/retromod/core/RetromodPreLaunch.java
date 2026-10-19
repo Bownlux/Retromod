@@ -94,6 +94,9 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
             // otherwise still hold its compile-time default during prelaunch (#9).
             RetromodVersion.TARGET_MC_VERSION = targetVersion;
 
+            // Decided once per launch; it gates the loader API runtime on every path below.
+            com.retromod.loaderapi.LoaderApiRuntime.configureForGame(gameDir, "fabric", targetVersion);
+
             boolean hostFabricApiLoaded = hasLoadedFabricApi();
 
             // Register shims before transforming so redirects are available. Pass the
@@ -113,6 +116,12 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
             } catch (Exception e) {
                 LOGGER.debug("Could not load auto-fix saved fixes: {}", e.getMessage());
             }
+
+            // The loader API runtime registers last and owns its keys from here on.
+            com.retromod.loaderapi.LoaderApiRuntime.prepare(RetromodTransformer.getInstance(),
+                    new com.retromod.loaderapi.LoaderApiContext("fabric", targetVersion,
+                            com.retromod.loaderapi.LoaderApiContext.TransformPath.FABRIC_PRELAUNCH,
+                            null));
 
             createFoldersAndGuides(gameDir);
 
@@ -154,7 +163,11 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 fromCfFolder = drainReadyModsFolder(cfFolder, gameDir.resolve("mods"));
             }
 
-            totalTransformed = fromPrimary + fromSecondary + fromCfFolder;
+            int retranslated = retranslateForLoaderApiSetting(gameDir, targetVersion);
+            // Fabric already loaded those jars, so their rebuilt copies go in when the game exits.
+            FabricTranslationIdentity.installScheduledOnExit();
+
+            totalTransformed = fromPrimary + fromSecondary + fromCfFolder + retranslated;
 
             if (totalTransformed > 0) {
                 showRestartMessage();
@@ -190,7 +203,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
      *
      * @param hostVersion the running MC version; gates 26.1-only remapping
      */
-    private void registerShimsForTransform(String hostVersion) {
+    static void registerShimsForTransform(String hostVersion) {
         try {
             RetromodTransformer transformer = RetromodTransformer.getInstance();
 
@@ -328,6 +341,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 java.util.List<java.util.function.Consumer<RetromodTransformer>> contentBridges = java.util.List.of(
                         com.retromod.shim.fabric.Pre1_20_5ParticleTypeBridge::register,
                         com.retromod.shim.fabric.Pre1_20_3BlockConstructorBridge::register,
+                        com.retromod.shim.common.LegacyProtectedBlockCallBridge::registerIntermediary,
                         com.retromod.shim.fabric.Pre1_20_5PackApiBridge::register,
                         com.retromod.shim.fabric.Pre1_20_5RegistryHolderBridge::register,
                         com.retromod.shim.fabric.Pre1_20_5ArmorMaterialBridge::register,
@@ -437,6 +451,27 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
         } catch (Exception e) {
             LOGGER.warn("Could not register shims for pre-launch transform: {}", e.getMessage());
         }
+    }
+
+    /**
+     * Translates jars in {@code mods/} again when the loader API runtime identity they were built
+     * with differs from this launch's. The rebuilt copies wait in {@code retromod-input/pending/}
+     * until the game exits. With the runtime off and no jar built with it, this only reads
+     * manifests.
+     */
+    static int retranslateForLoaderApiSetting(Path gameDir, String targetVersion) {
+        String expected = com.retromod.loaderapi.LoaderApiRuntime
+                .translationIdentity("fabric", targetVersion);
+        List<Path> processed = List.of(gameDir.resolve(PRIMARY_INPUT + PROCESSED_SUFFIX),
+                gameDir.resolve(SECONDARY_INPUT + PROCESSED_SUFFIX));
+        List<String> rebuilt = FabricTranslationIdentity.retranslateMismatched(
+                gameDir.resolve("mods"), gameDir.resolve(FabricTranslationIdentity.PENDING_FOLDER),
+                processed, expected, (original, outputDir) ->
+                        QuiltModTransformer.isQuiltMod(original)
+                                ? new QuiltModTransformer(targetVersion).transformMod(original, outputDir)
+                                : new FabricModTransformer(targetVersion).transformMod(original, outputDir));
+        transformedMods.addAll(rebuilt);
+        return rebuilt.size();
     }
 
     private String getMinecraftVersion() {
@@ -584,8 +619,10 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
 
             FabricModTransformer transformer = null;
             QuiltModTransformer quiltTransformer = null;
+            // A library goes first, so the addons built on it can reuse its stand-in classes.
+            SyntheticLibraries libraries = SyntheticLibraries.ofFolder(outputFolder);
 
-            for (Path modJar : modsToTransform) {
+            for (Path modJar : SyntheticLibraries.librariesFirst(modsToTransform, jar -> jar)) {
                 try {
                     String fileName = modJar.getFileName().toString();
 
@@ -630,8 +667,9 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                             quiltTransformer = new QuiltModTransformer(targetVersion);
                         }
                         boolean optedOut = com.retromod.util.OptOutCheck.isOptedOut(modJar);
-                        Path transformed = quiltTransformer.transformMod(modJar, outputFolder);
+                        Path transformed = quiltTransformer.transformMod(modJar, outputFolder, libraries);
                         if (transformed != null) {
+                            libraries.add(transformed);
                             if (!needsTransform) {
                                 LOGGER.info("{} already targets Minecraft {}; copying it unchanged",
                                     fileName, targetVersion);
@@ -652,8 +690,9 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                         if (transformer == null) {
                             transformer = new FabricModTransformer(targetVersion);
                         }
-                        Path transformed = transformer.transformMod(modJar, outputFolder);
+                        Path transformed = transformer.transformMod(modJar, outputFolder, libraries);
                         if (transformed != null) {
+                            libraries.add(transformed);
                             LOGGER.info("Updated {} as {}", fileName, transformed.getFileName());
                             transformedMods.add(fileName);
                             completed = true;

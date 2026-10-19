@@ -38,8 +38,29 @@ import java.lang.reflect.Proxy;
  * <p><b>Limitations:</b> Old-style send() calls (raw bytes on a channel) cannot be bridged
  * because the new API requires a registered CustomPayload type. These are no-op'd with a
  * warning log, and the ByteBuf is released to prevent memory leaks.</p>
+ *
+ * <p>While the loader API runtime is on, every entry point forwards to its channels instead, so a
+ * jar translated before the runtime still registers, sends and receives.</p>
  */
 public class FabricNetworkingBridge {
+
+    /** Lets the loader API runtime take over this bridge while it is on. */
+    public interface Delegate {
+        boolean registerServerGlobalReceiver(Object channelId, Object handler);
+
+        boolean registerClientGlobalReceiver(Object channelId, Object handler);
+
+        void serverSend(Object player, Object channelId, Object buf);
+
+        void clientSend(Object channelId, Object buf);
+    }
+
+    private static volatile Delegate delegate;
+
+    /** Installs the runtime's channels; every entry point then forwards to them. */
+    public static void installDelegate(Delegate runtime) {
+        delegate = runtime;
+    }
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-NetworkBridge");
 
@@ -143,6 +164,8 @@ public class FabricNetworkingBridge {
      * @return true if registration succeeded
      */
     public static boolean registerServerGlobalReceiver(Object channelId, Object handler) {
+        Delegate runtime = delegate;
+        if (runtime != null) return runtime.registerServerGlobalReceiver(channelId, handler);
         initialize();
 
         String channelStr = channelId.toString();
@@ -190,6 +213,8 @@ public class FabricNetworkingBridge {
      * Bridge for ClientPlayNetworking.registerGlobalReceiver(Identifier, PlayChannelHandler).
      */
     public static boolean registerClientGlobalReceiver(Object channelId, Object handler) {
+        Delegate runtime = delegate;
+        if (runtime != null) return runtime.registerClientGlobalReceiver(channelId, handler);
         initialize();
 
         String channelStr = channelId.toString();
@@ -433,6 +458,11 @@ public class FabricNetworkingBridge {
      * This prevents NoSuchMethodError crashes while the mod still loads.
      */
     public static void clientSend(Object channelId, Object buf) {
+        Delegate runtime = delegate;
+        if (runtime != null) {
+            runtime.clientSend(channelId, buf);
+            return;
+        }
         initialize();
         LOGGER.warn("Bridged clientSend({}) - old channel-based send is not supported in 26.1. " +
             "Packet will be dropped.", channelId);
@@ -444,6 +474,11 @@ public class FabricNetworkingBridge {
      * Bridge for ServerPlayNetworking.send(ServerPlayer, Identifier, FriendlyByteBuf).
      */
     public static void serverSend(Object player, Object channelId, Object buf) {
+        Delegate runtime = delegate;
+        if (runtime != null) {
+            runtime.serverSend(player, channelId, buf);
+            return;
+        }
         initialize();
         LOGGER.warn("Bridged serverSend({}) - old channel-based send is not supported in 26.1. " +
             "Packet will be dropped.", channelId);

@@ -12,31 +12,7 @@ import org.objectweb.asm.Type;
 
 import static org.objectweb.asm.Opcodes.*;
 
-/**
- * MC 1.21.3+ made {@code BlockBehaviour.<init>}/{@code Item.<init>} call
- * {@code Objects.requireNonNull(properties.id, "Block/Item id not set")}: a block/item can no longer
- * be constructed without its registry id stamped on its {@code Properties}. NeoForge's TYPED
- * {@code DeferredRegister.Blocks/Items} set that id, but only through the {@code Function<Properties,T>}
- * register overloads; the plain {@code register(String, Supplier<T>)} that Forge 1.20.1 mods use builds
- * the object inside the supplier with no id, so it dies at {@code RegisterEvent} with
- * {@code NullPointerException: Block id not set} (Macaw's on NeoForge 26.2, ROADMAP #87).
- *
- * <p>This synthetic threads the id through a {@link ThreadLocal}:
- * <ul>
- *   <li>{@code register(dr, name, supplier)} (the devirtualized target of the mod's
- *       {@code DeferredRegister.register(String, Supplier)}) registers via the id-AWARE
- *       {@code register(String, Function<Identifier,T>)} overload, and its {@code apply} sets the
- *       thread-local {@code ResourceKey} (built from the register's own registry key + the entry id)
- *       around the supplier call.</li>
- *   <li>The block/item {@code Properties} factories the mod uses ({@code Properties.of/ofFullCopy/
- *       ofLegacyCopy}, {@code new Item.Properties()}) are redirected to the {@code block*}/{@code
- *       itemProps} helpers, which stamp {@code setId(threadLocalKey)} the moment the Properties is
- *       created (inside the supplier, so the thread-local is live).</li>
- * </ul>
- * One class implements {@code Function} AND carries the static helpers, so only a single synthetic is
- * embedded per mod (via {@link com.retromod.core.SyntheticEmbedder}); it references only itself and
- * runtime NeoForge/MC classes.
- */
+/** Generates the bridge that sets a block or item's registry id before Minecraft builds it. */
 public final class RegistryIdBridgeSynthetic {
 
     private RegistryIdBridgeSynthetic() {}
@@ -65,6 +41,11 @@ public final class RegistryIdBridgeSynthetic {
     private static final String L_TL = "L" + THREADLOCAL + ";";
     private static final String L_OBJ = "Ljava/lang/Object;";
 
+    /** Flag to stamp blocks and items in registered static fields through {@link #INTERNAL}. */
+    public static final String STATIC_FIELDS_FLAG = "registry-id-static-fields";
+    /** The same flag for {@link #FORGE_INTERNAL} on a Forge host. */
+    public static final String FORGE_STATIC_FIELDS_FLAG = "registry-id-static-fields-forge";
+
     // Redirect targets (all on INTERNAL): the mod's calls are rewritten to these.
     public static final String REGISTER_DESC = "(" + L_DR + "Ljava/lang/String;" + L_SUP + ")" + L_DH;
     public static final String BLOCK_OF_DESC = "()" + L_BBP;
@@ -80,8 +61,19 @@ public final class RegistryIdBridgeSynthetic {
     public static final String LEGACY_BIOMES = "LEGACY_BIOMES";
     /** Painting variant suppliers, which 1.21 also made data, kept the same way for the same pack. */
     public static final String LEGACY_PAINTINGS = "LEGACY_PAINTINGS";
+    /** Converts Forge loot modifier serializers for NeoForge; both register wrappers call it. */
+    public static final String LOOT_MODIFIER_CODECS = "com/retromod/shim/forge/embedded/LegacyLootModifierCodecs";
     /** The 1.20.5 to 1.21.11 biome recorder, beside {@link #INTERNAL} in the same embedded package. */
     public static final String BIOME_RECORDER = "com/retromod/shim/forge/embedded/LegacyBiomeRecorder";
+
+    /**
+     * Registers the embedded classes the register wrappers call, so the embedder copies them in
+     * beside {@link #INTERNAL} or {@link #BIOME_RECORDER}.
+     */
+    public static void registerWrapperHelpers(com.retromod.core.RetromodTransformer transformer) {
+        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, LOOT_MODIFIER_CODECS,
+                com.retromod.shim.forge.embedded.LegacyLootModifierCodecs.class);
+    }
 
     /** A ClassWriter that never needs the (absent) MC/NeoForge class hierarchy for frame computation. */
     private static ClassWriter newWriter() {
@@ -93,6 +85,8 @@ public final class RegistryIdBridgeSynthetic {
     }
 
     public static byte[] generate() {
+        // One class is the Function and carries the static helpers, so each mod embeds a single
+        // synthetic (through SyntheticEmbedder) that references only itself, NeoForge, and Minecraft.
         ClassWriter cw = newWriter();
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL, INTERNAL, null, "java/lang/Object",
                 new String[]{FUNCTION});
@@ -110,6 +104,8 @@ public final class RegistryIdBridgeSynthetic {
         ci.visitInsn(DUP);
         ci.visitMethodInsn(INVOKESPECIAL, THREADLOCAL, "<init>", "()V", false);
         ci.visitFieldInsn(PUTSTATIC, INTERNAL, "CURRENT", L_TL);
+        // SAVED holds the ids an isolated static initializer sets aside.
+        com.retromod.shim.common.StaticFieldIdStamper.emitSavedInit(ci, INTERNAL);
         ci.visitTypeInsn(NEW, "java/util/LinkedHashMap");
         ci.visitInsn(DUP);
         ci.visitMethodInsn(INVOKESPECIAL, "java/util/LinkedHashMap", "<init>", "()V", false);
@@ -164,6 +160,11 @@ public final class RegistryIdBridgeSynthetic {
         a.visitMaxs(0, 0);
         a.visitEnd();
 
+        // 1.21.3 and newer refuse to build a block or item whose Properties has no id. NeoForge's
+        // typed registers set it only through their Function overloads, so the plain
+        // register(String, Supplier) that Forge 1.20.1 mods call died at RegisterEvent with
+        // "Block id not set" (Macaw's on NeoForge 26.2, ROADMAP #87). The mod's call is
+        // redirected here and goes through the id-aware overload, whose apply sets CURRENT.
         // static DeferredHolder register(DeferredRegister dr, String name, Supplier sup):
         //     DeferredHolder h = dr.register(name, new RegistryIdBridge(sup, dr.getRegistryKey()));
         //     if (dr.getRegistryKey().equals(Registries.BIOME)) { LEGACY_BIOMES.put(h.getId().toString(), sup); noteLegacyBiome(); }
@@ -171,6 +172,7 @@ public final class RegistryIdBridgeSynthetic {
         MethodVisitor r = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "register", REGISTER_DESC, null, null);
         r.visitCode();
         emitEnchantmentHolder(r);
+        emitLootModifierSerializer(r);
         r.visitVarInsn(ALOAD, 0);                 // dr
         r.visitVarInsn(ALOAD, 1);                 // name
         r.visitTypeInsn(NEW, INTERNAL);
@@ -189,9 +191,13 @@ public final class RegistryIdBridgeSynthetic {
         r.visitEnd();
         emitLegacyBiomes(cw, INTERNAL);
 
-        // static Properties applyBlock(Properties p): if (CURRENT.get()!=null) p.setId((ResourceKey)k); return p;
-        emitApply(cw, INTERNAL, "applyBlock", BBP, L_BBP);
-        emitApply(cw, INTERNAL, "applyItem", IP, L_IP);
+        // The mod's Properties factories are redirected to helpers that set the id the moment the
+        // Properties is made, which happens inside the supplier while CURRENT holds the key.
+        emitApply(cw, INTERNAL, "applyBlock", BBP, L_BBP, "BLOCK");
+        emitApply(cw, INTERNAL, "applyItem", IP, L_IP, "ITEM");
+        // A block or item stored in a registered static field gets its id through these instead.
+        emitEnterLeave(cw, INTERNAL);
+        com.retromod.shim.common.StaticFieldIdStamper.emitIsolation(cw, INTERNAL);
 
         // block Properties factories -> applyBlock(<original>())
         emitBlockFactory(cw, INTERNAL, "blockOf", "of", "()" + L_BBP);
@@ -239,6 +245,7 @@ public final class RegistryIdBridgeSynthetic {
         MethodVisitor r = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "register", REGISTER_DESC, null, null);
         r.visitCode();
         if (enchantments) emitEnchantmentHolder(r);
+        emitLootModifierSerializer(r);
         r.visitVarInsn(ALOAD, 0);
         r.visitVarInsn(ALOAD, 1);
         r.visitVarInsn(ALOAD, 2);
@@ -272,6 +279,18 @@ public final class RegistryIdBridgeSynthetic {
     }
 
     /**
+     * At the start of {@code register}: {@code sup = LegacyLootModifierCodecs.serializer(dr.getRegistryKey(), sup)},
+     * so a Forge loot modifier serializer reaches NeoForge's registry as the {@code MapCodec} it reads.
+     */
+    private static void emitLootModifierSerializer(MethodVisitor r) {
+        r.visitVarInsn(ALOAD, 0);
+        r.visitMethodInsn(INVOKEVIRTUAL, DR, "getRegistryKey", "()" + L_RK, false);
+        r.visitVarInsn(ALOAD, 2);
+        r.visitMethodInsn(INVOKESTATIC, LOOT_MODIFIER_CODECS, "serializer", "(" + L_OBJ + L_SUP + ")" + L_SUP, false);
+        r.visitVarInsn(ASTORE, 2);
+    }
+
+    /**
      * At the start of {@code register}: an enchantment register's entry is built now, recorded for
      * the legacy enchantment pack, and returned in a holder that answers with it, because NeoForge
      * never builds a data-driven registry's entries and the holder would stay unbound.
@@ -292,7 +311,7 @@ public final class RegistryIdBridgeSynthetic {
         r.visitLabel(notEnchantment);
     }
 
-    /** In {@code register}, with the holder in local 3: remember a biome's or painting's supplier by its id. */
+    /** In {@code register}, with the holder in local 3: records a biome or painting supplier by id. */
     private static void emitRecordLegacyBiome(MethodVisitor r) {
         emitRecordLegacyEntry(r, "BIOME", LEGACY_BIOMES);
         emitRecordLegacyEntry(r, "PAINTING_VARIANT", LEGACY_PAINTINGS);
@@ -375,6 +394,8 @@ public final class RegistryIdBridgeSynthetic {
     /** Register the Forge-variant synthetic + redirects (call from the Forge 26.2 chain only). */
     public static void registerForgeRedirects(com.retromod.core.RetromodTransformer t) {
         t.registerSyntheticClass(FORGE_INTERNAL, generateForge());
+        // Also stamp blocks and items the mod stores in registered static fields.
+        t.enablePostProcess(FORGE_STATIC_FIELDS_FLAG);
         final String B = FORGE_INTERNAL;
         t.registerMethodRedirect(FDR, "register",
                 "(Ljava/lang/String;Ljava/util/function/Supplier;)" + L_FRO,
@@ -405,6 +426,8 @@ public final class RegistryIdBridgeSynthetic {
         ci.visitInsn(DUP);
         ci.visitMethodInsn(INVOKESPECIAL, THREADLOCAL, "<init>", "()V", false);
         ci.visitFieldInsn(PUTSTATIC, FORGE_INTERNAL, "CURRENT", L_TL);
+        // SAVED holds the ids an isolated static initializer sets aside.
+        com.retromod.shim.common.StaticFieldIdStamper.emitSavedInit(ci, FORGE_INTERNAL);
         ci.visitInsn(RETURN);
         ci.visitMaxs(0, 0);
         ci.visitEnd();
@@ -463,8 +486,11 @@ public final class RegistryIdBridgeSynthetic {
         r.visitMaxs(0, 0);
         r.visitEnd();
 
-        emitApply(cw, FORGE_INTERNAL, "applyBlock", BBP, L_BBP);
-        emitApply(cw, FORGE_INTERNAL, "applyItem", IP, L_IP);
+        // The same Properties helpers and static field stamping as the NeoForge bridge.
+        emitApply(cw, FORGE_INTERNAL, "applyBlock", BBP, L_BBP, "BLOCK");
+        emitApply(cw, FORGE_INTERNAL, "applyItem", IP, L_IP, "ITEM");
+        emitEnterLeave(cw, FORGE_INTERNAL);
+        com.retromod.shim.common.StaticFieldIdStamper.emitIsolation(cw, FORGE_INTERNAL);
         emitBlockFactory(cw, FORGE_INTERNAL, "blockOf", "of", "()" + L_BBP);
         emitBlockFactory(cw, FORGE_INTERNAL, "blockOfFullCopy", "ofFullCopy", "(" + L_BB + ")" + L_BBP);
         emitBlockFactory(cw, FORGE_INTERNAL, "blockOfLegacyCopy", "ofLegacyCopy", "(" + L_BB + ")" + L_BBP);
@@ -487,24 +513,80 @@ public final class RegistryIdBridgeSynthetic {
         ip.visitEnd();
     }
 
-    /** static P applyX(P p): P k=(P)CURRENT.get(); if (k!=null) p.setId(k); return p; */
-    private static void emitApply(ClassWriter cw, String owner, String name, String propsOwner, String lProps) {
+    /** Emits {@code static P applyX(P p)}, which sets the current id on the Properties it is given. */
+    private static void emitApply(ClassWriter cw, String owner, String name, String propsOwner, String lProps,
+                                  String registriesField) {
         MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, name, "(" + lProps + ")" + lProps, null, null);
         m.visitCode();
-        m.visitVarInsn(ALOAD, 0);                 // props
+        // Object k = CURRENT.get(); if (k == null) return p;
         m.visitFieldInsn(GETSTATIC, owner, "CURRENT", L_TL);
         m.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "get", "()" + L_OBJ, false);
-        m.visitInsn(DUP);
-        Label nullLabel = new Label();
-        m.visitJumpInsn(IFNULL, nullLabel);       // stack: props, keyObj
-        m.visitTypeInsn(CHECKCAST, RK);           // stack: props, key
+        m.visitVarInsn(ASTORE, 1);
+        Label present = new Label();
+        m.visitVarInsn(ALOAD, 1);
+        m.visitJumpInsn(IFNONNULL, present);
+        m.visitVarInsn(ALOAD, 0);
+        m.visitInsn(ARETURN);                     // no id: the props stay as they were
+        m.visitLabel(present);
+        // A deferred register sets a full key. A static field's stamp sets only the id, because
+        // one class can fill block and item fields alike, so the registry comes from the kind of
+        // Properties being built: if (k instanceof Identifier) k = ResourceKey.create(Registries.X, k);
+        Label keyed = new Label();
+        m.visitVarInsn(ALOAD, 1);
+        m.visitTypeInsn(INSTANCEOF, IDENTIFIER);
+        m.visitJumpInsn(IFEQ, keyed);
+        m.visitFieldInsn(GETSTATIC, "net/minecraft/core/registries/Registries", registriesField, L_RK);
+        m.visitVarInsn(ALOAD, 1);
+        m.visitTypeInsn(CHECKCAST, IDENTIFIER);
+        m.visitMethodInsn(INVOKESTATIC, RK, "create", "(" + L_RK + L_ID + ")" + L_RK, false);
+        m.visitVarInsn(ASTORE, 1);
+        m.visitLabel(keyed);
+        // return p.setId((ResourceKey) k);
+        m.visitVarInsn(ALOAD, 0);
+        m.visitVarInsn(ALOAD, 1);
+        m.visitTypeInsn(CHECKCAST, RK);
         m.visitMethodInsn(INVOKEVIRTUAL, propsOwner, "setId", "(" + L_RK + ")" + lProps, false);
-        m.visitInsn(ARETURN);                     // returns props (setId returns this)
-        m.visitLabel(nullLabel);                  // stack: props, null
-        m.visitInsn(POP);
-        m.visitInsn(ARETURN);                     // returns props
+        m.visitInsn(ARETURN);                     // setId returns the same props
         m.visitMaxs(0, 0);
         m.visitEnd();
+    }
+
+    /** Emits {@code enter} and {@code leave}, which set a static field's id while it is filled. */
+    private static void emitEnterLeave(ClassWriter cw, String owner) {
+        // static Object enter(Identifier id):
+        //     Object previous = CURRENT.get(); CURRENT.set(id); return previous;
+        // The old id is kept because the statement may run inside a deferred register's supplier,
+        // which has its own key set, or start another class's static initializer.
+        MethodVisitor enter = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "enter",
+                com.retromod.shim.common.StaticFieldIdStamper.ENTER_DESC, null, null);
+        enter.visitCode();
+        enter.visitFieldInsn(GETSTATIC, owner, "CURRENT", L_TL);
+        enter.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "get", "()" + L_OBJ, false);
+        enter.visitFieldInsn(GETSTATIC, owner, "CURRENT", L_TL);
+        enter.visitVarInsn(ALOAD, 0);
+        enter.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "set", "(" + L_OBJ + ")V", false);
+        enter.visitInsn(ARETURN);
+        enter.visitMaxs(0, 0);
+        enter.visitEnd();
+
+        // static void leave(Object previous):
+        //     if (previous == null) CURRENT.remove(); else CURRENT.set(previous);
+        MethodVisitor leave = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "leave",
+                com.retromod.shim.common.StaticFieldIdStamper.LEAVE_DESC, null, null);
+        leave.visitCode();
+        Label restore = new Label();
+        leave.visitVarInsn(ALOAD, 0);
+        leave.visitJumpInsn(IFNONNULL, restore);
+        leave.visitFieldInsn(GETSTATIC, owner, "CURRENT", L_TL);
+        leave.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "remove", "()V", false);
+        leave.visitInsn(RETURN);
+        leave.visitLabel(restore);
+        leave.visitFieldInsn(GETSTATIC, owner, "CURRENT", L_TL);
+        leave.visitVarInsn(ALOAD, 0);
+        leave.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "set", "(" + L_OBJ + ")V", false);
+        leave.visitInsn(RETURN);
+        leave.visitMaxs(0, 0);
+        leave.visitEnd();
     }
 
     /** static Properties name(...): return applyBlock(BlockBehaviour$Properties.orig(...)); */

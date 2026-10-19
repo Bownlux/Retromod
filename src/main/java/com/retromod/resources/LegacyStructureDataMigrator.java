@@ -17,28 +17,19 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Set;
-import java.util.stream.Stream;
 
-/**
- * Moves a 1.18.2 mod's jigsaw structures to the data format Minecraft 1.19 introduced.
- *
- * <p>1.18.2 defined them in {@code worldgen/configured_structure_feature/} as a vanilla feature
- * type such as {@code minecraft:village} with a nested {@code config}. 1.19 reads
- * {@code worldgen/structure/} with type {@code minecraft:jigsaw} and the pool settings at the top
- * level. The mod's structure sets still name the structures, so the old folder left them unbound
- * and the server refused to load any world ({@code Unbound values in registry ...
- * worldgen/structure}, #311).
- *
- * <p>Only jigsaw-based types are converted, since their 1.18.2 config maps field for field.
- * Other feature types are left alone and still fail as before.
- */
+/** Moves a 1.18.2 mod's jigsaw structures to the data format Minecraft 1.19 introduced. */
 public final class LegacyStructureDataMigrator {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-DataMigrator");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
+    // 1.18.2 defined structures here as a vanilla feature type such as minecraft:village with a
+    // nested config. 1.19 reads worldgen/structure/ with type minecraft:jigsaw and the pool settings
+    // at the top level. The mod's structure sets still name the structures, so the old folder left
+    // them unbound and the server refused to load any world ("Unbound values in registry ...
+    // worldgen/structure", #311).
     static final String OLD_FOLDER = "configured_structure_feature";
     static final String NEW_FOLDER = "structure";
 
@@ -57,42 +48,45 @@ public final class LegacyStructureDataMigrator {
      */
     public static int migrate(Path extractedJar, String sourceMcVersion, String targetMcVersion)
             throws IOException {
-        if (sourceMcVersion == null || targetMcVersion == null
-                || RetromodVersion.compareMcVersions(sourceMcVersion, "1.19") >= 0
-                || RetromodVersion.compareMcVersions(targetMcVersion, "1.19") < 0) {
+        if (!applies(sourceMcVersion, targetMcVersion)
+                || !Files.isDirectory(extractedJar.resolve("data"))) {
             return 0;
         }
-        Path data = extractedJar.resolve("data");
-        if (!Files.isDirectory(data)) {
+        return migrate(DirectoryResourceTree.open(extractedJar), sourceMcVersion, targetMcVersion);
+    }
+
+    /** {@link #migrate(Path, String, String)} over any resource tree. */
+    static int migrate(ResourceTree tree, String sourceMcVersion, String targetMcVersion)
+            throws IOException {
+        if (!applies(sourceMcVersion, targetMcVersion)) {
             return 0;
-        }
-        List<Path> oldFiles;
-        try (Stream<Path> walk = Files.walk(data)) {
-            oldFiles = walk.filter(LegacyStructureDataMigrator::isConfiguredStructureFeature)
-                    .toList();
         }
         int written = 0;
-        for (Path oldFile : oldFiles) {
+        for (String oldFile : tree.names()) {
+            if (!isConfiguredStructureFeature(oldFile)) {
+                continue;
+            }
+            String fileName = oldFile.substring(oldFile.lastIndexOf('/') + 1);
             JsonObject converted;
             try {
-                converted = convert(readObject(oldFile));
+                converted = convert(readObject(tree, oldFile));
             } catch (RuntimeException malformed) {
                 // A value of the wrong JSON type. Skip this structure rather than fail the mod.
-                LOGGER.warn("Could not convert 1.18.2 structure {}: {}", oldFile.getFileName(),
+                LOGGER.warn("Could not convert 1.18.2 structure {}: {}", fileName,
                         malformed.getMessage());
                 continue;
             }
             if (converted == null) {
                 continue;
             }
-            Path worldgen = oldFile.getParent().getParent();
-            Path newFile = worldgen.resolve(NEW_FOLDER)
-                    .resolve(oldFile.getParent().relativize(oldFile).toString());
-            if (Files.exists(newFile)) {
+            // The new file goes in worldgen/structure/, beside the old folder.
+            String worldgen = oldFile.substring(0, oldFile.length() - fileName.length()
+                    - OLD_FOLDER.length() - 1);
+            String newFile = worldgen + NEW_FOLDER + "/" + fileName;
+            if (tree.exists(newFile)) {
                 continue; // the mod already ships the 1.19 form
             }
-            Files.createDirectories(newFile.getParent());
-            Files.writeString(newFile, GSON.toJson(converted), StandardCharsets.UTF_8);
+            tree.write(newFile, GSON.toJson(converted).getBytes(StandardCharsets.UTF_8));
             written++;
         }
         if (written > 0) {
@@ -101,17 +95,26 @@ public final class LegacyStructureDataMigrator {
         return written;
     }
 
-    private static boolean isConfiguredStructureFeature(Path path) {
-        return path.toString().endsWith(".json") && path.getParent() != null
-                && path.getParent().getFileName().toString().equals(OLD_FOLDER)
-                && path.getParent().getParent() != null
-                && path.getParent().getParent().getFileName().toString().equals("worldgen");
+    /** Whether a mod built before 1.19 runs on a 1.19 or newer host. */
+    private static boolean applies(String sourceMcVersion, String targetMcVersion) {
+        return sourceMcVersion != null && targetMcVersion != null
+                && RetromodVersion.compareMcVersions(sourceMcVersion, "1.19") < 0
+                && RetromodVersion.compareMcVersions(targetMcVersion, "1.19") >= 0;
     }
 
-    private static JsonObject readObject(Path file) {
+    /** A direct child of a {@code worldgen/configured_structure_feature/} folder under {@code data/}. */
+    private static boolean isConfiguredStructureFeature(String name) {
+        if (!name.startsWith("data/") || !name.endsWith(".json")) {
+            return false;
+        }
+        String folder = name.substring(0, name.lastIndexOf('/'));
+        return folder.endsWith("/worldgen/" + OLD_FOLDER);
+    }
+
+    private static JsonObject readObject(ResourceTree tree, String name) {
         try {
-            JsonElement root = JsonParser.parseString(
-                    Files.readString(file, StandardCharsets.UTF_8));
+            JsonElement root = JsonParser.parseString(StandardCharsets.UTF_8.newDecoder()
+                    .decode(java.nio.ByteBuffer.wrap(tree.read(name))).toString());
             return root.isJsonObject() ? root.getAsJsonObject() : null;
         } catch (Exception unreadable) {
             return null;
@@ -120,6 +123,8 @@ public final class LegacyStructureDataMigrator {
 
     /** The 1.19 form of one 1.18.2 jigsaw structure, or null for any other feature type. */
     static JsonObject convert(JsonObject old) {
+        // Only jigsaw-based types are converted, since their 1.18.2 config maps field for field.
+        // Other feature types are left alone and still fail as before.
         if (old == null || !old.has("type") || !old.get("type").isJsonPrimitive()
                 || !JIGSAW_TYPES.contains(old.get("type").getAsString())
                 || !old.has("config") || !old.get("config").isJsonObject()) {

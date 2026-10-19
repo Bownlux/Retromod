@@ -149,7 +149,8 @@ public final class Pre1_20_5MojangArmorMaterialBridge {
                 with1122Constructor(toMojang(Pre1_20_5ArmorMaterialBridge.generateLegacyArmorItem(), STRINGS)));
 
         for (String field : VANILLA_FIELDS) {
-            transformer.registerFieldRedirect(ARMOR_MATERIALS, field, "L" + ARMOR_MATERIALS + ";",
+            // The view stands in for the enum constant; 1.21's ArmorMaterials is a holder class.
+            transformer.registerStandInFieldGetter(ARMOR_MATERIALS, field, "L" + ARMOR_MATERIALS + ";",
                     Pre1_20_5ArmorMaterialBridge.MATERIALS, field, "()" + L_LEGACY);
         }
         transformer.registerConstructorRedirect(ARMOR_ITEM, "(" + L_LEGACY + L_TYPE + L_PROPERTIES + ")V",

@@ -11,42 +11,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
-/**
- * Transforms Resource Packs (texture packs) to work on newer Minecraft versions.
- * 
- * What changes between versions:
- * - pack.mcmeta "pack_format" number
- * - Some texture paths (renamed blocks/items)
- * - Some JSON model formats
- * - Some sound paths
- * 
- * Pack Format History:
- * - 1: 1.6.1 - 1.8.9
- * - 2: 1.9 - 1.10.2
- * - 3: 1.11 - 1.12.2
- * - 4: 1.13 - 1.14.4
- * - 5: 1.15 - 1.16.1
- * - 6: 1.16.2 - 1.16.5
- * - 7: 1.17 - 1.17.1
- * - 8: 1.18 - 1.18.2
- * - 9: 1.19 - 1.19.2
- * - 12: 1.19.3
- * - 13: 1.19.4
- * - 15: 1.20 - 1.20.1
- * - 18: 1.20.2
- * - 22: 1.20.3 - 1.20.4
- * - 32: 1.20.5 - 1.20.6
- * - 34: 1.21 - 1.21.1
- * - 42: 1.21.2 - 1.21.3
- * - 46: 1.21.4
- * - 55: 1.21.5
- * - 63: 1.21.6
- * - 64: 1.21.7 - 1.21.8
- * - 69.0+: 1.21.9 and newer full-version metadata
- */
+/** Converts resource packs (texture packs) to work on newer Minecraft versions. */
 public class ResourcePackTransformer {
     
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Resources");
@@ -67,6 +37,11 @@ public class ResourcePackTransformer {
         // Add more as needed
     }
     
+    // Resource pack formats: 1 = 1.6.1-1.8.9, 2 = 1.9-1.10.2, 3 = 1.11-1.12.2, 4 = 1.13-1.14.4,
+    // 5 = 1.15-1.16.1, 6 = 1.16.2-1.16.5, 7 = 1.17-1.17.1, 8 = 1.18-1.18.2, 9 = 1.19-1.19.2,
+    // 12 = 1.19.3, 13 = 1.19.4, 15 = 1.20-1.20.1, 18 = 1.20.2, 22 = 1.20.3-1.20.4,
+    // 32 = 1.20.5-1.20.6, 34 = 1.21-1.21.1, 42 = 1.21.2-1.21.3, 46 = 1.21.4, 55 = 1.21.5,
+    // 63 = 1.21.6, 64 = 1.21.7-1.21.8, and 69.0 and up for 1.21.9 and newer full-version metadata.
     private final PackFormat targetPackFormat;
     private final String targetMcVersion;
     
@@ -141,33 +116,22 @@ public class ResourcePackTransformer {
                 PackArchive.extractZip(sourcePack, tempDir, "Resource pack");
             }
             
-            // Transform pack.mcmeta
+            // Between versions the pack_format number, some texture paths (renamed blocks and
+            // items), some JSON model formats and some sound paths change. First, pack.mcmeta.
             PackMetadata.rewrite(tempDir, targetPackFormat, targetPackFormat.major() >= 65);
-            
-            // Transform texture paths if needed
-            if (oldFormat.compareTo(new PackFormat(4, 0)) < 0) {
-                // Pre-1.13 pack: needs path transforms
-                transformTexturePaths(tempDir);
-            }
 
-            int movedTextures = 0;
-            for (Path namespace : PackNamespaces.list(tempDir)) {
-                movedTextures += VersionedTexturePathMappings.apply(
-                    namespace.resolve("textures"), oldFormat, targetPackFormat);
-            }
-            if (movedTextures > 0) {
-                LOGGER.info("  Updated {} versioned texture path(s)", movedTextures);
-            }
+            migrateTextures(tempDir, oldFormat);
 
-            // Moving a texture without repointing the models that name it leaves a pack that looks
-            // converted and renders the missing-texture checkerboard.
-            int repointed = PackTextureReferences.rewrite(
-                tempDir, blockRenames(), FlatteningTextureRenames.items());
-            if (repointed > 0) {
-                LOGGER.info("  Repointed texture references in {} model(s)", repointed);
-            }
-
-            int migrated = ModDataMigrator.migrateTreeChecked(tempDir, targetMcVersion);
+            // The same converters a mod's own resources go through. A pack owns no item ids, so
+            // item definitions are written only for the namespaces its own folders add. A pre-1.13
+            // pack takes its game's version as the source, so its .lang files and mixed-case ids
+            // are converted as a 1.12 mod's are. A later pack keeps an unknown source: the other
+            // source-gated steps read data, which a resource pack does not carry.
+            MigrationContext context = MigrationContext.builder(targetMcVersion)
+                .sourceMcVersion(PackFormat.minecraftVersionForPre113Resources(oldFormat))
+                .targetLoader(MigrationContext.Loader.host())
+                .build();
+            int migrated = ModResourceMigrations.migrateDirectory(tempDir, context);
             if (migrated > 0) {
                 LOGGER.info("  Updated {} resource file(s)", migrated);
             }
@@ -185,14 +149,45 @@ public class ResourcePackTransformer {
         }
     }
     
-    /**
-     * Transform texture paths for pre-1.13 packs.
-     */
-    private void transformTexturePaths(Path packDir) throws IOException {
-        // A pack that also skins mods keeps those textures under assets/<modid>, and they followed
-        // the same 1.13 layout change, so every namespace gets the same treatment.
-        for (Path namespace : PackNamespaces.list(packDir)) {
-            transformTexturePathsIn(namespace.resolve("textures"));
+    /** Moves a standalone pack's textures to the target's paths and repoints the models that name them. */
+    void migrateTextures(Path packDir, PackFormat oldFormat) throws IOException {
+        migrateTextures(packDir, oldFormat, false);
+    }
+
+    /** The texture steps, with {@code vanillaOnly} for a pack a mod ships inside its jar. */
+    void migrateTextures(Path packDir, PackFormat oldFormat, boolean vanillaOnly) throws IOException {
+        List<Path> namespaces = new ArrayList<>(PackNamespaces.list(packDir));
+        // A pack inside a mod's jar overrides the mod's own assets in every other namespace, at the
+        // paths the mod's models name, and those models sit outside the pack and keep their paths.
+        // So only its minecraft textures move, and only references to them are repointed.
+        if (vanillaOnly) {
+            namespaces.removeIf(namespace -> !namespace.getFileName().toString().equals("minecraft"));
+        }
+        if (oldFormat.compareTo(new PackFormat(4, 0)) < 0) {
+            // A pre-1.13 pack gets the 1.13 folder and name changes. A pack that also skins mods
+            // keeps those textures under assets/<modid>, and they followed the same layout change.
+            for (Path namespace : namespaces) {
+                transformTexturePathsIn(namespace.resolve("textures"));
+            }
+        }
+
+        // Then the moves later versions made, from the pack's format up to the target's.
+        int movedTextures = 0;
+        for (Path namespace : namespaces) {
+            movedTextures += VersionedTexturePathMappings.apply(
+                namespace.resolve("textures"), oldFormat, targetPackFormat);
+        }
+        if (movedTextures > 0) {
+            LOGGER.info("  Updated {} versioned texture path(s)", movedTextures);
+        }
+
+        // Moving a texture without repointing the models that name it leaves a pack that looks
+        // converted and renders the missing-texture checkerboard.
+        int repointed = PackTextureReferences.rewrite(
+            packDir, blockRenames(), FlatteningTextureRenames.items(), vanillaOnly,
+            oldFormat, targetPackFormat);
+        if (repointed > 0) {
+            LOGGER.info("  Repointed texture references in {} model(s)", repointed);
         }
     }
 

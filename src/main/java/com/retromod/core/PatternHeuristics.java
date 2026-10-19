@@ -17,22 +17,11 @@ import org.slf4j.LoggerFactory;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Resolves method, class, and field references not covered by the shim redirect
- * tables, using known naming-pattern transformations.
- *
- * <p>Rules are checked in registration order; the first match wins. Each carries
- * a confidence score (0.0-1.0): 0.95-0.99 for verified renames, 0.85-0.90 for
- * broad patterns with known exceptions, 0.60-0.70 for heuristic guesses.</p>
- *
- * <p>Thread-safe: the rule arrays are fixed after construction and match counters
- * are {@link AtomicInteger}s.</p>
- *
- * <p>Must not reference {@code Retromod} directly: the standalone CLI uses this
- * without Fabric on the classpath.</p>
- */
+/** Resolves method, class, and field references the shim tables miss, using known naming patterns. */
 public class PatternHeuristics {
 
+    // Never reference Retromod here: the standalone CLI uses this class without Fabric on the
+    // classpath.
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Patterns");
 
     /**
@@ -54,6 +43,9 @@ public class PatternHeuristics {
         String explanation
     ) {}
 
+    // Rules run in registration order and the first match wins. Confidence is 0.95 to 0.99 for
+    // verified renames, 0.85 to 0.90 for broad patterns with known exceptions, and 0.60 to 0.70
+    // for guesses. The arrays are fixed after construction, so lookups are thread-safe.
     private final PatternRule[] methodRules;
     private final ClassPatternRule[] classRules;
     private final PatternRule[] fieldRules;
@@ -65,6 +57,7 @@ public class PatternHeuristics {
         return s.replace("GuiGraphics", "GuiGraphicsExtractor");
     }
 
+    // Lookups run on several threads, so the match counters are atomic.
     private final AtomicInteger methodMatches = new AtomicInteger(0);
     private final AtomicInteger classMatches = new AtomicInteger(0);
     private final AtomicInteger fieldMatches = new AtomicInteger(0);
@@ -279,9 +272,11 @@ public class PatternHeuristics {
 
         // 26.1 made no-cull the default, dropping the *NoCull suffix
         // (entityCutoutNoCull -> entityCutout), and moved RenderType into a
-        // rendertype/ subpackage.
+        // rendertype/ subpackage. Only the pre-26.1 RenderType factories are old: the 26.x
+        // RenderTypes holder still declares armorCutoutNoCull on 26.1 through 26.3, so matching
+        // any owner that contains "RenderType" would turn that valid call into a missing one.
         rules.add((owner, name, desc) -> {
-            if (name.endsWith("NoCull") && owner.contains("RenderType")) {
+            if (name.endsWith("NoCull") && isLegacyRenderTypeOwner(owner)) {
                 String newName = name.substring(0, name.length() - 6);
                 return new PatternResult(
                     owner.replace("client/renderer/RenderType", "client/renderer/rendertype/RenderType"),
@@ -491,6 +486,12 @@ public class PatternHeuristics {
     /** True for GuiGraphics (pre-26.1) and GuiGraphicsExtractor (26.1). */
     private static boolean isGuiGraphics(String owner) {
         return owner.contains("GuiGraphics");
+    }
+
+    /** The pre-26.1 RenderType class, under its old package or after the class move. */
+    private static boolean isLegacyRenderTypeOwner(String owner) {
+        return owner.equals("net/minecraft/client/renderer/RenderType")
+                || owner.equals("net/minecraft/client/renderer/rendertype/RenderType");
     }
 
     /** "play" -> "Play"; used to reorder the Fabric networking S2C/C2S rename. */

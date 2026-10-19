@@ -71,6 +71,25 @@ class LegacySpawnPlacementTypeBridgeTest {
     }
 
     @Test
+    void fabricRegistersItOnceItsModsAreMojangNamed() {
+        // Longwings 0.9.5 (Fabric 1.20.1) on 26.3: its entry point stopped at a biome spawn rule
+        // with NoClassDefFoundError: SpawnPlacements$Type, because only NeoForge and Forge
+        // registered the bridge.
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        new com.retromod.shim.fabric.Fabric_1_21_1_to_1_21_2().registerRedirects(transformer);
+        assertEquals(LegacySpawnPlacementTypeBridge.NEW_TYPE,
+                transformer.getClassRedirects().get(LegacySpawnPlacementTypeBridge.OLD_TYPE));
+
+        // An intermediary host never sees the Mojang name, so the bridge stays off there.
+        RetromodVersion.TARGET_MC_VERSION = "1.21.4";
+        transformer.clearRedirectsForTesting();
+        new com.retromod.shim.fabric.Fabric_1_21_1_to_1_21_2().registerRedirects(transformer);
+        assertFalse(transformer.getClassRedirects().containsKey(LegacySpawnPlacementTypeBridge.OLD_TYPE));
+    }
+
+    @Test
     void helperForwardsToTheInterfaceMethod() {
         ClassNode helper = new ClassNode();
         new ClassReader(LegacySpawnPlacementTypeBridge.generateHelper()).accept(helper, 0);

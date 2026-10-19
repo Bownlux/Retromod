@@ -14,8 +14,8 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Regression for {@link ModDataMigrator}: the 1.21.x -> 26.x data-pack JSON rewrites
- * that let a transformed structure mod's loot tables and advancements parse on 26.1.
+ * Regression for {@link ModDataMigrator}: the data-pack JSON rewrites that let a transformed mod's
+ * loot tables, advancements and recipes parse on the host, each from the release that changed it.
  */
 class ModDataMigratorTest {
 
@@ -322,10 +322,33 @@ class ModDataMigratorTest {
     }
 
     @Test
-    void normalizeIsGatedOffForPre26() {
+    void normalizeIsGatedOffBeforeTheStrictReader() {
         String in = "{\n // c\n \"a\":1\n}";
         assertEquals(in, mig("data/m/worldgen/template_pool/x.json", in, "1.21.1"),
-                "lenient JSON is fine on a 1.21.x target - leave it");
+                "1.21.1 reads data JSON leniently, so leave it");
+        assertEquals(in, mig("data/m/worldgen/template_pool/x.json", in, "1.21.5"),
+                "1.21.5 is the last lenient host");
+    }
+
+    @Test
+    void normalizeRunsFromTheFirstStrictHost() {
+        String in = "{\n // c\n \"a\":[1,2,],\n}";
+        for (String host : new String[] {"1.21.6", "1.21.11", "26.1"}) {
+            String out = mig("data/m/worldgen/template_pool/x.json", in, host);
+            assertFalse(out.contains("//"), host + " parses data JSON strictly: " + out);
+            assertFalse(out.contains(",]") || out.contains(",\n}"), host + ": " + out);
+        }
+    }
+
+    @Test
+    void assetsSideDataIsNotRewrittenInPlace() {
+        assertFalse(ModDataMigrator.isMigratableData("assets/m/recipes/x.json"),
+                "1.12 mods read these from code in the old shape; the copy under data/ is rewritten");
+        assertFalse(ModDataMigrator.isMigratableData("assets/m/loot_tables/x.json"));
+        assertFalse(ModDataMigrator.isMigratableData("pack/assets/minecraft/models/item/recipe_book.json"));
+        assertTrue(ModDataMigrator.isMigratableData("pack/data/m/recipe/x.json"));
+        assertTrue(ModDataMigrator.isMigratableData(
+                "assets/m/shaders/core/rendertype_item_entity_no_cardinal_shading.vsh"));
     }
 
     @Test
@@ -426,6 +449,20 @@ class ModDataMigratorTest {
         assertTrue(out.contains("\"conditions\":{\"recipes\":\"m:thing\"}"), out);
         assertEquals(in, mig("data/m/advancement/recipes/thing.json", in, "26.2"),
                 "26.2 still reads the old key");
+    }
+
+    @Test
+    void renamedTriggerFieldsOn263() {
+        // Vanilla's own 26.2 criteria for every trigger whose field 26.3 renamed come out as 26.3 wrote them.
+        String advancement = "data/m/advancement/adventure/triggers.json";
+        String out = mig(advancement, DataLoadGateTest.VANILLA_26_2_CRITERIA, "26.3");
+
+        assertEquals(com.google.gson.JsonParser.parseString(DataLoadGateTest.VANILLA_26_3_CRITERIA),
+                com.google.gson.JsonParser.parseString(out));
+        assertEquals(DataLoadGateTest.VANILLA_26_2_CRITERIA, mig(advancement, DataLoadGateTest.VANILLA_26_2_CRITERIA,
+                "26.2"), "26.2 reads only the old keys");
+        assertEquals(DataLoadGateTest.VANILLA_26_3_CRITERIA, mig(advancement, DataLoadGateTest.VANILLA_26_3_CRITERIA,
+                "26.3"), "26.3's own data stays as it is");
     }
     @Test
     void legacyRecipeIngredientsBecomeStrings() {
@@ -590,5 +627,140 @@ class ModDataMigratorTest {
                 .getAsJsonObject("count").get("type").getAsString());
         assertFalse(entry.getAsJsonObject("condition").toString().contains("uniform"),
                 "a range inside a condition is not a number provider: " + out);
+    }
+
+    @Test
+    void recipeResultsNameTheirItemByIdFrom1_20_5() {
+        String shaped = "{\"type\":\"minecraft:crafting_shaped\",\"pattern\":[\"#\"],"
+                + "\"key\":{\"#\":\"minecraft:stick\"},\"result\":{\"item\":\"mod:wand\",\"count\":2}}";
+        for (String target : new String[]{"1.20.5", "1.21.1", "1.21.11", "26.3"}) {
+            String out = mig("data/mod/recipe/wand.json", shaped, target);
+            assertTrue(out.contains("\"result\":{\"id\":\"mod:wand\",\"count\":2}"), target + ": " + out);
+        }
+        assertEquals(shaped, mig("data/mod/recipes/wand.json", shaped, "1.20.4"),
+                "1.20.4 still reads the item key");
+    }
+
+    @Test
+    void bareCookingAndStonecuttingResultsBecomeItemStacks() {
+        String smelting = "{\"type\":\"minecraft:smelting\",\"ingredient\":\"mod:ore\","
+                + "\"result\":\"mod:ingot\",\"experience\":0.7,\"cookingtime\":200}";
+        assertTrue(mig("data/mod/recipe/ingot.json", smelting, "1.21.1")
+                .contains("\"result\":{\"id\":\"mod:ingot\"}"));
+        String stonecutting = "{\"type\":\"stonecutting\",\"count\":2,\"ingredient\":\"mod:stone\","
+                + "\"result\":\"mod:slab\"}";
+        String out = mig("data/mod/recipe/slab.json", stonecutting, "26.3");
+        com.google.gson.JsonObject recipe = com.google.gson.JsonParser.parseString(out).getAsJsonObject();
+        assertFalse(recipe.has("count"), "the count moved into the result: " + out);
+        assertEquals("mod:slab", recipe.getAsJsonObject("result").get("id").getAsString());
+        assertEquals(2, recipe.getAsJsonObject("result").get("count").getAsInt());
+    }
+
+    @Test
+    void resultsThatCannotBeRewrittenFaithfullyAreLeftAlone() {
+        String modNbt = "{\"type\":\"minecraft:crafting_shapeless\",\"ingredients\":[\"minecraft:stick\"],"
+                + "\"result\":{\"item\":\"mod:wand\",\"nbt\":\"{Charge:3}\"}}";
+        assertTrue(mig("data/mod/recipe/wand.json", modNbt, "1.21.1")
+                        .contains("\"components\":{\"minecraft:custom_data\":\"{Charge:3}\"}"),
+                "the mod's own NBT carries over whole as custom data");
+        String vanillaNbt = modNbt.replace("{Charge:3}", "{CanDestroy:[\\\"minecraft:stone\\\"]}");
+        assertTrue(mig("data/mod/recipe/wand.json", vanillaNbt, "1.21.1").contains("\"item\""),
+                "without the key it cannot carry over, the recipe would give a different item");
+        String modType = "{\"type\":\"mod:infusing\",\"result\":{\"item\":\"mod:gem\"}}";
+        assertEquals(modType, mig("data/mod/recipe/gem.json", modType, "26.3"),
+                "the mod's own code reads its own recipe type in the shape it expects");
+    }
+
+    @Test
+    void componentRulesStartAtTheReleaseThatChangedThem() {
+        String modelData = "{\"components\":{\"minecraft:custom_model_data\":7}}";
+        assertEquals(modelData, mig("data/m/loot_table/x.json", modelData, "1.21.3"));
+        assertTrue(mig("data/m/loot_table/x.json", modelData, "1.21.4").contains("{\"floats\":[7]}"));
+
+        String dyed = "{\"components\":{\"minecraft:dyed_color\":{\"rgb\":255}}}";
+        assertEquals(dyed, mig("data/m/loot_table/x.json", dyed, "1.21.4"));
+        assertTrue(mig("data/m/loot_table/x.json", dyed, "1.21.5").contains("\"minecraft:dyed_color\":255"));
+    }
+
+    @Test
+    void thePotionEntitySplitStartsAt1_21_5() {
+        String tag = "{\"values\":[\"minecraft:potion\"]}";
+        assertEquals(tag, mig("data/m/tags/entity_type/x.json", tag, "1.21.4"));
+        assertTrue(mig("data/m/tags/entity_type/x.json", tag, "1.21.5").contains("minecraft:splash_potion"));
+    }
+
+    @Test
+    void entityPredicateKeysWaitFor26_2() {
+        String in = "{\"a\":[{\"condition\":\"minecraft:entity_properties\",\"entity\":\"this\","
+                + "\"predicate\":{\"type\":\"minecraft:pig\"}}]}";
+        assertEquals(in, mig("data/m/predicate/pig.json", in, "26.1.2"),
+                "26.1.2 still reads type and ignores the registry keys");
+        assertTrue(mig("data/m/predicate/pig.json", in, "26.2").contains("\"minecraft:entity_type\""));
+    }
+
+    @Test
+    void anItemWithComponentsBecomesTheLoadersComponentIngredient() {
+        String recipe = "{\"type\":\"minecraft:crafting_shapeless\",\"ingredients\":[{\"item\":\"minecraft:sugar\"},"
+                + "{\"item\":\"minecraft:potion\",\"components\":{\"minecraft:potion_contents\":\"minecraft:water\"}}],"
+                + "\"result\":{\"id\":\"m:brew\"}}";
+        byte[] in = recipe.getBytes(StandardCharsets.UTF_8);
+
+        String neo = new String(ModDataMigrator.migrate("data/m/recipe/brew.json", in, "1.21.1", "26.3",
+                MigrationContext.Loader.NEOFORGE), StandardCharsets.UTF_8);
+        assertTrue(neo.contains("{\"neoforge:ingredient_type\":\"neoforge:components\",\"items\":\"minecraft:potion\","
+                + "\"components\":{\"minecraft:potion_contents\":\"minecraft:water\"}}"), neo);
+
+        String fabric = new String(ModDataMigrator.migrate("data/m/recipe/brew.json", in, "1.21.1", "1.21.11",
+                MigrationContext.Loader.FABRIC), StandardCharsets.UTF_8);
+        assertTrue(fabric.contains("{\"fabric:type\":\"fabric:components\",\"base\":\"minecraft:potion\""), fabric);
+
+        String forge = new String(ModDataMigrator.migrate("data/m/recipe/brew.json", in, "1.21.1", "26.3",
+                MigrationContext.Loader.FORGE), StandardCharsets.UTF_8);
+        assertTrue(forge.contains("\"components\":{\"minecraft:potion_contents\""), "Forge has no such ingredient");
+        assertTrue(forge.contains("\"minecraft:sugar\""), "the plain ingredient still becomes a string");
+
+        assertSame(in, ModDataMigrator.migrate("data/m/recipe/brew.json", in, "1.21.1", "1.21.1",
+                MigrationContext.Loader.NEOFORGE), "1.21.1 still reads the object form");
+    }
+
+    @Test
+    void advancementIconsNameTheirItemByIdOn1_21Hosts() {
+        String advancement = "{\"display\":{\"icon\":{\"item\":\"mod:wand\"},\"title\":\"x\"},\"criteria\":{}}";
+        assertTrue(mig("data/mod/advancement/wand.json", advancement, "1.21.1")
+                .contains("\"icon\":{\"id\":\"mod:wand\"}"));
+        assertEquals(advancement, mig("data/mod/advancements/wand.json", advancement, "1.20.1"));
+    }
+
+    @Test
+    void lootModifierRewriteFollowsTheNamedLoaderNotTheRunningOne() {
+        String name = "data/mod/loot_modifiers/fish.json";
+        String modifier = "{\"type\":\"mod:add\",\"conditions\":[{\"condition\":\"forge:loot_table_id\","
+                + "\"loot_table_id\":\"minecraft:gameplay/fishing\"}]}";
+        byte[] in = modifier.getBytes(StandardCharsets.UTF_8);
+        String forge = new String(ModDataMigrator.migrate(name, in, "26.3", MigrationContext.Loader.FORGE),
+                StandardCharsets.UTF_8);
+        assertTrue(forge.contains("\"conditions\":[{\"type\":\"forge:loot_table_id\""), forge);
+        assertSame(in, ModDataMigrator.migrate(name, in, "26.3", MigrationContext.Loader.FABRIC),
+                "no host loader reads a Forge loot modifier on Fabric");
+    }
+
+    @Test
+    void pixelSizedPaintingVariantIsReadInBlocks() {
+        // #283: Scorched Guns ships a 64 by 32 pixel painting, which 1.21 rejects as blocks
+        // ("Value must be within range [1;16]") and which then failed the whole registry load.
+        String painting = "{\"asset_id\":\"scguns:the_collective\",\"height\":32,\"width\":64}";
+
+        com.google.gson.JsonObject migrated = com.google.gson.JsonParser.parseString(
+                mig("data/scguns/painting_variant/the_collective.json", painting, "1.21.1")).getAsJsonObject();
+
+        assertEquals(4, migrated.get("width").getAsInt());
+        assertEquals(2, migrated.get("height").getAsInt());
+        assertEquals("scguns:the_collective", migrated.get("asset_id").getAsString());
+    }
+
+    @Test
+    void paintingVariantAlreadyInBlocksIsKept() {
+        String painting = "{\"asset_id\":\"mod:wide\",\"height\":2,\"width\":16}";
+        assertEquals(painting, mig("data/mod/painting_variant/wide.json", painting, "1.21.1"));
     }
 }

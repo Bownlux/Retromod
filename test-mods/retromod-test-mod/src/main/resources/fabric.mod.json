@@ -12,8 +12,11 @@
     "sources": "https://github.com/Bownlux/Retromod"
   },
   "license": "MIT",
-  "environment": "client",
+  "environment": "*",
   "entrypoints": {
+    "main": [
+      "com.retromod.testmod.RetromodTestModServer"
+    ],
     "client": [
       "com.retromod.testmod.RetromodTestMod"
     ]

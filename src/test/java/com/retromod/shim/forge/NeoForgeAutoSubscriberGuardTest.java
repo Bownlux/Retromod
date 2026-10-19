@@ -126,6 +126,117 @@ class NeoForgeAutoSubscriberGuardTest {
         assertSame(in, NeoForgeAutoSubscriberGuard.apply(in, name -> false));
     }
 
+    private static final String MINECRAFT = "net/minecraft/client/Minecraft";
+    private static final String HELPER_DESC = "(Ljava/lang/Object;L" + MINECRAFT + ";)L" + MINECRAFT + ";";
+
+    @Test
+    @DisplayName("#283: a both-sides subscriber's private client helper no longer stops a server")
+    void clientHelperSignatureIsErasedForServers() throws Exception {
+        byte[] in = flightHandler(null);
+        byte[] out = NeoForgeAutoSubscriberGuard.apply(in, name -> false);
+
+        assertThrows(NoClassDefFoundError.class, () -> new Host(in, false).load().getDeclaredMethods(),
+                "the original resolves Minecraft as NeoForge lists the class's methods on a server");
+        assertEquals(3, new Host(out, false).load().getDeclaredMethods().length,
+                "with the client type erased, a server can list every method");
+        assertTrue(read(out).methods.stream().noneMatch(m -> m.desc.contains(MINECRAFT)));
+    }
+
+    @Test
+    @DisplayName("the erased helper still takes and returns the client object on a client")
+    void erasedHelperStillRunsOnAClient() throws Exception {
+        Class<?> handler = new Host(NeoForgeAutoSubscriberGuard.apply(flightHandler(null), name -> false), true).load();
+        Object minecraft = handler.getClassLoader().loadClass(MINECRAFT.replace('/', '.'))
+                .getConstructor().newInstance();
+
+        Object result = handler.getMethod("onTick", Object.class, Object.class).invoke(null, "player", minecraft);
+
+        assertSame(minecraft, result, "the cast after the call hands the caller its Minecraft back");
+    }
+
+    @Test
+    @DisplayName("a client-only subscriber is never listed on a server and is left alone")
+    void clientOnlySubscriberIsLeftAlone() {
+        byte[] in = flightHandler("CLIENT");
+        assertTrue(read(NeoForgeAutoSubscriberGuard.apply(in, name -> false)).methods.stream()
+                .anyMatch(m -> m.desc.equals(HELPER_DESC)));
+    }
+
+    /**
+     * {@code @EventBusSubscriber class Flight}: a static handler, and a private helper
+     * {@code static Minecraft movement(Object, Minecraft)} that the public {@code onTick} calls.
+     */
+    private static byte[] flightHandler(String dist) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, "test/Flight", null, "java/lang/Object", null);
+        org.objectweb.asm.AnnotationVisitor subscriber = cw.visitAnnotation(AUTO, true);
+        subscriber.visit("modid", "scguns");
+        if (dist != null) {
+            org.objectweb.asm.AnnotationVisitor sides = subscriber.visitArray("value");
+            sides.visitEnum(null, "Lnet/neoforged/api/distmarker/Dist;", dist);
+            sides.visitEnd();
+        }
+        subscriber.visitEnd();
+        handler(cw, ACC_PUBLIC | ACC_STATIC, "onPlayerTick");
+        MethodVisitor tick = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "onTick",
+                "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", null, null);
+        tick.visitCode();
+        tick.visitVarInsn(ALOAD, 0);
+        tick.visitVarInsn(ALOAD, 1);
+        tick.visitTypeInsn(CHECKCAST, MINECRAFT);
+        tick.visitMethodInsn(INVOKESTATIC, "test/Flight", "movement", HELPER_DESC, false);
+        tick.visitInsn(ARETURN);
+        tick.visitMaxs(0, 0);
+        tick.visitEnd();
+        MethodVisitor helper = cw.visitMethod(ACC_PRIVATE | ACC_STATIC, "movement", HELPER_DESC, null, null);
+        helper.visitCode();
+        helper.visitVarInsn(ALOAD, 1);
+        helper.visitInsn(ARETURN);
+        helper.visitMaxs(0, 0);
+        helper.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** Loads one class; a client host also has an empty {@code Minecraft}, a server has none. */
+    private static final class Host extends ClassLoader {
+        private final byte[] bytes;
+        private final boolean client;
+
+        Host(byte[] bytes, boolean client) {
+            super(NeoForgeAutoSubscriberGuardTest.class.getClassLoader());
+            this.bytes = bytes;
+            this.client = client;
+        }
+
+        Class<?> load() throws ClassNotFoundException {
+            return loadClass("test.Flight");
+        }
+
+        @Override
+        protected synchronized Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            Class<?> loaded = findLoadedClass(name);
+            if (loaded != null) return loaded;
+            if (name.equals("test.Flight")) return defineClass(name, bytes, 0, bytes.length);
+            if (name.equals(MINECRAFT.replace('/', '.'))) {
+                if (!client) throw new ClassNotFoundException(name + " is client-only");
+                ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+                cw.visit(V17, ACC_PUBLIC, MINECRAFT, null, "java/lang/Object", null);
+                MethodVisitor init = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+                init.visitCode();
+                init.visitVarInsn(ALOAD, 0);
+                init.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+                init.visitInsn(RETURN);
+                init.visitMaxs(0, 0);
+                init.visitEnd();
+                cw.visitEnd();
+                byte[] stub = cw.toByteArray();
+                return defineClass(name, stub, 0, stub.length);
+            }
+            return super.loadClass(name, resolve);
+        }
+    }
+
     /** Runs {@code body} with a context loader that answers the given class resources, as a host would. */
     private static <T> T withHostClasses(List<String> internalNames, java.util.function.Supplier<T> body) {
         ClassLoader previous = Thread.currentThread().getContextClassLoader();

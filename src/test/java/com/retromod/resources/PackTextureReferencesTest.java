@@ -127,6 +127,52 @@ class PackTextureReferencesTest {
     }
 
     @Test
+    @DisplayName("A format 6 pack's model follows the 1.17 grass path rename, whether the pack ships the texture or not")
+    void versionedMovesRepointReferences(@TempDir Path root) throws Exception {
+        Path pack = pack(root, 6);
+        write(pack.resolve("assets/minecraft/textures/block/grass_path_top.png"), "png");
+        write(pack.resolve("assets/minecraft/models/block/path_slab.json"),
+                "{\"parent\":\"block/slab\",\"textures\":{"
+                        + "\"top\":\"minecraft:block/grass_path_top\","
+                        + "\"side\":\"block/grass_path_side\","
+                        + "\"modded\":\"examplemod:block/grass_path_top\","
+                        + "\"bottom\":\"block/dirt\"}}");
+        Path out = root.resolve("out");
+        Files.createDirectories(out);
+
+        Path result = new ResourcePackTransformer("26.3").transformPack(pack, out);
+
+        try (ZipFile zip = new ZipFile(result.toFile())) {
+            assertNotNull(zip.getEntry("assets/minecraft/textures/block/dirt_path_top.png"));
+        }
+        String model = entry(result, "assets/minecraft/models/block/path_slab.json");
+        assertTrue(model.contains("\"top\":\"minecraft:block/dirt_path_top\""), "the pack's own texture moved: " + model);
+        assertTrue(model.contains("\"side\":\"block/dirt_path_side\""), "vanilla's texture moved too: " + model);
+        assertTrue(model.contains("\"modded\":\"examplemod:block/grass_path_top\""),
+                "a mod's texture is not vanilla's and the pack does not ship it: " + model);
+        assertTrue(model.contains("\"bottom\":\"block/dirt\""), model);
+    }
+
+    @Test
+    @DisplayName("A reference to vanilla's sign sheet stays on 26.3, while one to the pack's own moved sheet follows it")
+    void redrawnSignArtIsFollowedOnlyForThePacksOwnFile(@TempDir Path root) throws Exception {
+        Path pack = pack(root, 15);
+        write(pack.resolve("assets/minecraft/textures/entity/signs/spruce.png"), "png");
+        write(pack.resolve("assets/minecraft/models/block/notice_board.json"),
+                "{\"textures\":{\"own\":\"minecraft:entity/signs/spruce\",\"vanilla\":\"minecraft:entity/signs/oak\"}}");
+        Path out = root.resolve("out");
+        Files.createDirectories(out);
+
+        String model = entry(new ResourcePackTransformer("26.3").transformPack(pack, out),
+                "assets/minecraft/models/block/notice_board.json");
+
+        assertTrue(model.contains("\"own\":\"minecraft:block/spruce_sign\""),
+                "the pack's sheet now lives at the new path, so its model follows it: " + model);
+        assertTrue(model.contains("\"vanilla\":\"minecraft:entity/signs/oak\""),
+                "26.2 redrew vanilla's sign as a 32x32 block sprite, which the old coordinates would garble: " + model);
+    }
+
+    @Test
     @DisplayName("An animation sidecar stays attached to its texture")
     void animationSidecarFollowsTheTexture(@TempDir Path root) throws Exception {
         Path pack = pack(root, 3);

@@ -22,6 +22,12 @@ public class NeoForge_1_20_6_to_1_21 implements VersionShim {
         // Vanilla item bases removed in 1.21, rebased only on hosts that lost them.
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21");
         com.retromod.shim.common.LegacyDyeColorBridge.register(transformer);
+        // The Forge-era StairBlock(Supplier, Properties) that NeoForge 1.21 dropped.
+        com.retromod.shim.forge.LegacyStairBlockBridge.register(transformer);
+        // Rarity.create became an enum extension declared in the mod's metadata.
+        com.retromod.shim.forge.LegacyRarityBridge.register(transformer);
+        // 1.21 made painting variants data.
+        com.retromod.shim.common.LegacyPaintingVariantBridge.register(transformer);
         // ResourceLocation(namespace, path) ctor went private in 1.21; point it at the static factory (#92)
         transformer.registerConstructorRedirect(
             "net/minecraft/resources/ResourceLocation",

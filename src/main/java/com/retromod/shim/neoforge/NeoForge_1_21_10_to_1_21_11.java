@@ -9,10 +9,7 @@ package com.retromod.shim.neoforge;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
 
-/**
- * NeoForge shim for 1.21.10 mods on 1.21.11 (the last obfuscated MC version).
- * Covers ResourceLocation->Identifier, javax->jspecify Nullable, and RenderType->RenderTypes.
- */
+/** Updates NeoForge 1.21.10 mods for 1.21.11, the last obfuscated Minecraft version. */
 public class NeoForge_1_21_10_to_1_21_11 implements VersionShim {
     
     @Override
@@ -37,6 +34,9 @@ public class NeoForge_1_21_10_to_1_21_11 implements VersionShim {
     
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+
+        // The int permission level in CommandSourceStack's constructor became a PermissionSet.
+        com.retromod.shim.common.LegacyCommandSourceBridge.register(transformer);
 
         // Mojang renamed ResourceLocation to Identifier.
         transformer.registerClassRedirect(

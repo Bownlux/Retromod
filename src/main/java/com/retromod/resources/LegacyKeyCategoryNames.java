@@ -19,7 +19,6 @@ import org.objectweb.asm.Type;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -30,19 +29,8 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
-/**
- * Names the key binding categories that older mods made from a plain string.
- *
- * <p>1.21.9 replaced the string with a category registered by id, and the Controls screen titles
- * it with the translation of {@code key.category.<namespace>.<path>}. Retromod registers an old
- * mod's category as {@code retromod_compat:<path>}, so nothing translated that key and the screen
- * showed it raw. Before 1.21.9 the screen showed the translation of the string itself, or the
- * string when it had none. This writes {@code assets/retromod_compat/lang/<code>.json} with that
- * same text for each language the mod ships. A category string the mod builds at run time cannot
- * be seen here and stays raw.
- */
+/** Names the key binding categories that older mods made from a plain string. */
 public final class LegacyKeyCategoryNames {
 
     /** Namespace of the categories Retromod registers for old category strings. */
@@ -100,6 +88,9 @@ public final class LegacyKeyCategoryNames {
         if (categories.isEmpty()) return Map.of();
         languages.computeIfAbsent(DEFAULT_LANGUAGE, code -> new JsonObject());
 
+        // 1.21.9 titles a category with the translation of key.category.<namespace>.<path>, and
+        // nothing translated the retromod_compat keys, so the Controls screen showed them raw.
+        // Write a retromod_compat lang file for each language the mod ships.
         Map<String, byte[]> files = new LinkedHashMap<>();
         for (Map.Entry<String, JsonObject> language : languages.entrySet()) {
             String file = "assets/" + NAMESPACE + "/lang/" + language.getKey() + ".json";
@@ -108,6 +99,8 @@ public final class LegacyKeyCategoryNames {
             for (String category : categories) {
                 JsonElement translated = language.getValue().get(category);
                 String key = "key.category." + NAMESPACE + "." + categoryPath(category);
+                // The text the screen showed before 1.21.9: the string's translation, or the
+                // string itself when it had none.
                 if (translated != null && translated.isJsonPrimitive()) {
                     names.addProperty(key, translated.getAsString());
                 } else if (language.getKey().equals(DEFAULT_LANGUAGE)) {
@@ -122,24 +115,29 @@ public final class LegacyKeyCategoryNames {
     /** Writes {@link #entries} into an extracted jar. Returns how many files it wrote. */
     public static int writeTree(Path root, String targetMcVersion) throws IOException {
         if (!appliesTo(targetMcVersion)) return 0;
-        Path base = root.normalize();
-        Map<String, Path> byName = new LinkedHashMap<>();
-        try (Stream<Path> walk = Files.walk(base)) {
-            walk.filter(Files::isRegularFile)
-                    .forEach(file -> byName.put(base.relativize(file.normalize()).toString().replace('\\', '/'), file));
-        }
-        Map<String, byte[]> files = entries(byName.keySet(), name -> {
-            try {
-                return Files.readAllBytes(byName.get(name));
-            } catch (IOException unreadable) {
-                return null;
+        return writeTree(DirectoryResourceTree.open(root), targetMcVersion, java.util.List.of(), name -> null);
+    }
+
+    /** Writes {@link #entries} into a tree. Returns how many files it wrote. */
+    public static int writeTree(ResourceTree tree, String targetMcVersion,
+            Collection<String> classNames, Function<String, byte[]> classReader) throws IOException {
+        if (!appliesTo(targetMcVersion)) return 0;
+        // The streaming paths keep classes out of their tree, so they pass the class entries
+        // separately. An extracted tree holds its classes itself.
+        Set<String> names = new LinkedHashSet<>(tree.names());
+        names.addAll(classNames);
+        Map<String, byte[]> files = entries(names, name -> {
+            if (tree.exists(name)) {
+                try {
+                    return tree.read(name);
+                } catch (IOException unreadable) {
+                    return null;
+                }
             }
+            return classReader.apply(name);
         });
         for (Map.Entry<String, byte[]> file : files.entrySet()) {
-            Path target = base.resolve(file.getKey()).normalize();
-            if (!target.startsWith(base)) continue;
-            Files.createDirectories(target.getParent());
-            Files.write(target, file.getValue());
+            tree.write(file.getKey(), file.getValue());
         }
         return files.size();
     }
@@ -158,6 +156,7 @@ public final class LegacyKeyCategoryNames {
         } catch (RuntimeException malformed) {
             return;
         }
+        // Only constant strings show up here; a category the mod builds at run time stays raw.
         for (MethodNode method : node.methods) {
             for (AbstractInsnNode insn : method.instructions) {
                 if (insn instanceof MethodInsnNode call && isKeyBindingCall(call)

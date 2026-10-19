@@ -111,6 +111,30 @@ public class Legacy121RegistrationOn26_1Test {
     }
 
     @Test
+    @DisplayName("A 1.21.11 CustomRecipe.Serializer is built as the generated serializer stand-in")
+    void customRecipeSerializerUsesTheStandIn() {
+        // #271: Minepathy registers its special recipes with new CustomRecipe.Serializer(Factory),
+        // the later 1.21 name of SimpleCraftingRecipeSerializer, which 26.1 removed under both.
+        new LegacyRecipeSerializerShim().registerRedirects(transformer);
+        String serializer = "net/minecraft/world/item/crafting/CustomRecipe$Serializer";
+        String factory = serializer + "$Factory";
+        List<AbstractInsnNode> insns = transformBody(mv -> {
+            mv.visitTypeInsn(NEW, serializer);
+            mv.visitInsn(DUP);
+            mv.visitInsn(ACONST_NULL);
+            mv.visitMethodInsn(INVOKESPECIAL, serializer, "<init>", "(L" + factory + ";)V", false);
+            mv.visitInsn(POP);
+            mv.visitInsn(RETURN);
+        });
+
+        MethodInsnNode init = firstCall(insns, LegacyRecipeSerializerShim.SIMPLE_SERIALIZER, "<init>");
+        assertNotNull(init, "the serializer must be built from the stand-in");
+        assertEquals("(L" + LegacyRecipeSerializerShim.SIMPLE_FACTORY + ";)V", init.desc,
+                "the factory interface moves with it, so the mod's lambda still fits the constructor");
+        assertNull(firstCall(insns, serializer, "<init>"), "26.1 has no CustomRecipe.Serializer");
+    }
+
+    @Test
     @DisplayName("Vanilla serializer constants and cauldron tables read from their 26.1 owners")
     void movedConstantsAreReadFromNewOwners() {
         new LegacyRecipeSerializerShim().registerRedirects(transformer);

@@ -132,7 +132,9 @@ class CoreTransformerPathParityTest {
 
     @Test
     void loaderTransformsUseCheckedDataMigration() throws IOException {
-        assertCheckedDataMigration(FabricModTransformer.class, 2);
+        // Fabric: the outer mod, remapNestedJar (26.x hosts) and processNestedJiJJar (older hosts).
+        assertCheckedDataMigration(FabricModTransformer.class, 3);
+        // Forge and NeoForge: the outer mod and patchSingleJijJar.
         assertCheckedDataMigration(ForgeModTransformer.class, 2);
     }
 
@@ -148,9 +150,15 @@ class CoreTransformerPathParityTest {
                     @Override
                     public void visitMethodInsn(int opcode, String owner, String methodName,
                             String methodDescriptor, boolean isInterface) {
-                        if ("com/retromod/resources/ModDataMigrator".equals(owner)) {
-                            if ("migrateTreeChecked".equals(methodName)) checkedCalls[0]++;
-                            if ("migrateTree".equals(methodName)) bestEffortCalls[0]++;
+                        // Every runtime path runs the shared resource converters, which fail
+                        // closed; the best-effort tree migration swallows errors.
+                        if ("com/retromod/resources/ModResourceMigrations".equals(owner)
+                                && "migrateDirectory".equals(methodName)) {
+                            checkedCalls[0]++;
+                        }
+                        if ("com/retromod/resources/ModDataMigrator".equals(owner)
+                                && "migrateTree".equals(methodName)) {
+                            bestEffortCalls[0]++;
                         }
                     }
                 };

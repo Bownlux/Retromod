@@ -17,7 +17,7 @@ import java.util.Set;
  * syntax. This converter reshapes the file without remapping symbols. An
  * intermediary widener is therefore rejected until its names can be remapped.
  *
- * <p>The modifier mapping is adapted from Sinytra Connector:
+ * <p>The modifier mapping is adapted from Sintra Connector:
  * <ul>
  *   <li>Class: {@code accessible} to {@code public}, {@code extendable} to {@code public-f}</li>
  *   <li>Method: {@code accessible} to {@code public}, {@code extendable} to {@code protected-f}</li>

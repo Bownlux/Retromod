@@ -1,0 +1,54 @@
+# removed_in	old_parent	new_parent	added_slots
+#
+# Vanilla template models that a release removed, and the model that took over their geometry.
+# A mod model whose parent is the old template is pointed at the new one when the mod was built
+# before removed_in and the host is removed_in or newer. Both columns name minecraft models.
+#
+# Each row was derived from the vanilla client jars: the old model exists in the last release
+# checked before removed_in and in none from removed_in through 26.3, the new model exists in
+# every one of those, and the two have the same elements with the same open texture slots.
+# Releases checked: 1.12.2, 1.13, 1.14.4, 1.15.2, 1.16.1, 1.16.2, 1.16.5, 1.17.1, 1.18.2, 1.19,
+# 1.19.2, 1.19.3, 1.20.1, 1.20.2, 1.20.3, 1.21.1, 1.21.2, 1.21.4, 1.21.10, 1.21.11, 26.1, 26.2
+# and 26.3.
+#
+# One name came back meaning something else. block/grass was the grass block in 1.12.2 and the
+# short grass plant from 1.13 to 1.20.2, so it has a row for each meaning. Rows apply in release
+# order: a 1.12 model's block/grass becomes block/grass_block at the 1.13 row, which the 1.20.3
+# row, the plant's rename, then no longer matches.
+#
+# added_slots is "-" when the slots kept their names. Otherwise it lists new=old pairs: the new
+# template reads slot "new" where the old one read "old", so the mod model gains "new": "#old",
+# which also resolves when a child model is the one that sets "old".
+1.13	block/half_slab	block/slab	-
+1.13	block/upper_slab	block/slab_top	-
+1.13	block/pane_post	block/template_glass_pane_post	-
+1.13	block/pane_noside	block/template_glass_pane_noside	-
+1.13	block/pane_noside_alt	block/template_glass_pane_noside_alt	-
+1.13	block/pane_side	block/template_glass_pane_side	-
+1.13	block/pane_side_alt	block/template_glass_pane_side_alt	-
+1.13	block/fence_gate_closed	block/template_fence_gate	-
+1.13	block/fence_gate_open	block/template_fence_gate_open	-
+1.13	block/wall_gate_closed	block/template_fence_gate_wall	-
+1.13	block/wall_gate_open	block/template_fence_gate_wall_open	-
+1.13	block/wall_post	block/template_wall_post	-
+1.13	block/wall_side	block/template_wall_side	-
+1.13	block/trapdoor_bottom	block/template_trapdoor_bottom	-
+1.13	block/trapdoor_top	block/template_trapdoor_top	-
+1.13	block/trapdoor_open	block/template_trapdoor_open	-
+1.13	block/glazed_terracotta	block/template_glazed_terracotta	-
+1.13	block/redstone_side	block/redstone_dust_side	-
+1.13	block/redstone_side_alt	block/redstone_dust_side_alt	-
+1.13	block/grass	block/grass_block	-
+1.16	block/fire_floor	block/template_fire_floor	-
+1.16	block/fire_side	block/template_fire_side	-
+1.16	block/fire_side_alt	block/template_fire_side_alt	-
+1.16	block/fire_up	block/template_fire_up	-
+1.16	block/fire_up_alt	block/template_fire_up_alt	-
+1.16	block/torch_wall	block/template_torch_wall	-
+1.17	block/grass_path	block/dirt_path	-
+1.19	block/door_bottom	block/door_bottom_left	-
+1.19	block/door_bottom_rh	block/door_bottom_right	-
+1.19	block/door_top	block/door_top_left	-
+1.19	block/door_top_rh	block/door_top_right	-
+1.20.3	block/grass	block/short_grass	-
+26.3	block/template_farmland	block/template_cube_bottom_top_indented	bottom=dirt,side=dirt

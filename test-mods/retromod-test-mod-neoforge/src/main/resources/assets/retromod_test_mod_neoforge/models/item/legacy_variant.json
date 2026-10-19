@@ -1,0 +1,9 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "minecraft:item/stick"
+  },
+  "overrides": [
+    { "predicate": { "custom_model_data": 1 }, "model": "retromod_test_mod_neoforge:item/legacy_variant_one" }
+  ]
+}

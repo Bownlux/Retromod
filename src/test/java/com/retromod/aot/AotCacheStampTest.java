@@ -215,4 +215,65 @@ class AotCacheStampTest {
         new AotCompiler(new ShimRegistry(), "26.1", cache);
         assertEquals("new", Files.readString(compiled));
     }
+
+    @Test
+    @DisplayName("a trusted root accepts links above it, so a linked game directory still works")
+    void trustedRootAcceptsLinksAboveIt() throws IOException {
+        Path realGame = Files.createDirectory(tempRoot().resolve("real-game"));
+        Path linkedGame = tempRoot().resolve("linked-game");
+        try {
+            Files.createSymbolicLink(linkedGame, realGame);
+        } catch (UnsupportedOperationException | IOException e) {
+            throw new TestAbortedException("symbolic links are unavailable", e);
+        }
+        Path cache = linkedGame.resolve("retromod-cache/translated/forge/1.20.1/jars");
+
+        assertFalse(AotCacheStamp.ensureCurrent(cache, "1.4.0|abc"),
+                "the strict check still refuses any link from the filesystem root");
+        assertTrue(AotCacheStamp.ensureCurrentBelow(linkedGame, cache, "1.4.0|abc"));
+        assertEquals("1.4.0|abc", AotCacheStamp.readStampBelow(linkedGame, cache));
+        assertTrue(Files.isRegularFile(realGame.resolve(
+                "retromod-cache/translated/forge/1.20.1/jars/.cache-stamp")));
+    }
+
+    @Test
+    @DisplayName("a trusted root still refuses links below it and paths outside it")
+    void trustedRootRefusesLinksBelowIt() throws IOException {
+        Path game = Files.createDirectory(tempRoot().resolve("game"));
+        Path external = Files.createDirectory(tempRoot().resolve("external-cache"));
+        try {
+            Files.createSymbolicLink(game.resolve("retromod-cache"), external);
+        } catch (UnsupportedOperationException | IOException e) {
+            throw new TestAbortedException("symbolic links are unavailable", e);
+        }
+        assertFalse(AotCacheStamp.ensureCurrentBelow(game,
+                game.resolve("retromod-cache/jars"), "1.4.0|abc"));
+        assertFalse(Files.exists(external.resolve("jars")));
+        assertFalse(AotCacheStamp.ensureCurrentBelow(game, tempRoot().resolve("elsewhere"),
+                "1.4.0|abc"));
+        assertNull(AotCacheStamp.readStampBelow(game, game.resolve("retromod-cache/jars")));
+    }
+
+    @Test
+    @DisplayName("a trusted root wipes a cache stamped by another build")
+    void trustedRootWipesOnMismatch() throws IOException {
+        Path game = Files.createDirectory(tempRoot().resolve("wipe-game"));
+        Path cache = game.resolve("retromod-cache/jars");
+        assertTrue(AotCacheStamp.ensureCurrentBelow(game, cache, "1.4.0|old"));
+        Path stale = Files.writeString(cache.resolve("stale-retromod.jar"), "old");
+
+        assertTrue(AotCacheStamp.ensureCurrentBelow(game, cache, "1.4.0|new"));
+        assertFalse(Files.exists(stale));
+        assertEquals("1.4.0|new", AotCacheStamp.readStampBelow(game, cache));
+    }
+
+    @Test
+    @DisplayName("a target stamp is refused when the target cannot be one line")
+    void stampForTargetRejectsMultiLineTargets() {
+        assertNull(AotCacheStamp.stampForTarget("inplace/forge/1.20.1\nextra"));
+        assertNull(AotCacheStamp.stampForTarget(" "));
+        String stamp = AotCacheStamp.stampForTarget("inplace/forge/1.20.1/abc");
+        assertNotNull(stamp);
+        assertTrue(stamp.endsWith("|target=inplace/forge/1.20.1/abc"));
+    }
 }

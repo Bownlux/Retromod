@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -51,5 +52,43 @@ class ConfigScreenFactoryTest {
                 ConfigScreenFactory.mergeConfigJson(existing, toggles)).getAsJsonObject();
 
         assertFalse(root.get("verify_transforms").getAsBoolean());
+    }
+
+    private static Properties props(String... pairs) {
+        Properties properties = new Properties();
+        for (int i = 0; i < pairs.length; i += 2) properties.setProperty(pairs[i], pairs[i + 1]);
+        return properties;
+    }
+
+    @Test
+    void inPlaceSwitchIsHiddenWhereItChangesNothing() {
+        assertFalse(ConfigScreenFactory.visibleToggleKeys(props())
+                        .contains("write_translated_jars"),
+                "Fabric and Quilt always write into mods/, so no toggle is shown there");
+        assertTrue(ConfigScreenFactory.visibleToggleKeys(
+                        props("retromod.boot.owner", "retromod.jar"))
+                .contains("write_translated_jars"));
+        assertEquals("write_translated_jars", ConfigScreenFactory.visibleToggleKeys(
+                props("retromod.inplace.mode", "in-place")).get(4));
+    }
+
+    @Test
+    void changedInPlaceSwitchSaysItWaitsForTheNextLaunch() {
+        Map<String, Boolean> saved = new LinkedHashMap<>();
+        saved.put("write_translated_jars", true);
+        assertTrue(ConfigScreenFactory.switchWaitsForRestart(saved,
+                props("retromod.inplace.mode", "in-place")));
+        assertFalse(ConfigScreenFactory.switchWaitsForRestart(saved,
+                props("retromod.inplace.mode", "rewrite")));
+        saved.put("write_translated_jars", false);
+        assertFalse(ConfigScreenFactory.switchWaitsForRestart(saved,
+                props("retromod.inplace.mode", "in-place")));
+        assertFalse(ConfigScreenFactory.switchWaitsForRestart(saved, props()),
+                "without a discovery pass there is nothing to compare");
+    }
+
+    @Test
+    void settingsDefaultToInPlaceMode() {
+        assertFalse(ConfigScreenFactory.loadConfig().get("write_translated_jars"));
     }
 }

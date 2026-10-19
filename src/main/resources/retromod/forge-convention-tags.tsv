@@ -1,0 +1,271 @@
+# Forge convention tag paths and the c: tag each one became, for NeoForge and for Forge 26.1+.
+#
+# Format: FORGE_PATH<TAB>C_PATH<TAB>NEOFORGE_SINCE[<TAB>NEOFORGE_ALSO]
+#   FORGE_PATH      the path of a forge: tag, such as ingots/iron for forge:ingots/iron
+#   C_PATH          the path of the c: tag that replaced it, or = when the path is unchanged
+#   NEOFORGE_SINCE  the first Minecraft version whose newest NeoForge build ships that c: tag,
+#                   with every later newest build through 26.3 shipping it too
+#   NEOFORGE_ALSO   optional, comma-separated earlier Minecraft versions whose newest NeoForge
+#                   build ships that c: tag although a later version's newest build drops it
+#                   again (NeoForge 21.1.262 ships c:tools/wrench, 21.2.1-beta and 21.3.100 do not)
+#
+# NeoForge dropped Forge's forge: tags for c: ones in 1.20.5. Forge kept both families through
+# 1.21.11 and dropped all but a few forge: tags in 26.1. Every c: tag here is shipped by Forge
+# 26.1, 26.1.1, 26.1.2, 26.2 and 26.3 (the newest build of each), so a row applies to every
+# Forge host from 26.1.
+#
+# Rows come from two sources:
+#   - every forge: tag the Forge 1.20.1 jar ships whose meaning survived, matched by path or
+#     by NeoForge's own legacy-name list, then checked by comparing resolved members (Forge
+#     1.20.1 with vanilla 1.20.1 against NeoForge 21.11 with vanilla 1.21.11)
+#   - community forge: names NeoForge's legacy-name list maps to a c: tag, kept only where the
+#     two names are spellings of the same thing (cookie and cookies to foods/cookie)
+# A forge: tag whose c: counterpart means something else is left out, so its references keep
+# their forge: name: stained glass colors that collapsed into c:glass_blocks, raw ore blocks
+# that NeoForge points at the refined storage blocks, and tags with no lasting c: tag at all.
+armors	=	1.20.5
+barrels	=	1.20.5
+barrels/wooden	=	1.20.5
+berries	foods/berry	1.21
+berry	foods/berry	1.21
+bones	=	1.20.5
+bookshelves	=	1.20.5
+bosses	=	1.20.5
+bread	foods/bread	1.21
+breads	foods/bread	1.21
+bucket	buckets	1.20.5
+candies	foods/candy	1.21
+candy	foods/candy	1.21
+chests	=	1.20.5
+chests/ender	=	1.20.5
+chests/trapped	=	1.20.5
+chests/wooden	=	1.20.5
+cobblestone	cobblestones	1.20.5
+cobblestone/deepslate	cobblestones/deepslate	1.20.5
+cobblestone/infested	cobblestones/infested	1.20.5
+cobblestone/mossy	cobblestones/mossy	1.20.5
+cobblestone/normal	cobblestones/normal	1.20.5
+cooked_fish	foods/cooked_fish	1.21
+cooked_fishes	foods/cooked_fish	1.21
+cooked_meat	foods/cooked_meat	1.21
+cooked_meats	foods/cooked_meat	1.21
+cookie	foods/cookie	1.21
+cookies	foods/cookie	1.21
+crafting_table	player_workstations/crafting_tables	1.20.5
+crafting_tables	player_workstations/crafting_tables	1.20.5
+crops	=	1.20.5
+crops/beetroot	=	1.20.5
+crops/carrot	=	1.20.5
+crops/nether_wart	=	1.20.5
+crops/potato	=	1.20.5
+crops/wheat	=	1.20.5
+dusts	=	1.20.5
+dusts/glowstone	=	1.20.5
+dusts/redstone	=	1.20.5
+dyes	=	1.20.5
+dyes/black	=	1.20.5
+dyes/blue	=	1.20.5
+dyes/brown	=	1.20.5
+dyes/cyan	=	1.20.5
+dyes/gray	=	1.20.5
+dyes/green	=	1.20.5
+dyes/light_blue	=	1.20.5
+dyes/light_gray	=	1.20.5
+dyes/lime	=	1.20.5
+dyes/magenta	=	1.20.5
+dyes/orange	=	1.20.5
+dyes/pink	=	1.20.5
+dyes/purple	=	1.20.5
+dyes/red	=	1.20.5
+dyes/white	=	1.20.5
+dyes/yellow	=	1.20.5
+eggs	=	1.20.5
+end_stones	=	1.20.5
+ender_pearls	=	1.20.5
+experience	=	1.21.1
+feathers	=	1.20.5
+fence_gates	=	1.20.5
+fence_gates/wooden	=	1.20.5
+fences	=	1.20.5
+fences/nether_brick	=	1.20.5
+fences/wooden	=	1.20.5
+food	foods	1.20.5
+foods	=	1.20.5
+foods/berries	foods/berry	1.21
+foods/breads	foods/bread	1.21
+foods/candies	foods/candy	1.21
+foods/cooked_fishes	foods/cooked_fish	1.21
+foods/cooked_meats	foods/cooked_meat	1.21
+foods/cookies	foods/cookie	1.21
+foods/fruits	foods/fruit	1.21
+foods/pies	foods/pie	1.21.1
+foods/raw_fishes	foods/raw_fish	1.21
+foods/raw_meats	foods/raw_meat	1.21
+foods/soups	foods/soup	1.21
+foods/vegetables	foods/vegetable	1.21
+fruit	foods/fruit	1.21
+fruits	foods/fruit	1.21
+furnace	player_workstations/furnaces	1.20.5
+furnaces	player_workstations/furnaces	1.20.5
+gaseous	=	1.20.5
+gems	=	1.20.5
+gems/amethyst	=	1.20.5
+gems/diamond	=	1.20.5
+gems/emerald	=	1.20.5
+gems/lapis	=	1.20.5
+gems/prismarine	=	1.20.5
+gems/quartz	=	1.20.5
+glass	glass_blocks	1.20.5
+glass/colorless	glass_blocks/colorless	1.20.5
+glass/silica	glass_blocks/cheap	1.20.5
+glass/tinted	glass_blocks/tinted	1.20.5
+glass_panes	=	1.20.5
+glass_panes/colorless	=	1.20.5
+gravel	gravels	1.20.6
+gunpowder	gunpowders	1.20.6
+honey	=	1.20.5
+ingots	=	1.20.5
+ingots/brick	bricks/normal	1.20.5
+ingots/copper	=	1.20.5
+ingots/gold	=	1.20.5
+ingots/iron	=	1.20.5
+ingots/nether_brick	bricks/nether	1.20.5
+ingots/netherite	=	1.20.5
+is_cave	=	1.20.5
+is_cold	=	1.20.5
+is_cold/end	=	1.20.5
+is_cold/nether	=	1.20.5
+is_cold/overworld	=	1.20.5
+is_coniferous	is_tree/coniferous	1.20.5
+is_dead	=	1.20.5
+is_dense	is_dense_vegetation	1.20.5
+is_dense/end	is_dense_vegetation/end	1.20.5
+is_dense/nether	is_dense_vegetation/nether	1.20.5
+is_dense/overworld	is_dense_vegetation/overworld	1.20.5
+is_desert	=	1.20.5
+is_dry	=	1.20.5
+is_dry/end	=	1.20.5
+is_dry/nether	=	1.20.5
+is_dry/overworld	=	1.20.5
+is_end	=	1.20.5
+is_hot	=	1.20.5
+is_hot/end	=	1.20.5
+is_hot/nether	=	1.20.5
+is_hot/overworld	=	1.20.5
+is_lush	=	1.20.5
+is_magical	=	1.20.5
+is_mountain	=	1.20.5
+is_mushroom	=	1.20.5
+is_nether	=	1.20.5
+is_overworld	=	1.20.5
+is_peak	is_mountain/peak	1.20.5
+is_plains	=	1.20.5
+is_plateau	=	1.20.5
+is_rare	=	1.20.5
+is_sandy	=	1.20.5
+is_slope	is_mountain/slope	1.20.5
+is_snowy	=	1.20.5
+is_sparse	is_sparse_vegetation	1.20.5
+is_sparse/end	is_sparse_vegetation/end	1.20.5
+is_sparse/nether	is_sparse_vegetation/nether	1.20.5
+is_sparse/overworld	is_sparse_vegetation/overworld	1.20.5
+is_spooky	=	1.20.5
+is_swamp	=	1.20.5
+is_underground	=	1.20.5
+is_void	=	1.20.5
+is_wasteland	=	1.20.5
+is_water	is_aquatic	1.20.5
+is_wet	=	1.20.5
+is_wet/end	=	1.20.5
+is_wet/nether	=	1.20.5
+is_wet/overworld	=	1.20.5
+lava	=	1.20.5
+leather	leathers	1.20.6
+milk	=	1.20.5
+mushrooms	=	1.20.5
+nether_stars	=	1.20.5
+netherrack	netherracks	1.20.6
+no_default_monsters	=	1.20.5
+nuggets	=	1.20.5
+nuggets/gold	=	1.20.5
+nuggets/iron	=	1.20.5
+obsidian	obsidians/normal	1.21.1
+ore_bearing_ground/deepslate	=	1.20.5
+ore_bearing_ground/netherrack	=	1.20.5
+ore_bearing_ground/stone	=	1.20.5
+ore_rates/dense	=	1.20.5
+ore_rates/singular	=	1.20.5
+ore_rates/sparse	=	1.20.5
+ores	=	1.20.5
+ores/coal	=	1.20.5
+ores/copper	=	1.20.5
+ores/diamond	=	1.20.5
+ores/emerald	=	1.20.5
+ores/gold	=	1.20.5
+ores/iron	=	1.20.5
+ores/lapis	=	1.20.5
+ores/netherite_scrap	=	1.20.5
+ores/quartz	=	1.20.5
+ores/redstone	=	1.20.5
+ores_in_ground/deepslate	=	1.20.5
+ores_in_ground/netherrack	=	1.20.5
+ores_in_ground/stone	=	1.20.5
+pie	foods/pie	1.21.1
+pies	foods/pie	1.21.1
+potion	=	1.20.5
+raw_fish	foods/raw_fish	1.21
+raw_fishes	foods/raw_fish	1.21
+raw_materials	=	1.20.5
+raw_materials/copper	=	1.20.5
+raw_materials/gold	=	1.20.5
+raw_materials/iron	=	1.20.5
+raw_meat	foods/raw_meat	1.21
+raw_meats	foods/raw_meat	1.21
+relocation_not_supported	=	1.20.5
+rods	=	1.20.5
+rods/blaze	=	1.20.5
+rods/wooden	=	1.20.5
+rope	ropes	1.20.5
+sand	sands	1.20.5
+sand/colorless	sands/colorless	1.20.5
+sand/red	sands/red	1.20.5
+sandstone	sandstone/blocks	1.20.5
+seeds	=	1.20.5
+seeds/beetroot	=	1.20.5
+seeds/melon	=	1.20.5
+seeds/pumpkin	=	1.20.5
+seeds/wheat	=	1.20.5
+shears	tools/shear	1.21
+skulls	=	1.20.5
+slimeballs	slime_balls	1.21
+soup	foods/soup	1.21
+soups	foods/soup	1.21
+stone	stones	1.20.5
+storage_blocks	=	1.20.5
+storage_blocks/coal	=	1.20.5
+storage_blocks/copper	=	1.20.5
+storage_blocks/diamond	=	1.20.5
+storage_blocks/emerald	=	1.20.5
+storage_blocks/gold	=	1.20.5
+storage_blocks/iron	=	1.20.5
+storage_blocks/lapis	=	1.20.5
+storage_blocks/netherite	=	1.20.5
+storage_blocks/raw_copper	=	1.20.5
+storage_blocks/raw_gold	=	1.20.5
+storage_blocks/raw_iron	=	1.20.5
+storage_blocks/redstone	=	1.20.5
+string	strings	1.20.5
+tools	=	1.20.5
+tools/bows	tools/bow	1.21
+tools/brushes	tools/brush	1.21
+tools/crossbows	tools/crossbow	1.21
+tools/fishing_rods	tools/fishing_rod	1.21
+tools/shears	tools/shear	1.21
+tools/shields	tools/shield	1.21
+tools/wrench	=	1.21.4	1.21.1
+tools/wrenches	tools/wrench	1.21.4	1.21.1
+vegetable	foods/vegetable	1.21
+vegetables	foods/vegetable	1.21
+water	=	1.20.5
+wrench	tools/wrench	1.21.4	1.21.1
+wrenches	tools/wrench	1.21.4	1.21.1

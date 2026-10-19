@@ -159,6 +159,24 @@ class LegacyLootConditionMigratorTest {
                 LegacyLootConditionMigrator.migrate(bytes(old), false, true));
     }
 
+    @Test
+    @DisplayName("a stray function name on an entry is dropped, a set_contents block entity type is not")
+    void strayFunctionNameOnlyOnEntries() {
+        String entry = """
+                {"pools":[{"entries":[{"type":"minecraft:item","name":"minecraft:beef",
+                  "function":"minecraft:furnace_smelt"}]}]}""";
+        assertJson("""
+                {"pools":[{"entries":[{"type":"minecraft:item","name":"minecraft:beef"}]}]}""",
+                LegacyLootConditionMigrator.migrate(bytes(entry), true));
+
+        String contents = """
+                {"pools":[{"entries":[{"type":"minecraft:item","name":"minecraft:shulker_box","functions":[
+                  {"function":"minecraft:set_contents","type":"minecraft:shulker_box","entries":[]}]}]}]}""";
+        String migrated = new String(LegacyLootConditionMigrator.migrate(bytes(contents), true),
+                StandardCharsets.UTF_8);
+        assertTrue(migrated.contains("minecraft:set_contents"), migrated);
+    }
+
     private static byte[] bytes(String json) {
         return json.getBytes(StandardCharsets.UTF_8);
     }

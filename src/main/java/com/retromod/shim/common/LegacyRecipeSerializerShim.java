@@ -20,7 +20,8 @@ import static org.objectweb.asm.Opcodes.*;
  * <p>Through 1.21.11 {@code RecipeSerializer} was an interface a mod implemented with its own
  * {@code codec()} and {@code streamCodec()}. 26.1 made it a final class built from those two
  * codecs, moved the vanilla serializer constants onto each recipe class as {@code SERIALIZER}, and
- * removed {@code SimpleCraftingRecipeSerializer} (all verified against the 26.1.2 jar). A 1.21.x
+ * removed {@code SimpleCraftingRecipeSerializer} under both of its 1.21 names, the later one being
+ * {@code CustomRecipe.Serializer} (all verified against the 26.1.2 jar). A 1.21.x
  * serializer class then fails at definition with {@code IncompatibleClassChangeError} "can not
  * implement RecipeSerializer, because it is not an interface" before the mod's entry point
  * finishes (#249).
@@ -29,8 +30,8 @@ import static org.objectweb.asm.Opcodes.*;
  * adapts the object into a real 26.1 {@code RecipeSerializer} built from its own codecs, which
  * {@link WorldgenTypeBridgeSynthetic} does at the {@code Registry.register} boundary. Calls to
  * {@code codec()} and {@code streamCodec()} accept either shape. And
- * {@code SimpleCraftingRecipeSerializer} becomes a generated stand-in with the same constructor
- * and codecs.
+ * {@code SimpleCraftingRecipeSerializer} and {@code CustomRecipe.Serializer} become a generated
+ * stand-in with the same constructor and codecs.
  *
  * <p>The adapted codec traps a {@code LinkageError} or a runtime exception from the mod's decoder
  * and reports it once as a recipe load error. A recipe whose codec still fails does not load, but
@@ -43,6 +44,8 @@ public class LegacyRecipeSerializerShim implements MinecraftVersionedApiShim {
     static final String OLD_SIMPLE_SERIALIZER =
             "net/minecraft/world/item/crafting/SimpleCraftingRecipeSerializer";
     static final String OLD_SIMPLE_FACTORY = OLD_SIMPLE_SERIALIZER + "$Factory";
+    static final String OLD_CUSTOM_SERIALIZER = "net/minecraft/world/item/crafting/CustomRecipe$Serializer";
+    static final String OLD_CUSTOM_FACTORY = OLD_CUSTOM_SERIALIZER + "$Factory";
     private static final String EMBEDDED = "com/retromod/shim/common/embedded/";
     public static final String BRIDGE = EMBEDDED + "LegacyRecipeSerializerBridge";
     public static final String SAFE_CODEC = EMBEDDED + "LegacyRecipeMapCodec";
@@ -129,6 +132,10 @@ public class LegacyRecipeSerializerShim implements MinecraftVersionedApiShim {
                 serializerDesc));
         transformer.registerClassRedirect(OLD_SIMPLE_SERIALIZER, SIMPLE_SERIALIZER);
         transformer.registerClassRedirect(OLD_SIMPLE_FACTORY, SIMPLE_FACTORY);
+        // The later 1.21 name for the same class (1.21.11 has it), with the same (Factory)
+        // constructor and the same create(CraftingBookCategory) factory method.
+        transformer.registerClassRedirect(OLD_CUSTOM_SERIALIZER, SIMPLE_SERIALIZER);
+        transformer.registerClassRedirect(OLD_CUSTOM_FACTORY, SIMPLE_FACTORY);
     }
 
     public static Map<String, String> movedConstants() {

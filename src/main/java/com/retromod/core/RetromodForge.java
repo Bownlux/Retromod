@@ -6,6 +6,7 @@ package com.retromod.core;
 
 import com.retromod.gui.RetromodGui;
 import com.retromod.gui.TitleScreenButtonInjector;
+import com.retromod.inplace.InPlaceLaunch;
 import com.retromod.shim.ShimRegistry;
 import com.retromod.util.ArchivePublication;
 import com.retromod.util.ZipSecurity;
@@ -21,10 +22,7 @@ import java.nio.file.Paths;
 // runtime under Forge: FML refuses to load a JAR whose mods.toml declares a
 // modId without a matching @Mod class ("The Mod File <jar> has mods that were not found").
 
-/**
- * Forge entry point. Runs on clients (GUI file picker, "Add Mods" button) and
- * dedicated servers (headless, console warnings).
- */
+/** Forge entry point: translates old Forge mods while Forge constructs mods. */
 @net.minecraftforge.fml.common.Mod("retromod")
 public class RetromodForge {
 
@@ -134,7 +132,13 @@ public class RetromodForge {
             LOGGER.debug("Could not initialize fuzzy resolver: {}", e.getMessage());
         }
 
-        initializeHybridEngine();
+        // In-place mode serves translations from Retromod's cache and never writes into mods/.
+        // The rewrite flow below is what write_translated_jars=true keeps.
+        InPlaceLaunch launch = InPlaceLaunch.forEntryPoint(
+                Paths.get(".").toAbsolutePath().normalize());
+        launch.logDecision();
+
+        initializeHybridEngine(launch);
 
         // On a 26.2+ client, prefer the OpenGL backend so translated old mods'
         // OpenGL rendering keeps working. No-op below 26.2 / on a server / if the
@@ -146,29 +150,49 @@ public class RetromodForge {
             LOGGER.debug("Graphics backend preference skipped: {}", e.getMessage());
         }
 
-        int transformed = transformModsFromInput();
-        transformed += transformModsInPlace();
+        // The rewrite flow translates retromod-input/ and then rewrites old jars in mods/.
+        int transformed;
+        if (launch.rewrite()) {
+            transformed = transformModsFromInput();
+            transformed += transformModsInPlace();
+        } else {
+            // The same transformer and call the rewrite flow uses, so cached jars match it.
+            transformed = launch.translatePending(RetromodVersion.TARGET_MC_VERSION, () ->
+                    (InPlaceLaunch.LinkingTranslator)
+                            new ForgeModTransformer(RetromodVersion.TARGET_MC_VERSION)::transformMod);
+        }
 
         // Arm the in-game restart prompt (#33), shown on the title screen.
-        com.retromod.gui.RestartPrompt.markPending(transformed);
+        if (launch.rewrite()) {
+            com.retromod.gui.RestartPrompt.markPending(transformed);
+        } else {
+            com.retromod.gui.RestartPrompt.markTranslatedIntoCache(transformed);
+        }
 
+        // A client gets the GUI file picker and the "Add Mods" button. A dedicated server runs
+        // headless and reports on the console only.
         if (!isServer && EnvironmentDetector.canShowGui()) {
             if (transformed > 0) {
-                showRestartPopup(transformed);
+                showRestartPopup(transformed, !launch.rewrite());
             } else {
                 initializeClientGui();
             }
         } else {
             LOGGER.info("Running without the in-game interface on this server");
-            if (transformed > 0) {
+            if (transformed > 0 && launch.rewrite()) {
                 LOGGER.info("Updated {} {}. Restart the server to load {}.",
+                        transformed, transformed == 1 ? "mod" : "mods",
+                        transformed == 1 ? "it" : "them");
+            } else if (transformed > 0) {
+                LOGGER.info("Translated {} {} into retromod-cache/. Restart the server to "
+                        + "load {}. The files in mods/ were not changed.",
                         transformed, transformed == 1 ? "mod" : "mods",
                         transformed == 1 ? "it" : "them");
             }
         }
 
         // Scan for mods that can be runtime-transformed (minor versions)
-        scanForRuntimeTransformableMods();
+        scanForRuntimeTransformableMods(launch);
 
         // Scan the previous launch's log for known crash patterns and register
         // fixes for the next retransformation. Gated on the same opt-in flag
@@ -264,13 +288,15 @@ public class RetromodForge {
                 RetromodVersion.TARGET_MC_VERSION);
     }
 
-    private void initializeHybridEngine() {
+    private void initializeHybridEngine(InPlaceLaunch launch) {
         try {
             Path gameDir = Paths.get(".").toAbsolutePath().normalize();
             Path modsFolder = gameDir.resolve("mods");
             
+            // The engine skips originals that in-place mode holds back for their cached translation.
             HybridTransformationEngine hybrid = HybridTransformationEngine.getInstance();
-            hybrid.initialize(modsFolder, RetromodVersion.TARGET_MC_VERSION);
+            hybrid.initialize(modsFolder, RetromodVersion.TARGET_MC_VERSION,
+                    launch::isHiddenOriginal);
             
             LOGGER.info("Hybrid AOT/JIT engine initialized");
         } catch (Exception e) {
@@ -367,14 +393,16 @@ public class RetromodForge {
             if (jars.isEmpty()) return 0;
 
             ForgeModTransformer transformer = new ForgeModTransformer(RetromodVersion.TARGET_MC_VERSION);
+            SyntheticLibraries libraries = SyntheticLibraries.ofFolder(modsDir);
 
-            for (Path modJar : jars) {
+            for (Path modJar : SyntheticLibraries.librariesFirst(jars, jar -> jar)) {
                 try {
                     String fileName = modJar.getFileName().toString();
                     LOGGER.info("Transforming from retromod-input/: {}", fileName);
 
-                    Path transformed = transformer.transformMod(modJar, modsDir);
+                    Path transformed = transformer.transformMod(modJar, modsDir, libraries);
                     if (transformed != null) {
+                        libraries.add(transformed);
                         ArchivePublication.moveReplacing(
                                 modJar, processedDir.resolve(fileName));
                         count++;
@@ -423,34 +451,46 @@ public class RetromodForge {
                              .toList();
             }
 
+            java.util.List<Path> incompatible = new java.util.ArrayList<>();
             for (Path modJar : jars) {
                 try {
                     var info = detector.detectVersion(modJar);
                     if (info != null && info.needsTransformation(RetromodVersion.TARGET_MC_VERSION)) {
-                        String fileName = modJar.getFileName().toString();
-                        LOGGER.info("Found incompatible mod in mods/: {} ({})", fileName, info.targetMcVersion());
-
-                        Files.createDirectories(backupDir);
-                        ArchivePublication.copyReplacing(
-                                modJar, backupDir.resolve(fileName));
-
-                        Path tempDir = Files.createTempDirectory("retromod-inplace-");
-                        try {
-                            Path transformed = transformer.transformMod(modJar, tempDir);
-                            if (transformed != null) {
-                                ArchivePublication.moveReplacing(transformed, modJar);
-                                LOGGER.info("Transformed in place: {}", fileName);
-                                count++;
-                            }
-                        } finally {
-                            try (var walk = Files.walk(tempDir)) {
-                                walk.sorted(java.util.Comparator.reverseOrder())
-                                    .forEach(p -> { try { Files.delete(p); } catch (Exception ignored) {} });
-                            }
-                        }
+                        LOGGER.info("Found incompatible mod in mods/: {} ({})",
+                                modJar.getFileName(), info.targetMcVersion());
+                        incompatible.add(modJar);
                     }
                 } catch (Exception e) {
                     LOGGER.debug("Could not check: {}", modJar.getFileName());
+                }
+            }
+            SyntheticLibraries libraries = incompatible.isEmpty()
+                    ? SyntheticLibraries.NONE : SyntheticLibraries.ofFolder(modsDir);
+
+            for (Path modJar : SyntheticLibraries.librariesFirst(incompatible, jar -> jar)) {
+                try {
+                    String fileName = modJar.getFileName().toString();
+                    Files.createDirectories(backupDir);
+                    ArchivePublication.copyReplacing(
+                            modJar, backupDir.resolve(fileName));
+
+                    Path tempDir = Files.createTempDirectory("retromod-inplace-");
+                    try {
+                        Path transformed = transformer.transformMod(modJar, tempDir, libraries);
+                        if (transformed != null) {
+                            ArchivePublication.moveReplacing(transformed, modJar);
+                            libraries.add(modJar);
+                            LOGGER.info("Transformed in place: {}", fileName);
+                            count++;
+                        }
+                    } finally {
+                        try (var walk = Files.walk(tempDir)) {
+                            walk.sorted(java.util.Comparator.reverseOrder())
+                                .forEach(p -> { try { Files.delete(p); } catch (Exception ignored) {} });
+                        }
+                    }
+                } catch (Exception e) {
+                    LOGGER.debug("Could not transform: {}", modJar.getFileName());
                 }
             }
         } catch (Exception e) {
@@ -459,8 +499,8 @@ public class RetromodForge {
         return count;
     }
 
-    /** Tell the user (via a Swing dialog) to restart Minecraft. */
-    private void showRestartPopup(int transformedCount) {
+    /** Tells the player, in a Swing dialog, to restart Minecraft. */
+    private void showRestartPopup(int transformedCount, boolean translatedIntoCache) {
         if (!EnvironmentDetector.canShowGui()) return;
 
         Thread popupThread = new Thread(() -> {
@@ -469,11 +509,14 @@ public class RetromodForge {
                     javax.swing.UIManager.getSystemLookAndFeelClassName());
             } catch (Exception ignored) {}
 
+            // In in-place mode no file in mods/ changed, so the text names the cache instead.
             javax.swing.JOptionPane.showMessageDialog(null,
-                "Retromod transformed " + transformedCount + " mod(s).\n\n" +
-                "Please close Minecraft and launch it again\n" +
-                "for the changes to take effect.\n\n" +
-                "This only happens the first time.",
+                translatedIntoCache
+                    ? com.retromod.gui.RestartPrompt.cacheRestartPopupText(transformedCount)
+                    : "Retromod transformed " + transformedCount + " mod(s).\n\n" +
+                      "Please close Minecraft and launch it again\n" +
+                      "for the changes to take effect.\n\n" +
+                      "This only happens the first time.",
                 "Retromod - Restart Required",
                 javax.swing.JOptionPane.INFORMATION_MESSAGE);
         }, "Retromod-RestartPopup");
@@ -481,7 +524,7 @@ public class RetromodForge {
         popupThread.start();
     }
 
-    private void scanForRuntimeTransformableMods() {
+    private void scanForRuntimeTransformableMods(InPlaceLaunch launch) {
         try {
             Path modsFolder = Paths.get("mods");
             if (!Files.exists(modsFolder)) return;
@@ -494,6 +537,8 @@ public class RetromodForge {
             if (modFiles == null) return;
             
             for (java.io.File modFile : modFiles) {
+                // The loader runs the cached translation of a held-back original, not this file.
+                if (launch.isHiddenOriginal(modFile.toPath())) continue;
                 try {
                     var info = detector.detectVersion(modFile.toPath());
                     if (info != null && info.needsTransformation(RetromodVersion.TARGET_MC_VERSION)) {

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PackFormatTest {
@@ -48,6 +49,16 @@ class PackFormatTest {
             assertEquals(new PackFormat(formats[2], formats[3]),
                 PackFormat.dataTarget(version), "data format for " + version);
         });
+    }
+
+    @Test
+    void pre113ResourceFormatsNameTheLastReleaseThatReadThem() {
+        assertEquals("1.8.9", PackFormat.minecraftVersionForPre113Resources(new PackFormat(1, 0)));
+        assertEquals("1.10.2", PackFormat.minecraftVersionForPre113Resources(new PackFormat(2, 0)));
+        assertEquals("1.12.2", PackFormat.minecraftVersionForPre113Resources(new PackFormat(3, 0)));
+        assertNull(PackFormat.minecraftVersionForPre113Resources(new PackFormat(4, 0)),
+            "1.13 packs already use JSON language files and lowercase ids");
+        assertNull(PackFormat.minecraftVersionForPre113Resources(PackFormat.resourceTarget("26.3")));
     }
 
     @Test

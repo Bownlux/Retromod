@@ -6,51 +6,57 @@ package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
 
-/**
- * 26.2 to 26.3 core class moves, shared by the Fabric, NeoForge, and Forge shims. Both versions use
- * Mojang names on every loader, so the table is loader independent, and each loader wraps it in its
- * own shim because the shim registry runs its search per loader.
- *
- * <p>Generated from the 26.2 and 26.3-snapshot-10 client jars. Every entry is checked against both:
- * the old name is present in 26.2 and absent in 26.3, the new name is present in 26.3 and absent in
- * 26.2, and the pairing itself is proven by an identical simple name, a unique structural match, or
- * overlapping members. Nothing inferred from name similarity alone is included.
- *
- * <p>The bulk of the jump is one library repackage: {@code com/mojang/blaze3d} became
- * {@code com/mojang/renderpearl}, with its subpackages reorganized rather than moved wholesale, so
- * each class is listed rather than a prefix rewritten. The repackage is partial: {@code PoseStack},
- * {@code VertexConsumer}, {@code BufferBuilder}, and {@code ByteBufferBuilder} stayed where they
- * were. The rest are vanilla moves, several of which only correct capitalization
- * ({@code EnderMan} to {@code Enderman}, {@code RedStoneWireBlock} to {@code RedstoneWireBlock}).
- *
- * <p>A class move restores linkage, not behavior. A renamed class whose members also changed still
- * needs a member redirect or a bridge, and the rendering repackage in particular carries API drift
- * that a class name alone does not describe.
- *
- * <p>26.3 also deletes much of the worldgen configuration system outright, including
- * {@code FeatureConfiguration} and its subclasses, {@code ConfiguredFeature},
- * {@code SurfaceRules}, {@code BlockStateProviderType}, and {@code PlacementModifierType}, and
- * finishes the data-driven item migration by removing {@code AxeItem}, {@code HoeItem},
- * {@code ShovelItem}, {@code BedItem}, and {@code SignItem}. Those have no successor to point
- * at, so they are absent here and need a real port.
- */
+/** Maps the vanilla classes and members 26.3 moved or renamed, for every loader. */
 public final class Mc26_2To26_3CoreMoves {
 
     private Mc26_2To26_3CoreMoves() {}
 
+    /** Registers every move, through each loader's own shim since ShimRegistry searches per loader. */
     public static void register(RetromodTransformer t) {
         registerPushReactionRenames(t);
         LegacyResourceSelectorBridge.register(t);
+        // The class moves come from the 26.2 and 26.3-snapshot-10 client jars. Each old name is in
+        // 26.2 and not 26.3, each new name the reverse, and each pairing is proven by an identical
+        // simple name, a unique structural match, or shared members, never by a similar name alone.
+        // A move restores linkage, not behavior: a class whose members changed still needs a
+        // member redirect or a bridge.
         registerRenderLibraryRepackage(t);
         registerVanillaMoves(t);
         registerAuthlibMoves(t);
         registerSdlInputBridges(t);
+        registerGlfwPolls(t);
         registerRemovedToolBases(t);
+        // 26.3 also deleted much of the worldgen configuration system (FeatureConfiguration,
+        // ConfiguredFeature, SurfaceRules, BlockStateProviderType, PlacementModifierType). A deleted
+        // class has no move target, so it gets a bridge or needs a real port.
         LegacyFeatureBridge.register(t);
+        // Members and systems 26.3 reshaped: block codecs, model submission, swings, armor trims,
+        // inventory and player members, and command sources.
+        LegacyBlockCodecBridge.register(t);
+        LegacyModelSubmitBridge.register(t);
+        LegacySwingBridge.register(t);
+        LegacyArmorTrimBridge.register(t);
+        Legacy263MemberBridge.register(t);
+        LegacyCommandSourceBridge.register(t);
+        registerConsumeEffectConstructors(t);
+    }
+
+    /**
+     * 26.3 gave {@code TeleportRandomlyConsumeEffect} a directional-particles flag and dropped the
+     * one-argument constructor. An old call passes {@code true}, the value 26.3's no-argument
+     * constructor uses and its codec reads for data that omits the flag.
+     */
+    static void registerConsumeEffectConstructors(RetromodTransformer t) {
+        t.registerSuperConstructorAdapter(
+                "net/minecraft/world/item/consume_effects/TeleportRandomlyConsumeEffect", "(F)V", "(FZ)V",
+                mv -> mv.visitInsn(org.objectweb.asm.Opcodes.ICONST_1));
     }
 
     /** {@code com/mojang/blaze3d} became {@code com/mojang/renderpearl} (182 classes). */
     private static void registerRenderLibraryRepackage(RetromodTransformer t) {
+        // Subpackages were reorganized, not moved whole, so each class is listed instead of a
+        // prefix rewrite. PoseStack, VertexConsumer, BufferBuilder, and ByteBufferBuilder stayed
+        // put. The repackage also carries API drift that a class name alone does not describe.
         t.registerClassRedirect("com/mojang/blaze3d/GpuDeviceLossException",
                 "com/mojang/renderpearl/api/device/GpuDeviceLossException");
         t.registerClassRedirect("com/mojang/blaze3d/GpuFormat",
@@ -478,6 +484,26 @@ public final class Mc26_2To26_3CoreMoves {
         }
     }
 
+    /** Answers a mod's own GLFW polls on 26.3, whose libraries replace LWJGL's GLFW with SDL. */
+    private static void registerGlfwPolls(RetromodTransformer t) {
+        // Without this the first GLFW call fails with NoClassDefFoundError: org/lwjgl/glfw/GLFW,
+        // often in a per-frame render hook that takes the game down before the title screen.
+        String glfw = "org/lwjgl/glfw/GLFW";
+        String poly = LegacyKeyCodeAdapter.POLY;
+        Common_1_21_11_to_26_1_ClassMoves.ensureSyntheticRegistered(t, poly);
+        // Answer from what replaced GLFW: time from Blaze3D's SDL clock, keys and buttons from
+        // Minecraft's input state, and the cursor from the mouse handler. Like isKeyDown, a literal
+        // key or button is translated from GLFW numbering by LegacyKeyCodeAdapter; a code read at
+        // runtime is already the host's.
+        t.registerMethodRedirect(glfw, "glfwGetTime", "()D",
+                "com/mojang/blaze3d/Blaze3D", "getTime", "()D");
+        t.registerMethodRedirect(glfw, "glfwGetKey", "(JI)I", poly, "glfwGetKeyUntranslated", "(JI)I");
+        t.registerMethodRedirect(glfw, "glfwGetMouseButton", "(JI)I",
+                poly, "glfwGetMouseButtonUntranslated", "(JI)I");
+        t.registerMethodRedirect(glfw, "glfwGetCursorPos", "(J[D[D)V",
+                poly, "glfwGetCursorPos", "(J[D[D)V");
+    }
+
     private static void registerAuthlibMoves(RetromodTransformer t) {
         String authlib = "com/mojang/authlib/";
         t.registerClassRedirect(authlib + "minecraft/MinecraftSessionService",
@@ -489,6 +515,8 @@ public final class Mc26_2To26_3CoreMoves {
     }
 
     private static void registerVanillaMoves(RetromodTransformer t) {
+        // Several only fix capitalization, such as EnderMan to Enderman and RedStoneWireBlock to
+        // RedstoneWireBlock.
         t.registerClassRedirect("com/mojang/realmsclient/RealmsMainScreen$NotificationButton",
                 "com/mojang/realmsclient/gui/RealmsHeader$NotificationButton");
         t.registerClassRedirect("net/minecraft/client/gui/screens/options/WorldOptionsScreen",
@@ -513,6 +541,25 @@ public final class Mc26_2To26_3CoreMoves {
                 poseStack, "rotate", "(Lorg/joml/Quaternionfc;)V");
         t.registerMethodRedirect(poseStack, "mulPose", "(Lorg/joml/Quaternionf;)V",
                 poseStack, "rotate", "(Lorg/joml/Quaternionfc;)V");
+        // Axis.of(Vector3f) became Axis.of(Vector3fc), the JOML widening 26.2 applied elsewhere.
+        // The value on the stack already implements Vector3fc, so only the descriptor changes.
+        // The method dates from 1.19.3, so 1.20.1 mods call it too.
+        t.registerConvertingRedirect("com/mojang/math/Axis", "of",
+                "(Lorg/joml/Vector3f;)Lcom/mojang/math/Axis;",
+                "com/mojang/math/Axis", "of", "(Lorg/joml/Vector3fc;)Lcom/mojang/math/Axis;", 0, 0);
+        // RenderTypes.armorEntityGlint() is gone. trimmedArmorGlint() builds the same render type
+        // under a new name: the glint pipeline, the armor glint texture and texturing, and the view
+        // offset layering, plus a forced solid model phase. Custom armor layers draw their
+        // enchantment shine with it.
+        String renderTypes = "net/minecraft/client/renderer/rendertype/RenderTypes";
+        String renderTypeGetter = "()Lnet/minecraft/client/renderer/rendertype/RenderType;";
+        t.registerMethodRedirect(renderTypes, "armorEntityGlint", renderTypeGetter,
+                renderTypes, "trimmedArmorGlint", renderTypeGetter);
+        // entityGlint() went the same way: patternedShieldGlint() is its glint pipeline, item glint
+        // texture and entity glint texturing with no layering, plus the forced solid model phase.
+        // glint() and glintTranslucent() have no standalone successor and stay unbridged.
+        t.registerMethodRedirect(renderTypes, "entityGlint", renderTypeGetter,
+                renderTypes, "patternedShieldGlint", renderTypeGetter);
         // The hand-selection enum moved into the new first-person render state with the same
         // constants, renderMainHand/renderOffHand fields, and (boolean, boolean) constructor.
         t.registerClassRedirect("net/minecraft/client/renderer/ItemInHandRenderer$HandRenderSelection",
@@ -617,17 +664,21 @@ public final class Mc26_2To26_3CoreMoves {
                 "net/minecraft/world/level/storage/loot/ValidationContext$RecursiveElementReferenceProblem");
 
         // Loot number providers split into an int-valued and a float-valued family in 26.3-pre-1.
-        // Only the three names that exist in exactly one of the two are carried. ConstantValue,
+        // Only the three names that exist in exactly one of the two move. ConstantValue,
         // EnvironmentAttributeValue, StorageValue, Sum and UniformGenerator each exist under BOTH
-        // ints and floats, so nothing in the old name says which a mod meant; those are declined.
-        // NumberProvider and NumberProviders themselves are gone, so a mod that implements the
-        // interface needs a real port either way (verified against the 26.3-pre-2 client).
+        // ints and floats, so nothing in the old name says which a mod meant. NumberProvider,
+        // ConstantValue and UniformGenerator go to a stand-in that converts at each consumer
+        // instead (LegacyNumberProviderBridge); the other three are declined. A mod that implements
+        // the interface needs a real port either way (verified against the 26.3-pre-2 client).
         String loot = "net/minecraft/world/level/storage/loot/providers/number/";
         t.registerClassRedirect(loot + "BinomialDistributionGenerator",
                 loot + "ints/BinomialDistributionGenerator");
         t.registerClassRedirect(loot + "ScoreboardValue", loot + "ints/ScoreboardValue");
         t.registerClassRedirect(loot + "EnchantmentLevelProvider",
                 loot + "floats/EnchantmentLevelProvider");
+        LegacyNumberProviderBridge.register(t);
+        // The loot entry builders were rebuilt in the same release.
+        LegacyLootBuilderBridge.register(t);
     }
 
     /**

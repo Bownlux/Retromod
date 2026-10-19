@@ -68,6 +68,27 @@ class LoaderIsolationTest {
     }
 
     @Test
+    @DisplayName("Loader API providers and the runtime name no loader class")
+    void loaderApiProvidersAreLoaderNeutral() throws IOException {
+        // ServiceLoader instantiates providers on Forge and NeoForge as well, and the runtime and
+        // the identity check run from loader-neutral code.
+        for (String cls : new String[]{
+                "com/retromod/loaderapi/LoaderApiRuntime",
+                "com/retromod/loaderapi/LoaderApiSetting",
+                "com/retromod/loaderapi/LoaderApiContext",
+                "com/retromod/loaderapi/LoaderApiProvider",
+                "com/retromod/loaderapi/LoaderApiRegistration",
+                "com/retromod/loaderapi/fabric/v26/FabricApi26Provider",
+                "com/retromod/loaderapi/fabric/v26/FabricApi26Rows",
+                "com/retromod/core/FabricTranslationIdentity"}) {
+            String cp = constantPool(cls);
+            assertFalse(cp.contains("net/fabricmc/"), cls + " must not reference a Fabric class");
+            assertFalse(cp.contains("net/neoforged/"), cls + " must stay NeoForge-free");
+            assertFalse(cp.contains("net/minecraftforge/"), cls + " must stay Forge-free");
+        }
+    }
+
+    @Test
     @DisplayName("RetromodVersion carries no loader-specific reference (safe from any entry point)")
     void retromodVersionIsLoaderNeutral() throws IOException {
         String cp = constantPool("com/retromod/core/RetromodVersion");

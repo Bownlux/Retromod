@@ -63,6 +63,35 @@ class FabricRegistryIdSharedSlotTest {
     }
 
     @Test
+    @DisplayName("a static field stamped inside another one's statement puts the outer id back")
+    void nestedEnterRestoresTheOuterId() throws Throwable {
+        // ModItems.FOO = new BlockItem(ModBlocks.FOO, new Item.Properties()) runs ModBlocks'
+        // static initializer before the item's properties exist. If that inner stamp cleared the
+        // slot, the item would be built with no id.
+        StubLoader loader = new StubLoader();
+        Class<?> identifier = loader.define(IDENTIFIER, stubIdentifier());
+        Class<?> bridge = loader.define("com/retromod/embedded/mod/Bridge",
+                relocatedBridge("com/retromod/embedded/mod/Bridge"));
+        // Looked up from the bridge's own loader, so the test's loader is never bound to this
+        // copy of the stand-in Identifier and the other cases can define their own.
+        var lookup = MethodHandles.privateLookupIn(bridge, MethodHandles.lookup());
+        var enter = lookup.findStatic(bridge, "enter", MethodType.methodType(Object.class, identifier));
+        var leave = lookup.findStatic(bridge, "leave", MethodType.methodType(void.class, Object.class));
+        Object itemId = identifier.getConstructor().newInstance();
+        Object blockId = identifier.getConstructor().newInstance();
+
+        Object beforeItem = enter.invoke(itemId);
+        Object beforeBlock = enter.invoke(blockId);
+        assertSame(blockId, slotOf(bridge).get(), "the block statement sees its own id");
+        leave.invoke(beforeBlock);
+        assertSame(itemId, slotOf(bridge).get(),
+                "the item statement must get its id back after the block class initializes");
+        leave.invoke(beforeItem);
+        assertNull(beforeItem, "nothing was set before the outer statement");
+        assertNull(slotOf(bridge).get(), "the outer leave clears the slot it found empty");
+    }
+
+    @Test
     @DisplayName("an unexpected value under the shared key falls back to a private slot")
     void foreignPropertyValueFallsBackToPrivateSlot() throws Exception {
         System.getProperties().put(FabricRegistryIdSynthetic.SHARED_SLOT_KEY, "not a slot");

@@ -2,6 +2,9 @@
   "_comment": "Retromod Configuration - https://github.com/Bownlux/Retromod",
   "_comment2": "This file is auto-generated on first launch. Edit values as needed.",
 
+  "_install_comment": "Forge and NeoForge: false keeps translated copies in retromod-cache/ and never changes mods/. true writes translated jars into mods/ like earlier versions. Fabric and Quilt always use retromod-input/.",
+  "write_translated_jars": false,
+
   "use_aot": true,
   "use_hybrid": true,
   "instruction_level_granularity": true,

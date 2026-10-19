@@ -867,8 +867,8 @@ public class AutoFixEngine {
             }
         ));
 
-        // Missing mod dependency. Report only; the user must install it.
-        //   "Mod 'sodium' is a required dependency of 'iris' but it is not installed"
+        // Missing mod dependency.
+        //   A Example is that "The Mod 'sodium' is a required dependency of 'iris' but it is not installed"
         patterns.add(new ErrorPattern(
             "MissingModDependency",
             Pattern.compile("(?:'(\\S+)' is a (?:required )?dependency of '(\\S+)'.*not installed|Unmet dependency.*?(\\S+) requires (\\S+))"),

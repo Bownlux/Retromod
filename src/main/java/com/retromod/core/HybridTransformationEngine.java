@@ -20,10 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
-/**
- * Builds transformed classes in the background and handles early class loads at runtime.
- * It also records which mod owns each class for crash reports and performance tracking.
- */
+/** Builds transformed classes in the background and handles early class loads at runtime. */
 public final class HybridTransformationEngine {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Hybrid");
@@ -44,6 +41,7 @@ public final class HybridTransformationEngine {
     private final Object aotCacheLock = new Object();
     private long cachedTransformBytes;
     private final AtomicBoolean cacheLimitLogged = new AtomicBoolean(false);
+    // Which mod owns each class, for crash reports and performance tracking.
     private final Map<String, String> classToModMap = new ConcurrentHashMap<>();
     private final Map<String, ModTransformInfo> modsToTransform = new ConcurrentHashMap<>();
 
@@ -89,9 +87,15 @@ public final class HybridTransformationEngine {
     
     /** Finds old mods and starts preparing their classes in the background. */
     public void initialize(Path modsFolder, String targetVersion) {
+        initialize(modsFolder, targetVersion, jar -> false);
+    }
+
+    /** Like {@link #initialize(Path, String)}, but skips jars the loader does not load this launch. */
+    public void initialize(Path modsFolder, String targetVersion,
+            java.util.function.Predicate<Path> notLoaded) {
         LOGGER.info("Preparing the background transformation cache");
 
-        scanModsFolder(modsFolder, targetVersion);
+        scanModsFolder(modsFolder, targetVersion, notLoaded);
 
         // Crash reports use the same ownership map as the transformer.
         initializeCrashHandler();
@@ -228,7 +232,8 @@ public final class HybridTransformationEngine {
         }
     }
 
-    private void scanModsFolder(Path modsFolder, String targetVersion) {
+    private void scanModsFolder(Path modsFolder, String targetVersion,
+            java.util.function.Predicate<Path> notLoaded) {
         if (!Files.isDirectory(modsFolder, LinkOption.NOFOLLOW_LINKS)) return;
 
         try (var stream = Files.list(modsFolder)) {
@@ -236,6 +241,9 @@ public final class HybridTransformationEngine {
                 .filter(p -> p.toString().toLowerCase(Locale.ROOT).endsWith(".jar"))
                 .filter(p -> !p.getFileName().toString().contains("-retromod"))
                 .filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
+                // In-place loading keeps an old original from the loader and runs its cached
+                // translation instead, so preparing the original's classes would be wasted work.
+                .filter(p -> !notLoaded.test(p))
                 .forEach(jarPath -> {
                     try {
                         var info = versionDetector.detectVersion(jarPath);
@@ -338,6 +346,9 @@ public final class HybridTransformationEngine {
                 originalClasses.put(className, original);
             }
 
+            // A block filled into a static field of one class can be registered by another.
+            com.retromod.shim.common.StaticFieldRegistryIds registryIds =
+                    jitTransformer.indexJarRegistryIds(originalClasses.values());
             int compiled = 0;
             for (Map.Entry<String, byte[]> classEntry : originalClasses.entrySet()) {
                 String className = classEntry.getKey();
@@ -360,7 +371,7 @@ public final class HybridTransformationEngine {
                     }
                     byte[] transformed = transformWithMixinRepairs(
                             jitTransformer, mixinTransformer, original, className,
-                            originalClasses::get);
+                            originalClasses::get, registryIds);
 
                     if (transformed != null) {
                         cacheTransform(className, original, transformed);
@@ -421,7 +432,20 @@ public final class HybridTransformationEngine {
             byte[] originalBytes,
             String className,
             java.util.function.Function<String, byte[]> jarClassBytes) {
-        try (var hierarchyScope = transformer.pushJarClassBytesProvider(jarClassBytes)) {
+        return transformWithMixinRepairs(transformer, mixins, originalBytes, className,
+                jarClassBytes, com.retromod.shim.common.StaticFieldRegistryIds.NONE);
+    }
+
+    /** Transforms one class with the rest of its jar's classes and registry ids in scope. */
+    static byte[] transformWithMixinRepairs(
+            RetromodTransformer transformer,
+            MixinCompatibilityTransformer mixins,
+            byte[] originalBytes,
+            String className,
+            java.util.function.Function<String, byte[]> jarClassBytes,
+            com.retromod.shim.common.StaticFieldRegistryIds registryIds) {
+        try (var hierarchyScope = transformer.pushJarClassBytesProvider(jarClassBytes);
+             var registryIdScope = transformer.pushJarRegistryIds(registryIds)) {
             return transformWithMixinRepairs(
                     transformer, mixins, originalBytes, className);
         }

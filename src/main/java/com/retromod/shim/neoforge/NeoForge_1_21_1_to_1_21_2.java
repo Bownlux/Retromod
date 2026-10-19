@@ -7,7 +7,7 @@ package com.retromod.shim.neoforge;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
 
-/** NeoForge 1.21.1 to 1.21.2: shader rename, InteractionResult merge, Registry renames, Attribute GENERIC_ drop. */
+/** Updates NeoForge 1.21.1 mods for the vanilla 1.21.2 renames and merged classes. */
 public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
     @Override public String getShimName() { return "NeoForge 1.21.1 to 1.21.2"; }
     @Override public String getSourceVersion() { return "1.21.1"; }
@@ -46,6 +46,11 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
         com.retromod.shim.common.LegacyChestBlockBridge.register(transformer);
         com.retromod.shim.common.LegacyFoodConsumableBridge.register(transformer);
         com.retromod.shim.common.LegacyItemConstructorBridge.register(transformer);
+        // Entity and recipe members that 1.21.2 removed or made stricter.
+        com.retromod.shim.common.Legacy1212MemberBridge.register(transformer);
+        // EntityType.Builder.build(String) became build(ResourceKey).
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
+            .registerOfficialEntityTypeBuildBridge(transformer);
 
         transformer.registerMethodRedirect(
             "net/minecraft/core/RegistryAccess", "registryOrThrow",
