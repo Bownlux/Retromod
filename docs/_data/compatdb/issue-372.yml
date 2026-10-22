@@ -1,0 +1,21 @@
+name: "Fossils and Archaeology and morehitboxes"
+bundle: true
+badge: borked
+host_mc: "."
+loader: "neoforge"
+retromod: "1.4.0-snapshot.2"
+mods:
+  - name: "Fossils and Archaeology: Revival"
+    version: "9.3.4.0"
+    source_mc: "1.20.1"
+    link: "https://www.curseforge.com/minecraft/mc-mods/fossils"
+  - name: "More Hitboxes"
+    version: "1.9.2"
+    source_mc: "1.20.1"
+    link: "https://www.curseforge.com/minecraft/mc-mods/more-hitboxes"
+summary: "Failed to create mod instance: java.lang.IllegalArgumentException: Registry ResourceKey[minecraft:root / minecraft:enchantment] does not exist!"
+details: "The mixinextras is fixed but now it crashes with this https://mclo.gs/JDOZLl5"
+reporter: "freopt"
+date: "2026-10-22"
+issue: 372
+
