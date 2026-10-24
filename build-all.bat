@@ -613,6 +613,7 @@ if /I "!RUNTIME_TOML!"=="META-INF/mods.toml" set "LEGACY_MANDATORY=1"
     echo '''
     echo authors = "Bownlux"
     echo logoFile = "assets/retromod/icon.png"
+    echo iconFile = "assets/retromod/icon.png"
     echo.
     echo [[dependencies.retromod]]
     echo modId = "neoforge"
