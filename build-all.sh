@@ -845,6 +845,7 @@ bytecode, mixins, and loader metadata, then keeps a backup of the original mod.
 '''
 authors = "Bownlux"
 logoFile = "assets/retromod/icon.png"
+iconFile = "assets/retromod/icon.png"
 
 [[dependencies.retromod]]
 modId = "neoforge"
