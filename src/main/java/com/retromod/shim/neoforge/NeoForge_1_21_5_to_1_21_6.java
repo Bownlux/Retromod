@@ -24,11 +24,19 @@ public class NeoForge_1_21_5_to_1_21_6 implements VersionShim {
             "net/neoforged/neoforge/common/util/INBTSerializable",
             "net/neoforged/neoforge/common/util/ValueIOSerializable"
         );
+        // ItemStackHandler, FluidTank, and EnergyStorage lost their NBT save methods for ValueIO ones.
+        LegacyHandlerNbtBridge.register(transformer);
 
         // LayeredDraw was removed in 1.21.6; point refs at GuiComponent (a polyfill is needed for full compat)
         transformer.registerClassRedirect(
             "net/minecraft/client/gui/LayeredDraw",
             "net/minecraft/client/gui/GuiComponent"
+        );
+        // A HUD layer has the same render(graphics, deltaTracker) shape as NeoForge's GuiLayer, which
+        // RegisterGuiLayersEvent takes in its place.
+        transformer.registerClassRedirect(
+            "net/minecraft/client/gui/LayeredDraw$Layer",
+            "net/neoforged/neoforge/client/gui/GuiLayer"
         );
     }
     

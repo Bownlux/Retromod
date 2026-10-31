@@ -68,6 +68,40 @@ public class RetromodTestModForge {
                 .addListener(FarmersDelightAddon::register);
         // An entity type built from its bare name in a deferred register's supplier.
         EntityTypeKeys.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        // #372: a 1.20.1 recipe serializer and advancement trigger, checked once the server's data loads.
+        LegacyRecipesAndTriggers.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener(this::checkLoadedData);
+    }
+
+    /**
+     * #372: Fossils and Archaeology's recipes and advancement criteria are read from data with the
+     * 1.20.1 APIs. They load with the server's data, so the results are in the log rather than the summary.
+     */
+    private void checkLoadedData(net.minecraftforge.event.server.ServerStartedEvent event) {
+        String recipes;
+        try {
+            recipes = LegacyRecipesAndTriggers.recipesLoad(event.getServer());
+        } catch (Throwable t) {
+            recipes = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} #372 a 1.20.1 recipe serializer loads, matches, and syncs its recipe (server started): {}",
+                PREFIX, recipes);
+        LOG.info("{} #372 a 1.20.1 advancement trigger reads its player and item predicates (server started): {}",
+                PREFIX, LegacyRecipesAndTriggers.triggerRead());
+        String explosion;
+        try {
+            explosion = LegacyExplosionCase.run(event.getServer().overworld());
+        } catch (Throwable t) {
+            explosion = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} #366 an Explosion subclass explodes, then finishes (server started): {}", PREFIX, explosion);
+        String rules;
+        try {
+            rules = LegacyExplosionCase.gameRuleRead(event.getServer().overworld());
+        } catch (Throwable t) {
+            rules = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} #366 level.getGameRules().getBoolean(rule) (server started): {}", PREFIX, rules);
     }
 
     /**

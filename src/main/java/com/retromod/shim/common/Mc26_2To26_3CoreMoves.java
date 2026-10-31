@@ -22,6 +22,7 @@ public final class Mc26_2To26_3CoreMoves {
         // member redirect or a bridge.
         registerRenderLibraryRepackage(t);
         registerVanillaMoves(t);
+        registerTagRenames(t);
         registerAuthlibMoves(t);
         registerSdlInputBridges(t);
         registerGlfwPolls(t);
@@ -39,6 +40,13 @@ public final class Mc26_2To26_3CoreMoves {
         Legacy263MemberBridge.register(t);
         LegacyCommandSourceBridge.register(t);
         registerConsumeEffectConstructors(t);
+        // 26.3 made the axe, hoe and shovel sounds holders. The 1.20.5 shims register this bridge
+        // too, but a mod built for 1.21.2 to 26.2 never passes through them.
+        LegacyHolderConstantBridge.register(t);
+        // 26.3 deleted PotionBrewing for minecraft:brewing recipes; old readers get it rebuilt over them.
+        LegacyPotionBrewingApi.register(t);
+        // ContextAwarePredicate became a holder of a loot condition, so old triggers read and test that.
+        LegacyContextAwarePredicateBridge.register(t);
     }
 
     /**
@@ -514,6 +522,21 @@ public final class Mc26_2To26_3CoreMoves {
         }
     }
 
+    /** Tag constants 26.3 renamed, each tag holding the same entries under its new name. */
+    private static void registerTagRenames(RetromodTransformer t) {
+        renameTag(t, "net/minecraft/tags/BlockTags", "CONVERTABLE_TO_MUD", "CONVERTIBLE_TO_MUD");
+        // The explorer map tags are now named after the structure each map leads to.
+        renameTag(t, "net/minecraft/tags/StructureTags", "ON_JUNGLE_EXPLORER_MAPS", "ON_JUNGLE_PYRAMID_MAPS");
+        renameTag(t, "net/minecraft/tags/StructureTags", "ON_SWAMP_EXPLORER_MAPS", "ON_SWAMP_HUT_MAPS");
+        renameTag(t, "net/minecraft/tags/StructureTags", "ON_WOODLAND_EXPLORER_MAPS", "ON_WOODLAND_MANSION_MAPS");
+        renameTag(t, "net/minecraft/tags/StructureTags", "ON_OCEAN_EXPLORER_MAPS", "ON_OCEAN_MONUMENT_MAPS");
+        renameTag(t, "net/minecraft/tags/StructureTags", "ON_TRIAL_CHAMBERS_MAPS", "ON_BURIED_TRIAL_CHAMBERS_MAPS");
+    }
+
+    private static void renameTag(RetromodTransformer t, String owner, String oldName, String newName) {
+        t.registerFieldRedirect(owner, oldName, "Lnet/minecraft/tags/TagKey;", owner, newName, "Lnet/minecraft/tags/TagKey;");
+    }
+
     private static void registerVanillaMoves(RetromodTransformer t) {
         // Several only fix capitalization, such as EnderMan to Enderman and RedStoneWireBlock to
         // RedstoneWireBlock.
@@ -592,6 +615,12 @@ public final class Mc26_2To26_3CoreMoves {
                 "net/minecraft/util/datafix/fixes/LegacyBlockRenameFix$1");
         t.registerClassRedirect("net/minecraft/world/clock/ServerClockManager$ClockInstance",
                 "net/minecraft/world/clock/ServerClockManager$ServerClockInstance");
+        t.registerClassRedirect("net/minecraft/client/ClientClockManager$ClockInstance",
+                "net/minecraft/client/ClientClockManager$ClientClockInstance");
+        t.registerClassRedirect("net/minecraft/client/resources/sounds/UnderwaterAmbientSoundInstances$SubSound",
+                "net/minecraft/client/resources/sounds/UnderLiquidSubSound");
+        t.registerClassRedirect("net/minecraft/world/level/storage/loot/predicates/LootItemConditions",
+                "net/minecraft/world/level/storage/loot/predicates/LootItemConditionTypes");
         t.registerClassRedirect("net/minecraft/world/entity/ai/goal/CatLieOnBedGoal",
                 "net/minecraft/world/entity/ai/goal/CatLieOnBlockGoal");
         t.registerClassRedirect("net/minecraft/world/entity/monster/EnderMan",
@@ -602,6 +631,8 @@ public final class Mc26_2To26_3CoreMoves {
                 "net/minecraft/world/entity/monster/Enderman$EndermanLookForPlayerGoal");
         t.registerClassRedirect("net/minecraft/world/entity/monster/EnderMan$EndermanTakeBlockGoal",
                 "net/minecraft/world/entity/monster/Enderman$EndermanTakeBlockGoal");
+        t.registerClassRedirect("net/minecraft/world/entity/monster/EnderMan$EndermanLeaveBlockGoal",
+                "net/minecraft/world/entity/monster/Enderman$EndermanLeaveBlockGoal");
         t.registerClassRedirect("net/minecraft/world/level/biome/Climate$SpawnFinder$Result",
                 "net/minecraft/world/level/levelgen/NoiseSpawnFinder$Result");
         t.registerClassRedirect("net/minecraft/world/level/block/RedStoneWireBlock",
@@ -660,6 +691,8 @@ public final class Mc26_2To26_3CoreMoves {
                 "net/minecraft/world/level/levelgen/structure/placement/AbstractSpreadingStructurePlacement$ExclusionZone");
         t.registerClassRedirect("net/minecraft/world/level/levelgen/structure/placement/StructurePlacement$FrequencyReducer",
                 "net/minecraft/world/level/levelgen/structure/placement/AbstractSpreadingStructurePlacement$FrequencyReducer");
+        t.registerClassRedirect("net/minecraft/world/level/levelgen/structure/placement/StructurePlacement$FrequencyReductionMethod",
+                "net/minecraft/world/level/levelgen/structure/placement/AbstractSpreadingStructurePlacement$FrequencyReductionMethod");
         t.registerClassRedirect("net/minecraft/world/level/storage/loot/ValidationContext$MissingReferenceProblem",
                 "net/minecraft/world/level/storage/loot/ValidationContext$RecursiveElementReferenceProblem");
 

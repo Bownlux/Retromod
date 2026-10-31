@@ -60,6 +60,20 @@ class LegacyLootModifierCodecsTest {
     }
 
     @Test
+    @DisplayName("a biome modifier serializer is converted too (#377)")
+    void biomeModifierSerializerIsUnwrapped() throws Exception {
+        // Saint's Dragons registers its conditional feature modifier's record codec here.
+        Dfu dfu = new Dfu();
+        Object mapCodec = dfu.load("test/RecordMap").getConstructor().newInstance();
+        Object recordCodec = dfu.load(MAP_CODEC_CODEC).getConstructor(dfu.load(MAP_CODEC)).newInstance(mapCodec);
+
+        Object registered = LegacyLootModifierCodecs.serializer(
+                "ResourceKey[minecraft:root / neoforge:biome_modifier_serializers]", () -> recordCodec).get();
+
+        assertSame(mapCodec, registered);
+    }
+
+    @Test
     @DisplayName("other registries keep the mod's supplier")
     void otherRegistriesAreUntouched() {
         Supplier<Object> blocks = Object::new;

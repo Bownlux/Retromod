@@ -64,11 +64,11 @@ class DyedBlockAccessorTest {
         t.clearRedirectsForTesting();
         try {
             Mc26_1To26_2CoreMoves.register(t);
-            // 448 dyed (14 Blocks families + 14 Items families, 16 colours each) + 33 BlockItemTags
+            // 464 dyed (14 Blocks families + 15 Items families, 16 colours each) + 33 BlockItemTags
             // accessors (17 deleted BlockTags + 16 deleted ItemTags constants -> .block()/.item()),
             // which share the static-field-accessor table (snapshot.3).
-            assertEquals(448 + 33, t.getStaticFieldAccessorCount(),
-                    "448 dyed accessors + 33 BlockItemTags accessors");
+            assertEquals(464 + 33, t.getStaticFieldAccessorCount(),
+                    "464 dyed accessors + 33 BlockItemTags accessors");
         } finally {
             t.clearRedirectsForTesting();
         }

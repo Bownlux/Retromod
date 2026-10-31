@@ -207,4 +207,33 @@ class LegacyEquipmentBridgeTest {
         new ClassReader(bytes).accept(node, 0);
         return node;
     }
+
+    @Test
+    @DisplayName("#366: a tool's createAttributes on its own class goes to the helper")
+    void toolAttributesGoToTheHelper() {
+        String modifiers = "Lnet/minecraft/world/item/component/ItemAttributeModifiers;";
+        org.objectweb.asm.ClassWriter cw = new org.objectweb.asm.ClassWriter(org.objectweb.asm.ClassWriter.COMPUTE_MAXS);
+        cw.visit(org.objectweb.asm.Opcodes.V21, org.objectweb.asm.Opcodes.ACC_PUBLIC, "mod/Pick", null, "java/lang/Object", null);
+        org.objectweb.asm.MethodVisitor mv = cw.visitMethod(org.objectweb.asm.Opcodes.ACC_STATIC, "attributes",
+                "(L" + LegacyEquipmentBridge.TIER + ";)" + modifiers, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 0);
+        mv.visitInsn(org.objectweb.asm.Opcodes.FCONST_1);
+        mv.visitInsn(org.objectweb.asm.Opcodes.FCONST_0);
+        mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKESTATIC, "mod/Pick", "createAttributes",
+                "(L" + LegacyEquipmentBridge.TIER + ";FF)" + modifiers, false);
+        mv.visitInsn(org.objectweb.asm.Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        org.objectweb.asm.tree.ClassNode node = new org.objectweb.asm.tree.ClassNode();
+        new org.objectweb.asm.ClassReader(LegacyEquipmentBridge.retargetToolAttributes(cw.toByteArray())).accept(node, 0);
+
+        java.util.List<String> calls = new java.util.ArrayList<>();
+        for (org.objectweb.asm.tree.AbstractInsnNode insn : node.methods.get(0).instructions) {
+            if (insn instanceof org.objectweb.asm.tree.MethodInsnNode call) calls.add(call.owner + "." + call.name);
+        }
+        assertEquals(java.util.List.of(LegacyEquipmentBridge.SUPPORT + ".diggerAttributes"), calls);
+    }
 }

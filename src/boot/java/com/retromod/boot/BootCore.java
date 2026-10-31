@@ -69,6 +69,17 @@ public final class BootCore {
     public record BootJar(Path path, String version, String targetMinecraft, String loader,
             String generation, String runtimeSha256) {
 
+        /**
+         * Whether this jar carries a locator for {@code locatorGeneration}. A jar for a host line
+         * that spans two SPI shapes, such as NeoForge 1.20.6, lists both, joined by {@code +}.
+         */
+        public boolean serves(String locatorGeneration) {
+            for (String listed : generation.split("\\+")) {
+                if (listed.trim().equals(locatorGeneration)) return true;
+            }
+            return false;
+        }
+
         /** A short label for log lines. */
         public String describe() {
             return path.getFileName() + " (Retromod " + version + " for " + loader + " "
@@ -101,7 +112,7 @@ public final class BootCore {
         if (candidates.isEmpty() && anchor != null) {
             Path own = codeSourceJar(anchor);
             if (own != null) {
-                readBootJar(own).filter(jar -> generation.equals(jar.generation()))
+                readBootJar(own).filter(jar -> jar.serves(generation))
                         .ifPresent(candidates::add);
             }
         }
@@ -186,7 +197,7 @@ public final class BootCore {
                         || !Files.isRegularFile(file)) {
                     continue;
                 }
-                readBootJar(file).filter(jar -> generation.equals(jar.generation()))
+                readBootJar(file).filter(jar -> jar.serves(generation))
                         .ifPresent(found::add);
             }
         } catch (IOException e) {

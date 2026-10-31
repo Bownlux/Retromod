@@ -59,6 +59,46 @@ class LegacyEnchantmentBridgeTest {
     }
 
     @Test
+    @DisplayName("Architectury registrations go through the support class, which records enchantments")
+    void architecturyRegistrationsAreRouted() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        LegacyEnchantmentBridge.registerRedirects(transformer);
+
+        ClassNode out = read(transformer.transformClass(architecturyRegistrations(), "mod/ModEnchantments"));
+
+        List<String> calls = calls(out);
+        String support = LegacyEnchantmentBridge.SUPPORT + ".";
+        assertTrue(calls.contains(support + "architecturyRegister(Ljava/lang/Object;Ljava/lang/String;"
+                + "Ljava/util/function/Supplier;)Ljava/lang/Object;"), "saw " + calls);
+        assertTrue(calls.contains(support + "architecturyRegisterAll(Ljava/lang/Object;)V"), "saw " + calls);
+        assertTrue(calls.stream().noneMatch(call -> call.startsWith(LegacyEnchantmentBridge.ARCHITECTURY_REGISTER + ".register")),
+                "no direct register call may remain, saw " + calls);
+    }
+
+    /** Fossils' {@code ModEnchantments}: {@code ENCHANTMENTS.register("archeology", ...)} and {@code ENCHANTMENTS.register()}. */
+    private static byte[] architecturyRegistrations() {
+        String register = LegacyEnchantmentBridge.ARCHITECTURY_REGISTER;
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, "mod/ModEnchantments", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "register",
+                "(L" + register + ";Ljava/util/function/Supplier;)Ljava/lang/Object;", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEVIRTUAL, register, "register", "()V", false);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitLdcInsn("archeology");
+        mv.visitVarInsn(ALOAD, 1);
+        mv.visitMethodInsn(INVOKEVIRTUAL, register, "register",
+                "(Ljava/lang/String;Ljava/util/function/Supplier;)Ldev/architectury/registry/registries/RegistrySupplier;", false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    @Test
     @DisplayName("a jar is renamed only when it was written against the old class")
     void onlyOldJarsAreRenamed() {
         assertTrue(LegacyEnchantmentBridge.usesOldEnchantment(archeology()));

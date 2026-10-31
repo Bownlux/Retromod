@@ -5,6 +5,7 @@
 package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -33,6 +34,7 @@ class LegacyHolderConstantBridgeTest {
     private static final String REFERENCE = "Lnet/minecraft/core/Holder$Reference;";
 
     private RetromodTransformer transformer;
+    private final String previousHost = RetromodVersion.TARGET_MC_VERSION;
 
     @BeforeEach
     void setUp() {
@@ -43,6 +45,7 @@ class LegacyHolderConstantBridgeTest {
     @AfterEach
     void tearDown() {
         transformer.clearRedirectsForTesting();
+        RetromodVersion.TARGET_MC_VERSION = previousHost;
     }
 
     @Test
@@ -58,6 +61,54 @@ class LegacyHolderConstantBridgeTest {
     @Test
     @DisplayName("An old bare read unwraps the holder, and a holder read is left alone")
     void oldReadUnwrapsTheHolder() {
+        LegacyHolderConstantBridge.registerRedirects(transformer,
+                Map.of(SOUNDS, Map.of("ARMOR_EQUIP_IRON", REFERENCE)));
+        assertTrue(readsThroughGetter(armorMaterials("ARMOR_EQUIP_IRON")),
+                "the SoundEvent read must go through the unwrapping getter");
+    }
+
+    @Test
+    @DisplayName("26.3's tool sound holders are bridged from the 26.3 shim, offline too")
+    void toolSoundsFrom26Point3() {
+        RetromodVersion.TARGET_MC_VERSION = "26.2";
+        Mc26_2To26_3CoreMoves.register(transformer);
+        assertFalse(readsThroughGetter(armorMaterials("HOE_TILL")), "26.2 keeps HOE_TILL a sound event");
+
+        transformer.clearRedirectsForTesting();
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        Mc26_2To26_3CoreMoves.register(transformer);
+        for (String sound : LegacyHolderConstantBridge.TOOL_SOUNDS_HELD_FROM_26_3) {
+            assertTrue(readsThroughGetter(armorMaterials(sound)), sound + " must unwrap its 26.3 holder");
+        }
+    }
+
+    private boolean readsThroughGetter(byte[] classBytes) {
+        ClassNode out = new ClassNode();
+        new ClassReader(transformer.transformClass(classBytes, "test/ModArmorMaterials")).accept(out, 0);
+        List<AbstractInsnNode> insns = new ArrayList<>();
+        out.methods.forEach(m -> m.instructions.forEach(insns::add));
+        return insns.stream().anyMatch(i -> i instanceof MethodInsnNode call
+                && call.owner.equals(LegacyHolderConstantBridge.HELPER) && call.desc.equals("()" + SOUND));
+    }
+
+    /** A class that reads {@code SoundEvents.<field>} as a bare sound event. */
+    private static byte[] armorMaterials(String field) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "test/ModArmorMaterials", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "sounds", "()V", null, null);
+        mv.visitCode();
+        mv.visitFieldInsn(GETSTATIC, SOUNDS, field, SOUND);
+        mv.visitInsn(POP);
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    @Test
+    @DisplayName("A holder read is left alone")
+    void holderReadStaysAFieldRead() {
         LegacyHolderConstantBridge.registerRedirects(transformer,
                 Map.of(SOUNDS, Map.of("ARMOR_EQUIP_IRON", REFERENCE)));
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
@@ -77,10 +128,6 @@ class LegacyHolderConstantBridgeTest {
         new ClassReader(transformer.transformClass(cw.toByteArray(), "test/ModArmorMaterials")).accept(out, 0);
         List<AbstractInsnNode> insns = new ArrayList<>();
         out.methods.forEach(m -> m.instructions.forEach(insns::add));
-        assertTrue(insns.stream().anyMatch(i -> i instanceof MethodInsnNode call
-                        && call.owner.equals(LegacyHolderConstantBridge.HELPER)
-                        && call.desc.equals("()" + SOUND)),
-                "the SoundEvent read must go through the unwrapping getter");
         assertTrue(insns.stream().anyMatch(i -> i instanceof FieldInsnNode field
                         && field.owner.equals(SOUNDS) && field.desc.equals(REFERENCE)),
                 "a 1.20.5+ mod's holder read must stay a field read");

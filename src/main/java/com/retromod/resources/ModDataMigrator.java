@@ -112,7 +112,8 @@ public final class ModDataMigrator {
         }
         // A function file only needs the ids its commands name renamed.
         if (entryName.endsWith(".mcfunction")) {
-            return VanillaIdRenames.migrateFunction(json, sourceMcVersion, targetMcVersion);
+            byte[] renamedIds = VanillaIdRenames.migrateFunction(json, sourceMcVersion, targetMcVersion);
+            return VanillaTagRenames.migrateFunction(renamedIds, sourceMcVersion, targetMcVersion);
         }
 
         try {
@@ -138,6 +139,8 @@ public final class ModDataMigrator {
 
         // Minecraft's renamed ids, such as minecraft:chain to minecraft:iron_chain in 1.21.9.
         normalized = VanillaIdRenames.migrate(entryName, normalized, sourceMcVersion, targetMcVersion);
+        // And its renamed tags, such as #minecraft:concrete_powder to concrete_powders in 26.2.
+        normalized = VanillaTagRenames.migrate(normalized, sourceMcVersion, targetMcVersion);
 
         // 1.21 made painting variants data sized in blocks. One out-of-range size failed the
         // whole registry load, so a size that can only be pixels is read as pixels.
@@ -236,6 +239,10 @@ public final class ModDataMigrator {
 
         if (Worldgen26_3Migrator.appliesTo(targetMcVersion) && Worldgen26_3Migrator.isWorldgen(entryName)) {
             normalized = Worldgen26_3Migrator.migrate(normalized);
+        } else if (Worldgen26_3Migrator.appliesTo(targetMcVersion) && probe.contains("\"Name\"")) {
+            // 26.3 reads a block state as "id" and "properties", so a mod's own data naming an old
+            // {"Name", "Properties"} state, such as a world transmutation, failed to load.
+            normalized = Worldgen26_3Migrator.migrateStates(normalized);
         }
 
         // 1.21.2 replaced ingredient objects ({"item": ...}, {"tag": ...}) with a bare id or

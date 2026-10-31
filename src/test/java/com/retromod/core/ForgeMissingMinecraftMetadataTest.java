@@ -92,6 +92,30 @@ class ForgeMissingMinecraftMetadataTest {
         assertTrue(info.needsTransformation("26.3"));
     }
 
+    /**
+     * #372: TerraBlender 1.21.1 declares only {@code neoforge [20.4,)}. Read as a 1.20.4 mod, it
+     * was translated and served in place of the native jar on NeoForge 1.21.1.
+     */
+    @Test
+    void readsBuildOnMinecraftBeforeTheNeoForgeFloor() throws Exception {
+        Path jar = tmp.resolve("TerraBlender-neoforge-1.21.1-4.1.0.8.jar");
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.IMPLEMENTATION_VERSION, "4.1.0.8");
+        manifest.getMainAttributes().putValue("Build-On-Minecraft", "1.21.1");
+        String toml = mdkTemplateToml("neoforge", "[20.4,)", "4.1.0.8");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            out.putNextEntry(new JarEntry("META-INF/neoforge.mods.toml"));
+            out.write(toml.getBytes(StandardCharsets.UTF_8));
+            out.closeEntry();
+        }
+
+        ModVersionInfo info = ModVersionDetector.metadataOnly().detectVersion(jar);
+
+        assertEquals("1.21.1", info.targetMcVersion(), "the neoforge [20.4,) floor must not be read instead");
+        assertFalse(info.needsTransformation("1.21.1"));
+    }
+
     @Test
     void aPlainManifestVersionStillNamesNoMinecraftVersion() throws Exception {
         ModVersionInfo info = ModVersionDetector.metadataOnly().detectVersion(mdkTemplateJar(

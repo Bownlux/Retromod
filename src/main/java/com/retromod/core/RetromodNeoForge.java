@@ -71,9 +71,9 @@ public class RetromodNeoForge {
         // Forge items hand out renderers through initializeClient, which NeoForge no longer calls.
         com.retromod.shim.forge.ClientExtensionsBridge.listen();
 
-        // Forge SRG -> Mojang member names. NeoForge has been Mojang-named since 1.17,
-        // but a Forge SRG-baked mod (Jade, JEI Forge) migrated onto NeoForge carries
-        // SRG names with it and crashes without this mapping.
+        // Forge SRG -> Mojang member names. NeoForge 1.20.2 and newer run Mojang names, but a
+        // Forge SRG-baked mod (Jade, JEI Forge) migrated onto NeoForge carries SRG names with it
+        // and crashes without this mapping.
         try {
             int srgEntries = com.retromod.mapping.SrgToMojangMapper.getInstance()
                     .applyTo(transformer);

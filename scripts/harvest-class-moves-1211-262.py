@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Find likely vanilla class moves between Minecraft 1.21.1 and 26.2.
+"""Find likely vanilla class moves between an obfuscated Minecraft version and a 26.x jar.
 
-The script compares 1.21.1 Mojang mappings with the unobfuscated 26.2 client jar.
+The script compares one version's Mojang mappings (1.21.1 by default, --source to change it)
+with an unobfuscated 26.x client jar (26.2 by default, --target-jar to pass another).
 A candidate must disappear from its old path, keep the same simple name at one new path,
 and share members with the new class. Anonymous classes and existing redirects are skipped.
 
 Renames are deliberately out of scope because matching them requires semantic review.
 Results are written to `target/srg-work/class-moves-1211-262.txt`.
 """
-import os, re, json, struct, zipfile, urllib.request, collections
+import argparse, os, re, json, struct, zipfile, urllib.request, collections
 
 W = os.environ.get("SRG_WORK", os.path.join(os.path.dirname(__file__), "..", "target", "srg-work"))
 os.makedirs(W, exist_ok=True)
@@ -22,10 +23,10 @@ def fetch(url, dest):
         o.write(r.read())
     return dest
 
-def dl_1211_proguard():
+def dl_proguard(version):
     man = json.load(op("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"))
-    meta = json.load(op(next(v["url"] for v in man["versions"] if v["id"] == "1.21.1")))
-    return [fetch(meta["downloads"][s]["url"], f"{W}/{s}-1.21.1.txt")
+    meta = json.load(op(next(v["url"] for v in man["versions"] if v["id"] == version)))
+    return [fetch(meta["downloads"][s]["url"], f"{W}/{s}-{version}.txt")
             for s in ("client_mappings", "server_mappings")]
 
 CLS_RE = re.compile(r"^(\S+) -> (\S+):$")
@@ -94,7 +95,8 @@ def shipped_redirects():
     """Return source names already covered by Java or resource redirect tables."""
     have = set()
     for f in ("src/main/java/com/retromod/shim/common/Common_1_21_11_to_26_1_ClassMoves.java",
-              "src/main/java/com/retromod/shim/common/Mc26_1To26_2CoreMoves.java"):
+              "src/main/java/com/retromod/shim/common/Mc26_1To26_2CoreMoves.java",
+              "src/main/java/com/retromod/shim/common/Mc26_2To26_3CoreMoves.java"):
         path = os.path.join(REPO, f)
         if not os.path.exists(path):
             continue
@@ -118,8 +120,12 @@ def is_anon_inner(name):
     return bool(re.search(r"\$\d", name))
 
 def main():
-    pg = dl_1211_proguard()
-    jar = fetch(json.load(op(next(v["url"] for v in json.load(
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", default="1.21.1", help="obfuscated version whose Mojang mappings name the old classes")
+    parser.add_argument("--target-jar", help="unobfuscated 26.x client jar; downloads 26.2 when omitted")
+    args = parser.parse_args()
+    pg = dl_proguard(args.source)
+    jar = args.target_jar or fetch(json.load(op(next(v["url"] for v in json.load(
         op("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"))["versions"]
         if v["id"] == "26.2")))["downloads"]["client"]["url"], f"{W}/client-26.2.jar")
     old = classes_1211(pg)          # class -> member names
@@ -159,7 +165,7 @@ def main():
             else:
                 ambiguous.append((c, cands))
 
-    print(f"1.21.1 vanilla classes: {len(old)}   26.2: {len(new)}")
+    print(f"{args.source} vanilla classes: {len(old)}   target: {len(new)}")
     print(f"Likely package moves: {len(moves)}")
     print(f"Rejected same-name matches: {len(rejected)}")
     for c, d in rejected[:20]:

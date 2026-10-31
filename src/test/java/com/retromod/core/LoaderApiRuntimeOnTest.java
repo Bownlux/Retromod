@@ -90,6 +90,20 @@ class LoaderApiRuntimeOnTest {
     }
 
     @Test
+    @DisplayName("The trade synthetics the runtime claims are still registered afterwards")
+    void claimedTradeSyntheticsSurvive() {
+        RetromodPreLaunch.registerShimsForTransform(HOST);
+        LoaderApiRuntime.prepare(transformer, new LoaderApiContext("fabric", HOST,
+                LoaderApiContext.TransformPath.FABRIC_PRELAUNCH, null));
+        // A claim clears what is registered under its type, so claiming after registering left an
+        // old Fabric trade handler with NoClassDefFoundError on 26.3.
+        for (String synthetic : List.of(com.retromod.shim.forge.LegacyTradeBridge.ITEM_LISTING,
+                com.retromod.shim.forge.LegacyTradeBridge.PROFESSIONS)) {
+            assertTrue(transformer.getSyntheticClasses().containsKey(synthetic), synthetic + " was cleared by its own claim");
+        }
+    }
+
+    @Test
     @DisplayName("Runtime, CLI and AOT outputs carry the translation identity")
     void outputsCarryIdentity() throws Exception {
         String identity = LoaderApiRuntime.translationIdentity("fabric", HOST);

@@ -18,10 +18,7 @@ public class NeoForge_1_20_4_to_1_20_5 implements VersionShim {
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
         // 1.20.5 split Properties.copy into ofFullCopy and ofLegacyCopy; the legacy one copies what copy did.
-        transformer.registerMethodRedirect("net/minecraft/world/level/block/state/BlockBehaviour$Properties", "copy",
-                "(Lnet/minecraft/world/level/block/state/BlockBehaviour;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;",
-                "net/minecraft/world/level/block/state/BlockBehaviour$Properties", "ofLegacyCopy",
-                "(Lnet/minecraft/world/level/block/state/BlockBehaviour;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;");
+        com.retromod.shim.common.LegacyBlockPropertiesBridge.register(transformer);
         com.retromod.shim.forge.LegacyEntityTemplateAdapter.register(transformer);
         com.retromod.shim.forge.LegacyTierBridge.register(transformer);
         // DFU 8 (1.20.5) removed DataResult.get(); its Either is rebuilt from the result.
@@ -84,6 +81,10 @@ public class NeoForge_1_20_4_to_1_20_5 implements VersionShim {
         com.retromod.shim.common.LegacyDispenserBridge.register(transformer);
         com.retromod.shim.common.LegacyToolItemBridge.register(transformer);
         com.retromod.shim.common.Legacy1205MemberBridge.register(transformer);
+        // 1.20.5 priced trades in item costs, so the old item stack trade constructors are gone.
+        com.retromod.shim.common.LegacyMerchantOfferBridge.register(transformer);
+        // 1.20.5 also replaced the Gson loot serializers that custom loot functions and conditions used.
+        com.retromod.shim.common.LegacyLootSerializerBridge.register(transformer);
         com.retromod.shim.common.LegacyCodecTypeBridge.register(transformer);
         com.retromod.shim.common.LegacyRegistryNbtBridge.register(transformer);
     }

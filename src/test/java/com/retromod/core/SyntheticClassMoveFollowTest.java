@@ -144,6 +144,22 @@ class SyntheticClassMoveFollowTest {
     }
 
     @Test
+    @DisplayName("A chain of moves, as a 1.20.1 name moved in 26.1 and again in 26.2, reaches its last name")
+    void chainedMovesReachTheLastName() throws Exception {
+        String middle = "com/mojang/blaze3d/pipeline/PrimitiveTopology";
+        RetromodTransformer t = prepared();
+        t.registerClassRedirect(MOVED_OLD, middle);
+        t.registerClassRedirect(middle, MOVED_NEW);
+
+        SyntheticEmbedder.ByteEmbeddingResult result =
+                SyntheticEmbedder.embedIntoJarBytes(modJarBytes(), "testmod", t);
+        assertTrue(result.succeeded());
+        assertFollowedTheMove(result.jarBytes(), tempDir.resolve("check3.jar").toString());
+        String all = new String(result.jarBytes(), java.nio.charset.StandardCharsets.ISO_8859_1);
+        assertFalse(all.contains(middle), "the stand-in stopped halfway along the chain");
+    }
+
+    @Test
     @DisplayName("Embedding into an unpacked directory follows the move")
     void directoryPathFollowsTheMove() throws Exception {
         RetromodTransformer t = prepared();

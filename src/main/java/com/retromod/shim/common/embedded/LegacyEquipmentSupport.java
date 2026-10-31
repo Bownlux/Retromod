@@ -37,6 +37,22 @@ public final class LegacyEquipmentSupport {
 
     private static final Map<Object, Object> ARMOR_RECORDS = new IdentityHashMap<>();
     private static final Map<Object, Object> TOOL_RECORDS = new IdentityHashMap<>();
+
+    // Records built from the 1.20.5 to 1.21.1 constructor, and the repair supplier each was given.
+    // Their items set durability themselves, so the record's is never applied.
+    private static final Map<Object, Object> OLD_RECORD_REPAIRS = java.util.Collections.synchronizedMap(new IdentityHashMap<>());
+    // The 1.21.1 armor material registry, rebuilt under its own id. One registry serves every mod,
+    // so it is kept in the system properties, which all mods' copies of this class share.
+    private static final String REGISTRY_PROPERTY = "retromod.legacyArmorMaterialRegistry";
+    private static final String REGISTRY_ID = "retromod:legacy_armor_material";
+    // An armor item whose material holder binds after items: its material and type, from adapt to
+    // constructed on the same thread, then until the components event.
+    private static final ThreadLocal<Object[]> PENDING_ARMOR = new ThreadLocal<>();
+    private static final Map<Object, Object[]> DEFERRED_ARMOR = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    private static final java.util.Set<String> LISTENING_BUSES = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    // A 1.20.5 to 1.21.1 tool gave createAttributes its damage and speed, then only its tier to
+    // its constructor. The two numbers wait here, on the thread building the tool.
+    private static final ThreadLocal<float[]> LAST_TOOL_NUMBERS = new ThreadLocal<>();
     private static volatile boolean warned;
 
     private LegacyEquipmentSupport() {}
@@ -76,7 +92,17 @@ public final class LegacyEquipmentSupport {
             else if (arg != properties && material == null && arg != null) material = arg;
         }
         if (type == null || material == null) return properties;
+        // From 1.20.5 to 1.21.1 an armor item named its material by registry holder.
+        Class<?> holderClass = Class.forName("net.minecraft.core.Holder", false, loader);
+        if (holderClass.isInstance(material)) {
+            if (!(boolean) holderClass.getMethod("isBound").invoke(material)) {
+                PENDING_ARMOR.set(new Object[]{material, type});
+                return properties;
+            }
+            material = holderClass.getMethod("value").invoke(material);
+        }
         Object record = armorRecord(material, typeClass, loader);
+        if (OLD_RECORD_REPAIRS.containsKey(record)) return armorComponents(properties, record, type, loader);
         Class<?> recordClass = Class.forName(ARMOR_MATERIAL, false, loader);
         Object result = properties.getClass().getMethod("humanoidArmor", recordClass, typeClass)
                 .invoke(properties, record, type);
@@ -125,7 +151,10 @@ public final class LegacyEquipmentSupport {
             else if (tagClass.isInstance(arg)) blocks = arg;
             else if (arg != properties && material == null && arg != null) material = arg;
         }
-        // A 1.20.5 to 1.21.1 tool passed its damage through createAttributes instead, which is gone.
+        // A 1.20.5 to 1.21.1 tool passed its damage through createAttributes instead, which kept it.
+        if (numbers.size() < 2 && LAST_TOOL_NUMBERS.get() != null) {
+            numbers = List.of(lastToolDamage(), lastToolSpeed());
+        }
         if (material == null || numbers.size() < 2) return properties;
         Object record = toolRecord(material, toolClass, loader);
         Object result;
@@ -139,6 +168,7 @@ public final class LegacyEquipmentSupport {
         }
         if (isLegacy(material, toolClass)) {
             result = repairable(result, repairIngredient(material), loader);
+            if (((Number) call(material, "getEnchantmentValue")).intValue() <= 0) result = withoutEnchantable(result, loader);
         }
         return result;
     }
@@ -177,6 +207,266 @@ public final class LegacyEquipmentSupport {
             return ((Number) call(material, "getDefenseForType", type)).intValue();
         } catch (Throwable missing) {
             return 0;
+        }
+    }
+
+    /**
+     * {@code new ArmorMaterial(defense, enchantmentValue, equipSound, repair, layers, toughness,
+     * knockbackResistance)}, the 1.20.5 to 1.21.1 record, as the current one. The first layer names
+     * the equipment asset, as it named the armor texture.
+     */
+    public static Object oldArmorMaterial(Object defense, int enchantmentValue, Object equipSound, Object repair,
+            Object layers, float toughness, float knockbackResistance) {
+        try {
+            ClassLoader loader = LegacyEquipmentSupport.class.getClassLoader();
+            Class<?> recordClass = Class.forName(ARMOR_MATERIAL, false, loader);
+            List<?> layerList = (List<?>) layers;
+            Object asset = layerList.isEmpty() ? identifier(loader, "minecraft:iron")
+                    : layerList.get(0).getClass().getMethod("assetName").invoke(layerList.get(0));
+            Object assetId = resourceKey(loader, "net.minecraft.world.item.equipment.EquipmentAssets", "ROOT_ID", asset);
+            Object record = recordClass.getConstructors()[0].newInstance(0, defense, enchantmentValue, equipSound,
+                    toughness, knockbackResistance, unusedRepairTag(loader), assetId);
+            OLD_RECORD_REPAIRS.put(record, repair == null ? List.of() : repair);
+            return record;
+        } catch (Exception failure) {
+            throw new IllegalStateException("Retromod could not build an old armor material", failure);
+        }
+    }
+
+    /** {@code Registries.ARMOR_MATERIAL}, which 1.21.2 removed: the key of the rebuilt registry. */
+    public static Object armorMaterialKey() {
+        // A deferred register only needs the key, but its entries need the registry to exist.
+        armorMaterialRegistry();
+        return registryKey();
+    }
+
+    private static Object registryKey() {
+        try {
+            ClassLoader loader = LegacyEquipmentSupport.class.getClassLoader();
+            Class<?> keyClass = Class.forName("net.minecraft.resources.ResourceKey", false, loader);
+            Class<?> idClass = Class.forName("net.minecraft.resources.Identifier", false, loader);
+            return keyClass.getMethod("createRegistryKey", idClass).invoke(null, identifier(loader, REGISTRY_ID));
+        } catch (Exception failure) {
+            throw new IllegalStateException("Retromod could not name the old armor material registry", failure);
+        }
+    }
+
+    /**
+     * {@code BuiltInRegistries.ARMOR_MATERIAL}: the rebuilt registry. On NeoForge it is also
+     * registered with the loader, so a deferred register for it is filled as before.
+     */
+    public static Object armorMaterialRegistry() {
+        return System.getProperties().computeIfAbsent(REGISTRY_PROPERTY, unused -> createArmorMaterialRegistry());
+    }
+
+    private static Object createArmorMaterialRegistry() {
+        try {
+            ClassLoader loader = LegacyEquipmentSupport.class.getClassLoader();
+            Object key = registryKey();
+            Class<?> keyClass = Class.forName("net.minecraft.resources.ResourceKey", false, loader);
+            Class<?> builderClass;
+            try {
+                builderClass = Class.forName("net.neoforged.neoforge.registries.RegistryBuilder", false, loader);
+            } catch (ClassNotFoundException notNeoForge) {
+                Class<?> lifecycle = Class.forName("com.mojang.serialization.Lifecycle", false, loader);
+                return Class.forName("net.minecraft.core.MappedRegistry", false, loader)
+                        .getConstructor(keyClass, lifecycle).newInstance(key, lifecycle.getMethod("stable").invoke(null));
+            }
+            Object builder = builderClass.getConstructor(keyClass).newInstance(key);
+            builder = builderClass.getMethod("sync", boolean.class).invoke(builder, false);
+            Object registry = builderClass.getMethod("create").invoke(builder);
+            // NewRegistryEvent comes after mod construction, where the first reader is.
+            Class<?> newRegistryEvent = Class.forName("net.neoforged.neoforge.registries.NewRegistryEvent", false, loader);
+            Method register = newRegistryEvent.getMethod("register", Class.forName("net.minecraft.core.Registry", false, loader));
+            addModBusListener(newRegistryEvent, event -> {
+                try {
+                    register.invoke(event, registry);
+                } catch (ReflectiveOperationException failure) {
+                    throw new IllegalStateException("Retromod could not register the old armor material registry", failure);
+                }
+            });
+            return registry;
+        } catch (ReflectiveOperationException failure) {
+            throw new IllegalStateException("Retromod could not rebuild the old armor material registry", failure);
+        }
+    }
+
+    /** Called by the armor base once the item exists: its components wait for its material. */
+    public static void constructed(Object item) {
+        Object[] pending = PENDING_ARMOR.get();
+        if (pending == null) return;
+        PENDING_ARMOR.remove();
+        DEFERRED_ARMOR.put(item, pending);
+        try {
+            Class<?> event = Class.forName("net.neoforged.neoforge.event.ModifyDefaultComponentsEvent", false,
+                    item.getClass().getClassLoader());
+            addModBusListener(event, LegacyEquipmentSupport::applyDeferredArmor);
+        } catch (ReflectiveOperationException notNeoForge) {
+            // Only NeoForge registers a holder's registry after items; elsewhere nothing waits here.
+        }
+    }
+
+    /** Sets each waiting armor item's components from its now bound material. */
+    private static void applyDeferredArmor(Object event) {
+        Map<Object, Object[]> waiting;
+        synchronized (DEFERRED_ARMOR) {
+            waiting = new java.util.HashMap<>(DEFERRED_ARMOR);
+            DEFERRED_ARMOR.clear();
+        }
+        waiting.forEach((item, pending) -> {
+            try {
+                ClassLoader loader = item.getClass().getClassLoader();
+                Object record = Class.forName("net.minecraft.core.Holder", false, loader).getMethod("value").invoke(pending[0]);
+                Class<?> itemLike = Class.forName("net.minecraft.world.level.ItemLike", false, loader);
+                java.util.function.Consumer<Object> components = builder -> setArmorComponents(builder, record, pending[1], loader);
+                modifyComponents(event, itemLike, item, components, loader);
+            } catch (ReflectiveOperationException | RuntimeException failure) {
+                System.err.println("[Retromod] Could not give an old armor item its armor components: " + failure);
+            }
+        });
+    }
+
+    /**
+     * {@code event.modify(item, components)}. 26.3 kept only the form that takes an
+     * {@code Initializer}, which also receives the registries and the item.
+     */
+    private static void modifyComponents(Object event, Class<?> itemLike, Object item,
+            java.util.function.Consumer<Object> components, ClassLoader loader) throws ReflectiveOperationException {
+        try {
+            event.getClass().getMethod("modify", itemLike, java.util.function.Consumer.class).invoke(event, item, components);
+            return;
+        } catch (NoSuchMethodException consumerFormRemoved) {
+            // Falls through to the initializer form.
+        }
+        Class<?> initializer = Class.forName("net.neoforged.neoforge.event.ModifyDefaultComponentsEvent$Initializer", false, loader);
+        Object run = java.lang.reflect.Proxy.newProxyInstance(initializer.getClassLoader(), new Class<?>[]{initializer},
+                (proxy, method, arguments) -> switch (method.getName()) {
+                    case "run" -> {
+                        components.accept(arguments[0]);
+                        yield null;
+                    }
+                    case "hashCode" -> System.identityHashCode(proxy);
+                    case "equals" -> proxy == arguments[0];
+                    case "toString" -> "Retromod armor components";
+                    default -> java.lang.reflect.InvocationHandler.invokeDefault(proxy, method, arguments);
+                });
+        event.getClass().getMethod("modify", itemLike, initializer).invoke(event, item, run);
+    }
+
+    /** The components humanoid armor gets from its material, without durability, which the item sets. */
+    private static Object armorComponents(Object properties, Object record, Object type, ClassLoader loader) throws Exception {
+        Class<?> componentType = Class.forName("net.minecraft.core.component.DataComponentType", false, loader);
+        Method component = properties.getClass().getMethod("component", componentType, Object.class);
+        for (Object[] value : armorComponentValues(record, type, loader)) {
+            properties = component.invoke(properties, value[0], value[1]);
+        }
+        return repairable(properties, oldRepairIngredient(record), loader);
+    }
+
+    private static void setArmorComponents(Object builder, Object record, Object type, ClassLoader loader) {
+        try {
+            Class<?> componentType = Class.forName("net.minecraft.core.component.DataComponentType", false, loader);
+            Method set = builder.getClass().getMethod("set", componentType, Object.class);
+            for (Object[] value : armorComponentValues(record, type, loader)) set.invoke(builder, value[0], value[1]);
+        } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+        }
+    }
+
+    /** Attribute modifiers, enchantability, and the equipment slot, sound, and asset. */
+    private static List<Object[]> armorComponentValues(Object record, Object type, ClassLoader loader) throws Exception {
+        Class<?> components = Class.forName("net.minecraft.core.component.DataComponents", false, loader);
+        List<Object[]> values = new ArrayList<>();
+        values.add(new Object[]{components.getField("ATTRIBUTE_MODIFIERS").get(null),
+                record.getClass().getMethod("createAttributes", type.getClass()).invoke(record, type)});
+        int enchantmentValue = ((Number) call(record, "enchantmentValue")).intValue();
+        if (enchantmentValue > 0) {
+            Object enchantable = Class.forName("net.minecraft.world.item.enchantment.Enchantable", false, loader)
+                    .getConstructor(int.class).newInstance(enchantmentValue);
+            values.add(new Object[]{components.getField("ENCHANTABLE").get(null), enchantable});
+        }
+        Class<?> equippable = Class.forName("net.minecraft.world.item.equipment.Equippable", false, loader);
+        Object slot = type.getClass().getMethod("getSlot").invoke(type);
+        Object builder = equippable.getMethod("builder", slot.getClass()).invoke(null, slot);
+        builder = builder.getClass().getMethod("setEquipSound", Class.forName("net.minecraft.core.Holder", false, loader))
+                .invoke(builder, call(record, "equipSound"));
+        builder = builder.getClass().getMethod("setAsset", Class.forName("net.minecraft.resources.ResourceKey", false, loader))
+                .invoke(builder, call(record, "assetId"));
+        values.add(new Object[]{components.getField("EQUIPPABLE").get(null), builder.getClass().getMethod("build").invoke(builder)});
+        return values;
+    }
+
+    /** The ingredient an old record's repair supplier gives, or null when it gives none it can still read. */
+    private static Object oldRepairIngredient(Object record) {
+        Object repair = OLD_RECORD_REPAIRS.get(record);
+        if (!(repair instanceof java.util.function.Supplier<?> supplier)) return null;
+        try {
+            return supplier.get();
+        } catch (LinkageError | RuntimeException removedOrEmpty) {
+            // Ingredient.EMPTY, the usual "no repair", is gone, so reading it fails.
+            return null;
+        }
+    }
+
+    /** Listens on the mod bus of the mod being loaded, once per bus. */
+    private static void addModBusListener(Class<?> event, java.util.function.Consumer<Object> listener)
+            throws ReflectiveOperationException {
+        ClassLoader loader = LegacyEquipmentSupport.class.getClassLoader();
+        Object context = Class.forName("net.neoforged.fml.ModLoadingContext", false, loader).getMethod("get").invoke(null);
+        Object container = context.getClass().getMethod("getActiveContainer").invoke(context);
+        Object bus = container.getClass().getMethod("getEventBus").invoke(container);
+        if (bus == null || !LISTENING_BUSES.add(System.identityHashCode(bus) + ":" + event.getName())) return;
+        Class<?> busClass = Class.forName("net.neoforged.bus.api.IEventBus", false, loader);
+        busClass.getMethod("addListener", Class.class, java.util.function.Consumer.class).invoke(bus, event, listener);
+    }
+
+    /** {@code DiggerItem.createAttributes(tier, damage, speed)}: the tier's bonus added to the damage, both on the main hand. */
+    public static Object diggerAttributes(Object tier, float damage, float speed) {
+        return toolAttributes(tier, damage, speed);
+    }
+
+    /** {@code SwordItem.createAttributes(tier, damage, speed)}, whose damage was a whole number. */
+    public static Object swordAttributes(Object tier, int damage, float speed) {
+        return toolAttributes(tier, damage, speed);
+    }
+
+    /** The damage the last {@code createAttributes} on this thread was given, or none. */
+    public static float lastToolDamage() {
+        float[] numbers = LAST_TOOL_NUMBERS.get();
+        return numbers == null ? 0.0F : numbers[0];
+    }
+
+    /** The speed the last {@code createAttributes} on this thread was given, which ends its use. */
+    public static float lastToolSpeed() {
+        float[] numbers = LAST_TOOL_NUMBERS.get();
+        LAST_TOOL_NUMBERS.remove();
+        return numbers == null ? -3.0F : numbers[1];
+    }
+
+    private static Object toolAttributes(Object tier, float damage, float speed) {
+        LAST_TOOL_NUMBERS.set(new float[]{damage, speed});
+        try {
+            ClassLoader loader = LegacyEquipmentSupport.class.getClassLoader();
+            Class<?> item = Class.forName("net.minecraft.world.item.Item", false, loader);
+            Class<?> attributes = Class.forName("net.minecraft.world.entity.ai.attributes.Attributes", false, loader);
+            Class<?> modifier = Class.forName("net.minecraft.world.entity.ai.attributes.AttributeModifier", false, loader);
+            Class<?> operation = Class.forName("net.minecraft.world.entity.ai.attributes.AttributeModifier$Operation", false, loader);
+            Class<?> slotGroup = Class.forName("net.minecraft.world.entity.EquipmentSlotGroup", false, loader);
+            Class<?> holder = Class.forName("net.minecraft.core.Holder", false, loader);
+            Object addValue = operation.getField("ADD_VALUE").get(null);
+            Object mainHand = slotGroup.getField("MAINHAND").get(null);
+            float bonus = ((Number) call(tier, "getAttackDamageBonus")).floatValue();
+            Object builder = Class.forName("net.minecraft.world.item.component.ItemAttributeModifiers", false, loader)
+                    .getMethod("builder").invoke(null);
+            Method add = builder.getClass().getMethod("add", holder, modifier, slotGroup);
+            Constructor<?> newModifier = modifier.getConstructor(item.getField("BASE_ATTACK_DAMAGE_ID").getType(), double.class, operation);
+            add.invoke(builder, attributes.getField("ATTACK_DAMAGE").get(null),
+                    newModifier.newInstance(item.getField("BASE_ATTACK_DAMAGE_ID").get(null), (double) (damage + bonus), addValue), mainHand);
+            add.invoke(builder, attributes.getField("ATTACK_SPEED").get(null),
+                    newModifier.newInstance(item.getField("BASE_ATTACK_SPEED_ID").get(null), (double) speed, addValue), mainHand);
+            return builder.getClass().getMethod("build").invoke(builder);
+        } catch (Exception failure) {
+            throw new IllegalStateException("Retromod could not build an old tool's attack attributes", failure);
         }
     }
 
@@ -268,10 +558,12 @@ public final class LegacyEquipmentSupport {
                 incorrect = incorrectForLevel(((Number) call(material, "getLevel")).intValue(), loader);
             }
             Constructor<?> ctor = toolClass.getConstructors()[0];
+            // A tier with no enchantability was simply not enchantable; the record refuses 0.
+            int enchantmentValue = Math.max(1, ((Number) call(material, "getEnchantmentValue")).intValue());
             Object record = ctor.newInstance(incorrect, ((Number) call(material, "getUses")).intValue(),
                     ((Number) call(material, "getSpeed")).floatValue(),
                     ((Number) call(material, "getAttackDamageBonus")).floatValue(),
-                    ((Number) call(material, "getEnchantmentValue")).intValue(), unusedRepairTag(loader));
+                    enchantmentValue, unusedRepairTag(loader));
             TOOL_RECORDS.put(material, record);
             return record;
         }
@@ -348,6 +640,14 @@ public final class LegacyEquipmentSupport {
         Class<?> holderSetClass = Class.forName("net.minecraft.core.HolderSet", false, loader);
         return Class.forName("net.minecraft.world.item.crafting.Ingredient", false, loader)
                 .getMethod("of", holderSetClass).invoke(null, holderSet);
+    }
+
+    /** Removes the enchantable component the record's clamped value added. */
+    private static Object withoutEnchantable(Object properties, ClassLoader loader) throws Exception {
+        Class<?> componentType = Class.forName("net.minecraft.core.component.DataComponentType", false, loader);
+        Object enchantable = Class.forName("net.minecraft.core.component.DataComponents", false, loader)
+                .getField("ENCHANTABLE").get(null);
+        return properties.getClass().getMethod("component", componentType, Object.class).invoke(properties, enchantable, null);
     }
 
     /** Sets the repair items from an old ingredient, which has no tag to give the record. */

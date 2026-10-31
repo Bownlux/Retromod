@@ -66,8 +66,13 @@ public final class ModResourceMigrations {
             new ClientItemDefinitionMigrator(),
             // Key binding category names (1.21.9).
             new KeyCategoryNames(),
+            // A mod's additions to vanilla tags that later releases renamed, copied after the
+            // content rewrites so each copy is already in its final form.
+            new VanillaTagFiles(),
             // The 26.3 worldgen folder moves, after the rewrites that read the old names.
             new WorldgenFolders(),
+            // The root pack.mcmeta Forge 26.x needs before it loads the jar's assets and data.
+            new ModPackMetadata(),
             // The load gate, so it judges copied data in its final form.
             new DataLoadGate(),
             // Recipe advancements for recipes the host will not load (26.3). This runs after the
@@ -374,6 +379,24 @@ public final class ModResourceMigrations {
     }
 
     /** Moves configured features and carvers to their 26.3 folders ({@link Worldgen26_3Migrator}). */
+    /** Runs {@link VanillaTagRenames#copyTagFiles}, which also writes the dye recipes 26.1 needs. */
+    static final class VanillaTagFiles implements ModResourceConverter {
+        @Override
+        public String name() {
+            return "renamed vanilla tags";
+        }
+
+        @Override
+        public boolean appliesTo(MigrationContext context) {
+            return context.targetAtLeast(VanillaTagRenames.FIRST_RENAME);
+        }
+
+        @Override
+        public int apply(ResourceTree tree, MigrationContext context) throws IOException {
+            return VanillaTagRenames.copyTagFiles(tree, context.sourceMcVersion(), context.targetMcVersion());
+        }
+    }
+
     static final class WorldgenFolders implements ModResourceConverter {
         @Override
         public String name() {

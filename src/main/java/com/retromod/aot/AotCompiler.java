@@ -665,8 +665,8 @@ public class AotCompiler {
                                 com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
                                 .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                     } else if (resourceName.equals("META-INF/accesstransformer.cfg")) {
-                        data = com.retromod.core.ForgeModTransformer.normalizeAccessTransformer(
-                                new String(data, java.nio.charset.StandardCharsets.UTF_8))
+                        data = com.retromod.core.ForgeModTransformer.prepareAccessTransformer(
+                                new String(data, java.nio.charset.StandardCharsets.UTF_8), targetMcVersion)
                                 .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                     }
                 } catch (Exception e) {
@@ -1080,8 +1080,8 @@ public class AotCompiler {
                         if (!java.util.Arrays.equals(t, d)) { d = t; modified = true; }
                     } else if (name.equals("META-INF/accesstransformer.cfg")) {
                         byte[] t = com.retromod.core.ForgeModTransformer
-                                .normalizeAccessTransformer(new String(
-                                        d, java.nio.charset.StandardCharsets.UTF_8))
+                                .prepareAccessTransformer(new String(
+                                        d, java.nio.charset.StandardCharsets.UTF_8), targetMcVersion)
                                 .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                         if (!java.util.Arrays.equals(t, d)) { d = t; modified = true; }
                     } else if (isRefmapEntry(name)) {

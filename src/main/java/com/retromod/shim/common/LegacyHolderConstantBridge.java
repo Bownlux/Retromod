@@ -6,6 +6,7 @@ package com.retromod.shim.common;
 
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -15,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -38,12 +40,22 @@ public final class LegacyHolderConstantBridge {
             "net/minecraft/sounds/SoundEvents", "net/minecraft/sounds/SoundEvent",
             "net/minecraft/world/item/alchemy/Potions", "net/minecraft/world/item/alchemy/Potion");
 
+    /** The tool sounds 26.3 turned into holders, for an offline transform that cannot read the host. */
+    static final List<String> TOOL_SOUNDS_HELD_FROM_26_3 = List.of(
+            "AXE_STRIP", "AXE_SCRAPE", "AXE_WAX_OFF", "HOE_TILL", "SHOVEL_FLATTEN");
+
     private LegacyHolderConstantBridge() {}
 
     public static void register(RetromodTransformer transformer) {
         Map<String, Map<String, String>> constants = new LinkedHashMap<>();
         for (String owner : OWNERS.keySet()) {
-            constants.put(owner, holderFields(ClassResourceInspector.read(owner)));
+            ClassNode host = ClassResourceInspector.read(owner);
+            Map<String, String> fields = holderFields(host);
+            if (host == null && owner.equals("net/minecraft/sounds/SoundEvents")
+                    && RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.3") >= 0) {
+                for (String sound : TOOL_SOUNDS_HELD_FROM_26_3) fields.put(sound, "L" + HOLDER + "$Reference;");
+            }
+            constants.put(owner, fields);
         }
         int count = constants.values().stream().mapToInt(Map::size).sum();
         if (count == 0) return;

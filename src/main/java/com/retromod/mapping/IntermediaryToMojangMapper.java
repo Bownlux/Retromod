@@ -13,19 +13,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Maps Fabric intermediary names (class_XXXX, field_XXXX, method_XXXX) to
- * Mojang official names.
- *
- * MC 26.1 dropped code obfuscation, so the runtime uses Mojang names directly.
- * Old Fabric mods reference intermediary names in mixin target annotations,
- * mixin refmaps, and access widener files. The mapping loads from a bundled TSV
- * (Fabric intermediary + Mojang ProGuard for 1.21.4). Intermediary names are
- * stable across MC versions, so one recent mapping covers all old mods.
- */
+/** Maps Fabric intermediary names (class_N, field_N, method_N) to the Mojang names a 26.x host uses. */
 public class IntermediaryToMojangMapper {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Mapping");
+    // Old Fabric mods name Minecraft by intermediary ids in code, mixin targets, refmaps and access
+    // wideners, and 26.1 dropped obfuscation. Each id keeps one name: the one it has on the 26.x
+    // host, which the table's header explains how to change.
     private static final String MAPPING_RESOURCE = "/intermediary-to-mojang.tsv";
     private static final String CLASS_MOVES_RESOURCE = "/mojang-class-moves-26.1.tsv";
 
@@ -419,31 +413,16 @@ public class IntermediaryToMojangMapper {
         for (Map.Entry<String, String> entry : classMoveMap.entrySet()) {
             String oldName = entry.getKey();
             String newName = entry.getValue();
-            boolean apply;
-            if (haveHost) {
-                boolean oldOnHost = hostHasClass.test(oldName);
-                if (oldOnHost) {
-                    // Host still exposes the old name, so the mod's reference is
-                    // already valid; renaming would be wrong.
-                    apply = false;
-                    skippedOldPresent++;
-                } else if (newName.startsWith("net/minecraft/")) {
-                    // Vanilla rename: safe only if the host has the new name,
-                    // otherwise it's a 26.1-only rename on an older host.
-                    apply = hostHasClass.test(newName);
-                    if (!apply) skippedNewMissing++;
-                } else {
-                    // Redirect to a non-vanilla replacement (Retromod polyfill,
-                    // JOML, blaze3d). The MC JAR won't contain it, so the old
-                    // class being gone is the signal that it's needed.
-                    apply = true;
-                }
-            } else {
-                apply = unobfFallback;
-            }
+            boolean apply = haveHost
+                    ? appliesOnHost(oldName, newName, hostHasClass, unobfFallback)
+                    : unobfFallback;
             if (apply) {
                 transformer.registerClassRedirect(oldName, newName);
                 applied++;
+            } else if (haveHost && hostHasClass.test(oldName)) {
+                skippedOldPresent++;
+            } else if (haveHost) {
+                skippedNewMissing++;
             }
         }
 
@@ -463,6 +442,22 @@ public class IntermediaryToMojangMapper {
                 skippedNewMissing, skippedOldPresent,
                 identifierOnHost ? " + 2 Identifier ctor redirects" : "");
         return applied;
+    }
+
+    /** Whether one class move applies on a host whose classes {@code hostHasClass} answers for. */
+    static boolean appliesOnHost(String oldName, String newName,
+                                 java.util.function.Predicate<String> hostHasClass, boolean unobfuscatedHost) {
+        // Host still exposes the old name, so the mod's reference is already valid;
+        // renaming would be wrong.
+        if (hostHasClass.test(oldName)) return false;
+        // Redirect to a non-vanilla replacement (Retromod polyfill, JOML, blaze3d). The MC
+        // JAR won't contain it, so the old class being gone is the signal that it's needed.
+        if (!newName.startsWith("net/minecraft/")) return true;
+        // Vanilla rename: safe only if the host has the new name, otherwise it's a 26.1-only
+        // rename on an older host. On a 26.2 or newer host the 26.1 name may have moved again
+        // (the advancement criterion package split in 26.2), so the first hop is kept for the
+        // later shims' moves to finish.
+        return hostHasClass.test(newName) || unobfuscatedHost;
     }
 
     /**

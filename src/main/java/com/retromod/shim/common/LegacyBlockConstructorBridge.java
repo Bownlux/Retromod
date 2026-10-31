@@ -8,6 +8,7 @@ import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.SyntheticEmbedder;
 import com.retromod.shim.common.embedded.LegacyCauldronInteractions;
+import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.ClassNode;
@@ -15,6 +16,8 @@ import org.objectweb.asm.tree.MethodNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -61,6 +64,14 @@ public final class LegacyBlockConstructorBridge {
     static final String CLUSTER_OLD = "(II" + L_PROPERTIES + ")V";
     static final String CLUSTER_MODERN = "(FF" + L_PROPERTIES + ")V";
     static final String CAULDRON_OLD = "(" + L_PROPERTIES + "Ljava/util/Map;)V";
+    private static final String BLOCKS = "net/minecraft/world/level/block/";
+    private static final String L_SET_TYPE = "Lnet/minecraft/world/level/block/state/properties/BlockSetType;";
+    private static final String L_WOOD_TYPE = "Lnet/minecraft/world/level/block/state/properties/WoodType;";
+    private static final String L_KEY = "Lnet/minecraft/resources/ResourceKey;";
+    private static final String SIMPLE_PARTICLE = "net/minecraft/core/particles/SimpleParticleType";
+    /** The signs, whose wood type moved ahead of the properties. */
+    static final List<String> SIGNS = List.of("SignBlock", "StandingSignBlock", "WallSignBlock",
+            "CeilingHangingSignBlock", "WallHangingSignBlock");
     static final String INTERACTION = "net/minecraft/core/cauldron/CauldronInteraction";
     /** Each vanilla table and the helper method that answers the old map read. */
     static final String[][] VANILLA_TABLES = {
@@ -102,6 +113,7 @@ public final class LegacyBlockConstructorBridge {
             });
             bridged++;
         }
+        bridged += registerTypeFirstConstructors(transformer, host);
         ClassNode cauldron = host.apply(CAULDRON);
         String interactionsType = hostInteractionsType(cauldron);
         if (interactionsType != null && !hasConstructor(cauldron, CAULDRON_OLD)) {
@@ -124,6 +136,45 @@ public final class LegacyBlockConstructorBridge {
             bridged += VANILLA_TABLES.length;
         }
         return bridged;
+    }
+
+    /** The 1.20.3 constructors that put a block's type ahead of its properties. */
+    private static int registerTypeFirstConstructors(RetromodTransformer transformer, Function<String, ClassNode> host) {
+        int bridged = 0;
+        // properties, type -> type, properties
+        for (String sign : SIGNS) {
+            bridged += reorder(transformer, host, BLOCKS + sign, "(" + L_PROPERTIES + L_WOOD_TYPE + ")V",
+                    "(" + L_WOOD_TYPE + L_PROPERTIES + ")V", mv -> mv.visitInsn(Opcodes.SWAP));
+        }
+        bridged += reorder(transformer, host, BLOCKS + "MushroomBlock", "(" + L_PROPERTIES + L_KEY + ")V",
+                "(" + L_KEY + L_PROPERTIES + ")V", mv -> mv.visitInsn(Opcodes.SWAP));
+        // ticks, properties, type -> ticks, type, properties
+        bridged += reorder(transformer, host, BLOCKS + "WeightedPressurePlateBlock", "(I" + L_PROPERTIES + L_SET_TYPE + ")V",
+                "(I" + L_SET_TYPE + L_PROPERTIES + ")V", mv -> mv.visitInsn(Opcodes.SWAP));
+        // properties, type, ticks, arrows -> type, ticks, properties. Arrows moved into the BlockSetType.
+        bridged += reorder(transformer, host, BLOCKS + "ButtonBlock", "(" + L_PROPERTIES + L_SET_TYPE + "IZ)V",
+                "(" + L_SET_TYPE + "I" + L_PROPERTIES + ")V", mv -> {
+                    mv.visitInsn(Opcodes.POP);
+                    mv.visitInsn(Opcodes.DUP2_X1);
+                    mv.visitInsn(Opcodes.POP2);
+                });
+        // properties, particle -> particle, properties. The torch particle became a simple type.
+        for (String torch : List.of("TorchBlock", "WallTorchBlock")) {
+            bridged += reorder(transformer, host, BLOCKS + torch,
+                    "(" + L_PROPERTIES + "Lnet/minecraft/core/particles/ParticleOptions;)V",
+                    "(L" + SIMPLE_PARTICLE + ";" + L_PROPERTIES + ")V", mv -> {
+                        mv.visitTypeInsn(Opcodes.CHECKCAST, SIMPLE_PARTICLE);
+                        mv.visitInsn(Opcodes.SWAP);
+                    });
+        }
+        return bridged;
+    }
+
+    private static int reorder(RetromodTransformer transformer, Function<String, ClassNode> host, String block,
+            String oldDesc, String modernDesc, Consumer<MethodVisitor> adapter) {
+        if (!replaced(host.apply(block), oldDesc, modernDesc)) return 0;
+        transformer.registerSuperConstructorAdapter(block, oldDesc, modernDesc, adapter);
+        return 1;
     }
 
     /** Whether the host still declares {@code CauldronInteraction.EMPTY} as a plain map. */

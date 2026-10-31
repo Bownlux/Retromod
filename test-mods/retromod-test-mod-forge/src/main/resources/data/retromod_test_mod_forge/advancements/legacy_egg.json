@@ -1,0 +1,13 @@
+{
+  "criteria": {
+    "egg": {
+      "trigger": "retromod_test_mod_forge:legacy_egg",
+      "conditions": {
+        "player": [
+          {"condition": "minecraft:entity_properties", "entity": "this", "predicate": {"type": "minecraft:player"}}
+        ],
+        "item": {"items": ["minecraft:egg"]}
+      }
+    }
+  }
+}

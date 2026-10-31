@@ -135,6 +135,17 @@ class BootCoreTest {
     }
 
     @Test
+    @DisplayName("a 1.20.6 jar that carries both NeoForge locators serves each of them (#375)")
+    void dualGenerationJarServesBothLocators() throws Exception {
+        Path mods = gameDir().resolve("mods");
+        bootJar(mods.resolve("retromod-1.20.6.jar"), "1.4.0", "1.20.6", "A-neo+BC", runtimeJar("dual"));
+
+        assertEquals(1, BootCore.findBootJars(mods, "A-neo").size(), "FML 3.0.18 runs the folder locator");
+        assertEquals(1, BootCore.findBootJars(mods, "BC").size(), "FML 3.0.19 and newer run the candidate locator");
+        assertTrue(BootCore.findBootJars(mods, "A").isEmpty(), "a Forge locator must not take a NeoForge jar");
+    }
+
+    @Test
     @DisplayName("the runtime is extracted once into a folder that holds only that jar")
     void extractsTheRuntimeIntoItsOwnFolder() throws Exception {
         Path game = gameDir();

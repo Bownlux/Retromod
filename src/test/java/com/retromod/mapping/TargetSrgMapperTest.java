@@ -11,6 +11,8 @@ import com.retromod.shim.forge.Forge_1_19_4_to_1_20;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.AnnotationVisitor;
@@ -44,8 +46,48 @@ class TargetSrgMapperTest {
         TargetSrgMapper mapper = TargetSrgMapper.forVersion("1.20.1");
         assertTrue(mapper.methodCount() > 30_000);
         assertTrue(mapper.fieldCount() > 30_000);
-        assertEquals(0, TargetSrgMapper.forVersion("1.20.2").methodCount(),
-                "an unsupported target must not borrow a nearby SRG namespace");
+        assertEquals(0, TargetSrgMapper.forVersion("1.20.6").methodCount(),
+                "Forge 1.20.6 runs Mojang names, so it gets no SRG namespace");
+    }
+
+    @ParameterizedTest(name = "Forge {0}")
+    @CsvSource({"1.20, 39078, 30033", "1.20.2, 39293, 30712", "1.20.3, 40551, 31958",
+            "1.20.4, 40551, 31958"})
+    @DisplayName("Every Forge host that runs SRG names has its own table")
+    void everySrgHostHasItsTable(String host, int methods, int fields) {
+        TargetSrgMapper mapper = TargetSrgMapper.forVersion(host);
+
+        assertEquals(methods, mapper.methodCount(), "methods on Forge " + host);
+        assertEquals(fields, mapper.fieldCount(), "fields on Forge " + host);
+    }
+
+    @ParameterizedTest(name = "Forge {0} reads {1}")
+    @CsvSource({"1.20.1, f_119943_", "1.20.2, f_301428_", "1.20.4, f_301428_"})
+    @DisplayName("A field Forge 1.20.2 gave a new id gets the host's own id")
+    void renumberedFieldTakesTheHostId(String host, String expected) {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        SrgToMojangMapper.getInstance().applyTo(transformer);
+        TargetSrgMapper.forVersion(host).applyTo(transformer);
+
+        FieldInsnNode read = transformedFieldRead(transformer,
+                "net/minecraft/client/searchtree/SearchRegistry", "f_119943_",
+                "Lnet/minecraft/client/searchtree/SearchRegistry$Key;");
+
+        assertEquals(expected, read.name);
+    }
+
+    @Test
+    @DisplayName("A member the host lacks keeps its Mojang name instead of borrowing 1.20.1's id")
+    void memberMissingOnTheHostIsNotGivenANearbyId() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        SrgToMojangMapper.getInstance().applyTo(transformer);
+        TargetSrgMapper.forVersion("1.20").applyTo(transformer);
+
+        FieldInsnNode read = transformedFieldRead(transformer,
+                "net/minecraft/client/gui/screens/ConnectScreen", "f_290019_",
+                "Lnet/minecraft/network/chat/Component;");
+
+        assertEquals("ABORT_CONNECTION", read.name, "1.20 has no ConnectScreen.ABORT_CONNECTION");
     }
 
     @Test
@@ -217,6 +259,25 @@ class TargetSrgMapperTest {
         handler.visitEnd();
         writer.visitEnd();
         return writer.toByteArray();
+    }
+
+    /** Transforms a class whose only method reads one static field, and returns that read. */
+    private static FieldInsnNode transformedFieldRead(RetromodTransformer transformer, String owner,
+                                                      String name, String descriptor) {
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/ReadsAField", null, "java/lang/Object", null);
+        MethodVisitor method = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "read",
+                "()Ljava/lang/Object;", null, null);
+        method.visitCode();
+        method.visitFieldInsn(Opcodes.GETSTATIC, owner, name, descriptor);
+        method.visitInsn(Opcodes.ARETURN);
+        method.visitMaxs(1, 0);
+        method.visitEnd();
+        writer.visitEnd();
+        ClassNode output = new ClassNode();
+        new ClassReader(transformer.transformClass(writer.toByteArray(), "test/ReadsAField.class"))
+                .accept(output, 0);
+        return firstInstruction(output, FieldInsnNode.class);
     }
 
     private static <T extends AbstractInsnNode> T firstInstruction(

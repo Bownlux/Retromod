@@ -689,13 +689,22 @@ public class ModVersionDetector {
             return null;
         }
         String implementationVersion;
+        String builtOn;
         try (InputStream input = jar.getInputStream(manifestEntry)) {
             Manifest manifest = new Manifest(new ByteArrayInputStream(
                     ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE)));
             implementationVersion = manifest.getMainAttributes()
                     .getValue(Attributes.Name.IMPLEMENTATION_VERSION);
+            builtOn = manifest.getMainAttributes().getValue("Build-On-Minecraft");
         } catch (IOException | RuntimeException unreadable) {
             return null;
+        }
+        // Some builds name the version outright. TerraBlender 1.21.1 does, and declares only an
+        // open neoforge [20.4,) range, which otherwise read as a 1.20.4 mod to translate.
+        if (builtOn != null && EXACT_MC_VERSION.matcher(builtOn.trim()).matches()) {
+            LOGGER.info("Read Minecraft {} from the jar manifest's Build-On-Minecraft because its "
+                    + "metadata has no minecraft dependency", builtOn.trim());
+            return builtOn.trim();
         }
         String inferred = leadingMcVersion(implementationVersion);
         if (inferred != null) {
@@ -704,6 +713,9 @@ public class ModVersionDetector {
         }
         return inferred;
     }
+
+    private static final java.util.regex.Pattern EXACT_MC_VERSION = java.util.regex.Pattern
+            .compile("1\\.(?:1[2-9]|2[0-1])(?:\\.\\d{1,2})?|26\\.\\d{1,2}(?:\\.\\d{1,2})?");
 
     /** The supported Minecraft version a version string starts with, or null. */
     private static String leadingMcVersion(String version) {

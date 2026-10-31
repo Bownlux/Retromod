@@ -6,6 +6,7 @@
 package com.retromod.shim.forge;
 
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Handle;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Type;
@@ -155,6 +156,22 @@ public final class RegistryIdBridgeSynthetic {
         a.visitVarInsn(ASTORE, 2);
         a.visitFieldInsn(GETSTATIC, INTERNAL, "CURRENT", L_TL);
         a.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "remove", "()V", false);
+        // From 26.1 a 1.21 recipe serializer is no longer a RecipeSerializer, so the registry takes
+        // it adapted, as Registry.register does. Before 26.1 it still is one and stays as it is.
+        Label registered = new Label();
+        a.visitVarInsn(ALOAD, 0);
+        a.visitFieldInsn(GETFIELD, INTERNAL, "key", L_RK);
+        a.visitFieldInsn(GETSTATIC, "net/minecraft/core/registries/Registries", "RECIPE_SERIALIZER", L_RK);
+        a.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Object", "equals", "(" + L_OBJ + ")Z", false);
+        a.visitJumpInsn(IFEQ, registered);
+        a.visitVarInsn(ALOAD, 2);
+        a.visitTypeInsn(INSTANCEOF, "net/minecraft/world/item/crafting/RecipeSerializer");
+        a.visitJumpInsn(IFNE, registered);
+        a.visitVarInsn(ALOAD, 2);
+        a.visitMethodInsn(INVOKESTATIC, com.retromod.shim.common.LegacyRecipeSerializerShim.BRIDGE, "adapt",
+                "(" + L_OBJ + ")" + L_OBJ, false);
+        a.visitVarInsn(ASTORE, 2);
+        a.visitLabel(registered);
         a.visitVarInsn(ALOAD, 2);
         a.visitInsn(ARETURN);
         a.visitMaxs(0, 0);
@@ -239,17 +256,29 @@ public final class RegistryIdBridgeSynthetic {
         ci.visitEnd();
 
         // static DeferredHolder register(DeferredRegister dr, String name, Supplier sup):
-        //     DeferredHolder h = dr.register(name, sup);
+        //     DeferredHolder h = dr.register(name, id -> sup.get());
         //     if (dr.getRegistryKey().equals(Registries.BIOME)) { LEGACY_BIOMES.put(dr.getNamespace() + ":" + name, sup); noteLegacyBiome(); }
         //     return h;
         MethodVisitor r = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "register", REGISTER_DESC, null, null);
         r.visitCode();
         if (enchantments) emitEnchantmentHolder(r);
         emitLootModifierSerializer(r);
+        // Through the Function overload, as on 26.x. A mod's DeferredRegister subclass that overrides
+        // the Supplier overload and calls super lands here, and a virtual call back to that overload
+        // runs the override again until the stack overflows (ProjectE on NeoForge 1.21.11).
         r.visitVarInsn(ALOAD, 0);
         r.visitVarInsn(ALOAD, 1);
         r.visitVarInsn(ALOAD, 2);
-        r.visitMethodInsn(INVOKEVIRTUAL, DR, "register", "(Ljava/lang/String;" + L_SUP + ")" + L_DH, false);
+        Type objectToObject = Type.getMethodType("(" + L_OBJ + ")" + L_OBJ);
+        r.visitInvokeDynamicInsn("apply", "(" + L_SUP + ")L" + FUNCTION + ";",
+                new Handle(H_INVOKESTATIC, "java/lang/invoke/LambdaMetafactory", "metafactory",
+                        "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;"
+                                + "Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)"
+                                + "Ljava/lang/invoke/CallSite;", false),
+                objectToObject,
+                new Handle(H_INVOKESTATIC, BIOME_RECORDER, "supply", "(" + L_SUP + L_OBJ + ")" + L_OBJ, false),
+                objectToObject);
+        r.visitMethodInsn(INVOKEVIRTUAL, DR, "register", "(Ljava/lang/String;L" + FUNCTION + ";)" + L_DH, false);
         r.visitVarInsn(ASTORE, 3);
         Label notBiome = new Label();
         r.visitVarInsn(ALOAD, 0);
@@ -274,6 +303,16 @@ public final class RegistryIdBridgeSynthetic {
         r.visitMaxs(0, 0);
         r.visitEnd();
         emitLegacyBiomes(cw, BIOME_RECORDER);
+
+        // private static Object supply(Supplier sup, Object id): the Function's body, sup.get().
+        MethodVisitor supply = cw.visitMethod(ACC_PRIVATE | ACC_STATIC | ACC_SYNTHETIC, "supply",
+                "(" + L_SUP + L_OBJ + ")" + L_OBJ, null, null);
+        supply.visitCode();
+        supply.visitVarInsn(ALOAD, 0);
+        supply.visitMethodInsn(INVOKEINTERFACE, "java/util/function/Supplier", "get", "()" + L_OBJ, true);
+        supply.visitInsn(ARETURN);
+        supply.visitMaxs(0, 0);
+        supply.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
     }
@@ -457,6 +496,23 @@ public final class RegistryIdBridgeSynthetic {
         g.visitVarInsn(ASTORE, 1);
         g.visitFieldInsn(GETSTATIC, FORGE_INTERNAL, "CURRENT", L_TL);
         g.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "remove", "()V", false);
+        // An old recipe serializer goes in adapted, as on NeoForge. Left raw, every recipe of its
+        // type throws ClassCastException in the recipe reload and the world cannot load.
+        Label registered = new Label();
+        g.visitVarInsn(ALOAD, 0);
+        g.visitFieldInsn(GETFIELD, FORGE_INTERNAL, "ro", L_FRO);
+        g.visitMethodInsn(INVOKEVIRTUAL, FRO, "getKey", "()" + L_RK, false);
+        g.visitFieldInsn(GETSTATIC, "net/minecraft/core/registries/Registries", "RECIPE_SERIALIZER", L_RK);
+        g.visitMethodInsn(INVOKEVIRTUAL, RK, "isFor", "(" + L_RK + ")Z", false);
+        g.visitJumpInsn(IFEQ, registered);
+        g.visitVarInsn(ALOAD, 1);
+        g.visitTypeInsn(INSTANCEOF, "net/minecraft/world/item/crafting/RecipeSerializer");
+        g.visitJumpInsn(IFNE, registered);
+        g.visitVarInsn(ALOAD, 1);
+        g.visitMethodInsn(INVOKESTATIC, com.retromod.shim.common.LegacyRecipeSerializerShim.BRIDGE, "adapt",
+                "(" + L_OBJ + ")" + L_OBJ, false);
+        g.visitVarInsn(ASTORE, 1);
+        g.visitLabel(registered);
         g.visitVarInsn(ALOAD, 1);
         g.visitInsn(ARETURN);
         g.visitMaxs(0, 0);

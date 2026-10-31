@@ -37,6 +37,17 @@ public class NeoForge_1_21_10_to_1_21_11 implements VersionShim {
 
         // The int permission level in CommandSourceStack's constructor became a PermissionSet.
         com.retromod.shim.common.LegacyCommandSourceBridge.register(transformer);
+        // 1.21.11 moved game rules to gamerules.GameRules under new names, which only a server
+        // level holds. Fabric kept its field ids, so only the Mojang-named loaders need this.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerGameRuleFieldRenames(transformer);
+        com.retromod.shim.common.LegacyGameRuleCallBridge.register(transformer);
+        // SimpleCraftingRecipeSerializer became CustomRecipe.Serializer.
+        com.retromod.shim.common.LegacyRecipeSerializerShim.registerCustomRecipeRename(transformer);
+        // The reload listener events already carry their newer names here (checked on 1.21.11).
+        if (com.retromod.core.ClassResourceInspector.exists("net/neoforged/neoforge/event/AddServerReloadListenersEvent")
+                && !com.retromod.core.ClassResourceInspector.exists("net/neoforged/neoforge/event/AddReloadListenerEvent")) {
+            NeoForge_1_21_11_to_26_1.registerReloadListenerEvents(transformer);
+        }
 
         // Mojang renamed ResourceLocation to Identifier.
         transformer.registerClassRedirect(
@@ -120,6 +131,6 @@ public class NeoForge_1_21_10_to_1_21_11 implements VersionShim {
 
     @Override
     public String[] getShimClasses() {
-        return new String[] {};
+        return new String[] {"com.retromod.shim.neoforge.embedded.ReloadListenerEventShim"};
     }
 }

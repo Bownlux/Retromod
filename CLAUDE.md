@@ -102,9 +102,9 @@ Contained does not mean partial. If a rule belongs in one shared layer, fix it t
 ## Critical Context
 
 - **Target MC version:** 26.1 (Mojang removed ALL code obfuscation); 26.2 supported since 1.1.0-snapshot.4 (shims/aliases/Fabric build target in place, verified on 26.2-rc-1)
-- **Java:** Built WITH Java 25 (we need the modern compiler to use ASM 9.10.1 features that read MC 26.1's class file format), but bytecode targets `--release 17` so the SAME JAR runs on Java 17, 21, and 25. Broad runtime compat is the entire point. `build-all.sh` sets the per-MC `"java"` constraint in fabric.mod.json based on what each MC version itself needs: `>=17` for MC 1.20-1.20.4, `>=21` for MC 1.20.5-1.21.x, **`>=25` for MC 26.x** (MC 26.1's own class files are Java 25 bytecode, so a Java 21 JVM can't load them). Don't accidentally bump `<release>` higher, or that locks out MC 1.20.x users on Java 17. ASM itself runs on Java 8+; it just READS class files up to v69 (Java 25), which has nothing to do with what bytecode WE emit.
+- **Java:** Built WITH Java 25 (we need the modern compiler to use ASM 9.11.1 features that read MC 26.1's class file format), but bytecode targets `--release 17` so the SAME JAR runs on Java 17, 21, and 25. Broad runtime compat is the entire point. `build-all.sh` sets the per-MC `"java"` constraint in fabric.mod.json based on what each MC version itself needs: `>=17` for MC 1.20-1.20.4, `>=21` for MC 1.20.5-1.21.x, **`>=25` for MC 26.x** (MC 26.1's own class files are Java 25 bytecode, so a Java 21 JVM can't load them). Don't accidentally bump `<release>` higher, or that locks out MC 1.20.x users on Java 17. ASM itself runs on Java 8+; it just READS class files up to v69 (Java 25), which has nothing to do with what bytecode WE emit.
 - **Intermediary names are dead in 26.1+.** All `class_XXXX`, `method_XXXX`, `field_XXXX` must map to Mojang official names.
-- **NeoForge already uses Mojang names** since 1.17. NeoForge mods mainly need metadata patching, not name remapping.
+- **NeoForge 1.20.2 and newer run Mojang member names.** NeoForge mods mainly need metadata patching, not name remapping. NeoForge 1.20.1 is a Forge 47 fork that runs SRG names, like Forge 1.20 to 1.20.4 (`TargetSrgMapper` has a table for each); Forge 1.20.6 and newer run Mojang names. The installers show it: Forge 1.20 to 1.20.4 merge only `--classes` from Mojang's mappings, NeoForge 20.2 to 20.4 merge `--classes --fields --methods`.
 - **Fabric mods use intermediary names**, so they need full intermediary→Mojang remapping for 26.1+.
 - **ALL old shims (including pre-1.20.1) must stay.** People still translate 1.16.5, 1.14.4 mods. Shims are NOT separate build targets; they're all part of one build.
 - **`Retromod.TARGET_MC_VERSION`** is auto-detected at runtime from the mod loader. NEVER hardcode version strings like `"1.21.11"`. Always use `Retromod.TARGET_MC_VERSION`.
@@ -135,6 +135,8 @@ src/main/java/com/retromod/
 
 src/boot/java/com/retromod/boot/   Forge/NeoForge bootstrap locators (JDK + loader SPI only, never in the runtime jar)
 src/boot/stubs/                    Compile-only SPI stubs for the bootstrap, never packaged
+src/legacyapi/java/                APIs a host removed, rebuilt in Java (com.retromod.legacyapi), copied into each mod that uses them by RebuiltApiClasses
+src/legacyapi/stubs/               Compile-only stubs of the host types they call; check them with scripts/LegacyApiLinkCheck.java against real host jars
 ```
 
 ## Build Commands
@@ -156,12 +158,12 @@ mvn package -P lite -DskipTests -Dexec.skip=true
 mvn exec:java -Dexec.mainClass="com.retromod.cli.RetromodCli" -Dexec.args="<command>" -q
 
 # Run the executable release CLI (dependencies bundled)
-java -jar dist/CLI/retromod-1.4.0-snapshot.2-cli.jar <command>
+java -jar dist/CLI/retromod-1.4.0-snapshot.3-cli.jar <command>
 ```
 
 **Important:** Always pass `-Dexec.skip=true` during build to prevent Maven from running the CLI entrypoint.
 
-Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 71 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.4.0-snapshot.2-cli.jar`.
+Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 71 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.4.0-snapshot.3-cli.jar`.
 
 ## Release integrity (self-hash)
 
@@ -170,7 +172,7 @@ Official builds embed a SHA-256 of the executable release surface in `SignatureV
 **Embed the hash as the LAST release step** (any covered code, provider, or transformation-data change shifts it):
 ```bash
 mvn clean package -Dexec.skip=true                          # build the final jars
-python3 scripts/compute-self-hash.py target/retromod-1.4.0-snapshot.2-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.4.0-snapshot.3-all.jar
 # embed the 64-hex result into SignatureVerifier.EXPECTED_SELF_HASH PROGRAMMATICALLY
 # (sed/python - never hand-typed), rebuild, then re-run the compute script and
 # compare against the embedded value (closed-loop verify)
@@ -184,7 +186,7 @@ After embedding and rebuilding, run `bash build-all.sh --skip-build --require-se
 ## Deploy to Minecraft
 
 ```bash
-cp dist/Fabric/26.1/retromod-1.4.0-snapshot.2+26.1.jar ~/Library/Application\ Support/minecraft/mods/
+cp dist/Fabric/26.1/retromod-1.4.0-snapshot.3+26.1.jar ~/Library/Application\ Support/minecraft/mods/
 ```
 
 Game directory (macOS): `~/Library/Application Support/minecraft/`
@@ -201,7 +203,7 @@ Game directory (macOS): `~/Library/Application Support/minecraft/`
 | `core/FabricModTransformer.java` | Patches fabric.mod.json version constraints |
 | `core/ForgeModTransformer.java` | Patches mods.toml/neoforge.mods.toml version constraints |
 | `core/ModVersionDetector.java` | Reads mod MC version from loader-specific metadata |
-| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,981 classes, 54,479 fields, and 57,520 methods at snapshot.10) |
+| `mapping/IntermediaryToMojangMapper.java` | Loads the bundled intermediary-to-Mojang table (11,991 classes, 54,486 fields, and 56,906 methods at 1.4.0-snapshot.3) |
 | `mapping/MappingComposer.java` | Generates mapping files from TinyV2 + ProGuard sources |
 | `shim/ShimRegistry.java` | BFS chain finder with version aliases |
 | `cli/RetromodCli.java` | CLI tool (`TARGET_MC_VERSION = "26.1"`) |
@@ -325,9 +327,9 @@ Caveat: these surface CANDIDATES, not confirmations. A predicted break is a hypo
 
 | Dependency | Version | Purpose |
 |-----------|---------|---------|
-| ASM | 9.10.1 | Bytecode manipulation (9.8+ required for Java 25) |
+| ASM | 9.11.1 | Bytecode manipulation (9.8+ required for Java 25) |
 | Gson | 2.10.1 | JSON parsing |
-| SLF4J | 2.0.18 | Logging |
+| SLF4J | 2.0.20 | Logging |
 | JUnit Jupiter | 6.1.3 | Testing |
 | Mixin | 0.8.5 | Mixin API (provided) |
 | Fabric Loader | 0.16.10 | Fabric API (provided), pinned deliberately |

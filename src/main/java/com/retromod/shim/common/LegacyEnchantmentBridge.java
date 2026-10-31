@@ -64,6 +64,7 @@ public final class LegacyEnchantmentBridge {
     private static final String ENTITY = "net/minecraft/world/entity/Entity";
     private static final String DEFERRED_HOLDER = "net/neoforged/neoforge/registries/DeferredHolder";
     private static final String DEFERRED_REGISTER = "net/neoforged/neoforge/registries/DeferredRegister";
+    static final String ARCHITECTURY_REGISTER = "dev/architectury/registry/registries/DeferredRegister";
     private static final String RESOURCE_KEY = "net/minecraft/resources/ResourceKey";
     private static final String L_LEGACY = "L" + LEGACY + ";";
     private static final String L_RARITY = "L" + RARITY + ";";
@@ -117,6 +118,19 @@ public final class LegacyEnchantmentBridge {
                 SUPPORT, "enchant", "(" + L_OBJECT + L_OBJECT + "I)V", true);
         transformer.registerStaticFieldTypeDrift("net/minecraft/world/item/enchantment/Enchantments", L_LEGACY,
                 "L" + RESOURCE_KEY + ";", LEGACY, "fromKey", "(L" + RESOURCE_KEY + ";)" + L_LEGACY);
+
+        // Architectury's DeferredRegister, which multi-loader mods register through. Its register()
+        // asks for a registrar that a data-driven registry no longer has, so an enchantment entry is
+        // recorded for the pack instead. Every other register reaches Architectury unchanged.
+        String supplier = "Ljava/util/function/Supplier;";
+        String registrySupplier = "Ldev/architectury/registry/registries/RegistrySupplier;";
+        transformer.registerMethodRedirect(ARCHITECTURY_REGISTER, "register", "(" + L_STRING + supplier + ")" + registrySupplier,
+                SUPPORT, "architecturyRegister", "(" + L_OBJECT + L_STRING + supplier + ")" + L_OBJECT, true);
+        transformer.registerMethodRedirect(ARCHITECTURY_REGISTER, "register",
+                "(Lnet/minecraft/resources/ResourceLocation;" + supplier + ")" + registrySupplier,
+                SUPPORT, "architecturyRegisterId", "(" + L_OBJECT + L_OBJECT + supplier + ")" + L_OBJECT, true);
+        transformer.registerMethodRedirect(ARCHITECTURY_REGISTER, "register", "()V",
+                SUPPORT, "architecturyRegisterAll", "(" + L_OBJECT + ")V", true);
     }
 
     /** The generated classes and the compiled helpers they call, for every path that can reach them. */

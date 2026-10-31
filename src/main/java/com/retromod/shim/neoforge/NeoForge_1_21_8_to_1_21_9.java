@@ -68,6 +68,9 @@ public class NeoForge_1_21_8_to_1_21_9 implements VersionShim {
         // both still there, so a call site needs no repair. What did change is serialization,
         // INBTSerializable<CompoundTag> to ValueIOSerializable, which is a semantic migration and
         // not something a call redirect can express.
+        // The rework did replace the capabilities that held those handlers (checked on NeoForge
+        // 1.21.11), so the bridge restores the old ones beside the new. It reads the host to decide.
+        LegacyHandlerCapabilityBridge.register(transformer);
 
         // RenderHighlightEvent was removed in favour of ExtractBlockOutlineRenderStateEvent. That
         // is a render-state rework rather than a rename, so a mod using it still needs a real port.

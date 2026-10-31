@@ -18,6 +18,8 @@ public class NeoForge_1_20_2_to_1_20_3 implements VersionShim {
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
         com.retromod.shim.common.LegacyBlockConstructorBridge.register(transformer);
+        // The same release put doors, trapdoors, fence gates and pressure plates' type ahead of their properties.
+        com.retromod.shim.common.LegacyBlockSetTypeBridge.register(transformer);
     }
 
     @Override

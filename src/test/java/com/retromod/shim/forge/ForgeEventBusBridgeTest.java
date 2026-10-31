@@ -328,4 +328,18 @@ class ForgeEventBusBridgeTest {
             }
         }
     }
+
+    @Test
+    @DisplayName("A mod-bus event, which has no static BUS on Forge 26.2, is hooked onto the mod's own group")
+    void modBusEventsUseTheModGroup() {
+        byte[] impl = ForgeEventBusSynthetics.generateImpl();
+        new ClassReader(impl).accept(new org.objectweb.asm.util.CheckClassAdapter(new ClassWriter(0), true), 0);
+        ClassNode node = new ClassNode();
+        new ClassReader(impl).accept(node, 0);
+        boolean modGroupFallback = node.methods.stream().filter(m -> m.name.equals("busOf"))
+                .flatMap(m -> java.util.stream.StreamSupport.stream(m.instructions.spliterator(), false))
+                .anyMatch(insn -> insn instanceof MethodInsnNode call
+                        && call.owner.equals("net/minecraftforge/fml/event/IModBusEvent") && call.name.equals("getBus"));
+        assertTrue(modGroupFallback, "busOf must fall back to IModBusEvent.getBus(modGroup, type)");
+    }
 }

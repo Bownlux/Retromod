@@ -16,7 +16,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
 
-/** Starts Retromod on NeoForge 20.2 to 20.4 (FML 1 and 2) through the neoforgespi folder-locator SPI. */
+/** Starts Retromod on NeoForge 20.2 to 20.4 and on builds with FML 3.0.18 (all of 20.5, early 20.6) through the neoforgespi folder-locator SPI. */
 public final class LegacyNeoForgeBootLocator implements IModLocator {
 
     /** Must match {@code Retromod-Boot-Generation} in the jars built for these hosts. */

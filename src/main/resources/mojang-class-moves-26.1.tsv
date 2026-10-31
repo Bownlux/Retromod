@@ -1033,7 +1033,6 @@ net/minecraft/item/Item$Settings	net/minecraft/world/item/Item$Properties
 # VillagerTrades moved world.entity.npc → world.item.trading in 26.1. Outer type
 # resolves; the $ItemListing inner interface was removed (custom-trade mods that
 # implement it need re-authoring. This is tracked as a known limitation.
-net/minecraft/world/entity/npc/VillagerTrades	net/minecraft/world/item/trading/VillagerTrades
 # BlockRenderLayerMap removed from the 26.1-era Fabric API → Retromod no-op stand-in
 # (FabricBlockRenderLayerBridge injects the synthetic). Non-vanilla target: applied
 # only on the 26.1+ path, where the real class is gone. Render-layer calls
@@ -1043,7 +1042,6 @@ net/fabricmc/fabric/api/blockrenderlayer/v1/BlockRenderLayerMap	com/retromod/gen
 # (verified absent at the old path on 26.1-snapshot-10); its Model enum became the
 # top-level PlayerModelType (constants SLIM/WIDE unchanged). 7 corpus mods.
 # Member renames (texture->body etc.) are converting redirects in the common shim.
-net/minecraft/client/resources/PlayerSkin	net/minecraft/world/entity/player/PlayerSkin
 net/minecraft/client/resources/PlayerSkin$Model	net/minecraft/world/entity/player/PlayerModelType
 # ReceivingLevelScreen -> LevelLoadingScreen (26.1; the old class is gone on
 # 26.1-snapshot-10). Mods mostly instanceof/reference it for screen detection.
@@ -1067,7 +1065,6 @@ net/minecraft/client/renderer/LightTexture	net/minecraft/client/renderer/Lightma
 # (documented loss); the ubiquitous static getters moved to rendertype/RenderTypes
 # with two cull-naming flips, bridged by member redirects in the common shim.
 # 34 corpus mods reference RenderType.
-net/minecraft/client/renderer/RenderType	net/minecraft/client/renderer/rendertype/RenderType
 # GameRules restructure (26.1): the string-keyed instance became gamerules/GameRules
 # (constants + instance get on one class); Key became the typed GameRule. In the
 # moves tsv (not code registration) so the intermediary composition folds
@@ -1099,3 +1096,75 @@ com/mojang/blaze3d/platform/GlStateManager$DepthState	com/mojang/blaze3d/opengl/
 com/mojang/blaze3d/platform/GlStateManager$PolygonOffsetState	com/mojang/blaze3d/opengl/GlStateManager$PolygonOffsetState
 com/mojang/blaze3d/platform/GlStateManager$ScissorState	com/mojang/blaze3d/opengl/GlStateManager$ScissorState
 com/mojang/blaze3d/platform/GlStateManager$TextureState	com/mojang/blaze3d/opengl/GlStateManager$TextureState
+
+# 1.21.11 classes that 26.1 moved under the same simple name, added in 1.4.0-snapshot.3. The
+# rows above were harvested from 1.21.1, so classes added in 1.21.2 to 1.21.11 had no move.
+# From scripts/harvest-class-moves-1211-262.py --source 1.21.11 --target-jar <26.1.2 client>, and
+# each checked on the 26.1, 26.1.1 and 26.1.2 jars: old path absent, new path present.
+# AtlasManager, ParticleGroupRenderState and CameraRenderState were registered only as 26.2
+# moves, but 26.1 had already moved them.
+net/minecraft/client/gui/render/state/BlitRenderState	net/minecraft/client/renderer/state/gui/BlitRenderState
+net/minecraft/client/gui/render/state/ColoredRectangleRenderState	net/minecraft/client/renderer/state/gui/ColoredRectangleRenderState
+net/minecraft/client/gui/render/state/GlyphRenderState	net/minecraft/client/renderer/state/gui/GlyphRenderState
+net/minecraft/client/gui/render/state/GuiElementRenderState	net/minecraft/client/renderer/state/gui/GuiElementRenderState
+net/minecraft/client/gui/render/state/GuiItemRenderState	net/minecraft/client/renderer/state/gui/GuiItemRenderState
+net/minecraft/client/gui/render/state/GuiRenderState	net/minecraft/client/renderer/state/gui/GuiRenderState
+net/minecraft/client/gui/render/state/GuiRenderState$Node	net/minecraft/client/renderer/state/gui/GuiRenderState$Node
+net/minecraft/client/gui/render/state/GuiRenderState$TraverseRange	net/minecraft/client/renderer/state/gui/GuiRenderState$TraverseRange
+net/minecraft/client/gui/render/state/GuiTextRenderState	net/minecraft/client/renderer/state/gui/GuiTextRenderState
+net/minecraft/client/gui/render/state/ScreenArea	net/minecraft/client/renderer/state/gui/ScreenArea
+net/minecraft/client/gui/render/state/TiledBlitRenderState	net/minecraft/client/renderer/state/gui/TiledBlitRenderState
+net/minecraft/client/gui/render/state/pip/GuiBannerResultRenderState	net/minecraft/client/renderer/state/gui/pip/GuiBannerResultRenderState
+net/minecraft/client/gui/render/state/pip/GuiBookModelRenderState	net/minecraft/client/renderer/state/gui/pip/GuiBookModelRenderState
+net/minecraft/client/gui/render/state/pip/GuiEntityRenderState	net/minecraft/client/renderer/state/gui/pip/GuiEntityRenderState
+net/minecraft/client/gui/render/state/pip/GuiProfilerChartRenderState	net/minecraft/client/renderer/state/gui/pip/GuiProfilerChartRenderState
+net/minecraft/client/gui/render/state/pip/GuiSignRenderState	net/minecraft/client/renderer/state/gui/pip/GuiSignRenderState
+net/minecraft/client/gui/render/state/pip/GuiSkinRenderState	net/minecraft/client/renderer/state/gui/pip/GuiSkinRenderState
+net/minecraft/client/gui/render/state/pip/OversizedItemRenderState	net/minecraft/client/renderer/state/gui/pip/OversizedItemRenderState
+net/minecraft/client/gui/render/state/pip/PictureInPictureRenderState	net/minecraft/client/renderer/state/gui/pip/PictureInPictureRenderState
+net/minecraft/client/renderer/block/model/BlockStateModel	net/minecraft/client/renderer/block/dispatch/BlockStateModel
+net/minecraft/client/renderer/block/model/BlockStateModel$SimpleCachedUnbakedRoot	net/minecraft/client/renderer/block/dispatch/BlockStateModel$SimpleCachedUnbakedRoot
+net/minecraft/client/renderer/block/model/BlockStateModel$Unbaked	net/minecraft/client/renderer/block/dispatch/BlockStateModel$Unbaked
+net/minecraft/client/renderer/block/model/BlockStateModel$UnbakedRoot	net/minecraft/client/renderer/block/dispatch/BlockStateModel$UnbakedRoot
+net/minecraft/client/renderer/block/model/ItemModelGenerator$SideDirection	net/minecraft/client/resources/model/cuboid/ItemModelGenerator$SideDirection
+net/minecraft/client/renderer/block/model/ItemModelGenerator$SideFace	net/minecraft/client/resources/model/cuboid/ItemModelGenerator$SideFace
+net/minecraft/client/renderer/block/model/SimpleModelWrapper	net/minecraft/client/resources/model/SimpleModelWrapper
+net/minecraft/client/renderer/block/model/SingleVariant	net/minecraft/client/renderer/block/dispatch/SingleVariant
+net/minecraft/client/renderer/block/model/SingleVariant$Unbaked	net/minecraft/client/renderer/block/dispatch/SingleVariant$Unbaked
+net/minecraft/client/renderer/block/model/Variant$SimpleModelState	net/minecraft/client/renderer/block/dispatch/Variant$SimpleModelState
+net/minecraft/client/renderer/block/model/VariantMutator	net/minecraft/client/renderer/block/dispatch/VariantMutator
+net/minecraft/client/renderer/block/model/VariantMutator$VariantProperty	net/minecraft/client/renderer/block/dispatch/VariantMutator$VariantProperty
+net/minecraft/client/renderer/block/model/multipart/CombinedCondition	net/minecraft/client/renderer/block/dispatch/multipart/CombinedCondition
+net/minecraft/client/renderer/block/model/multipart/CombinedCondition$Operation	net/minecraft/client/renderer/block/dispatch/multipart/CombinedCondition$Operation
+net/minecraft/client/renderer/block/model/multipart/KeyValueCondition$Term	net/minecraft/client/renderer/block/dispatch/multipart/KeyValueCondition$Term
+net/minecraft/client/renderer/block/model/multipart/KeyValueCondition$Terms	net/minecraft/client/renderer/block/dispatch/multipart/KeyValueCondition$Terms
+net/minecraft/client/renderer/block/model/multipart/MultiPartModel	net/minecraft/client/renderer/block/dispatch/multipart/MultiPartModel
+net/minecraft/client/renderer/block/model/multipart/MultiPartModel$Selector	net/minecraft/client/renderer/block/dispatch/multipart/MultiPartModel$Selector
+net/minecraft/client/renderer/block/model/multipart/MultiPartModel$SharedBakedState	net/minecraft/client/renderer/block/dispatch/multipart/MultiPartModel$SharedBakedState
+net/minecraft/client/renderer/block/model/multipart/MultiPartModel$Unbaked	net/minecraft/client/renderer/block/dispatch/multipart/MultiPartModel$Unbaked
+net/minecraft/client/renderer/state/BlockBreakingRenderState	net/minecraft/client/renderer/state/level/BlockBreakingRenderState
+net/minecraft/client/renderer/state/BlockOutlineRenderState	net/minecraft/client/renderer/state/level/BlockOutlineRenderState
+net/minecraft/client/renderer/state/CameraRenderState	net/minecraft/client/renderer/state/level/CameraRenderState
+net/minecraft/client/renderer/state/LevelRenderState	net/minecraft/client/renderer/state/level/LevelRenderState
+net/minecraft/client/renderer/state/ParticleGroupRenderState	net/minecraft/client/renderer/state/level/ParticleGroupRenderState
+net/minecraft/client/renderer/state/ParticlesRenderState	net/minecraft/client/renderer/state/level/ParticlesRenderState
+net/minecraft/client/renderer/state/QuadParticleRenderState	net/minecraft/client/renderer/state/level/QuadParticleRenderState
+net/minecraft/client/renderer/state/QuadParticleRenderState$ParticleConsumer	net/minecraft/client/renderer/state/level/QuadParticleRenderState$ParticleConsumer
+net/minecraft/client/renderer/state/QuadParticleRenderState$PreparedBuffers	net/minecraft/client/renderer/state/level/QuadParticleRenderState$PreparedBuffers
+net/minecraft/client/renderer/state/QuadParticleRenderState$PreparedLayer	net/minecraft/client/renderer/state/level/QuadParticleRenderState$PreparedLayer
+net/minecraft/client/renderer/state/QuadParticleRenderState$Storage	net/minecraft/client/renderer/state/level/QuadParticleRenderState$Storage
+net/minecraft/client/renderer/state/SkyRenderState	net/minecraft/client/renderer/state/level/SkyRenderState
+net/minecraft/client/renderer/state/WeatherRenderState	net/minecraft/client/renderer/state/level/WeatherRenderState
+net/minecraft/client/renderer/state/WorldBorderRenderState	net/minecraft/client/renderer/state/level/WorldBorderRenderState
+net/minecraft/client/renderer/state/WorldBorderRenderState$DistancePerDirection	net/minecraft/client/renderer/state/level/WorldBorderRenderState$DistancePerDirection
+net/minecraft/client/resources/model/AtlasManager	net/minecraft/client/resources/model/sprite/AtlasManager
+net/minecraft/client/resources/model/AtlasManager$AtlasConfig	net/minecraft/client/resources/model/sprite/AtlasManager$AtlasConfig
+net/minecraft/client/resources/model/AtlasManager$AtlasEntry	net/minecraft/client/resources/model/sprite/AtlasManager$AtlasEntry
+net/minecraft/client/resources/model/AtlasManager$PendingStitch	net/minecraft/client/resources/model/sprite/AtlasManager$PendingStitch
+net/minecraft/client/resources/model/AtlasManager$PendingStitchResults	net/minecraft/client/resources/model/sprite/AtlasManager$PendingStitchResults
+net/minecraft/client/resources/model/BlockModelRotation$WithUvLock	net/minecraft/client/renderer/block/dispatch/BlockModelRotation$WithUvLock
+net/minecraft/client/resources/model/QuadCollection	net/minecraft/client/resources/model/geometry/QuadCollection
+net/minecraft/client/resources/model/QuadCollection$Builder	net/minecraft/client/resources/model/geometry/QuadCollection$Builder
+net/minecraft/client/resources/model/UnbakedGeometry	net/minecraft/client/resources/model/geometry/UnbakedGeometry
+net/minecraft/client/resources/model/WeightedVariants	net/minecraft/client/renderer/block/dispatch/WeightedVariants
+net/minecraft/client/resources/model/WeightedVariants$Unbaked	net/minecraft/client/renderer/block/dispatch/WeightedVariants$Unbaked

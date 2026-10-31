@@ -65,6 +65,7 @@ public final class LegacyCodecTypeBridge {
     private LegacyCodecTypeBridge() {}
 
     public static void register(RetromodTransformer transformer) {
+        registerCodecBases(transformer);
         List<String> bridged = new ArrayList<>();
         for (String iface : INTERFACES) {
             if (mapCodecOnHost(iface)) bridged.add(iface);
@@ -91,6 +92,77 @@ public final class LegacyCodecTypeBridge {
                     HELPER, "registerPlacementModifier",
                     "(Ljava/lang/String;L" + CODEC + ";)L" + PLACEMENT_MODIFIER_TYPE + ";");
         }
+    }
+
+    /** The chunk generator and biome source, abstract classes whose {@code codec()} also became a map codec. */
+    static final String[][] CODEC_BASES = {
+            {"net/minecraft/world/level/chunk/ChunkGenerator", "com/retromod/generated/LegacyChunkGenerator",
+                    "(Lnet/minecraft/world/level/biome/BiomeSource;)V",
+                    "(Lnet/minecraft/world/level/biome/BiomeSource;Ljava/util/function/Function;)V"},
+            {"net/minecraft/world/level/biome/BiomeSource", "com/retromod/generated/LegacyBiomeSource", "()V"}};
+
+    /**
+     * A mod's generator or biome source overrides the old {@code codec()} that returned a codec, which
+     * no longer implements the host's. Each is rebased onto a generated class whose {@code codec()}
+     * reads the mod's and returns it as a map codec. A class built for the current shape overrides
+     * the generated method itself, so it passes through unchanged.
+     */
+    static void registerCodecBases(RetromodTransformer transformer) {
+        for (String[] base : CODEC_BASES) {
+            if (!mapCodecOnHost(base[0])) continue;
+            String[] constructors = java.util.Arrays.copyOfRange(base, 2, base.length);
+            transformer.registerSyntheticClass(base[1], generateCodecBase(base[1], base[0], constructors));
+            transformer.registerSuperclassRebase(base[0], base[1]);
+        }
+    }
+
+    static byte[] generateCodecBase(String name, String base, String[] constructors) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
+            @Override
+            protected String getCommonSuperClass(String first, String second) {
+                return "java/lang/Object";
+            }
+        };
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT | Opcodes.ACC_SUPER, name, null, base, null);
+        for (String constructor : constructors) {
+            MethodVisitor init = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", constructor, null, null);
+            init.visitCode();
+            init.visitVarInsn(Opcodes.ALOAD, 0);
+            int slot = 1;
+            for (org.objectweb.asm.Type arg : org.objectweb.asm.Type.getArgumentTypes(constructor)) {
+                init.visitVarInsn(arg.getOpcode(Opcodes.ILOAD), slot);
+                slot += arg.getSize();
+            }
+            init.visitMethodInsn(Opcodes.INVOKESPECIAL, base, "<init>", constructor, false);
+            init.visitInsn(Opcodes.RETURN);
+            end(init);
+        }
+        // The mod's own codec(), with the old return type.
+        cw.visitMethod(Opcodes.ACC_PROTECTED | Opcodes.ACC_ABSTRACT, "codec", OLD_SAM, null, null).visitEnd();
+
+        // codec() as the host calls it: a record codec unwraps to its map codec; any other codec
+        // is used as one, which is what the old method promised.
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PROTECTED, "codec", NEW_SAM, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, name, "codec", OLD_SAM, false);
+        mv.visitVarInsn(Opcodes.ASTORE, 1);
+        Label notRecord = new Label();
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitTypeInsn(Opcodes.INSTANCEOF, MAP_CODEC_CODEC);
+        mv.visitJumpInsn(Opcodes.IFEQ, notRecord);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, MAP_CODEC_CODEC);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, MAP_CODEC_CODEC, "codec", NEW_SAM, false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(notRecord);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, MAP_CODEC, "assumeMapUnsafe",
+                "(L" + CODEC + ";)L" + MAP_CODEC + ";", false);
+        mv.visitInsn(Opcodes.ARETURN);
+        end(mv);
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     static String wrapName(String iface) {

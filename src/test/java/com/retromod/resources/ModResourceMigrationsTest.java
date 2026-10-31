@@ -124,8 +124,8 @@ class ModResourceMigrationsTest {
                 "vanilla texture references in mod models", "mod texture atlas sources",
                 "26.x model element fields", "banner pattern tags", "armor equipment assets",
                 "nested resource pack textures", "Forge data namespaces", "data content",
-                "item definitions", "key category names", "26.3 worldgen folders",
-                "data load gate", "dangling recipe advancements"), names);
+                "item definitions", "key category names", "renamed vanilla tags", "26.3 worldgen folders",
+                "mod pack metadata", "data load gate", "dangling recipe advancements"), names);
     }
 
     @Test

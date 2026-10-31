@@ -72,6 +72,13 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         // ExtraByteCodecs) that the direct-call pass can't reach.
         transformer.registerMethodRename(
             "net/minecraft/resources/ResourceKey", "location", "identifier");
+        // Only a server level has game rules, and they are read with get(rule), not typed getters.
+        LegacyGameRuleCallBridge.register(transformer);
+        // 26.1 moved the firework recipes' ingredient constants and shape table into recipe data.
+        LegacyFireworkConstantBridge.register(transformer);
+        // ItemStack.getItemHolder() is the typed instance's typeHolder() in 26.1.
+        transformer.registerMethodRename(
+            "net/minecraft/world/item/ItemStack", "getItemHolder", "typeHolder");
 
         // ChunkPos(long) ctor removed in 26.x; rewrite to the static ChunkPos.unpack(long).
         transformer.registerConstructorRedirect(
@@ -123,7 +130,28 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         // Every loader needs this: the old RULE_* spelling is the pre-26.1 Mojang name, so a
         // NeoForge or Forge mod from 1.20 or 1.21 carries it just as a Fabric one does.
         registerGameRuleFieldRenames(transformer);
+        registerTagRenames26_1(transformer);
 }
+
+    /** The block and item tags 26.1 renamed, with the same entries or the same job under the new name. */
+    public static void registerTagRenames26_1(RetromodTransformer transformer) {
+        String[][] blockTags = {
+                {"BAMBOO_PLANTABLE_ON", "SUPPORTS_BAMBOO"},
+                {"BIG_DRIPLEAF_PLACEABLE", "SUPPORTS_BIG_DRIPLEAF"},
+                {"DRY_VEGETATION_MAY_PLACE_ON", "SUPPORTS_DRY_VEGETATION"},
+                {"MUSHROOM_GROW_BLOCK", "OVERRIDES_MUSHROOM_LIGHT_REQUIREMENT"},
+                {"SMALL_DRIPLEAF_PLACEABLE", "SUPPORTS_SMALL_DRIPLEAF"},
+                {"SNOW_LAYER_CAN_SURVIVE_ON", "SUPPORT_OVERRIDE_SNOW_LAYER"},
+                {"SNOW_LAYER_CANNOT_SURVIVE_ON", "CANNOT_SUPPORT_SNOW_LAYER"}};
+        String tagKey = "Lnet/minecraft/tags/TagKey;";
+        for (String[] rename : blockTags) {
+            transformer.registerFieldRedirect("net/minecraft/tags/BlockTags", rename[0], tagKey,
+                    "net/minecraft/tags/BlockTags", rename[1], tagKey);
+        }
+        // The cauldron reads the same items from the new tag; a dye check by tag keeps working.
+        transformer.registerFieldRedirect("net/minecraft/tags/ItemTags", "DYEABLE", tagKey,
+                "net/minecraft/tags/ItemTags", "CAULDRON_CAN_REMOVE_DYE", tagKey);
+    }
 
     /**
      * Repairs the GameRules constant rename that 26.1 made.

@@ -68,6 +68,8 @@ class LegacyBlockCodecBridgeTest {
         RetromodVersion.TARGET_MC_VERSION = savedTarget;
         transformer.clearRedirectsForTesting();
         transformer.clearJarClassBytesProvider();
+        // Each test loads the stand-ins in its own class loader; the shared registry must not outlive it.
+        System.getProperties().keySet().removeIf(key -> key.toString().startsWith("retromod.legacyRegistry."));
     }
 
     @Test
@@ -137,6 +139,25 @@ class LegacyBlockCodecBridgeTest {
     }
 
     @Test
+    @DisplayName("the BLOCK_TYPE registry key names the stand-in registry, not the block registry")
+    void blockTypeKeyNamesTheStandIn() throws Exception {
+        // #366: ProjectE's block type register is keyed on Registries.BLOCK_TYPE. On 26.3 a guess
+        // replaced it with Registries.BLOCK, and its block types collided with its blocks.
+        registerRedirects(transformer);
+        String reader = "test/mod/BlockTypeKey";
+        byte[] transformed = transformer.transformClass(blockTypeKeyReader(reader), reader);
+
+        Map<String, byte[]> classes = compile263StandIns();
+        classes.putAll(compileStandIns(registryStandIns(), "registry"));
+        classes.put(reader.replace('/', '.'), transformed);
+        transformer.getSyntheticClasses().forEach((name, bytes) -> classes.put(name.replace('/', '.'), bytes));
+        Class<?> types = Class.forName(reader.replace('/', '.'), true, isolatedLoader(classes));
+
+        Object key = types.getMethod("blockTypes").invoke(null);
+        assertEquals("retromod:legacy_block_type", String.valueOf(key.getClass().getField("location").get(key)));
+    }
+
+    @Test
     @DisplayName("a host that still has simpleCodec keeps the mod's call")
     void gatedOnTheHostShape() {
         assertTrue(hostLostBlockCodecs(blockBehaviour(false)), "26.3 dropped simpleCodec");
@@ -198,6 +219,21 @@ class LegacyBlockCodecBridgeTest {
                 "()L" + REGISTRY + ";", null, null);
         m.visitCode();
         m.visitFieldInsn(Opcodes.GETSTATIC, BUILT_IN_REGISTRIES, "BLOCK_TYPE", "L" + REGISTRY + ";");
+        m.visitInsn(Opcodes.ARETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** {@code public static ResourceKey blockTypes() { return Registries.BLOCK_TYPE; }} */
+    private static byte[] blockTypeKeyReader(String name) {
+        String key = "Lnet/minecraft/resources/ResourceKey;";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, name, null, "java/lang/Object", null);
+        MethodVisitor m = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "blockTypes", "()" + key, null, null);
+        m.visitCode();
+        m.visitFieldInsn(Opcodes.GETSTATIC, "net/minecraft/core/registries/Registries", "BLOCK_TYPE", key);
         m.visitInsn(Opcodes.ARETURN);
         m.visitMaxs(0, 0);
         m.visitEnd();

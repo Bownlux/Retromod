@@ -30,7 +30,7 @@ public final class LoaderApiSetting {
     /** The decided value, with enough context to explain it in one log line. */
     public record Effective(boolean on, Mode mode, Source source, String retromodVersion) {
 
-        /** A short reason, such as {@code auto: snapshot build 1.4.0-snapshot.2}. */
+        /** A short reason, such as {@code auto: snapshot build 1.4.0-snapshot.3}. */
         public String reason() {
             String where = switch (source) {
                 case SYSTEM_PROPERTY -> "-D" + SYSTEM_PROPERTY;

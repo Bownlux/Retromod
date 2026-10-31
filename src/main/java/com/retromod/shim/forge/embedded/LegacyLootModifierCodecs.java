@@ -8,17 +8,19 @@ import java.lang.reflect.Method;
 import java.util.function.Supplier;
 
 /**
- * Forge 1.20.1 registered a global loot modifier's serializer as a {@code Codec}. NeoForge 1.20.5
- * and later read that registry as {@code MapCodec}s: loading the loot modifier data casts each
- * entry, so one old serializer stops every modifier from loading. A serializer registered to that
- * registry is converted when it is built. A record codec is unwrapped to its map codec; any other
- * codec is treated as a map codec, which is what a loot modifier's codec always described.
+ * Forge 1.20.1 registered a global loot modifier's, biome modifier's, or structure modifier's
+ * serializer as a {@code Codec}. NeoForge 1.20.5 and later read those registries as
+ * {@code MapCodec}s: loading the data casts each entry, so one old serializer stops every modifier
+ * from loading. A serializer registered to one of them is converted when it is built. A record
+ * codec is unwrapped to its map codec; any other codec is treated as a map codec, which is what a
+ * modifier's codec always described.
  *
  * <p>Reflective, because this class is embedded into each mod and compiled without Minecraft.
  */
 public final class LegacyLootModifierCodecs {
 
-    private static final String REGISTRY_SUFFIX = "/ neoforge:global_loot_modifier_serializers]";
+    private static final String[] REGISTRY_SUFFIXES = {"/ neoforge:global_loot_modifier_serializers]",
+            "/ neoforge:biome_modifier_serializers]", "/ neoforge:structure_modifier_serializers]"};
     private static final String MAP_CODEC = "com.mojang.serialization.MapCodec";
 
     private LegacyLootModifierCodecs() {}
@@ -26,8 +28,11 @@ public final class LegacyLootModifierCodecs {
     /** The supplier to register: converting for the loot modifier registry, unchanged otherwise. */
     public static Supplier<?> serializer(Object registryKey, Supplier<?> supplier) {
         // ResourceKey prints as ResourceKey[<registry> / <location>] on every version.
-        if (!String.valueOf(registryKey).endsWith(REGISTRY_SUFFIX)) return supplier;
-        return () -> toMapCodec(supplier.get());
+        String key = String.valueOf(registryKey);
+        for (String suffix : REGISTRY_SUFFIXES) {
+            if (key.endsWith(suffix)) return () -> toMapCodec(supplier.get());
+        }
+        return supplier;
     }
 
     static Object toMapCodec(Object codec) {
@@ -42,7 +47,7 @@ public final class LegacyLootModifierCodecs {
                     "com.mojang.serialization.Codec", false, mapCodec.getClassLoader()));
             return assume.invoke(null, codec);
         } catch (ReflectiveOperationException | LinkageError e) {
-            throw new IllegalStateException("Retromod could not convert the loot modifier serializer " + codec, e);
+            throw new IllegalStateException("Retromod could not convert the modifier serializer " + codec, e);
         }
     }
 }

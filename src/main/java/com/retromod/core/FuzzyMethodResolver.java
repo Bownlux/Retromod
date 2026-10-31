@@ -797,11 +797,21 @@ public class FuzzyMethodResolver {
      * @param name       the field name that wasn't found
      * @param descriptor the JVM field descriptor (type)
      */
+    /** Field types whose values are identities, which no fuzzy match may swap for a neighbor. */
+    private static final Set<String> IDENTITY_FIELD_TYPES = Set.of(
+            "Lnet/minecraft/resources/ResourceKey;", "Lnet/minecraft/core/Registry;",
+            "Lnet/minecraft/core/DefaultedRegistry;");
+
     public FieldInfo resolveField(String owner, String name, String descriptor) {
         if (!indexed) return null;
 
         // Same guard as resolveMethod: never rewrite a field reference that already resolves.
         if (hasField(owner, name, descriptor)) return null;
+
+        // A key or registry names exactly one thing. A similar name on the same class is another
+        // registry or biome, never a rename: Registries.BLOCK_TYPE, gone on 26.3, scored as BLOCK
+        // and turned a block type register into a second block register.
+        if (IDENTITY_FIELD_TYPES.contains(descriptor)) return null;
 
         String cacheKey = owner + "." + name + "." + descriptor;
         FieldInfo cached = fieldResolveCache.get(cacheKey);

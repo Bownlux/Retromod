@@ -41,6 +41,24 @@ class ForgeModTransformerTest {
     }
 
     @Test
+    @DisplayName("#372: an AT's SRG members become the Mojang names a NeoForge 1.21.1 host runs")
+    void remapsAccessTransformerMembersToMojang() {
+        String in = "public net.minecraft.world.entity.ai.village.poi.PoiTypes "
+                + "m_246216_(Lnet/minecraft/core/Holder;Ljava/util/Set;)V # Fossils' villager POIs\n"
+                + "public net.minecraft.world.entity.Mob f_21345_\n"
+                + "public net.minecraft.client.gui.screens.MenuScreens$ScreenConstructor\n"
+                + "public net.minecraft.world.entity.Mob m_99999999_()V\n";
+
+        String out = ForgeModTransformer.remapAccessTransformerToMojang(in,
+                com.retromod.mapping.SrgToMojangMapper.getInstance());
+
+        assertTrue(out.contains("PoiTypes registerBlockStates(Lnet/minecraft/core/Holder;Ljava/util/Set;)V # Fossils"), out);
+        assertTrue(out.contains("Mob goalSelector\n"), out);
+        assertTrue(out.contains("MenuScreens$ScreenConstructor\n"), "a class-only entry is unchanged: " + out);
+        assertTrue(out.contains("m_99999999_()V"), "an unknown id stays as written: " + out);
+    }
+
+    @Test
     @DisplayName("#221: runtime transform sanitizes an author-provided AccessTransformer")
     void transformModSanitizesAuthorAccessTransformer(@TempDir Path tmp) throws Exception {
         Path src = tmp.resolve("mna-at-fixture.jar");

@@ -48,6 +48,9 @@ public class Forge_26_1_to_26_2 implements VersionShim {
             return;
         }
         ForgeEventBusSynthetics.register(transformer);
+        // EventBus 7 split each tick event into Pre and Post records, so old tick listeners and
+        // their phase and side reads go through Retromod's rebuilt tick helpers.
+        LegacyTickEventBridge.register(transformer);
 
         // MC 26.x requires the registry id stamped on Block/Item Properties BEFORE construction,
         // and Forge's DeferredRegister.register(String, Supplier) builds the object with no id

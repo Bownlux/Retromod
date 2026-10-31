@@ -32,8 +32,9 @@ class TextureMigrationChainTest {
     @Test
     @DisplayName("Every migration ends somewhere the game ships, or is carried onward")
     void everyDestinationIsReachable() throws Exception {
-        Set<String> current = textureNames("26.2");
-        Assumptions.assumeTrue(current != null, "26.2 jar present");
+        // The newest version Retromod builds for decides where a pack's files have to end up.
+        Set<String> current = textureNames("26.3");
+        Assumptions.assumeTrue(current != null, "26.3 jar present");
 
         List<VersionedTexturePathMappings.Migration> migrations =
                 VersionedTexturePathMappings.migrations();
@@ -44,7 +45,7 @@ class TextureMigrationChainTest {
         for (var migration : migrations) {
             String destination = migration.destination();
             assertTrue(current.contains(destination) || sources.contains(destination),
-                    destination + " is neither shipped by 26.2 nor moved on by another row, so "
+                    destination + " is neither shipped by 26.3 nor moved on by another row, so "
                             + migration.source() + " would land where nothing looks for it");
         }
     }

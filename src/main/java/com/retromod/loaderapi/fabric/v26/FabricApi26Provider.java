@@ -56,6 +56,7 @@ public final class FabricApi26Provider implements LoaderApiProvider {
         NetworkingRows.register(registration);
         RenderRows.register(registration);
         ScreenRows.register(registration);
+        ContentRows.register(registration);
         FabricApi26Rows.register(FabricApi26Rows.bundled(), registration, rowHost);
     }
 }

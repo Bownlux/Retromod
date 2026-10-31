@@ -8,7 +8,10 @@ import com.retromod.shim.forge.embedded.LegacyDataPackSource;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,8 +22,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 /**
@@ -85,6 +91,119 @@ public final class LegacyEnchantmentSupport {
                 throw new IllegalStateException("Retromod could not stand in for the enchantment " + key, e);
             }
         });
+    }
+
+    // ---- Architectury registration ---------------------------------------------------------
+
+    // Architectury's registers for minecraft:enchantment. Their register() asks for a registrar,
+    // which a data-driven registry no longer has, so it is skipped for them.
+    private static final Set<Object> ARCHITECTURY_ENCHANTMENT_REGISTERS =
+            java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new WeakHashMap<>()));
+
+    /** Architectury {@code DeferredRegister.register(name, supplier)}. */
+    public static Object architecturyRegister(Object register, String name, Supplier<?> supplier) {
+        return architecturyEntry(register, invokeRegister(register, new Class<?>[] {String.class, Supplier.class},
+                name, supplier), supplier);
+    }
+
+    /** Architectury {@code DeferredRegister.register(id, supplier)}. */
+    public static Object architecturyRegisterId(Object register, Object id, Supplier<?> supplier) {
+        return architecturyEntry(register, invokeRegister(register, null, id, supplier), supplier);
+    }
+
+    /** Architectury {@code DeferredRegister.register()}, which an enchantment register skips. */
+    public static void architecturyRegisterAll(Object register) {
+        if (ARCHITECTURY_ENCHANTMENT_REGISTERS.contains(register)) return;
+        invokeRegister(register, new Class<?>[0]);
+    }
+
+    // Architectury's own entry only records the supplier, so it is safe to create; for an
+    // enchantment, the entry is built now, recorded for the pack, and answered by a stand-in.
+    private static Object architecturyEntry(Object register, Object entry, Supplier<?> supplier) {
+        try {
+            if (!"minecraft:enchantment".equals(String.valueOf(publicCall(entry, "getRegistryId")))) return entry;
+            ARCHITECTURY_ENCHANTMENT_REGISTERS.add(register);
+            Object enchantment = supplier.get();
+            record(String.valueOf(publicCall(entry, "getId")), enchantment);
+            Class<?> type = Class.forName("dev.architectury.registry.registries.RegistrySupplier", false,
+                    entry.getClass().getClassLoader());
+            // A lambda, not a nested class: this class is embedded into each mod on its own.
+            InvocationHandler handler = (proxy, method, args) -> answer(entry, enchantment, proxy, method, args);
+            return Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] {type}, handler);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Retromod could not register an old enchantment through Architectury", e);
+        }
+    }
+
+    /** A no-argument call through the entry's public interfaces, since its own class is package-private. */
+    private static Object publicCall(Object target, String name) throws ReflectiveOperationException {
+        for (Class<?> type : target.getClass().getInterfaces()) {
+            try {
+                return type.getMethod(name).invoke(target);
+            } catch (NoSuchMethodException notHere) {
+                // the next interface may declare it
+            }
+        }
+        throw new NoSuchMethodException(target.getClass().getName() + "." + name);
+    }
+
+    /** {@code register.register(args)} on Architectury's own method, the overload chosen by {@code types}. */
+    private static Object invokeRegister(Object register, Class<?>[] types, Object... args) {
+        try {
+            Method method = null;
+            for (Method candidate : register.getClass().getMethods()) {
+                if (!candidate.getName().equals("register") || candidate.getParameterCount() != args.length) continue;
+                Class<?>[] parameters = candidate.getParameterTypes();
+                // The id overload takes the host's identifier class, whose name changed in 26.1.
+                boolean fits = types == null ? parameters[0] != String.class : java.util.Arrays.equals(parameters, types);
+                if (fits) method = candidate;
+            }
+            if (method == null) throw new NoSuchMethodException("DeferredRegister.register with " + args.length + " arguments");
+            return method.invoke(register, args);
+        } catch (InvocationTargetException e) {
+            if (e.getCause() instanceof RuntimeException runtime) throw runtime;
+            throw new IllegalStateException(e.getCause());
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Retromod could not call Architectury's DeferredRegister.register", e);
+        }
+    }
+
+    /** Answers for an Architectury entry whose enchantment lives in the legacy enchantment pack. */
+    @SuppressWarnings("unchecked")
+    private static Object answer(Object entry, Object enchantment, Object proxy, Method method, Object[] args)
+            throws Throwable {
+        switch (method.getName()) {
+            case "get", "value", "getOrNull" -> {
+                return enchantment;
+            }
+            case "isPresent", "isBound" -> {
+                return true;
+            }
+            case "listen" -> {
+                ((Consumer<Object>) args[0]).accept(enchantment);
+                return null;
+            }
+            case "getId", "getRegistryId", "getKey", "getRegistryKey" -> {
+                return method.invoke(entry, args);
+            }
+            case "unwrapKey" -> {
+                return Optional.of(publicCall(entry, "getKey"));
+            }
+            case "hashCode" -> {
+                return System.identityHashCode(proxy);
+            }
+            case "equals" -> {
+                return proxy == args[0];
+            }
+            case "toString" -> {
+                return "RegistrySupplier[" + publicCall(entry, "getId") + " (Retromod legacy enchantment)]";
+            }
+            default -> {
+                // Default methods such as ifPresent and toOptional build on the answers above.
+                if (method.isDefault()) return InvocationHandler.invokeDefault(proxy, method, args);
+                return method.invoke(entry, args);
+            }
+        }
     }
 
     // ---- lookups ---------------------------------------------------------------------------

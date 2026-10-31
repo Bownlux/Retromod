@@ -12,8 +12,9 @@ import java.lang.reflect.Method;
  * {@link com.retromod.shim.forge.LegacyRarityBridge}, which declares each constant call it finds
  * under a name ending in {@code ":" + name}. This finds that constant.
  *
- * <p>A rarity built from a name only known at run time was never declared. It gets the vanilla
- * rarity of the same color, or {@code COMMON}, so the item still registers with a plain name color.
+ * <p>A rarity built from a name only known at run time was never declared, and Forge 26.x cannot add
+ * one at all. Such a call gets the vanilla rarity of the same color, or {@code COMMON}, so the item
+ * still registers with a plain name color.
  *
  * <p>Reflective, because this class is embedded into each mod and compiled without Minecraft.
  */
@@ -33,7 +34,7 @@ public final class LegacyRarities {
             }
             Object sameColor = sameColor(rarity, values, color);
             System.getLogger("Retromod").log(System.Logger.Level.WARNING,
-                    "Rarity " + name + " was not declared before the game started; using " + sameColor);
+                    "Rarity " + name + " cannot be added on this loader; using " + sameColor + ", the rarity of its color");
             return sameColor;
         } catch (ReflectiveOperationException | LinkageError e) {
             throw new IllegalStateException("Retromod could not find the rarity " + name, e);

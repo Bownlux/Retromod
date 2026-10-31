@@ -122,6 +122,14 @@ class LegacyRarityBridgeTest {
         assertFalse(LegacyRarityBridge.hostUsesEnumExtensions(vanilla), "nothing can extend a plain enum");
     }
 
+    @Test
+    @DisplayName("Forge 26.x, a plain Rarity without create, gets the same-color fallback")
+    void forgeWithoutCreateFallsBack() {
+        assertTrue(LegacyRarityBridge.hostDroppedCreate(rarityNode(false, false)));
+        assertFalse(LegacyRarityBridge.hostDroppedCreate(rarityNode(true, true)), "Forge 1.20.1 still has create");
+        assertFalse(LegacyRarityBridge.hostDroppedCreate(rarityNode(true, false)), "NeoForge declares extensions instead");
+    }
+
     // --- fixtures -----------------------------------------------------------------------------
 
     /** {@code Constants.<clinit>}: two constant rarities, as Scorched Guns declares them. */

@@ -5,7 +5,7 @@ nav_order: 11.5
 
 # Technical Details
 
-Retromod uses ASM 9.10.1 and compiles with Java 25 while targeting Java 17 bytecode. Host Minecraft still determines the required JVM.
+Retromod uses ASM 9.11.1 and compiles with Java 25 while targeting Java 17 bytecode. Host Minecraft still determines the required JVM.
 
 ## Bytecode Rewrites
 

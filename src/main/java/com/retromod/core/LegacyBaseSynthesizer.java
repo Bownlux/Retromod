@@ -67,8 +67,14 @@ public final class LegacyBaseSynthesizer {
      * result, cast back to {@code adaptedDesc}, in place of the forwarded argument. Only a legacy
      * constructor that has arguments the modern one drops is adapted.
      */
-    public record ArgumentAdapter(String owner, String method, String key, String adaptedDesc, String[] interfaces) {
+    public record ArgumentAdapter(String owner, String method, String key, String adaptedDesc, String[] interfaces,
+            String constructed) {
         static final String DESC = "(Ljava/lang/String;[Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;";
+        static final String CONSTRUCTED_DESC = "(Ljava/lang/Object;)V";
+
+        public ArgumentAdapter(String owner, String method, String key, String adaptedDesc, String[] interfaces) {
+            this(owner, method, key, adaptedDesc, interfaces, null);
+        }
 
         public ArgumentAdapter(String owner, String method, String key, String adaptedDesc) {
             this(owner, method, key, adaptedDesc, new String[0]);
@@ -154,6 +160,12 @@ public final class LegacyBaseSynthesizer {
             }
         }
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, modernBase, "<init>", modernCtorDesc, false);
+        // The adapter can finish the object once it exists, as {@code owner.constructed(this)}.
+        if (adapt && adapter.constructed() != null) {
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, adapter.owner(), adapter.constructed(),
+                    ArgumentAdapter.CONSTRUCTED_DESC, false);
+        }
         mv.visitInsn(Opcodes.RETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

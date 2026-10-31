@@ -58,6 +58,17 @@ public final class ForgeNeoForgeApiBridge {
             {"common/world/ModifiableStructureInfo$StructureInfo", "common/world/ModifiableStructureInfo$StructureInfo"},
             {"common/world/ModifiableStructureInfo$StructureInfo$Builder", "common/world/ModifiableStructureInfo$StructureInfo$Builder"},
             {"common/world/StructureModifier", "common/world/StructureModifier"},
+            // A mod's own biome modifier: the same interface, phases, and builders. Its serializer
+            // becomes a MapCodec as it registers (LegacyLootModifierCodecs).
+            {"common/world/BiomeModifier", "common/world/BiomeModifier"},
+            {"common/world/BiomeModifier$Phase", "common/world/BiomeModifier$Phase"},
+            {"common/world/ModifiableBiomeInfo", "common/world/ModifiableBiomeInfo"},
+            {"common/world/ModifiableBiomeInfo$BiomeInfo", "common/world/ModifiableBiomeInfo$BiomeInfo"},
+            {"common/world/ModifiableBiomeInfo$BiomeInfo$Builder", "common/world/ModifiableBiomeInfo$BiomeInfo$Builder"},
+            {"common/world/BiomeGenerationSettingsBuilder", "common/world/BiomeGenerationSettingsBuilder"},
+            {"common/world/MobSpawnSettingsBuilder", "common/world/MobSpawnSettingsBuilder"},
+            {"common/world/ClimateSettingsBuilder", "common/world/ClimateSettingsBuilder"},
+            {"common/world/BiomeSpecialEffectsBuilder", "common/world/BiomeSpecialEffectsBuilder"},
             {"common/world/ForgeBiomeModifiers", "common/world/BiomeModifiers"},
             {"common/world/ForgeBiomeModifiers$AddFeaturesBiomeModifier", "common/world/BiomeModifiers$AddFeaturesBiomeModifier"},
             {"common/world/ForgeBiomeModifiers$RemoveFeaturesBiomeModifier", "common/world/BiomeModifiers$RemoveFeaturesBiomeModifier"},
@@ -78,6 +89,8 @@ public final class ForgeNeoForgeApiBridge {
             {"common/ToolAction", "common/ItemAbility"},
             {"common/IForgeShearable", "common/IShearable"},
             {"common/util/Lazy", "common/util/Lazy"},
+            // getCurrentServer, the same static method.
+            {"server/ServerLifecycleHooks", "server/ServerLifecycleHooks"},
             {"common/util/FakePlayer", "common/util/FakePlayer"},
             {"common/util/FakePlayerFactory", "common/util/FakePlayerFactory"},
             // Global loot modifiers. NeoForge reads their serializers as MapCodecs, which
@@ -176,7 +189,43 @@ public final class ForgeNeoForgeApiBridge {
         LegacyForgeHooksBridge.register(transformer, ForgeNeoForgeApiBridge::hostHasClass);
         LegacyFluidSupplierBridge.register(transformer);
         LegacyForgeModAttributes.register(transformer);
+        registerStrictIngredient(transformer, ForgeNeoForgeApiBridge::hostHasClass);
         LOGGER.info("Bridged {} renamed Forge API classes and the Forge capability system", moved);
+    }
+
+    static final String STRICT_INGREDIENT = "net/minecraftforge/common/crafting/StrictNBTIngredient";
+    static final String STRICT_HELPER = "com/retromod/generated/LegacyStrictIngredient";
+
+    /**
+     * Forge's {@code StrictNBTIngredient.of(stack)}, which brewing recipes use for a potion input,
+     * is NeoForge's strict {@code DataComponentIngredient}. Callers only ever pass it on as an
+     * {@code Ingredient}, so the type becomes {@code Ingredient}.
+     */
+    static void registerStrictIngredient(RetromodTransformer transformer,
+            java.util.function.Predicate<String> hostHasClass) {
+        String components = NEO + "common/crafting/DataComponentIngredient";
+        if (!hostHasClass.test(components)) return;
+        String stack = "Lnet/minecraft/world/item/ItemStack;";
+        String ingredient = "net/minecraft/world/item/crafting/Ingredient";
+        org.objectweb.asm.ClassWriter cw = new org.objectweb.asm.ClassWriter(org.objectweb.asm.ClassWriter.COMPUTE_MAXS);
+        cw.visit(org.objectweb.asm.Opcodes.V17, org.objectweb.asm.Opcodes.ACC_PUBLIC
+                | org.objectweb.asm.Opcodes.ACC_FINAL | org.objectweb.asm.Opcodes.ACC_SUPER,
+                STRICT_HELPER, null, "java/lang/Object", null);
+        org.objectweb.asm.MethodVisitor of = cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC
+                | org.objectweb.asm.Opcodes.ACC_STATIC, "of", "(" + stack + ")L" + ingredient + ";", null, null);
+        of.visitCode();
+        of.visitInsn(org.objectweb.asm.Opcodes.ICONST_1);
+        of.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 0);
+        of.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKESTATIC, components, "of",
+                "(Z" + stack + ")L" + ingredient + ";", false);
+        of.visitInsn(org.objectweb.asm.Opcodes.ARETURN);
+        of.visitMaxs(0, 0);
+        of.visitEnd();
+        cw.visitEnd();
+        transformer.registerSyntheticClass(STRICT_HELPER, cw.toByteArray());
+        transformer.registerMethodRedirect(STRICT_INGREDIENT, "of", "(" + stack + ")L" + STRICT_INGREDIENT + ";",
+                STRICT_HELPER, "of", "(" + stack + ")L" + ingredient + ";");
+        transformer.registerClassRedirect(STRICT_INGREDIENT, ingredient);
     }
 
     /**
@@ -282,15 +331,22 @@ public final class ForgeNeoForgeApiBridge {
             transformer.registerClassRedirect(move[0], move[1]);
             moved++;
         }
-        // 1.20.5 renamed the attribute operations; the enum and its order are unchanged.
-        String operation = "net/minecraft/world/entity/ai/attributes/AttributeModifier$Operation";
-        if (hostHasField(operation, "ADD_VALUE")) {
-            String desc = "L" + operation + ";";
-            transformer.registerFieldRedirect(operation, "ADDITION", desc, operation, "ADD_VALUE", desc);
-            transformer.registerFieldRedirect(operation, "MULTIPLY_BASE", desc, operation, "ADD_MULTIPLIED_BASE", desc);
-            transformer.registerFieldRedirect(operation, "MULTIPLY_TOTAL", desc, operation, "ADD_MULTIPLIED_TOTAL", desc);
-        }
+        registerAttributeOperationRenames(transformer);
         return moved;
+    }
+
+    /** 1.20.5 renamed the attribute operations, on Forge and NeoForge alike; the enum and its order are unchanged. */
+    public static void registerAttributeOperationRenames(RetromodTransformer transformer) {
+        String operation = "net/minecraft/world/entity/ai/attributes/AttributeModifier$Operation";
+        boolean renamed = com.retromod.core.ClassResourceInspector.read(operation) != null
+                ? hostHasField(operation, "ADD_VALUE")
+                : com.retromod.core.RetromodVersion.compareMcVersions(
+                        com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "1.20.5") >= 0;
+        if (!renamed) return;
+        String desc = "L" + operation + ";";
+        transformer.registerFieldRedirect(operation, "ADDITION", desc, operation, "ADD_VALUE", desc);
+        transformer.registerFieldRedirect(operation, "MULTIPLY_BASE", desc, operation, "ADD_MULTIPLIED_BASE", desc);
+        transformer.registerFieldRedirect(operation, "MULTIPLY_TOTAL", desc, operation, "ADD_MULTIPLIED_TOTAL", desc);
     }
 
     private static boolean hostHasField(String owner, String field) {

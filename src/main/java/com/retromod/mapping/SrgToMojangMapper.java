@@ -16,58 +16,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Loads Forge SRG → Mojang member-name mappings from a bundled TSV resource
- * and applies them to a {@link RetromodTransformer}.
- *
- * <h3>Why this exists</h3>
- * <p>Forge mods built before MC ~1.20.5 (and any build still running
- * ForgeGradle's {@code reobfJar} task) reference MC members by Forge's SRG
- * names: fields like {@code Blocks.f_50069_} (= STONE) and methods like
- * {@code Component.m_237113_(String)} (= literal). Forge's runtime
- * classloader used to remap these to the actual MC names at class load
- * time. <strong>Forge 64.x for MC 26.1+ dropped the SRG remap layer</strong>
- * because MC 26.1 has no obfuscation at all (Mojang shipped official
- * names directly). Reobf'd mods then break with {@code NoSuchFieldError} /
- * {@code NoSuchMethodError} on every SRG name.
- *
- * <p>This mapper takes over that responsibility: it loads the bundled
- * SRG → Mojang dictionary and registers the mappings on Retromod's
- * transformer, which then applies them via the same {@code ClassRemapper}
- * pipeline that handles intermediary→Mojang.
- *
- * <h3>Data file</h3>
- * <p>Loaded from {@code /retromod/srg-to-mojang.tsv}. Tab-separated,
- * three columns:
- *
- * <pre>
- *   KIND    SRG_NAME    MOJANG_NAME
- *   FIELD   f_50069_    STONE
- *   METHOD  m_237113_   literal
- * </pre>
- *
- * <p>Lines starting with {@code #} are comments. Blank lines are ignored.
- * KIND is one of {@code FIELD} or {@code METHOD}.
- *
- * <p>The bundled data is a <strong>starter set</strong>: the highest-value
- * symbols (common Block/Item statics, Component factory methods,
- * ResourceLocation helpers) that the test mod and common Forge mods like
- * Jade and JEI rely on. The full SRG name space is in the tens of
- * thousands; complete coverage requires generating from Forge's official
- * mapping artifacts. See the data file's header for expansion notes.
- *
- * <h3>Loader scope</h3>
- * <p>SRG remap is primarily relevant on Forge runtimes for old reobf'd
- * Forge mods. NeoForge dropped SRG natively but cross-loader scenarios
- * (running a Forge SRG-baked mod on NeoForge) benefit too. Fabric never
- * used SRG. The mapper is loader-agnostic at the transformer level: it
- * activates whenever input bytecode has SRG-pattern names, regardless of
- * which loader registered it.
- */
+/** Loads the bundled Forge SRG to Mojang member names and registers them on the transformer. */
 public final class SrgToMojangMapper {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-SrgMapper");
 
+    // Forge mods built with reobfJar name Minecraft members by SRG id, such as f_50069_ for STONE.
+    // Hosts that run Mojang names (Forge 1.20.6 and newer, NeoForge 1.20.2 and newer, and 26.x)
+    // need the ids translated. Rows are FIELD or METHOD, the SRG id, then the Mojang name.
     private static final String RESOURCE_PATH = "/retromod/srg-to-mojang.tsv";
 
     /** Singleton, lazily loaded on first {@link #getInstance()} call. */

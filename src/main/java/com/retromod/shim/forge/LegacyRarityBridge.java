@@ -5,6 +5,8 @@
 package com.retromod.shim.forge;
 
 import com.retromod.core.ClassResourceInspector;
+import com.retromod.core.RetromodVersion;
+import com.retromod.util.McReflect;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.SyntheticEmbedder;
 import com.retromod.shim.forge.embedded.LegacyRarities;
@@ -73,10 +75,24 @@ public final class LegacyRarityBridge {
     private LegacyRarityBridge() {}
 
     public static void register(RetromodTransformer transformer) {
-        if (!hostUsesEnumExtensions(ClassResourceInspector.read(RARITY))) return;
+        ClassNode rarity = ClassResourceInspector.read(RARITY);
+        if (!hostUsesEnumExtensions(rarity) && !hostDroppedCreate(rarity)) return;
         SyntheticEmbedder.registerClassResource(transformer, HELPER, LegacyRarities.class);
         transformer.registerSyntheticClass(CALLS, generateCalls());
         transformer.registerMethodRedirect(RARITY, "create", CREATE_DESC, CALLS, "create", CREATE_DESC);
+    }
+
+    /**
+     * Forge 26.x: a plain enum with no {@code create} and no way to add a value, so every call gets
+     * the vanilla rarity of the same color. Offline, a Forge target from 26.1.
+     */
+    static boolean hostDroppedCreate(ClassNode rarity) {
+        if (McReflect.isNeoForge()) return false;
+        if (rarity == null) {
+            return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.1") >= 0;
+        }
+        boolean extensible = rarity.interfaces != null && rarity.interfaces.contains(EXTENSIBLE);
+        return !extensible && rarity.methods.stream().noneMatch(m -> m.name.equals("create"));
     }
 
     /** Whether this host adds rarities by enum extension, so a jar's constant rarities need declaring. */

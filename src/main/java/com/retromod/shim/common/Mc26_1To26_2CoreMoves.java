@@ -452,6 +452,21 @@ public final class Mc26_1To26_2CoreMoves {
         t.registerClassRedirect("net/minecraft/world/effect/InstantenousMobEffect",
                 "net/minecraft/world/effect/InstantaneousMobEffect");
 
+        // The HUD enums moved to the new Hud class, and dripstone thickness became the shared
+        // speleothem property. Every member carried over unchanged.
+        t.registerClassRedirect("net/minecraft/client/gui/Gui$HeartType", "net/minecraft/client/gui/Hud$HeartType");
+        t.registerClassRedirect("net/minecraft/client/gui/Gui$ContextualInfo",
+                "net/minecraft/client/gui/Hud$ContextualInfo");
+        t.registerClassRedirect("net/minecraft/world/level/block/state/properties/DripstoneThickness",
+                "net/minecraft/world/level/block/state/properties/SpeleothemThickness");
+        t.registerFieldRedirect("net/minecraft/world/level/block/state/properties/BlockStateProperties",
+                "DRIPSTONE_THICKNESS", "Lnet/minecraft/world/level/block/state/properties/EnumProperty;",
+                "net/minecraft/world/level/block/state/properties/BlockStateProperties", "SPELEOTHEM_THICKNESS",
+                "Lnet/minecraft/world/level/block/state/properties/EnumProperty;");
+        // The concrete powder tag became plural, with the same blocks in it.
+        t.registerFieldRedirect("net/minecraft/tags/BlockTags", "CONCRETE_POWDER", "Lnet/minecraft/tags/TagKey;",
+                "net/minecraft/tags/BlockTags", "CONCRETE_POWDERS", "Lnet/minecraft/tags/TagKey;");
+
         t.registerClassRedirect("net/minecraft/world/entity/animal/Bucketable",
                 "net/minecraft/world/entity/Bucketable");
         t.registerClassRedirect("net/minecraft/world/entity/monster/MagmaCube",
@@ -503,9 +518,9 @@ public final class Mc26_1To26_2CoreMoves {
         registerDyedFields(t, BLOCKS, BLOCK, "SHULKER_BOX", "DYED_SHULKER_BOX");
         registerDyedFields(t, BLOCKS, BLOCK, "CANDLE", "DYED_CANDLE");
         registerDyedFields(t, BLOCKS, BLOCK, "CANDLE_CAKE", "DYED_CANDLE_CAKE");
-        // Items (suffix -> collection field on Items). Items adds DYE and DYED_BUNDLE (no block form) and
-        // omits CANDLE_CAKE / WALL_BANNER (block-only). HARNESS is new in 26.2 with no pre-26.2 per-color
-        // constant, so it needs no accessor.
+        // Items (suffix -> collection field on Items). Items adds DYE, DYED_BUNDLE and HARNESS (no block
+        // form) and omits CANDLE_CAKE / WALL_BANNER (block-only). The harnesses came in 1.21.6 as
+        // WHITE_HARNESS to BLACK_HARNESS, which 26.2 removed with the other per-color constants.
         registerDyedFields(t, ITEMS, ITEM, "WOOL", "WOOL");
         registerDyedFields(t, ITEMS, ITEM, "CARPET", "CARPET");
         registerDyedFields(t, ITEMS, ITEM, "CONCRETE", "CONCRETE");
@@ -520,6 +535,9 @@ public final class Mc26_1To26_2CoreMoves {
         registerDyedFields(t, ITEMS, ITEM, "CANDLE", "DYED_CANDLE");
         registerDyedFields(t, ITEMS, ITEM, "DYE", "DYE");
         registerDyedFields(t, ITEMS, ITEM, "BUNDLE", "DYED_BUNDLE");
+        registerDyedFields(t, ITEMS, ITEM, "HARNESS", "HARNESS");
+        // The per-state copper constants became WeatheringCopperCollection fields the same way.
+        LegacyCopperConstantBridge.register(t);
 
         // Minecraft.setScreen(Screen) was removed in 26.2 (setScreenAndShow, same descriptor, is the
         // surviving variant; BOTH exist on 26.1, verified against 26.1-snapshot-10 vs the 26.2 jar,
@@ -616,9 +634,10 @@ public final class Mc26_1To26_2CoreMoves {
         GuiToHudHopSynthetic.register(t);
         LegacyToastManagerSynthetic.register(t);
 
-        // 1.21.11-era client classes that moved sub-packages at 26.2 (verified: old path present on
-        // 26.1-snapshot-10, only the new path on 26.2). Surfaced by nekomasfixed (#157), whose
-        // 1.21.11 mixins target them. Inners registered explicitly (the remapper is exact-keyed).
+        // 1.21.11-era client classes in new sub-packages. Released 26.1 already has the new paths,
+        // so mojang-class-moves-26.1.tsv carries them for 26.1.x hosts too. Surfaced by nekomasfixed
+        // (#157), whose 1.21.11 mixins target them. Inners registered explicitly (the remapper is
+        // exact-keyed).
         t.registerClassRedirect("net/minecraft/client/resources/model/AtlasManager",
                 "net/minecraft/client/resources/model/sprite/AtlasManager");
         for (String inner : new String[]{"AtlasConfig", "AtlasEntry", "PendingStitch", "PendingStitchResults"}) {

@@ -54,6 +54,32 @@ class ForgeNeoForgeApiBridgeTest {
     }
 
     @Test
+    void strictNbtIngredientBecomesAStrictComponentIngredient() {
+        // #377: Saint's Dragons builds its brewing inputs with StrictNBTIngredient.of(potion).
+        ForgeNeoForgeApiBridge.registerStrictIngredient(transformer, name -> true);
+        String stack = "Lnet/minecraft/world/item/ItemStack;";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "mod/Brewing", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "input", "(" + stack + ")Ljava/lang/Object;", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKESTATIC, ForgeNeoForgeApiBridge.STRICT_INGREDIENT, "of",
+                "(" + stack + ")L" + ForgeNeoForgeApiBridge.STRICT_INGREDIENT + ";", false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        ClassNode node = new ClassNode();
+        new ClassReader(transformer.transformClass(cw.toByteArray(), "mod/Brewing.class")).accept(node, 0);
+        MethodInsnNode call = (MethodInsnNode) java.util.Arrays.stream(node.methods.get(0).instructions.toArray())
+                .filter(insn -> insn instanceof MethodInsnNode).findFirst().orElseThrow();
+        assertEquals(ForgeNeoForgeApiBridge.STRICT_HELPER + ".of(" + stack + ")Lnet/minecraft/world/item/crafting/Ingredient;",
+                call.owner + "." + call.name + call.desc);
+        assertNotNull(transformer.getSyntheticClasses().get(ForgeNeoForgeApiBridge.STRICT_HELPER));
+    }
+
+    @Test
     void callsOnForgesLazyInterfaceBecomeCallsOnNeoForgesLazyClass() {
         String forgeLazy = "net/minecraftforge/common/util/Lazy";
         String neoLazy = "net/neoforged/neoforge/common/util/Lazy";

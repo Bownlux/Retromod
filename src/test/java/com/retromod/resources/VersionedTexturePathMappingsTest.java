@@ -24,12 +24,12 @@ class VersionedTexturePathMappingsTest {
     @Test
     void catalogCoversEveryVerifiedPostFlatteningBoundary() {
         // Grown by the derived pass over the vanilla jars; a drop means the table lost rows.
-        assertTrue(VersionedTexturePathMappings.migrations().size() >= 219,
+        assertTrue(VersionedTexturePathMappings.migrations().size() >= 236,
             "saw " + VersionedTexturePathMappings.migrations().size() + " migrations");
         Set<Integer> boundaries = VersionedTexturePathMappings.migrations().stream()
             .map(migration -> migration.requiredFormat().major())
             .collect(Collectors.toSet());
-        assertEquals(Set.of(4, 5, 7, 13, 15, 22, 32, 34, 42, 46, 55, 69, 75, 84, 88),
+        assertEquals(Set.of(4, 5, 7, 13, 15, 22, 32, 34, 42, 46, 55, 69, 75, 84, 88, 97),
             boundaries);
     }
 

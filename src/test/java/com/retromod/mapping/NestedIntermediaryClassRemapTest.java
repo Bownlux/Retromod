@@ -4,8 +4,14 @@
  */
 package com.retromod.mapping;
 
+import com.retromod.core.RetromodTransformer;
+import com.retromod.shim.common.Mc26_1To26_2CoreMoves;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -41,16 +47,37 @@ class NestedIntermediaryClassRemapTest {
     }
 
     @Test
-    @DisplayName("MinMaxBounds tsv skew fixed: criterion -> predicates package move (26.x)")
+    @DisplayName("MinMaxBounds maps to its 26.1 package and follows the 26.2 move to predicates")
     void minMaxBoundsPackageMove() {
-        // 26.x moved MinMaxBounds from advancements/criterion to advancements/predicates; the tsv
-        // had the stale criterion path, so a mod referencing it (jade's version predicate) died
-        // NoClassDefFoundError. class_2096$class_2100 is MinMaxBounds$Ints.
-        assertEquals("net/minecraft/advancements/predicates/MinMaxBounds",
-                m.mapClass("net/minecraft/class_2096"), "MinMaxBounds moved to the predicates package");
-        assertEquals("net/minecraft/advancements/predicates/MinMaxBounds$Ints",
-                m.remapString("net/minecraft/class_2096$class_2100"),
-                "the nested $Ints resolves under the predicates package too");
+        // 26.1 keeps MinMaxBounds in advancements/criterion and 26.2 moved it to advancements/predicates.
+        // The table holds the 26.1 name and the 26.2 shim carries it on, because a 26.2 name in the
+        // table left every 26.1.x host without the class. class_2096$class_2100 is MinMaxBounds$Ints.
+        assertEquals("net/minecraft/advancements/criterion/MinMaxBounds", m.mapClass("net/minecraft/class_2096"));
+        assertEquals("net/minecraft/advancements/criterion/MinMaxBounds$Ints",
+                m.remapString("net/minecraft/class_2096$class_2100"), "the nested $Ints stays beside it");
+
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        try {
+            IntermediaryToMojangMapper.applyTo(transformer);
+            Mc26_1To26_2CoreMoves.register(transformer);
+            assertEquals("Lnet/minecraft/advancements/predicates/MinMaxBounds$Ints;",
+                    fieldDescriptorAfterTransform(transformer, "Lnet/minecraft/class_2096$class_2100;"),
+                    "on 26.2 and newer the shim's move finishes the job, as jade's version predicate needs");
+        } finally {
+            transformer.clearRedirectsForTesting();
+        }
+    }
+
+    /** Transforms a class with one field of the given type, and returns the field's new descriptor. */
+    private static String fieldDescriptorAfterTransform(RetromodTransformer transformer, String descriptor) {
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/HoldsAField", null, "java/lang/Object", null);
+        writer.visitField(Opcodes.ACC_PUBLIC, "bounds", descriptor, null, null).visitEnd();
+        writer.visitEnd();
+        ClassNode output = new ClassNode();
+        new ClassReader(transformer.transformClass(writer.toByteArray(), "test/HoldsAField.class")).accept(output, 0);
+        return output.fields.get(0).desc;
     }
 
     @Test

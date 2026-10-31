@@ -483,6 +483,25 @@ class ModDataMigratorTest {
     }
 
     @Test
+    void oldBlockStatesInModDataUseTheIdKeysOn263() {
+        // ProjectE's world transmutations: 26.3's BlockState codec reads only "id" and "properties".
+        String in = "{\"transmutations\":[{\"origin\":\"minecraft:ice\",\"result\":{\"Name\":\"minecraft:water\","
+                + "\"Properties\":{\"level\":\"0\"}}},{\"origin\":{\"Name\":\"minecraft:lava\"},\"result\":\"minecraft:obsidian\"}]}";
+        String out = mig("data/projecte/pe_world_transmutations/defaults.json", in, "26.3");
+        assertEquals("{\"transmutations\":[{\"origin\":\"minecraft:ice\",\"result\":{\"id\":\"minecraft:water\","
+                + "\"properties\":{\"level\":\"0\"}}},{\"origin\":\"minecraft:lava\",\"result\":\"minecraft:obsidian\"}]}", out);
+        assertEquals(in, mig("data/projecte/pe_world_transmutations/defaults.json", in, "26.2"),
+                "26.2 still reads Name and Properties");
+    }
+
+    @Test
+    void nameKeysThatAreNotStatesStayOn263() {
+        String display = "{\"display\":{\"Name\":\"{\\\"text\\\":\\\"Hi\\\"}\"},\"owner\":{\"Name\":\"Steve\"},"
+                + "\"nested\":{\"Name\":\"m:x\",\"Properties\":{\"a\":{\"b\":1}}}}";
+        assertEquals(display, mig("data/m/custom/thing.json", display, "26.3"));
+    }
+
+    @Test
     void customIngredientsAreLeftAlone() {
         String in = "{\"type\":\"minecraft:smelting\",\"ingredient\":{\"type\":\"neoforge:components\",\"items\":\"minecraft:stick\"},"
                 + "\"result\":{\"id\":\"m:x\"}}";

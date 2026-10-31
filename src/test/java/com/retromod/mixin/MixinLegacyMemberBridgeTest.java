@@ -489,6 +489,47 @@ class MixinLegacyMemberBridgeTest {
     }
 
     @Test
+    @DisplayName("#372: a camera mixin's double move shadow narrows to the float move 1.21 kept")
+    void bridgesCameraMoveShadow() {
+        savedVersion = RetromodVersion.TARGET_MC_VERSION;
+        RetromodVersion.TARGET_MC_VERSION = "1.21.1";
+        ClassNode classNode = read(cameraMixin());
+        assertTrue(MixinLegacyMemberBridge.apply(classNode));
+
+        MethodNode bridge = method(classNode, "move", "(DDD)V");
+        assertFalse(hasAnnotation(bridge, SHADOW));
+        assertTrue(hasAnnotation(bridge, UNIQUE));
+        assertTrue(calls(bridge, "test/CameraMixin", "move", "(FFF)V"));
+        assertTrue(hasAnnotation(method(classNode, "move", "(FFF)V"), SHADOW), "the float move is shadowed");
+    }
+
+    @Test
+    @DisplayName("#372: a 1.20.6 host keeps the double camera move")
+    void cameraMoveStaysBefore121() {
+        savedVersion = RetromodVersion.TARGET_MC_VERSION;
+        RetromodVersion.TARGET_MC_VERSION = "1.20.6";
+        ClassNode classNode = read(cameraMixin());
+        assertFalse(MixinLegacyMemberBridge.apply(classNode));
+        assertTrue(hasAnnotation(method(classNode, "move", "(DDD)V"), SHADOW));
+    }
+
+    /** Fossils and Archaeology 9.3.4.0's {@code CameraMixin}: a shadow of the 1.20.1 {@code move(double, double, double)}. */
+    private static byte[] cameraMixin() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, "test/CameraMixin", null, "java/lang/Object", null);
+        var mixin = cw.visitAnnotation(MIXIN, false);
+        var values = mixin.visitArray("value");
+        values.visit(null, Type.getObjectType("net/minecraft/client/Camera"));
+        values.visitEnd();
+        mixin.visitEnd();
+        MethodVisitor shadow = cw.visitMethod(Opcodes.ACC_PROTECTED | Opcodes.ACC_ABSTRACT, "move", "(DDD)V", null, null);
+        shadow.visitAnnotation(SHADOW, true).visitEnd();
+        shadow.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    @Test
     @DisplayName("Legacy bridges are gated off before the modern registry and Pose changes")
     void oldHostKeepsOriginalMixins() {
         savedVersion = RetromodVersion.TARGET_MC_VERSION;

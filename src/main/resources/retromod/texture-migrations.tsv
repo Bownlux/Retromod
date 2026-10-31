@@ -9,7 +9,7 @@
 # be absent from the current version as long as another row carries it onward.
 #
 # Hand-checked rows are merged with a pass derived from the vanilla client jars at every
-# pack-format boundary from 1.13 to 26.2. The derivation compares adjacent versions on
+# pack-format boundary from 1.13 to 26.3. The derivation compares adjacent versions on
 # texture content: a PNG whose bytes are unchanged but whose path is not proves its own
 # move, and a pair is taken only when it is unambiguous in both directions. Adjacent
 # versions are compared rather than the endpoints because a rename and a redraw look the
@@ -28,7 +28,7 @@
 # art stop there.
 #
 # Regenerate the derived half with scripts/harvest-texture-migrations.py.
-# 219 migrations.
+# 236 migrations.
 4	5	entity/iron_golem.png	entity/iron_golem/iron_golem.png
 4	4	entity/sign.png	entity/signs/oak.png
 6	7	block/grass_path_side.png	block/dirt_path_side.png
@@ -248,3 +248,20 @@
 84	88	entity/signs/pale_oak.png	block/pale_oak_sign.png	new_layout
 84	88	entity/signs/spruce.png	block/spruce_sign.png	new_layout
 84	88	entity/signs/warped.png	block/warped_sign.png	new_layout
+88	97	trims/color_palettes/amethyst.png	palettes/trim/amethyst.png
+88	97	trims/color_palettes/copper.png	palettes/trim/copper.png
+88	97	trims/color_palettes/copper_darker.png	palettes/trim/copper_darker.png
+88	97	trims/color_palettes/diamond.png	palettes/trim/diamond.png
+88	97	trims/color_palettes/diamond_darker.png	palettes/trim/diamond_darker.png
+88	97	trims/color_palettes/emerald.png	palettes/trim/emerald.png
+88	97	trims/color_palettes/gold.png	palettes/trim/gold.png
+88	97	trims/color_palettes/gold_darker.png	palettes/trim/gold_darker.png
+88	97	trims/color_palettes/iron.png	palettes/trim/iron.png
+88	97	trims/color_palettes/iron_darker.png	palettes/trim/iron_darker.png
+88	97	trims/color_palettes/lapis.png	palettes/trim/lapis.png
+88	97	trims/color_palettes/netherite.png	palettes/trim/netherite.png
+88	97	trims/color_palettes/netherite_darker.png	palettes/trim/netherite_darker.png
+88	97	trims/color_palettes/quartz.png	palettes/trim/quartz.png
+88	97	trims/color_palettes/redstone.png	palettes/trim/redstone.png
+88	97	trims/color_palettes/resin.png	palettes/trim/resin.png
+88	97	trims/color_palettes/trim_palette.png	palettes/trim_base.png

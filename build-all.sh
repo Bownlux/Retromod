@@ -12,7 +12,7 @@
 # Keep building after one target fails so the final report can list every failure.
 # set -e
 
-VERSION="1.4.0-snapshot.2"
+VERSION="1.4.0-snapshot.3"
 # Older mods are translated at runtime, so only 1.20 and newer need host jars.
 # Security-only updates for versions before 26.1.
 MC_VERSIONS=("1.20" "1.20.1" "1.20.2" "1.20.3" "1.20.4" "1.20.5" "1.20.6" "1.21" "1.21.1" "1.21.2" "1.21.3" "1.21.4" "1.21.5" "1.21.6" "1.21.7" "1.21.8" "1.21.9" "1.21.10" "1.21.11" "26.1" "26.1.1" "26.1.2" "26.2" "26.3")
@@ -762,6 +762,13 @@ PY
                 rm -rf "$TEMP_DIR"
                 return 1
             fi
+            # Some mod lists open the logo as one path segment and reject a slash in it
+            # (NeoForge 1.20.2 and 1.20.3 crashed on it), so the logo sits at the jar root.
+            if ! cp "$TEMP_DIR/assets/retromod/icon.png" "$TEMP_DIR/retromod_logo.png"; then
+                echo "ERROR: Could not copy the Retromod logo for ${MC_VERSION}."
+                rm -rf "$TEMP_DIR"
+                return 1
+            fi
             if ! cat > "$TEMP_DIR/META-INF/mods.toml" << TOML
 modLoader = "javafml"
 loaderVersion = "[${FORGE_LV},)"
@@ -777,7 +784,7 @@ Retromod helps older Forge mods run on Minecraft ${MC_VERSION}. It updates
 bytecode, mixins, and loader metadata, then keeps a backup of the original mod.
 '''
 authors = "Bownlux"
-logoFile = "assets/retromod/icon.png"
+logoFile = "retromod_logo.png"
 
 [[dependencies.retromod]]
 modId = "forge"
@@ -817,6 +824,13 @@ TOML
                 rm -rf "$TEMP_DIR"
                 return 1
             fi
+            # NeoForge 1.20.2 and 1.20.3 open the logo as one path segment and reject a slash in
+            # it, so the mod list crashed on Retromod. A copy at the jar root works on every host.
+            if ! cp "$TEMP_DIR/assets/retromod/icon.png" "$TEMP_DIR/retromod_logo.png"; then
+                echo "ERROR: Could not copy the Retromod logo for ${MC_VERSION}."
+                rm -rf "$TEMP_DIR"
+                return 1
+            fi
             # loaderVersion tracks FancyModLoader, not NeoForge or Minecraft.
             # Their version numbers do not move together, so keep this range
             # permissive and enforce the real requirement in the neoforge
@@ -844,7 +858,8 @@ Retromod helps older NeoForge mods run on Minecraft ${MC_VERSION}. It updates
 bytecode, mixins, and loader metadata, then keeps a backup of the original mod.
 '''
 authors = "Bownlux"
-logoFile = "assets/retromod/icon.png"
+logoFile = "retromod_logo.png"
+iconFile = "assets/retromod/icon.png"
 
 [[dependencies.retromod]]
 modId = "neoforge"

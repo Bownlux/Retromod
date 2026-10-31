@@ -46,12 +46,12 @@ import static org.objectweb.asm.Opcodes.*;
  */
 public final class LegacyTradeBridge {
 
-    static final String ITEM_LISTING = "com/retromod/generated/LegacyItemListing";
+    public static final String ITEM_LISTING = "com/retromod/generated/LegacyItemListing";
     static final String BASIC_LISTING = "com/retromod/generated/LegacyBasicItemListing";
     static final String VILLAGER_EVENT = "com/retromod/generated/LegacyVillagerTradesEvent";
     static final String WANDERER_EVENT = "com/retromod/generated/LegacyWandererTradesEvent";
     static final String STORE = "com/retromod/shim/forge/embedded/LegacyTradeStore";
-    static final String PROFESSIONS = "com/retromod/generated/LegacyVillagerProfessions";
+    public static final String PROFESSIONS = "com/retromod/generated/LegacyVillagerProfessions";
 
     private static final String EVENT = "net/neoforged/bus/api/Event";
     private static final String ITEM_STACK = "net/minecraft/world/item/ItemStack";
@@ -76,7 +76,7 @@ public final class LegacyTradeBridge {
 
     static void registerRedirects(RetromodTransformer transformer) {
         SyntheticEmbedder.registerClassResource(transformer, STORE, LegacyTradeStore.class);
-        transformer.registerSyntheticClass(ITEM_LISTING, generateItemListing());
+        registerItemListings(transformer);
         transformer.registerSyntheticClass(BASIC_LISTING, generateBasicListing());
         transformer.registerSyntheticClass(VILLAGER_EVENT, generateVillagerEvent());
         transformer.registerSyntheticClass(WANDERER_EVENT, generateWandererEvent());
@@ -85,6 +85,14 @@ public final class LegacyTradeBridge {
             transformer.registerClassRedirect(loader + "event/village/WandererTradesEvent", WANDERER_EVENT);
             transformer.registerClassRedirect(loader + "common/BasicItemListing", BASIC_LISTING);
         }
+    }
+
+    /**
+     * The old trade factory type and profession reads, which every loader's trade API takes. The
+     * Fabric loader API runtime calls this for Fabric's {@code TradeOfferHelper}.
+     */
+    public static void registerItemListings(RetromodTransformer transformer) {
+        transformer.registerSyntheticClass(ITEM_LISTING, generateItemListing());
         transformer.registerClassRedirect("net/minecraft/world/entity/npc/VillagerTrades$ItemListing", ITEM_LISTING);
         transformer.registerClassRedirect("net/minecraft/world/item/trading/VillagerTrades$ItemListing", ITEM_LISTING);
 

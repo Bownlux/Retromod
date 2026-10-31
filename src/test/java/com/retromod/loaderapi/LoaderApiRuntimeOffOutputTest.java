@@ -69,6 +69,13 @@ class LoaderApiRuntimeOffOutputTest {
         Map<String, String> actual = LoaderApiGolden.digests(Files.readAllBytes(output));
         Map<String, String> expected = golden().get(command + "-" + loader);
         assertNotNull(expected, "no golden digests for " + command + "-" + loader);
+        // AOT copies in every helper the shims register, and each snapshot adds and edits helpers,
+        // so its comparison covers the mod's own entries only.
+        if ("aot".equals(command)) {
+            actual.keySet().removeIf(LoaderApiRuntimeOffOutputTest::isEmbeddedHelper);
+            expected = new java.util.TreeMap<>(expected);
+            expected.keySet().removeIf(LoaderApiRuntimeOffOutputTest::isEmbeddedHelper);
+        }
         assertEquals(new TreeSet<>(expected.keySet()), new TreeSet<>(actual.keySet()),
                 "the off path must write the same entries as 1.4.0-snapshot.2");
         for (Map.Entry<String, String> entry : expected.entrySet()) {
@@ -79,6 +86,11 @@ class LoaderApiRuntimeOffOutputTest {
                 readEntry(output, "META-INF/MANIFEST.MF")));
         assertFalse(manifest.contains(LoaderApiRuntime.MANIFEST_ATTRIBUTE),
                 "an off-path jar must not carry the runtime identity");
+    }
+
+    /** A copy of a Retromod helper class, in AOT's shared folder or relocated into the mod. */
+    private static boolean isEmbeddedHelper(String entry) {
+        return entry.startsWith("retromod_embedded/") || entry.matches("com/retromod/embedded/[^/]+/com/retromod/.*");
     }
 
     private static Map<String, Map<String, String>> golden() throws Exception {

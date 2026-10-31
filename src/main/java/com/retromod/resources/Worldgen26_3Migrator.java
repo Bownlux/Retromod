@@ -51,6 +51,8 @@ public final class Worldgen26_3Migrator {
             "minecraft:sea_pickle", "minecraft:coral_mushroom", "minecraft:basalt_columns", "minecraft:basalt_pillar",
             "minecraft:nether_forest_vegetation", "minecraft:glowstone_blob", "minecraft:desert_well");
 
+    private static final java.util.regex.Pattern NAMESPACED_ID = java.util.regex.Pattern.compile("[a-z0-9_.-]+:[a-z0-9_./-]+");
+
     private Worldgen26_3Migrator() {}
 
     static boolean appliesTo(String targetMcVersion) {
@@ -142,6 +144,47 @@ public final class Worldgen26_3Migrator {
         }
         if (type != null && TYPE_RENAMES.containsKey(type)) out.addProperty("type", TYPE_RENAMES.get(type));
         return out;
+    }
+
+    /** Any data file with only its old block states rewritten; the same array when it has none. */
+    static byte[] migrateStates(byte[] json) {
+        JsonElement before;
+        try {
+            before = com.google.gson.JsonParser.parseString(new String(json, java.nio.charset.StandardCharsets.UTF_8));
+        } catch (RuntimeException unparsable) {
+            return json;
+        }
+        JsonElement after = migrateStates(before);
+        if (after.equals(before)) return json;
+        return new com.google.gson.GsonBuilder().disableHtmlEscaping().create().toJson(after)
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private static JsonElement migrateStates(JsonElement element) {
+        if (element instanceof JsonArray array) {
+            JsonArray out = new JsonArray();
+            for (JsonElement item : array) out.add(migrateStates(item));
+            return out;
+        }
+        if (!(element instanceof JsonObject object)) return element;
+        // Outside worldgen a "Name" key can mean anything, so only a namespaced id with plain
+        // property values is read as a state.
+        if (isOldState(object) && NAMESPACED_ID.matcher(object.get("Name").getAsString()).matches()
+                && hasPlainProperties(object)) {
+            return state(object, false);
+        }
+        JsonObject out = new JsonObject();
+        for (Map.Entry<String, JsonElement> entry : object.entrySet()) out.add(entry.getKey(), migrateStates(entry.getValue()));
+        return out;
+    }
+
+    private static boolean hasPlainProperties(JsonObject state) {
+        if (!state.has("Properties")) return true;
+        if (!(state.get("Properties") instanceof JsonObject properties)) return false;
+        for (JsonElement value : properties.asMap().values()) {
+            if (!value.isJsonPrimitive()) return false;
+        }
+        return true;
     }
 
     /** An old block state object: {@code {"Name": ..., "Properties": {...}}}. */

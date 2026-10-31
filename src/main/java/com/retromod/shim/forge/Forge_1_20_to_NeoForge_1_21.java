@@ -40,18 +40,52 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
         // 1.20.5 split Properties.copy into ofFullCopy and ofLegacyCopy; the legacy one copies what copy did.
-        transformer.registerMethodRedirect("net/minecraft/world/level/block/state/BlockBehaviour$Properties", "copy",
-                "(Lnet/minecraft/world/level/block/state/BlockBehaviour;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;",
-                "net/minecraft/world/level/block/state/BlockBehaviour$Properties", "ofLegacyCopy",
-                "(Lnet/minecraft/world/level/block/state/BlockBehaviour;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;");
+        com.retromod.shim.common.LegacyBlockPropertiesBridge.register(transformer);
+        // Forge's ModConfig.getConfigData() and save() are NeoForge's getLoadedConfig().config() and save().
+        String modConfig = "net/neoforged/fml/config/ModConfig";
+        String loaded = "net/neoforged/fml/config/IConfigSpec$ILoadedConfig";
+        String commented = "()Lcom/electronwill/nightconfig/core/CommentedConfig;";
+        transformer.registerReturnUnwrapRedirect(modConfig, "getConfigData", commented, "getLoadedConfig",
+                "()L" + loaded + ";", loaded, "config", commented, true);
+        transformer.registerReturnUnwrapRedirect(modConfig, "save", "()V", "getLoadedConfig",
+                "()L" + loaded + ";", loaded, "save", "()V", true);
+        // NeoForge registers a point of interest's block states with the type, which Forge left to
+        // the mod, so the mod's own registration skips states a type already claims.
+        String poiHelper = "com/retromod/shim/forge/embedded/LegacyPoiTypes";
+        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, poiHelper,
+                com.retromod.shim.forge.embedded.LegacyPoiTypes.class);
+        transformer.registerMethodRedirect("net/minecraft/world/entity/ai/village/poi/PoiTypes", "registerBlockStates",
+                "(Lnet/minecraft/core/Holder;Ljava/util/Set;)V", poiHelper, "registerBlockStates",
+                "(Ljava/lang/Object;Ljava/util/Set;)V");
+        // Forge kept the vanilla registries open until loading finished; NeoForge freezes them after
+        // the registration events, so a mod's late Registry.register reopens them while loading.
+        String late = "com/retromod/shim/forge/embedded/LateVanillaRegistration";
+        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, late,
+                com.retromod.shim.forge.embedded.LateVanillaRegistration.class);
+        String registry = "net/minecraft/core/Registry";
+        String lateDesc = "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;";
+        for (String id : new String[]{"Ljava/lang/String;", "Lnet/minecraft/resources/ResourceLocation;",
+                "Lnet/minecraft/resources/ResourceKey;"}) {
+            transformer.registerMethodRedirect(registry, "register",
+                    "(Lnet/minecraft/core/Registry;" + id + "Ljava/lang/Object;)Ljava/lang/Object;", late, "register", lateDesc);
+        }
+        for (String id : new String[]{"Lnet/minecraft/resources/ResourceLocation;", "Lnet/minecraft/resources/ResourceKey;"}) {
+            transformer.registerMethodRedirect(registry, "registerForHolder",
+                    "(Lnet/minecraft/core/Registry;" + id + "Ljava/lang/Object;)Lnet/minecraft/core/Holder$Reference;",
+                    late, "registerForHolder", lateDesc);
+        }
         LegacyTabContentsBridge.register(transformer);
         LegacyEntityTemplateAdapter.register(transformer);
         LegacyFlowerBlockBridge.register(transformer);
         LegacyStairBlockBridge.register(transformer);
-        // Rarity.create became a NeoForge enum extension.
+        // Rarity.create became a NeoForge enum extension, and Forge 26.x dropped it.
         LegacyRarityBridge.register(transformer);
+        // A vanilla rename, so Forge needs it as much as NeoForge does.
+        ForgeNeoForgeApiBridge.registerAttributeOperationRenames(transformer);
         // DropExperienceBlock, AmethystClusterBlock and cauldron constructors from 1.20.3.
         com.retromod.shim.common.LegacyBlockConstructorBridge.register(transformer);
+        // The same release put doors, trapdoors, fence gates and pressure plates' type ahead of their properties.
+        com.retromod.shim.common.LegacyBlockSetTypeBridge.register(transformer);
         // Block methods later made protected, called through the state's public delegate.
         com.retromod.shim.common.LegacyProtectedBlockCallBridge.register(transformer);
         // 1.21 made painting variants data; the 26.1 chain registers the same bridge for its package.
@@ -90,8 +124,16 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         com.retromod.shim.common.LegacyFoodPropertiesBridge.register(transformer);
         com.retromod.shim.common.LegacyToolItemBridge.register(transformer);
         com.retromod.shim.common.Legacy1205MemberBridge.register(transformer);
+        // 1.20.5 priced trades in item costs, so the old item stack trade constructors are gone.
+        com.retromod.shim.common.LegacyMerchantOfferBridge.register(transformer);
+        // 1.20.5 also replaced the Gson loot serializers that custom loot functions and conditions used.
+        com.retromod.shim.common.LegacyLootSerializerBridge.register(transformer);
         // 1.20.2 split Advancement into its data and an AdvancementHolder.
         com.retromod.shim.common.LegacyAdvancementBridge.register(transformer);
+        // The same release read advancement triggers with codecs instead of a mod's JSON reader.
+        com.retromod.shim.common.LegacyCriterionTriggerBridge.register(transformer);
+        // Recipe serializers became codecs, and recipe lookups return holders, from 1.20.2 to 1.21.
+        com.retromod.shim.common.LegacyRecipeApiBridge.register(transformer);
         com.retromod.shim.common.LegacyCodecTypeBridge.register(transformer);
         com.retromod.shim.common.LegacyRegistryNbtBridge.register(transformer);
         com.retromod.shim.common.LegacyTreeGrowerBridge.register(transformer);
@@ -456,6 +498,24 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         }
         registerNetworkDeliveryBridge(transformer, netShim, wrapper);
 
+        // The nested channel builder opens the same channel as newSimpleChannel.
+        String channelBuilder = netShim + "$ChannelBuilder";
+        transformer.registerClassRedirect("net/minecraftforge/network/NetworkRegistry$ChannelBuilder", channelBuilder);
+        for (String owner : new String[]{"net/minecraftforge/network/NetworkRegistry$ChannelBuilder", channelBuilder}) {
+            for (String resourceId : new String[]{"Lnet/minecraft/resources/ResourceLocation;",
+                    "Lnet/minecraft/resources/Identifier;"}) {
+                for (String ret : new String[]{"Lnet/minecraftforge/network/NetworkRegistry$ChannelBuilder;",
+                        "L" + channelBuilder + ";"}) {
+                    transformer.registerMethodRedirect(owner, "named", "(" + resourceId + ")" + ret,
+                            channelBuilder, "named", "(Ljava/lang/Object;)L" + channelBuilder + ";");
+                }
+            }
+            for (String ret : new String[]{"Lnet/minecraftforge/network/simple/SimpleChannel;", "L" + wrapper + ";"}) {
+                transformer.registerMethodRedirect(owner, "simpleChannel", "()" + ret,
+                        channelBuilder, "simpleChannel", "()L" + wrapper + ";");
+            }
+        }
+
         // Forge 47 returns an IndexedMessageCodec.MessageHandler even when callers only discard
         // it. That class no longer exists on NeoForge. Retype the call to the wrapper's erased
         // Object result so the registration is collected without retaining the deleted class.
@@ -558,7 +618,9 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "com.retromod.shim.forge.embedded.NetworkShim$PayloadBridge",
             "com.retromod.shim.forge.embedded.NetworkShim$Payload",
             "com.retromod.shim.forge.embedded.NetworkShim$CodecHandler",
-            "com.retromod.shim.forge.embedded.NetworkShim$HandlerHandler"
+            "com.retromod.shim.forge.embedded.NetworkShim$HandlerHandler",
+            "com.retromod.shim.forge.embedded.NetworkShim$ChannelBuilder",
+            "com.retromod.shim.forge.embedded.NetworkShim$ForgeChannels"
         };
     }
 }

@@ -146,8 +146,11 @@ public final class LegacyEquipmentBridge {
         BASES.forEach((base, key) -> {
             if (transformer.getSyntheticClasses().containsKey(base)) {
                 String[] interfaces = base.contains("Dyeable") ? new String[]{DYEABLE} : new String[0];
-                transformer.attachLegacyBaseAdapter(base,
-                        new LegacyBaseSynthesizer.ArgumentAdapter(SUPPORT, "adapt", key, PROPERTIES, interfaces));
+                // Armor built from a material holder that binds after items gets its components
+                // once the item exists, through constructed(item).
+                String constructed = key.equals("armor") ? "constructed" : null;
+                transformer.attachLegacyBaseAdapter(base, new LegacyBaseSynthesizer.ArgumentAdapter(
+                        SUPPORT, "adapt", key, PROPERTIES, interfaces, constructed));
             }
         });
     }
@@ -239,6 +242,18 @@ public final class LegacyEquipmentBridge {
                 mv.visitVarInsn(Opcodes.FLOAD, 251);
                 mv.visitVarInsn(Opcodes.ALOAD, 252);
             });
+            // 1.20.5 to 1.21.1 took only the tier: the damage and speed went to createAttributes
+            // just before, and the helper kept them for this constructor.
+            String tierOnly = "(L" + TIER + ";L" + TOOL_PROPERTIES + ";)V";
+            transformer.registerConstructorRedirect(owner, tierOnly, TOOLS, tool[2],
+                    "(L" + TIER + ";L" + TOOL_PROPERTIES + ";)L" + owner + ";");
+            transformer.registerSuperConstructorAdapter(owner, tierOnly, newDesc, mv -> {
+                mv.visitVarInsn(Opcodes.ASTORE, 252);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, TOOLS, "material", "(L" + TIER + ";)L" + RECORD_TOOL + ";", false);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, SUPPORT, "lastToolDamage", "()F", false);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, SUPPORT, "lastToolSpeed", "()F", false);
+                mv.visitVarInsn(Opcodes.ALOAD, 252);
+            });
         }
     }
 
@@ -275,6 +290,22 @@ public final class LegacyEquipmentBridge {
             mv.visitInsn(Opcodes.ARETURN);
             mv.visitMaxs(0, 0);
             mv.visitEnd();
+
+            MethodVisitor tierOnly = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, tool[2],
+                    "(L" + TIER + ";L" + TOOL_PROPERTIES + ";)L" + owner + ";", null, null);
+            tierOnly.visitCode();
+            tierOnly.visitTypeInsn(Opcodes.NEW, owner);
+            tierOnly.visitInsn(Opcodes.DUP);
+            tierOnly.visitVarInsn(Opcodes.ALOAD, 0);
+            tierOnly.visitMethodInsn(Opcodes.INVOKESTATIC, TOOLS, "material", "(L" + TIER + ";)L" + RECORD_TOOL + ";", false);
+            tierOnly.visitMethodInsn(Opcodes.INVOKESTATIC, SUPPORT, "lastToolDamage", "()F", false);
+            tierOnly.visitMethodInsn(Opcodes.INVOKESTATIC, SUPPORT, "lastToolSpeed", "()F", false);
+            tierOnly.visitVarInsn(Opcodes.ALOAD, 1);
+            tierOnly.visitMethodInsn(Opcodes.INVOKESPECIAL, owner, "<init>",
+                    "(L" + RECORD_TOOL + ";FFL" + TOOL_PROPERTIES + ";)V", false);
+            tierOnly.visitInsn(Opcodes.ARETURN);
+            tierOnly.visitMaxs(0, 0);
+            tierOnly.visitEnd();
         }
         cw.visitEnd();
         return cw.toByteArray();
@@ -397,6 +428,38 @@ public final class LegacyEquipmentBridge {
      * In a legacy jar's class, after the remap, turns a read of a vanilla material that the old
      * enums named into the matching view, so it fits where the old interface is expected.
      */
+    /** Sends a 1.20.5 to 1.21.1 tool's {@code createAttributes(tier, damage, speed)}, removed in 1.21.5, to the helper. */
+    public static byte[] retargetToolAttributes(byte[] classBytes) {
+        // Tools called it on their own class. The descriptor names the generated tier, so no
+        // current method shares it, whatever the owner.
+        if (classBytes == null || !new String(classBytes, StandardCharsets.ISO_8859_1).contains("createAttributes")) return classBytes;
+        ClassNode node = new ClassNode();
+        new ClassReader(classBytes).accept(node, 0);
+        String modifiers = "Lnet/minecraft/world/item/component/ItemAttributeModifiers;";
+        boolean changed = false;
+        for (MethodNode method : node.methods) {
+            for (AbstractInsnNode insn : method.instructions.toArray()) {
+                if (!(insn instanceof MethodInsnNode call) || call.getOpcode() != Opcodes.INVOKESTATIC
+                        || !call.name.equals("createAttributes")) {
+                    continue;
+                }
+                // A digger took float damage, a sword int damage.
+                boolean digger = call.desc.equals("(L" + TIER + ";FF)" + modifiers);
+                if (!digger && !call.desc.equals("(L" + TIER + ";IF)" + modifiers)) continue;
+                method.instructions.insertBefore(call, new MethodInsnNode(Opcodes.INVOKESTATIC, SUPPORT,
+                        digger ? "diggerAttributes" : "swordAttributes", "(Ljava/lang/Object;" + (digger ? "F" : "I")
+                                + "F)Ljava/lang/Object;", false));
+                method.instructions.set(call, new org.objectweb.asm.tree.TypeInsnNode(Opcodes.CHECKCAST,
+                        "net/minecraft/world/item/component/ItemAttributeModifiers"));
+                changed = true;
+            }
+        }
+        if (!changed) return classBytes;
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        node.accept(writer);
+        return writer.toByteArray();
+    }
+
     public static byte[] apply(byte[] classBytes, String className) {
         if (classBytes == null || !LEGACY_CLASSES.contains(className)) return classBytes;
         ClassNode node = new ClassNode();

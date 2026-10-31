@@ -81,6 +81,19 @@ class GameRuleRenameCoverageTest {
     }
 
     @Test
+    @DisplayName("NeoForge and Forge 1.21.11 hosts rename it too, since 1.21.11 made the rename")
+    void renamesFromTheHostThatMadeIt() {
+        for (Runnable register : new Runnable[]{
+                () -> new com.retromod.shim.neoforge.NeoForge_1_21_10_to_1_21_11().registerRedirects(transformer),
+                () -> new com.retromod.shim.forge.Forge_1_21_10_to_1_21_11().registerRedirects(transformer)}) {
+            transformer.clearRedirectsForTesting();
+            register.run();
+            assertEquals("MOB_GRIEFING", fieldNameAfterTransform(modReadingMobGriefing(OWNER, RULE)),
+                    "a 1.21.1 mod reading RULE_MOBGRIEFING failed with NoSuchFieldError on 1.21.11");
+        }
+    }
+
+    @Test
     @DisplayName("every loader renames the constant, not just Fabric")
     void everyLoaderRenamesTheConstant() {
         record Case(String loader, Runnable register) {}

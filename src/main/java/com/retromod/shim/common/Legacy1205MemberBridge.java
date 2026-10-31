@@ -181,8 +181,46 @@ public final class Legacy1205MemberBridge {
         boolean scute = fieldRenamedOnHost(ITEMS, "SCUTE", "TURTLE_SCUTE");
         registerRedirects(transformer, members, renames, scute, shape);
         if (temptGoalTakesPredicate()) registerTemptGoalWidening(transformer);
+        if (propertiesLostStackSize()) registerPropertiesStackSize(transformer);
+        registerItemNames(transformer);
         enableLevelTooltips(transformer);
         LOGGER.info("Bridged {} removed 1.20.5 members and {} renamed classes", members.size(), renames.size());
+    }
+
+    /**
+     * 1.20.5 made {@code Item.toString()} return the namespaced id where it returned the path, and
+     * mods built ids from it, such as Fossils' {@code fossil:} + toString(). Only mods built before
+     * 1.20.5 are rewritten, and every object but an item passes through unchanged.
+     */
+    static void registerItemNames(RetromodTransformer transformer) {
+        String helper = "com/retromod/shim/common/embedded/LegacyItemNames";
+        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, helper,
+                com.retromod.shim.common.embedded.LegacyItemNames.class);
+        String toString = "()Ljava/lang/String;";
+        String helperDesc = "(Ljava/lang/Object;)Ljava/lang/String;";
+        // Wrapping, so a mod's own super.toString() keeps calling the real method.
+        for (String owner : new String[]{"java/lang/Object", ITEM}) {
+            transformer.registerWrappingMethodRedirect(owner, "toString", toString, helper, "toString", helperDesc);
+            transformer.limitRedirectToModsBefore(owner, "toString", toString, "1.20.5");
+        }
+        transformer.registerMethodRedirect("java/lang/String", "valueOf", helperDesc, helper, "valueOf", helperDesc);
+        transformer.limitRedirectToModsBefore("java/lang/String", "valueOf", helperDesc, "1.20.5");
+    }
+
+    /** {@code Item.Properties.maxStackSize}, which a mod's own properties class wrote, as the stack size component. */
+    static void registerPropertiesStackSize(RetromodTransformer transformer) {
+        String bridge = "com/retromod/mixin/runtime/ItemComponentsBridge";
+        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, bridge,
+                com.retromod.mixin.runtime.ItemComponentsBridge.class);
+        // Inherited: the write names the mod's subclass, such as Fossils' JavelinProperties.
+        transformer.registerInheritedFieldStaticBridge(ITEM + "$Properties", "maxStackSize", "I", bridge,
+                "propertiesStackSize", "(Ljava/lang/Object;)I", "setPropertiesStackSize", "(Ljava/lang/Object;I)V");
+    }
+
+    private static boolean propertiesLostStackSize() {
+        ClassNode properties = ClassResourceInspector.read(ITEM + "$Properties");
+        if (properties == null) return !hostBefore("1.20.5");
+        return properties.fields.stream().noneMatch(field -> field.name.equals("maxStackSize"));
     }
 
     /** Points the old {@code TemptGoal(mob, speed, Ingredient, scare)} constructor at the predicate one. */

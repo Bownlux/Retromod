@@ -7,6 +7,8 @@ package com.retromod.shim.common;
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.core.SyntheticEmbedder;
+import com.retromod.shim.common.embedded.LegacyRegistries;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -28,9 +30,9 @@ import org.objectweb.asm.tree.MethodNode;
  * names the cause, rather than build a block from data it never wrote.
  *
  * <p>26.3 also removed the {@code BLOCK_TYPE} registry those codecs were registered in, so a mod
- * that registered its block types failed with {@code NoSuchFieldError} before its blocks. The read
- * now returns a registry of Retromod's own that accepts the registrations. Nothing on 26.3 reads
- * it, which matches a host that no longer uses block codecs.
+ * that registered its block types failed with {@code NoSuchFieldError} before its blocks. The
+ * registry and its key now name a registry of Retromod's own that accepts the registrations.
+ * Nothing on 26.3 reads it, which matches a host that no longer uses block codecs.
  */
 public final class LegacyBlockCodecBridge {
 
@@ -45,10 +47,10 @@ public final class LegacyBlockCodecBridge {
     static final String BUILT_IN_REGISTRIES = "net/minecraft/core/registries/BuiltInRegistries";
     static final String REGISTRY = "net/minecraft/core/Registry";
     static final String BLOCK_TYPES = "blockTypes";
-    private static final String MAPPED_REGISTRY = "net/minecraft/core/MappedRegistry";
+    static final String BLOCK_TYPE_KEY = "blockTypeKey";
+    static final String REGISTRIES = "net/minecraft/core/registries/Registries";
+    static final String REGISTRIES_HELPER = "com/retromod/shim/common/embedded/LegacyRegistries";
     private static final String RESOURCE_KEY = "net/minecraft/resources/ResourceKey";
-    private static final String IDENTIFIER = "net/minecraft/resources/Identifier";
-    private static final String LIFECYCLE = "com/mojang/serialization/Lifecycle";
 
     private static final String SUPPLIER = "java/util/function/Supplier";
     private static final String FUNCTION = "java/util/function/Function";
@@ -71,6 +73,10 @@ public final class LegacyBlockCodecBridge {
                 HELPER, "propertiesCodec", PROPERTIES_CODEC);
         transformer.registerFieldRedirect(BUILT_IN_REGISTRIES, "BLOCK_TYPE", "L" + REGISTRY + ";",
                 HELPER, BLOCK_TYPES, "()L" + REGISTRY + ";");
+        // A deferred register names the registry by its key, which 26.3 removed with it.
+        transformer.registerExactFieldRedirect(REGISTRIES, "BLOCK_TYPE", "L" + RESOURCE_KEY + ";",
+                HELPER, BLOCK_TYPE_KEY, "()L" + RESOURCE_KEY + ";");
+        SyntheticEmbedder.registerClassResource(transformer, REGISTRIES_HELPER, LegacyRegistries.class);
     }
 
     /** Whether the host's {@code BlockBehaviour} lost {@code simpleCodec}. */
@@ -177,33 +183,24 @@ public final class LegacyBlockCodecBridge {
         return cw.toByteArray();
     }
 
-    /** {@code blockTypes()}: a registry created on first use that accepts the block types. */
+    /**
+     * {@code blockTypes()} and {@code blockTypeKey()}: a registry under Retromod's id that accepts
+     * the block types, shared by every mod. On NeoForge it is registered with the loader, so a
+     * deferred register for its key is filled as before.
+     */
     private static void emitBlockTypes(ClassWriter cw) {
-        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, BLOCK_TYPES, "L" + REGISTRY + ";",
-                null, null).visitEnd();
-        MethodVisitor m = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_SYNCHRONIZED,
-                BLOCK_TYPES, "()L" + REGISTRY + ";", null, null);
+        emitRegistryCall(cw, BLOCK_TYPES, "registry", REGISTRY);
+        emitRegistryCall(cw, BLOCK_TYPE_KEY, "key", RESOURCE_KEY);
+    }
+
+    private static void emitRegistryCall(ClassWriter cw, String name, String helper, String type) {
+        MethodVisitor m = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, name, "()L" + type + ";", null, null);
         m.visitCode();
-        Label created = new Label();
-        m.visitFieldInsn(Opcodes.GETSTATIC, HELPER, BLOCK_TYPES, "L" + REGISTRY + ";");
-        m.visitJumpInsn(Opcodes.IFNONNULL, created);
-        m.visitTypeInsn(Opcodes.NEW, MAPPED_REGISTRY);
-        m.visitInsn(Opcodes.DUP);
         m.visitLdcInsn("retromod");
         m.visitLdcInsn("legacy_block_type");
-        m.visitMethodInsn(Opcodes.INVOKESTATIC, IDENTIFIER, "fromNamespaceAndPath",
-                "(Ljava/lang/String;Ljava/lang/String;)L" + IDENTIFIER + ";", false);
-        m.visitMethodInsn(Opcodes.INVOKESTATIC, RESOURCE_KEY, "createRegistryKey",
-                "(L" + IDENTIFIER + ";)L" + RESOURCE_KEY + ";", false);
-        m.visitMethodInsn(Opcodes.INVOKESTATIC, LIFECYCLE, "stable", "()L" + LIFECYCLE + ";", false);
-        m.visitMethodInsn(Opcodes.INVOKESPECIAL, MAPPED_REGISTRY, "<init>",
-                "(L" + RESOURCE_KEY + ";L" + LIFECYCLE + ";)V", false);
-        // The cast lets the verifier check the store by name alone. Otherwise linking the helper
-        // for a codec call would load the registry classes to prove MappedRegistry is a Registry.
-        m.visitTypeInsn(Opcodes.CHECKCAST, REGISTRY);
-        m.visitFieldInsn(Opcodes.PUTSTATIC, HELPER, BLOCK_TYPES, "L" + REGISTRY + ";");
-        m.visitLabel(created);
-        m.visitFieldInsn(Opcodes.GETSTATIC, HELPER, BLOCK_TYPES, "L" + REGISTRY + ";");
+        m.visitMethodInsn(Opcodes.INVOKESTATIC, REGISTRIES_HELPER, helper,
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/Object;", false);
+        m.visitTypeInsn(Opcodes.CHECKCAST, type);
         m.visitInsn(Opcodes.ARETURN);
         m.visitMaxs(0, 0);
         m.visitEnd();

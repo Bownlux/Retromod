@@ -1,0 +1,5 @@
+{
+  "type": "retromod_test_mod_forge:legacy_egg",
+  "input": {"item": "minecraft:egg"},
+  "result": {"item": "minecraft:slime_ball", "count": 2}
+}

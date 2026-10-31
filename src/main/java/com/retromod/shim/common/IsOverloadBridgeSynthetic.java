@@ -215,17 +215,24 @@ public final class IsOverloadBridgeSynthetic {
         // JigsawStructureAssembler.addChildrenForPiece during structure generation (captured
         // live on the 26.2 server). Same-owner renames, so the INVOKEINTERFACE opcode and
         // descriptors are untouched.
-        String registry = "net/minecraft/core/Registry";
+        // The same names through DefaultedRegistry, the type of BuiltInRegistries.ITEM and BLOCK,
+        // whose calls name it as the owner. getTag became get, and holders listElements, in the same rename.
         String optDesc = "(Lnet/minecraft/resources/ResourceKey;)Ljava/util/Optional;";
-        t.registerMethodRedirect(registry, "getHolder", optDesc, registry, "get", optDesc);
-        t.registerMethodRedirect(registry, "getHolder",
-                "(Lnet/minecraft/resources/Identifier;)Ljava/util/Optional;",
-                registry, "get", "(Lnet/minecraft/resources/Identifier;)Ljava/util/Optional;");
-        t.registerMethodRedirect(registry, "getHolder", "(I)Ljava/util/Optional;",
-                registry, "get", "(I)Ljava/util/Optional;");
         String orThrowDesc = "(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/core/Holder$Reference;";
-        t.registerMethodRedirect(registry, "getHolderOrThrow", orThrowDesc,
-                registry, "getOrThrow", orThrowDesc);
+        String tagDesc = "(Lnet/minecraft/tags/TagKey;)Ljava/util/Optional;";
+        for (String registry : new String[]{"net/minecraft/core/Registry", "net/minecraft/core/DefaultedRegistry"}) {
+            t.registerMethodRedirect(registry, "getHolder", optDesc, registry, "get", optDesc);
+            t.registerMethodRedirect(registry, "getHolder",
+                    "(Lnet/minecraft/resources/Identifier;)Ljava/util/Optional;",
+                    registry, "get", "(Lnet/minecraft/resources/Identifier;)Ljava/util/Optional;");
+            t.registerMethodRedirect(registry, "getHolder", "(I)Ljava/util/Optional;",
+                    registry, "get", "(I)Ljava/util/Optional;");
+            t.registerMethodRedirect(registry, "getHolderOrThrow", orThrowDesc,
+                    registry, "getOrThrow", orThrowDesc);
+            t.registerMethodRedirect(registry, "getTag", tagDesc, registry, "get", tagDesc);
+            t.registerMethodRedirect(registry, "holders", "()Ljava/util/stream/Stream;",
+                    registry, "listElements", "()Ljava/util/stream/Stream;");
+        }
 
         // 26.1 dropped ConditionalEffect.codec's ContextKeySet validation arg (exact old
         // signature captured live: codec(Codec, net.minecraft.util.context.ContextKeySet)).

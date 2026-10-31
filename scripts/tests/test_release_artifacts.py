@@ -21,7 +21,7 @@ from scripts.release_artifacts import (
 )
 
 
-VERSION = "1.4.0-snapshot.2"
+VERSION = "1.4.0-snapshot.3"
 # Deliberately not a real release, so a version bump can never make it match.
 MISMATCHED_VERSION = "0.0.0-not-the-pom-version"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -222,7 +222,9 @@ class ReleaseArtifactValidationTest(unittest.TestCase):
         self.assertEqual("A", loader_bootstrap.boot_generation("neoforge", "1.20.1"))
         self.assertEqual("A-neo", loader_bootstrap.boot_generation("neoforge", "1.20.2"))
         self.assertEqual("A-neo", loader_bootstrap.boot_generation("neoforge", "1.20.4"))
-        self.assertEqual("BC", loader_bootstrap.boot_generation("neoforge", "1.20.5"))
+        self.assertEqual("A-neo+BC", loader_bootstrap.boot_generation("neoforge", "1.20.5"))
+        self.assertEqual("A-neo+BC", loader_bootstrap.boot_generation("neoforge", "1.20.6"))
+        self.assertEqual("BC", loader_bootstrap.boot_generation("neoforge", "1.21"))
         self.assertEqual("BC", loader_bootstrap.boot_generation("neoforge", "26.3"))
         self.assertIsNone(loader_bootstrap.boot_generation("fabric", "26.3"))
         self.assertEqual("forge", loader_bootstrap.runtime_loader("neoforge", "1.20.1"))
@@ -268,6 +270,22 @@ class ReleaseArtifactValidationTest(unittest.TestCase):
             "--version", VERSION, "--output", os.fspath(output)])
         self.assertEqual(1, result, "FML 2 never loads a runtime without META-INF/mods.toml")
         self.assertFalse(output.exists(), "a failed check must not leave the jar behind")
+
+    def test_fml_3_0_18_hosts_get_both_locators(self):
+        # NeoForge 20.5 and the first 20.6 builds ship FML 3.0.18 with the folder locator SPI;
+        # later 20.6 builds have the candidate locator, so one 1.20.6 jar needs both (#375).
+        artifact = self._artifact(f"NeoForge/1.20.6/retromod-{VERSION}+1.20.6.jar")
+        with zipfile.ZipFile(artifact.path) as jar:
+            names = jar.namelist()
+            manifest = loader_bootstrap.parse_manifest(jar.read("META-INF/MANIFEST.MF"))
+        self.assertEqual(
+            ["META-INF/services/net.neoforged.neoforgespi.locating.IModFileCandidateLocator",
+             "META-INF/services/net.neoforged.neoforgespi.locating.IModLocator"],
+            sorted(n for n in names if n.startswith("META-INF/services/")))
+        self.assertIn("com/retromod/boot/neoforge/LegacyNeoForgeBootLocator.class", names)
+        self.assertIn("com/retromod/boot/neoforge/NeoForgeBootLocator.class", names)
+        self.assertIn("META-INF/neoforge.mods.toml", names)
+        self.assertEqual("A-neo+BC", manifest["Retromod-Boot-Generation"])
 
     def test_bootstrap_layout_and_manifest(self):
         artifact = self._artifact(f"NeoForge/26.3/retromod-{VERSION}+26.3.jar")

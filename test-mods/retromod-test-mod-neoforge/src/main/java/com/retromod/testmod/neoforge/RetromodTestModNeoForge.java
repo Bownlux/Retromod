@@ -66,7 +66,31 @@ public class RetromodTestModNeoForge {
         modBus.addListener(CrossClassRegistration::register);
         // An entity type built from its bare name in a deferred register's supplier.
         EntityTypeKeys.register(modBus);
+        // #366: bedrock gets an old item handler, tank, and energy storage through the old capabilities.
+        modBus.addListener(LegacyHandlerCase::register);
+        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(this::checkLegacyExplosion);
         runTests();
+    }
+
+    /** #366: an old explosion subclass and game rule read need a server level, so their results are in the log. */
+    private void checkLegacyExplosion(net.neoforged.neoforge.event.server.ServerStartedEvent event) {
+        net.minecraft.server.level.ServerLevel level = event.getServer().overworld();
+        LOG.info("{} #366 an Explosion subclass explodes, then finishes: {}", PREFIX,
+                serverResult(() -> LegacyExplosionCase.run(level)));
+        LOG.info("{} #366 level.getGameRules().getBoolean(rule): {}", PREFIX,
+                serverResult(() -> LegacyExplosionCase.gameRuleRead(level)));
+        LOG.info("{} #366 old item, fluid, and energy handlers through the old capabilities: {}", PREFIX,
+                serverResult(() -> LegacyHandlerCase.run(level)));
+        LOG.info("{} #366 server.potionBrewing() brews water into awkward: {}", PREFIX,
+                serverResult(() -> LegacyBrewingCase.run(event.getServer())));
+    }
+
+    private static String serverResult(java.util.concurrent.Callable<String> check) {
+        try {
+            return check.call();
+        } catch (Throwable t) {
+            return "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
     }
 
     /**
@@ -419,6 +443,20 @@ public class RetromodTestModNeoForge {
         n++; passed += check(n, "#271 an EitherHolder built from a key reports that key",
             RemovedRegistryTypes::eitherHolderKeyReadsBack);
         n++; passed += check(n, "#271 BuiltInRegistries.BLOCK_TYPE read", RemovedRegistryTypes::blockTypeRegistryReads);
+
+        // #366: 1.21.2 turned Explosion into an interface, so a subclass failed to load.
+        n++; passed += check(n, "#366 an Explosion subclass loads", () ->
+            LegacyExplosionCase.class.getSuperclass() != null);
+
+        // 26.2 folded each copper state into a weathering copper collection.
+        n++; passed += check(n, "26.2 per-state copper constants", () ->
+            net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(net.minecraft.world.level.block.Blocks.EXPOSED_COPPER).getPath().equals("exposed_copper")
+                && net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(net.minecraft.world.level.block.Blocks.WAXED_OXIDIZED_CUT_COPPER_STAIRS).getPath().equals("waxed_oxidized_cut_copper_stairs")
+                && net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(net.minecraft.world.item.Items.WEATHERED_COPPER_DOOR).getPath().equals("weathered_copper_door"));
+
+        // 26.3 turned ContextAwarePredicate into a holder of a loot condition.
+        n++; passed += check(n, "26.3 trigger player predicate", LegacyTriggerCase::run);
+        n++; passed += check(n, "1.21.1 loot modifier from a condition array", LegacyLootModifierCase::run);
 
         LOG.info("{} SUMMARY: {}/{} passed", PREFIX, passed, n);
     }

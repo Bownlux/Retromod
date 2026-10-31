@@ -370,6 +370,8 @@ public final class ForgeEventBusSynthetics {
 
         cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "GAME_BUS", L_LEB, null, null).visitEnd();
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "g", L_BG, null, null).visitEnd();
+        // The mod's own bus group, kept when the mod asks for its event bus: a mod-bus event's bus lives there.
+        cw.visitField(ACC_PRIVATE | ACC_STATIC | ACC_VOLATILE, "modGroup", L_BG, null, null).visitEnd();
 
         // static { GAME_BUS = of(BusGroup.DEFAULT); }  (backs MinecraftForge.EVENT_BUS)
         MethodVisitor ci = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null);
@@ -398,6 +400,8 @@ public final class ForgeEventBusSynthetics {
         mb.visitCode();
         mb.visitVarInsn(ALOAD, 0);
         mb.visitMethodInsn(INVOKEVIRTUAL, FMLJMLC, "getModBusGroup", "()" + L_BG, false);
+        mb.visitInsn(DUP);
+        mb.visitFieldInsn(PUTSTATIC, LEB_IMPL, "modGroup", L_BG);
         mb.visitMethodInsn(INVOKESTATIC, LEB_IMPL, "of", "(" + L_BG + ")" + L_LEB, false);
         mb.visitInsn(ARETURN);
         mb.visitMaxs(0, 0);
@@ -484,12 +488,7 @@ public final class ForgeEventBusSynthetics {
                 "()[Ljava/lang/Class;", false);
         rf.visitInsn(ICONST_0);
         rf.visitInsn(AALOAD);
-        rf.visitLdcInsn("BUS");
-        rf.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Class", "getField",
-                "(Ljava/lang/String;)Ljava/lang/reflect/Field;", false);
-        rf.visitInsn(ACONST_NULL);
-        rf.visitMethodInsn(INVOKEVIRTUAL, "java/lang/reflect/Field", "get",
-                "(" + L_OBJ + ")" + L_OBJ, false);
+        rf.visitMethodInsn(INVOKESTATIC, LEB_IMPL, "busOf", "(" + L_CLASS + ")" + L_OBJ, false);
         rf.visitTypeInsn(CHECKCAST, EVENT_BUS7);
         rf.visitTypeInsn(NEW, RC);
         rf.visitInsn(DUP);
@@ -577,13 +576,8 @@ public final class ForgeEventBusSynthetics {
         h.visitJumpInsn(GOTO, next);
         h.visitLabel(isClass);
         h.visitTypeInsn(CHECKCAST, "java/lang/Class");
-        // ((EventBus) ev.getField("BUS").get(null)).addListener(c); return;
-        h.visitLdcInsn("BUS");
-        h.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Class", "getField",
-                "(Ljava/lang/String;)Ljava/lang/reflect/Field;", false);
-        h.visitInsn(ACONST_NULL);
-        h.visitMethodInsn(INVOKEVIRTUAL, "java/lang/reflect/Field", "get",
-                "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+        // ((EventBus) busOf(ev)).addListener(c); return;
+        h.visitMethodInsn(INVOKESTATIC, LEB_IMPL, "busOf", "(" + L_CLASS + ")" + L_OBJ, false);
         h.visitTypeInsn(CHECKCAST, EVENT_BUS7);
         h.visitVarInsn(ALOAD, 1);
         h.visitMethodInsn(INVOKEINTERFACE, EVENT_BUS7, "addListener",
@@ -689,6 +683,8 @@ public final class ForgeEventBusSynthetics {
      * {@code BUS} and {@code addListener(bits, c)}; any failure warns and no-ops.
      */
     private static void emitHookBus(ClassWriter cw) {
+        // static void hookBus(Class ev, byte priority, Consumer c): ((EventBus) busOf(ev)).addListener(priority, c),
+        // or a warning naming the event and the reason.
         MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "hookBus",
                 "(" + L_CLASS + "B" + L_CONSUMER + ")V", null, null);
         m.visitCode();
@@ -698,26 +694,56 @@ public final class ForgeEventBusSynthetics {
         m.visitTryCatchBlock(tryStart, tryEnd, catchAll, "java/lang/Throwable");
         m.visitLabel(tryStart);
         m.visitVarInsn(ALOAD, 0);
-        m.visitLdcInsn("BUS");
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Class", "getField",
-                "(Ljava/lang/String;)Ljava/lang/reflect/Field;", false);
-        m.visitInsn(ACONST_NULL);
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/reflect/Field", "get",
-                "(" + L_OBJ + ")" + L_OBJ, false);
+        m.visitMethodInsn(INVOKESTATIC, LEB_IMPL, "busOf", "(" + L_CLASS + ")" + L_OBJ, false);
         m.visitTypeInsn(CHECKCAST, EVENT_BUS7);
         m.visitVarInsn(ILOAD, 1);
         m.visitVarInsn(ALOAD, 2);
         m.visitMethodInsn(INVOKEINTERFACE, EVENT_BUS7, "addListener",
                 "(B" + L_CONSUMER + ")" + L_LISTENER7, true);
         m.visitInsn(POP);
+        String logger = String.join("/", "org", "slf4j", "Logger");
+        m.visitMethodInsn(INVOKESTATIC, "com/mojang/logging/LogUtils", "getLogger", "()L" + logger + ";", false);
+        m.visitLdcInsn("[Retromod] Hooked a listener onto EventBus 7 for {}");
+        m.visitVarInsn(ALOAD, 0);
+        m.visitMethodInsn(INVOKEINTERFACE, logger, "debug", "(Ljava/lang/String;" + L_OBJ + ")V", true);
         m.visitLabel(tryEnd);
         m.visitInsn(RETURN);
         m.visitLabel(catchAll);
-        m.visitInsn(POP);
-        emitWarn(m, "[Retromod] Could not hook a priority listener onto EventBus 7 for: ", 2);
+        m.visitVarInsn(ASTORE, 3);
+        m.visitMethodInsn(INVOKESTATIC, "com/mojang/logging/LogUtils", "getLogger", "()L" + logger + ";", false);
+        m.visitLdcInsn("[Retromod] Could not hook a listener onto EventBus 7 for {}: {}");
+        m.visitVarInsn(ALOAD, 0);
+        m.visitVarInsn(ALOAD, 3);
+        m.visitMethodInsn(INVOKEINTERFACE, logger, "warn", "(Ljava/lang/String;" + L_OBJ + L_OBJ + ")V", true);
         m.visitInsn(RETURN);
         m.visitMaxs(0, 0);
         m.visitEnd();
+
+        // static Object busOf(Class ev): a game event's static BUS, or a mod-bus event's bus in the mod's group.
+        MethodVisitor b = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "busOf", "(" + L_CLASS + ")" + L_OBJ, null,
+                new String[]{"java/lang/Exception"});
+        b.visitCode();
+        org.objectweb.asm.Label fieldStart = new org.objectweb.asm.Label();
+        org.objectweb.asm.Label fieldEnd = new org.objectweb.asm.Label();
+        org.objectweb.asm.Label noField = new org.objectweb.asm.Label();
+        b.visitTryCatchBlock(fieldStart, fieldEnd, noField, "java/lang/NoSuchFieldException");
+        b.visitLabel(fieldStart);
+        b.visitVarInsn(ALOAD, 0);
+        b.visitLdcInsn("BUS");
+        b.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Class", "getField", "(Ljava/lang/String;)Ljava/lang/reflect/Field;", false);
+        b.visitInsn(ACONST_NULL);
+        b.visitMethodInsn(INVOKEVIRTUAL, "java/lang/reflect/Field", "get", "(" + L_OBJ + ")" + L_OBJ, false);
+        b.visitLabel(fieldEnd);
+        b.visitInsn(ARETURN);
+        b.visitLabel(noField);
+        b.visitInsn(POP);
+        b.visitFieldInsn(GETSTATIC, LEB_IMPL, "modGroup", L_BG);
+        b.visitVarInsn(ALOAD, 0);
+        b.visitMethodInsn(INVOKESTATIC, "net/minecraftforge/fml/event/IModBusEvent", "getBus",
+                "(" + L_BG + L_CLASS + ")L" + EVENT_BUS7 + ";", true);
+        b.visitInsn(ARETURN);
+        b.visitMaxs(0, 0);
+        b.visitEnd();
     }
 
     /** The priority-carrying addListener helpers (#101), all funneling into hookBus. */
@@ -936,13 +962,16 @@ public final class ForgeEventBusSynthetics {
 
     /** As {@link #emitWarn(MethodVisitor, String)}, naming the object in the given local slot. */
     private static void emitWarn(MethodVisitor m, String msg, int slot) {
-        m.visitFieldInsn(GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;");
+        // Through Minecraft's own logger, so the warning reaches latest.log; standard error does not
+        // on most launchers. The name is assembled here so the release jar's SLF4J relocation leaves it.
+        String logger = String.join("/", "org", "slf4j", "Logger");
+        m.visitMethodInsn(INVOKESTATIC, "com/mojang/logging/LogUtils", "getLogger", "()L" + logger + ";", false);
         m.visitLdcInsn(msg);
         m.visitVarInsn(ALOAD, slot);
         m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Object", "getClass", "()Ljava/lang/Class;", false);
         m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Class", "getName", "()Ljava/lang/String;", false);
         m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
                 "(Ljava/lang/String;)Ljava/lang/String;", false);
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+        m.visitMethodInsn(INVOKEINTERFACE, logger, "warn", "(Ljava/lang/String;)V", true);
     }
 }

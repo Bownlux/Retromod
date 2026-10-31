@@ -77,6 +77,32 @@ class RegistryIdBridgeTest {
         }
     }
 
+    /**
+     * Forge 26.2: a 1.20.1 recipe serializer reached the registry raw through DeferredRegister, and
+     * the recipe reload's ClassCastException stopped the world from loading.
+     */
+    @Test
+    void forgeBridgeAdaptsOldRecipeSerializers() throws Exception {
+        ClassNode cn = new ClassNode();
+        new ClassReader(RegistryIdBridgeSynthetic.generateForge()).accept(cn, 0);
+        org.objectweb.asm.tree.MethodNode get = cn.methods.stream()
+                .filter(m -> m.name.equals("get")).findFirst().orElseThrow();
+        java.util.List<org.objectweb.asm.tree.AbstractInsnNode> code =
+                java.util.stream.StreamSupport.stream(get.instructions.spliterator(), false).toList();
+
+        assertTrue(code.stream().anyMatch(i -> i instanceof org.objectweb.asm.tree.MethodInsnNode m
+                        && m.name.equals("isFor")),
+                "only values of the recipe serializer registry are adapted");
+        assertTrue(code.stream().anyMatch(i -> i instanceof org.objectweb.asm.tree.MethodInsnNode m
+                        && m.owner.equals(com.retromod.shim.common.LegacyRecipeSerializerShim.BRIDGE)
+                        && m.name.equals("adapt")),
+                "get() must hand an old serializer to the 26.1 serializer bridge");
+        for (org.objectweb.asm.tree.MethodNode method : cn.methods) {
+            new org.objectweb.asm.tree.analysis.Analyzer<>(new org.objectweb.asm.tree.analysis.BasicVerifier())
+                    .analyze(cn.name, method);
+        }
+    }
+
     @Test
     void biomeRecorderForNeoForge1_21VerifiesAndKeepsTheMap() throws Exception {
         ClassNode cn = new ClassNode();
@@ -88,6 +114,13 @@ class RegistryIdBridgeTest {
                         .anyMatch(i -> i instanceof org.objectweb.asm.tree.MethodInsnNode call
                                 && call.desc.contains("net/minecraft/resources/Identifier")),
                 "1.21.1 has no Identifier class, so the recorder must not name it");
+        // ProjectE's DeferredRegister subclass overrides register(String, Supplier) and calls super,
+        // which lands in the recorder; calling that overload again looped until the stack overflowed.
+        assertFalse(java.util.stream.StreamSupport.stream(cn.methods.stream().filter(m -> m.name.equals("register"))
+                        .findFirst().orElseThrow().instructions.spliterator(), false)
+                        .anyMatch(i -> i instanceof org.objectweb.asm.tree.MethodInsnNode call
+                                && call.name.equals("register") && call.desc.contains("Ljava/util/function/Supplier;")),
+                "the recorder must register through the Function overload, not the Supplier one it replaces");
         for (org.objectweb.asm.tree.MethodNode method : cn.methods) {
             new org.objectweb.asm.tree.analysis.Analyzer<>(new org.objectweb.asm.tree.analysis.BasicVerifier())
                     .analyze(cn.name, method);

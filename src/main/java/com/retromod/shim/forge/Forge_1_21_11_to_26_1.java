@@ -50,6 +50,8 @@ public class Forge_1_21_11_to_26_1 implements VersionShim {
         // blaze3d refactor. Forge doesn't share the Common class-moves path, so
         // wire it here directly.
         com.retromod.shim.common.RemovedRenderStateNeutralize.register(transformer);
+        // 26.1 removed BlockEntityType.Builder; the type takes the supplier and blocks directly.
+        com.retromod.shim.common.LegacyBlockEntityTypeBuilderBridge.register(transformer);
 
         // 26.1 removed the single-arg is() overloads from BlockState/ItemStack/FluidState;
         // same wiring note as above (Forge doesn't run the Common class-moves path).
@@ -135,6 +137,10 @@ public class Forge_1_21_11_to_26_1 implements VersionShim {
         // hits NoSuchFieldError without this. Shared with the NeoForge/Fabric path.
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
             .registerGameRuleFieldRenames(transformer);
+        // The block and item tags 26.1 renamed. Shared with the NeoForge/Fabric path.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerTagRenames26_1(transformer);
+        // Forge 26.x builds network channels its own way; old SimpleChannel code opens one through it.
+        LegacyForgeNetworkBridge.register(transformer);
 
         // Bases Minecraft deleted, rebased so a mod that extends one still loads. Forge assembles
         // its own list instead of calling the common register(), so it reached neither of these:

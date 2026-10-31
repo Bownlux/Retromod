@@ -1590,7 +1590,7 @@ public class ForgeModTransformer {
 
         try {
             String original = Files.readString(atFile, java.nio.charset.StandardCharsets.UTF_8);
-            String normalized = normalizeAccessTransformer(original);
+            String normalized = prepareAccessTransformer(original, targetMcVersion);
             if (!normalized.equals(original)) {
                 Files.writeString(atFile, normalized, java.nio.charset.StandardCharsets.UTF_8);
                 LOGGER.info("Normalized legacy class descriptors in META-INF/accesstransformer.cfg");
@@ -1600,6 +1600,41 @@ public class ForgeModTransformer {
             LOGGER.warn("Failed to normalize META-INF/accesstransformer.cfg: {}", e.getMessage());
         }
         return false;
+    }
+
+    /** An author's AT as the host reads it, for the runtime and offline paths alike. */
+    public static String prepareAccessTransformer(String content, String targetMcVersion) {
+        String normalized = normalizeAccessTransformer(content);
+        // A host that runs Mojang member names ignores an entry that names an SRG id.
+        if (!hostRunsMojangMemberNames(targetMcVersion)) return normalized;
+        return remapAccessTransformerToMojang(normalized, com.retromod.mapping.SrgToMojangMapper.getInstance());
+    }
+
+    /** NeoForge runs Mojang member names from 1.20.2 and Forge from 1.20.6. */
+    private static boolean hostRunsMojangMemberNames(String targetMcVersion) {
+        if (com.retromod.util.McReflect.isNeoForge()) {
+            return !RetromodVersion.mcVersionExceeds("1.20.2", targetMcVersion);
+        }
+        return RetromodVersion.usesOfficialForgeRuntimeNames(targetMcVersion);
+    }
+
+    /** Each SRG method or field id an AT entry names, as the Mojang name the host runs. */
+    public static String remapAccessTransformerToMojang(String content,
+            com.retromod.mapping.SrgToMojangMapper srg) {
+        // access, class, then an optional member: a field name or a method name and descriptor.
+        Pattern entry = Pattern.compile("(?m)^(\\s*(?:public|protected|private|default)(?:[+-]f)?\\s+\\S+\\s+)"
+                + "((?:m_|f_|func_|field_)[\\w$]+)(?=[\\s(]|$)");
+        Matcher matcher = entry.matcher(content);
+        StringBuilder out = new StringBuilder();
+        while (matcher.find()) {
+            String name = matcher.group(2);
+            int end = matcher.end();
+            boolean method = end < content.length() && content.charAt(end) == '(';
+            String mojang = (method ? srg.getMethodMap() : srg.getFieldMap()).get(name);
+            matcher.appendReplacement(out, Matcher.quoteReplacement(matcher.group(1) + (mojang == null ? name : mojang)));
+        }
+        matcher.appendTail(out);
+        return out.toString();
     }
 
     /**

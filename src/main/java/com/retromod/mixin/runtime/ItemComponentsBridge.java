@@ -80,6 +80,9 @@ public final class ItemComponentsBridge {
     private static final String[] FIRE_RESISTANT = {"FIRE_RESISTANT", "field_50076"};
     private static final String[] UNIT = {"net.minecraft.util.Unit", "net.minecraft.class_3902"};
     private static final String[] UNIT_INSTANCE = {"INSTANCE", "field_17274"};
+    private static final String[] MAP_BUILDER_CLASS =
+            {"net.minecraft.core.component.DataComponentMap$Builder", "net.minecraft.class_9323$class_9324"};
+    private static final String[] STACKS_TO = {"stacksTo", "method_7889"};
 
     private ItemComponentsBridge() {}
 
@@ -129,6 +132,27 @@ public final class ItemComponentsBridge {
     /** A 1.12.2 item's {@code this.maxStackSize = value}, written from the item's own class. */
     public static void setMaxStackSize(Object item, int value) {
         setMaxStackSize(item, (Object) value);
+    }
+
+    /** A mod's {@code Item.Properties} subclass writing {@code this.maxStackSize = value}. */
+    public static void setPropertiesStackSize(Object properties, int value) {
+        try {
+            // 1.21 refuses an item that is both damageable and stackable, which the old field write
+            // could make, so durable properties keep a stack of one.
+            if (value > 1 && propertiesComponent(properties, MAX_DAMAGE) != null) return;
+            call(properties, STACKS_TO, value);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            throw new UnsupportedOperationException("Retromod could not set the stack size of " + properties, e);
+        }
+    }
+
+    /** {@code Item.Properties.maxStackSize}, read from the components the properties will give the item. */
+    public static int propertiesStackSize(Object properties) {
+        try {
+            return propertiesComponent(properties, MAX_STACK_SIZE) instanceof Integer size ? size : 64;
+        } catch (ReflectiveOperationException e) {
+            throw new UnsupportedOperationException("Retromod could not read the stack size of " + properties, e);
+        }
     }
 
     /** {@code Item.maxStackSize}, read from the {@code max_stack_size} component. */
@@ -184,6 +208,23 @@ public final class ItemComponentsBridge {
             throw new UnsupportedOperationException("Retromod could not set the " + componentType[0]
                     + " component of " + item, e);
         }
+    }
+
+    /** One component of the map an {@code Item.Properties} is building, or null. */
+    private static Object propertiesComponent(Object properties, String[] componentType)
+            throws ReflectiveOperationException {
+        ClassLoader loader = properties.getClass().getClassLoader();
+        Class<?> builderType = load(loader, MAP_BUILDER_CLASS);
+        for (Class<?> type = properties.getClass(); type != null; type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers()) || field.getType() != builderType) continue;
+                field.setAccessible(true);
+                // build() copies the entries, so the properties keep building as before.
+                Object map = call(field.get(properties), MAP_BUILD);
+                return call(map, GET, staticField(loader, DATA_COMPONENTS, componentType));
+            }
+        }
+        throw new NoSuchFieldException("component builder on " + properties.getClass().getName());
     }
 
     private static Object component(Object item, String[] componentType) throws ReflectiveOperationException {

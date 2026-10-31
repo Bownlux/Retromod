@@ -19,6 +19,10 @@ public class NeoForge_1_20_1_to_1_20_2 implements VersionShim {
     public void registerRedirects(RetromodTransformer transformer) {
         // 1.20.2 split Advancement into its data and an AdvancementHolder.
         com.retromod.shim.common.LegacyAdvancementBridge.register(transformer);
+        // The same release read advancement triggers with codecs instead of a mod's JSON reader.
+        com.retromod.shim.common.LegacyCriterionTriggerBridge.register(transformer);
+        // Recipe serializers became codecs, and recipe lookups return holders, from 1.20.2 to 1.21.
+        com.retromod.shim.common.LegacyRecipeApiBridge.register(transformer);
         // 1.20.2 removed the SimpleChannel and NetworkRegistry networking; map it onto PayloadRegistrar.
         transformer.registerClassRedirect(
             "net/neoforged/neoforge/network/NetworkRegistry",

@@ -27,11 +27,12 @@ import java.util.zip.ZipInputStream;
 /** Per-entry SHA-256 digests of a transformed jar, without the stamps that change on every run. */
 public final class LoaderApiGolden {
 
-    // The compile time and the self-hash change on every run, so two builds compare by content.
+    // The compile time, the self-hash and Retromod's own version change between builds, so two
+    // builds compare by content.
     private static final Set<String> VOLATILE_ATTRIBUTES = Set.of(
-            "Retromod-Compiled-Time", "Retromod-Self-Hash");
+            "Retromod-Compiled-Time", "Retromod-Self-Hash", "Retromod-AOT-Version");
     private static final List<String> VOLATILE_PROPERTIES = List.of(
-            "compiled_time=", "retromod_self_hash=");
+            "compiled_time=", "retromod_self_hash=", "aot_version=");
 
     private LoaderApiGolden() {}
 

@@ -45,6 +45,10 @@ class LegacyBlockConstructorBridgeTest {
     private static final String DROP = "net/minecraft/world/level/block/DropExperienceBlock";
     private static final String CLUSTER = "net/minecraft/world/level/block/AmethystClusterBlock";
     private static final String CAULDRON = "net/minecraft/world/level/block/AbstractCauldronBlock";
+    private static final String BUTTON = "net/minecraft/world/level/block/ButtonBlock";
+    private static final String SIGN = "net/minecraft/world/level/block/StandingSignBlock";
+    private static final String SET_TYPE = "net/minecraft/world/level/block/state/properties/BlockSetType";
+    private static final String WOOD_TYPE = "net/minecraft/world/level/block/state/properties/WoodType";
 
     private final RetromodTransformer transformer = RetromodTransformer.getInstance();
     private byte[] transformedCauldron;
@@ -68,6 +72,21 @@ class LegacyBlockConstructorBridgeTest {
         Object[] richArgs = args(rich);
         assertEquals(7, field(richArgs[0], "value"), "the mod's own provider comes first now");
         assertEquals(PROPERTIES.replace('/', '.'), richArgs[1].getClass().getName());
+    }
+
+    @Test
+    @DisplayName("#372: a 1.20.1 button and sign put their type ahead of the properties, and the button drops its arrow flag")
+    void typeFirstConstructors() throws Exception {
+        HostStubs host = register(host1211());
+
+        Object[] button = args(run(host, "button"));
+        Object[] sign = args(run(host, "sign"));
+
+        assertEquals(SET_TYPE.replace('/', '.'), button[0].getClass().getName());
+        assertEquals(30, button[1]);
+        assertEquals(PROPERTIES.replace('/', '.'), button[2].getClass().getName());
+        assertEquals(WOOD_TYPE.replace('/', '.'), sign[0].getClass().getName());
+        assertEquals(PROPERTIES.replace('/', '.'), sign[1].getClass().getName());
     }
 
     @Test
@@ -212,6 +231,17 @@ class LegacyBlockConstructorBridgeTest {
                     properties(mv);
                 });
         factory(cw, "cauldron", "test/AcidCauldron", "(" + L_PROPERTIES + ")V", mv -> properties(mv));
+        // Fossils and Archaeology's 1.20.1 buttons and signs.
+        factory(cw, "button", BUTTON, "(" + L_PROPERTIES + "L" + SET_TYPE + ";IZ)V", mv -> {
+            properties(mv);
+            instance(mv, SET_TYPE);
+            mv.visitIntInsn(BIPUSH, 30);
+            mv.visitInsn(ICONST_1);
+        });
+        factory(cw, "sign", SIGN, "(" + L_PROPERTIES + "L" + WOOD_TYPE + ";)V", mv -> {
+            properties(mv);
+            instance(mv, WOOD_TYPE);
+        });
         cw.visitEnd();
         return cw.toByteArray();
     }
@@ -270,6 +300,12 @@ class LegacyBlockConstructorBridgeTest {
         mv.visitEnd();
     }
 
+    private static void instance(MethodVisitor mv, String type) {
+        mv.visitTypeInsn(NEW, type);
+        mv.visitInsn(DUP);
+        mv.visitMethodInsn(INVOKESPECIAL, type, "<init>", "()V", false);
+    }
+
     private static void properties(MethodVisitor mv) {
         mv.visitTypeInsn(NEW, PROPERTIES);
         mv.visitInsn(DUP);
@@ -296,6 +332,10 @@ class LegacyBlockConstructorBridgeTest {
         classes.put(CONSTANT_INT, constantInt());
         classes.put(DROP, argsHolder(DROP, "java/lang/Object", "(L" + INT_PROVIDER + ";" + L_PROPERTIES + ")V"));
         classes.put(CLUSTER, argsHolder(CLUSTER, "java/lang/Object", "(FF" + L_PROPERTIES + ")V"));
+        classes.put(SET_TYPE, HostStubs.plainClass(SET_TYPE, "java/lang/Object"));
+        classes.put(WOOD_TYPE, HostStubs.plainClass(WOOD_TYPE, "java/lang/Object"));
+        classes.put(BUTTON, argsHolder(BUTTON, "java/lang/Object", "(L" + SET_TYPE + ";I" + L_PROPERTIES + ")V"));
+        classes.put(SIGN, argsHolder(SIGN, "java/lang/Object", "(L" + WOOD_TYPE + ";" + L_PROPERTIES + ")V"));
         return classes;
     }
 

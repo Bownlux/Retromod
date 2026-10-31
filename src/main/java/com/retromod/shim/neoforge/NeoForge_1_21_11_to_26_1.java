@@ -200,6 +200,14 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
         // (EnergyStorage is the impl, not a renamed interface), so they broke every
         // handler mod they touched. ForgeSpawnEggItem was likewise dropped: spawn eggs
         // went data-driven, so that redirect swapped one missing class for another.
+        // The rework did remove the capabilities holding those handlers, which a registration
+        // bridge restores beside the resource handler ones. The 1.21.9 shim registers it too,
+        // and this one covers a mod built for 1.21.9 or newer, whose chain starts after it.
+        LegacyHandlerCapabilityBridge.register(transformer);
+        // 26.1 removed BlockEntityType.Builder, and data attachments serialize with a MapCodec.
+        com.retromod.shim.common.LegacyBlockEntityTypeBuilderBridge.register(transformer);
+        LegacyAttachmentCodecBridge.register(transformer);
+        registerLootFrom(transformer);
 
         // BlockEvent$BreakEvent moved into its own subpackage in 26.1 (same ctor, still
         // cancellable). Block-break is one of the most common event subscriptions.
@@ -228,6 +236,36 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
             "net/neoforged/neoforge/client/event/RecipesReceivedEvent"
         );
 
+        registerReloadListenerEvents(transformer);
+
+        // jspecify annotations: catch javax.annotation for mods that skip the
+        // 1.21.10->1.21.11 shim via a direct BFS path.
+        transformer.registerClassRedirect(
+            "javax/annotation/Nullable",
+            "org/jspecify/annotations/Nullable"
+        );
+        transformer.registerClassRedirect(
+            "javax/annotation/Nonnull",
+            "org/jspecify/annotations/NonNull"
+        );
+    }
+
+    @Override
+    public String[] getShimClasses() {
+        return new String[] {
+            // Reuses Fabric's loader-agnostic ItemSafetyShim for safe
+            // getDefaultInstance() and the setGain() no-op.
+            "com.retromod.shim.fabric.embedded.ItemSafetyShim",
+            // Bridges the removed 1-arg AddReloadListenerEvent.addListener onto 26.2's id-requiring form (#139).
+            "com.retromod.shim.neoforge.embedded.ReloadListenerEventShim"
+        };
+    }
+
+    /**
+     * The reload listener events a 1.21.1 mod subscribes to, under the names NeoForge gave them by
+     * 1.21.11. The 1.21.11 shim calls this too, on a host that has only the new names.
+     */
+    static void registerReloadListenerEvents(RetromodTransformer transformer) {
         // AddReloadListenerEvent renamed to AddServerReloadListenersEvent around 26.x, and its
         // addListener now REQUIRES an id (inherited from SortedReloadListenerEvent). Both are game-bus
         // events (extend bus/api/Event, not IModBusEvent), so the class redirect retargets the
@@ -273,27 +311,17 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
                 true
             );
         }
-
-        // jspecify annotations: catch javax.annotation for mods that skip the
-        // 1.21.10->1.21.11 shim via a direct BFS path.
-        transformer.registerClassRedirect(
-            "javax/annotation/Nullable",
-            "org/jspecify/annotations/Nullable"
-        );
-        transformer.registerClassRedirect(
-            "javax/annotation/Nonnull",
-            "org/jspecify/annotations/NonNull"
-        );
     }
 
-    @Override
-    public String[] getShimClasses() {
-        return new String[] {
-            // Reuses Fabric's loader-agnostic ItemSafetyShim for safe
-            // getDefaultInstance() and the setGain() no-op.
-            "com.retromod.shim.fabric.embedded.ItemSafetyShim",
-            // Bridges the removed 1-arg AddReloadListenerEvent.addListener onto 26.2's id-requiring form (#139).
-            "com.retromod.shim.neoforge.embedded.ReloadListenerEventShim"
-        };
+    /** NeoForge's {@code Properties.lootFrom(block)} became a loot table override, where the host has no lootFrom. */
+    private static void registerLootFrom(RetromodTransformer transformer) {
+        String properties = "net/minecraft/world/level/block/state/BlockBehaviour$Properties";
+        org.objectweb.asm.tree.ClassNode host = com.retromod.core.ClassResourceInspector.read(properties);
+        if (host != null && host.methods.stream().anyMatch(method -> method.name.equals("lootFrom"))) return;
+        String helper = "com/retromod/shim/neoforge/embedded/LegacyLootFrom";
+        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, helper,
+                com.retromod.shim.neoforge.embedded.LegacyLootFrom.class);
+        transformer.registerMethodRedirect(properties, "lootFrom", "(Ljava/util/function/Supplier;)L" + properties + ";",
+                helper, "lootFrom", "(Ljava/lang/Object;Ljava/util/function/Supplier;)Ljava/lang/Object;", true);
     }
 }

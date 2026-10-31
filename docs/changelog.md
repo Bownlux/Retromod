@@ -10,6 +10,36 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.4.0 Snapshot Line
 
+### Snapshot 3, October 30, 2026
+
+- Translates old Forge mods on Forge 1.20, 1.20.2, 1.20.3, and 1.20.4, which run SRG names with their own numbering.
+- Names thousands more Forge SRG ids exactly, including ids from 1.14.4 to 1.16.4 mods, and corrects old 1.12.2 names.
+- Checks the Fabric intermediary table against the 26.x game jars: removes 751 wrong lambda entries, corrects 110 names, and adds 158 ids.
+- Adds moves for classes that 26.1 moved after 1.21.1 added them, for every loader.
+- Follows more classes and tag constants that 26.2 and 26.3 renamed, and moves trim palettes in resource packs.
+- Renames the vanilla tags that 26.1 to 26.3 renamed, in mod code and data, and writes the dye recipe 26.1 needs for armor a mod made dyeable.
+- Keeps custom advancement triggers working on 26.3, and follows the registry keys 26.3 reused for other registries.
+- Follows classes that 26.1 and 26.2 both moved on NeoForge and Forge 26.2 and newer, and NeoForge 1.21.1 classes and members that later NeoForge releases moved or renamed.
+- Keeps NeoForge 1.21.1 loot modifiers working on 26.2 and 26.3.
+- Rebuilds more of the old Forge API on Forge 26.x: the mod lists, which became static, the tick events, which split into Pre and Post events, `SimpleChannel` networking, mod bus listeners added with a lambda, `Rarity.create`, and the old attribute operation names.
+- Writes the `pack.mcmeta` Forge 26.x needs into a translated jar, so its data loads and game events keep running.
+- Keeps advancement triggers built before 1.20.2 working on 26.x, and keeps a 1.20.1 recipe serializer from stopping a Forge 26.x world from loading.
+- Serves old Fabric API stripping, tilling, flattening, composting, and fuel registrations on 26.3 through its new block transformers and item components.
+- Serves old Fabric API villager trades and brewing recipes on 26.x, and keeps the per-state copper constants working on 26.2 and newer.
+- Runs 1.20.1 recipes, advancement triggers, and loot serializers on newer hosts, and gets Fossils and Archaeology started on a NeoForge 1.21.1 server.
+- Leaves TerraBlender 1.21.1 and similar native mods untranslated.
+- Runs Forge 1.19.4 creative tab events on Forge 1.20 and newer, and gets Super Mario Mania started on a Forge 1.20.1 server.
+- Keeps 1.21.1 explosion subclasses working on 1.21.2 and newer, and 1.21.1 armor materials, recipe lookups, and NeoForge item, fluid, and energy handlers working on 26.2. ProjectE starts on a NeoForge 26.2 server.
+- Rebuilds the NeoForge item, fluid, and energy handler APIs that 26.3 removed, and the brewing table it replaced with recipes. ProjectE starts on a NeoForge 26.3 server.
+- Reads old block state keys in a mod's own data files on 26.3.
+- Bridges game rules, a renamed recipe serializer, reload events, and old handler capabilities on NeoForge 1.21.11, and game rules and the serializer on Forge 1.21.11.
+- Frames mod and Minecraft classes correctly in the offline CLI when it has the target game jar.
+- Starts on NeoForge 1.20.5 and 1.20.6, and opens Retromod's entry in the NeoForge 1.20.2 and 1.20.3 mod list.
+- Loads entities that override the eye height 1.20.5 made final, and maps Forge biome modifiers to NeoForge.
+- Updates ASM to 9.11.1 and SLF4J to 2.0.20, and updates the German translation.
+
+Old trades apply from a world's second start. The 1.20.1 recipe bridge covers 1.20.5 to 1.21.1 only, so old recipe classes still fail on 26.x. Old Forge mods on Forge 26.2 still fail on cancellable events, attached capabilities, and render events, and `Rarity.create` falls back to a vanilla rarity there. Old compost chances round to the nearest vanilla tier. Forge 1.19.4 screens still fail when opened on 1.20 and newer. The rebuilt NeoForge handler APIs are copied into each translated jar, so two old mods that hand handlers to each other outside capabilities see different classes. ProjectE still stops on NeoForge 1.21.2 to 1.21.11, where the block id and attachment bridges are not registered yet. A 1.21 Fabric mod that builds a single-item recipe serializer still fails on 26.x. ProjectE's client still fails on 26.x, which rebuilt the renderer it draws with.
+
 ### Snapshot 2, October 18, 2026
 
 - Loads old Forge and NeoForge mods straight from `mods/` without changing the files, from a translation cache. Set `write_translated_jars` to `true` to get the snapshot 1 behavior back.

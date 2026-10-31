@@ -136,4 +136,35 @@ class LegacyCodecTypeBridgeTest {
         new ClassReader(bytes).accept(node, 0);
         return node;
     }
+
+    /**
+     * #372: Fossils and Archaeology 9.3.4.0's chunk generators override the 1.20.1 codec() that
+     * returned a Codec, and register that codec, which NeoForge 1.21.1 could not dispatch.
+     */
+    @Test
+    void chunkGeneratorsLandOnTheMapCodecBase() {
+        String previous = com.retromod.core.RetromodVersion.TARGET_MC_VERSION;
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        try {
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = "1.21.1";
+            transformer.clearRedirectsForTesting();
+            registerCodecBases(transformer);
+
+            ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+            cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, "mod/LairGenerator", null,
+                    CODEC_BASES[0][0], null);
+            cw.visitEnd();
+            ClassNode out = new ClassNode();
+            new ClassReader(transformer.transformClass(cw.toByteArray(), "mod/LairGenerator")).accept(out, 0);
+
+            assertEquals(CODEC_BASES[0][1], out.superName);
+            for (String[] base : CODEC_BASES) {
+                byte[] generated = generateCodecBase(base[1], base[0], java.util.Arrays.copyOfRange(base, 2, base.length));
+                new ClassReader(generated).accept(new org.objectweb.asm.util.CheckClassAdapter(new ClassWriter(0), true), 0);
+            }
+        } finally {
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = previous;
+            transformer.clearRedirectsForTesting();
+        }
+    }
 }

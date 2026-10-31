@@ -207,7 +207,22 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
             // Entity, goal and level members 1.20.5 and 1.21.2 changed. NeoForge and Forge
             // register the 1.20.5 bridge from their 1.20.5 shims, which Fabric lacks.
             com.retromod.shim.common.Legacy1205MemberBridge.register(transformer);
+            // 1.20.5 priced trades in item costs, so the old item stack trade constructors are gone.
+            com.retromod.shim.common.LegacyMerchantOfferBridge.register(transformer);
+            // 1.20.5 also replaced the Gson loot serializers that custom loot functions and conditions used.
+            com.retromod.shim.common.LegacyLootSerializerBridge.register(transformer);
             com.retromod.shim.common.Legacy1212MemberBridge.register(transformer);
+            // 1.21.2 made armor materials plain records, with no registry to put them in.
+            com.retromod.shim.common.LegacyArmorMaterialRecordBridge.register(transformer);
+            // Tool rules take block holder sets instead of a tag or a list of blocks.
+            com.retromod.shim.common.LegacyToolRuleBridge.register(transformer);
+            // Recipes are listed through the recipe map and describe themselves through displays.
+            com.retromod.shim.common.LegacyRecipeIntrospectionBridge.register(transformer);
+            com.retromod.shim.common.LegacySpecialRecipeClasses.register(transformer);
+            // Explosion became an interface; an old subclass extends a server explosion instead.
+            com.retromod.shim.common.LegacyExplosionBaseBridge.register(transformer);
+            // Later versions hid Level.isClientSide and Level.random behind their getters.
+            com.retromod.shim.common.LegacyLevelFieldBridge.register(transformer);
             // 1.20.5 made the Attributes constants holders, which NeoForge and Forge also bridge
             // from their 1.20.5 shims. Without it a mob's createAttributes() failed with
             // NoSuchFieldError: Attributes.MAX_HEALTH in the mod's entry point.
@@ -217,9 +232,13 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
             com.retromod.shim.common.LegacySpawnPlacementTypeBridge.register(transformer);
             // 1.20.2 split Advancement into its data and an AdvancementHolder.
             com.retromod.shim.common.LegacyAdvancementBridge.register(transformer);
+            // The same release read advancement triggers with codecs instead of a mod's JSON reader.
+            com.retromod.shim.common.LegacyCriterionTriggerBridge.register(transformer);
             // Block constructors 1.20.3 reshaped. Pre-26.1 Fabric has the intermediary
             // Pre1_20_3BlockConstructorBridge instead.
             com.retromod.shim.common.LegacyBlockConstructorBridge.register(transformer);
+            // The same release put doors, trapdoors, fence gates and pressure plates' type ahead of their properties.
+            com.retromod.shim.common.LegacyBlockSetTypeBridge.register(transformer);
             com.retromod.shim.common.LegacyProtectedBlockCallBridge.register(transformer);
         } else {
             // Before 26.x these two calls keep intermediary names, so they are bridged here. On 26.x

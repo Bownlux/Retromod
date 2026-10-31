@@ -42,6 +42,12 @@ public class NeoForge_26_2_to_26_3 implements VersionShim {
         // NeoForge API removals: the tool ability constants and ItemHandlerHelper.
         LegacyItemAbilitiesBridge.register(transformer);
         LegacyItemHandlerHelperBridge.register(transformer);
+        // The item, fluid, and energy handler APIs, rebuilt inside each jar that uses them.
+        LegacyTransferApi.register(transformer);
+        // A reload listener no longer gets the registry access from its event.
+        LegacyReloadRegistryBridge.register(transformer);
+        // BiomeModifier.modify gained a RegistryAccess parameter.
+        LegacyBiomeModifierBridge.register(transformer);
     }
 
     private static final String REGISTRIES = "net/neoforged/neoforge/registries/";

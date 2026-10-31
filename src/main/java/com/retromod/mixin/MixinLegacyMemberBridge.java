@@ -4,6 +4,8 @@
  */
 package com.retromod.mixin;
 
+import com.retromod.core.ClassResourceInspector;
+import com.retromod.core.RetromodVersion;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
@@ -52,6 +54,9 @@ final class MixinLegacyMemberBridge {
     private static final String ENTITY = "net/minecraft/world/entity/Entity";
     private static final String PLAYER = "net/minecraft/world/entity/player/Player";
     private static final String CAMERA_PLAYER_DESC = "()L" + PLAYER + ";";
+    private static final String CAMERA = "net/minecraft/client/Camera";
+    private static final String OLD_CAMERA_MOVE = "(DDD)V";
+    private static final String CAMERA_MOVE = "(FFF)V";
     private static final String GUI_GRAPHICS_EXTRACTOR =
             "net/minecraft/client/gui/GuiGraphicsExtractor";
     private static final String DELTA_TRACKER = "net/minecraft/client/DeltaTracker";
@@ -144,6 +149,9 @@ final class MixinLegacyMemberBridge {
 
         if (targets.contains(POSE)) {
             modified |= bridgePoseConstructor(classNode);
+        }
+        if (targets.contains(CAMERA)) {
+            modified |= bridgeCameraMove(classNode);
         }
         for (String wrapper : MAP_CODEC_TYPE_WRAPPERS) {
             if (targets.contains(wrapper)) {
@@ -438,6 +446,40 @@ final class MixinLegacyMemberBridge {
         computeMaxStack(classNode, shadow);
         shadow.maxLocals = 2;
         return true;
+    }
+
+    /** Keeps a mixin's {@code @Shadow move(double, double, double)}, which 1.21 changed to floats on {@code Camera}. */
+    private static boolean bridgeCameraMove(ClassNode classNode) {
+        MethodNode shadow = findAnnotatedMethod(classNode, "move", OLD_CAMERA_MOVE, SHADOW_DESC);
+        if (shadow == null || isStatic(shadow) || !hostCameraMovesWithFloats()) return false;
+
+        // The current member, shadowed so the bridge can call it.
+        if (findMethod(classNode, "move", CAMERA_MOVE) == null) {
+            MethodNode current = new MethodNode(Opcodes.ACC_PROTECTED | Opcodes.ACC_ABSTRACT, "move", CAMERA_MOVE, null, null);
+            current.visibleAnnotations = new ArrayList<>(List.of(new AnnotationNode(SHADOW_DESC)));
+            classNode.methods.add(current);
+        }
+        // The old shadow becomes a mixin-owned method that narrows its arguments, as the old
+        // camera's own float math did.
+        makeConcreteUnique(shadow, SHADOW_DESC);
+        InsnList code = shadow.instructions;
+        code.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        for (int slot : new int[]{1, 3, 5}) {
+            code.add(new VarInsnNode(Opcodes.DLOAD, slot));
+            code.add(new InsnNode(Opcodes.D2F));
+        }
+        code.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, classNode.name, "move", CAMERA_MOVE, false));
+        code.add(new InsnNode(Opcodes.RETURN));
+        shadow.maxStack = 4;
+        shadow.maxLocals = 7;
+        return true;
+    }
+
+    /** Whether the host's camera moves by floats; offline, where it cannot be read, from 1.21. */
+    private static boolean hostCameraMovesWithFloats() {
+        ClassNode camera = ClassResourceInspector.read(CAMERA);
+        if (camera == null) return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21") >= 0;
+        return camera.methods.stream().anyMatch(method -> method.name.equals("move") && method.desc.equals(CAMERA_MOVE));
     }
 
     /**

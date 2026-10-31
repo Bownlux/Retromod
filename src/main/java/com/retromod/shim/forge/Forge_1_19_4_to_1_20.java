@@ -74,6 +74,17 @@ public class Forge_1_19_4_to_1_20 implements VersionShim {
                 + "Lnet/minecraft/world/phys/HitResult;";
         transformer.registerMethodRedirect(projectileUtil, "getHitResult", hitDesc,
                 projectileUtil, "getHitResultOnMoveVector", hitDesc);
+        // 1.20 replaced Forge's CreativeModeTabEvent with tab registry entries and turned the
+        // CreativeModeTabs constants into registry keys.
+        LegacyCreativeModeTabEvents.register(transformer);
+        // 1.20 renamed ServerPlayer.setLevel, which a teleporter calls when it moves a player.
+        transformer.registerMethodRedirect("net/minecraft/server/level/ServerPlayer", "setLevel",
+                "(Lnet/minecraft/server/level/ServerLevel;)V", "net/minecraft/server/level/ServerPlayer",
+                "setServerLevel", "(Lnet/minecraft/server/level/ServerLevel;)V");
+        // 1.20 renamed the void damage type. An SRG host keeps its id, which still names it.
+        String damageType = "Lnet/minecraft/resources/ResourceKey;";
+        transformer.registerFieldRedirect("net/minecraft/world/damagesource/DamageTypes", "OUT_OF_WORLD", damageType,
+                "net/minecraft/world/damagesource/DamageTypes", "FELL_OUT_OF_WORLD", damageType);
         transformer.registerMethodRedirect(
             "net/minecraft/world/level/block/entity/SignBlockEntity", "getMessage",
             "(I)Lnet/minecraft/network/chat/Component;",

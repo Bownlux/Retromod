@@ -1416,8 +1416,8 @@ public class RetromodCli {
                                     com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
                                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                         } else if (entry.getName().equals("META-INF/accesstransformer.cfg")) {
-                            data = com.retromod.core.ForgeModTransformer.normalizeAccessTransformer(
-                                    new String(data, java.nio.charset.StandardCharsets.UTF_8))
+                            data = com.retromod.core.ForgeModTransformer.prepareAccessTransformer(
+                                    new String(data, java.nio.charset.StandardCharsets.UTF_8), TARGET_MC_VERSION)
                                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                         } else if ((entry.getName().startsWith("META-INF/jars/")        // Fabric JiJ
                                     || entry.getName().startsWith("META-INF/jarjar/"))  // NeoForge/Forge JiJ
@@ -1933,8 +1933,8 @@ public class RetromodCli {
                             if (!java.util.Arrays.equals(t, data)) { data = t; modified = true; }
                         } else if (name.equals("META-INF/accesstransformer.cfg")) {
                             byte[] t = com.retromod.core.ForgeModTransformer
-                                    .normalizeAccessTransformer(new String(
-                                            data, java.nio.charset.StandardCharsets.UTF_8))
+                                    .prepareAccessTransformer(new String(
+                                            data, java.nio.charset.StandardCharsets.UTF_8), TARGET_MC_VERSION)
                                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                             if (!java.util.Arrays.equals(t, data)) { data = t; modified = true; }
                         } else if (name.equals("fabric.mod.json")) {

@@ -106,6 +106,18 @@ public class LegacyRecipeSerializerShim implements MinecraftVersionedApiShim {
         return "common";
     }
 
+    /**
+     * On a 1.21.11 host, where {@code SimpleCraftingRecipeSerializer} is already
+     * {@code CustomRecipe.Serializer} with the same constructor, codecs, and factory. 26.1 removed
+     * both names, so the host decides, and a 26.x host keeps the stand-in this shim registers.
+     */
+    public static void registerCustomRecipeRename(RetromodTransformer transformer) {
+        if (!com.retromod.core.ClassResourceInspector.exists(OLD_CUSTOM_SERIALIZER)
+                || com.retromod.core.ClassResourceInspector.exists(OLD_SIMPLE_SERIALIZER)) return;
+        transformer.registerClassRedirect(OLD_SIMPLE_SERIALIZER, OLD_CUSTOM_SERIALIZER);
+        transformer.registerClassRedirect(OLD_SIMPLE_FACTORY, OLD_CUSTOM_FACTORY);
+    }
+
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
         transformer.registerSyntheticClass(BRIDGE, generateBridge());

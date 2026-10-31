@@ -106,11 +106,23 @@ public final class SyntheticEmbedder {
         Map<String, String> combined = new HashMap<>();
         for (Map.Entry<String, String> move : classMoves.entrySet()) {
             if (relocation.containsKey(move.getKey())) continue;
-            combined.put(move.getKey(),
-                    relocation.getOrDefault(move.getValue(), move.getValue()));
+            // A mod class follows a chain of moves over repeated passes; a stand-in gets one pass,
+            // so it takes the end of the chain, such as a 1.20.1 name moved again in 26.1 and 26.2.
+            String last = lastMove(classMoves, move.getValue());
+            combined.put(move.getKey(), relocation.getOrDefault(last, last));
         }
         combined.putAll(relocation);
         return combined;
+    }
+
+    /** Where {@code name} ends up after every chained class move, stopping at a cycle. */
+    private static String lastMove(Map<String, String> classMoves, String name) {
+        Set<String> seen = new HashSet<>();
+        String current = name;
+        while (classMoves.containsKey(current) && seen.add(current)) {
+            current = classMoves.get(current);
+        }
+        return current;
     }
 
     public static int embed(Path modDir, String uniqueKey, RetromodTransformer transformer) {
@@ -487,8 +499,8 @@ public final class SyntheticEmbedder {
     /**
      * The class remapper, plus the host's member names when the host runs target SRG names.
      *
-     * <p>Synthetics are written with Mojang member names. Forge 1.20.1 and other pre-26 Forge hosts
-     * run SRG names, so a synthetic that called {@code CreativeModeTab.builder()} or overrode
+     * <p>Synthetics are written with Mojang member names. Forge 1.20 to 1.20.4 hosts run SRG
+     * names, so a synthetic that called {@code CreativeModeTab.builder()} or overrode
      * {@code getIconItem} by its Mojang name failed there with {@code NoSuchMethodError} or never
      * overrode anything. Mod classes already carry target SRG names, so this applies to synthetic
      * bytes only. A method a synthetic declares is looked up through its supertypes, because that

@@ -8,7 +8,7 @@ Last reviewed: 2026-10-12
 
 ## Current Work
 
-Retromod 1.3.4 is the current stable release, and 1.4.0-snapshot.2 is the current snapshot. The 1.3 line's goal was mixin translation, and it is
+Retromod 1.3.4 is the current stable release, and 1.4.0-snapshot.3 is the current snapshot. The 1.3 line's goal was mixin translation, and it is
 met: every repair that line set out to build has shipped code and a passing test, so the list of
 what it does now lives in the [changelog](CHANGELOG.md). What follows is what 1.3 did not close.
 
@@ -254,6 +254,29 @@ Worldgen and rendering:
   models, and `ItemInHandRenderer.itemUsed` on 26.3, which moved to `LocalPlayer` (#298).
 - World types from before 1.16 load but are not offered (#339). Offering them needs a density
   function, a biome source, and a generated world preset.
+
+### 1.4.0-snapshot.3
+
+Snapshot 3 refreshes the mapping data. The audits behind it also found these gaps on 26.2 and 26.3, none fixed yet:
+
+- 26.3 removed Fabric API's content registries and moved their jobs into data and item components. Batch C1
+  serves stripping, tilling, flattening, composting and the old `FuelRegistry`. Still open (batch C2):
+  `FabricPotionBrewingBuilder`, `DecoratedPotPatternRegistry`, `FuelValueEvents` for 26.1 and 26.2 mods on 26.3,
+  `StrippableBlockRegistry.getStrippedBlockState` and custom `StrippingTransformer`s, and the oxidizing,
+  flammability, villager and path-node registries.
+- 26.3 deleted `ContextAwarePredicate`, so custom advancement triggers fail.
+- 26.2 turned 15 copper constants on `Blocks` and `Items` into `WeatheringCopperCollection` and removed 84 per-state
+  fields from each, plus the 16 colored harness items.
+- GeckoLib 4.5 to 4.9 mods have 108 class names with no row in the GeckoLib 5 table.
+- 26.3 reused registry key names: `CARVER`, `MATERIAL_CONDITION`, and `MATERIAL_RULE` now name data registries, and
+  the codec registries moved to `*_TYPE` names. Older shims still land on the reused names.
+- Five `SoundEvents` tool sounds became `Holder$Reference` on 26.3.
+- Tag names inside a mod's data files are not renamed: `concrete_powder`, `convertable_to_mud`, and the five explorer
+  map structure tags.
+- About 4,300 members resolve on 26.1.2 but not on 26.3, and no 26.3 shim covers them.
+- Forge never released 1.20.5, but the build still makes a `dist/Forge/1.20.5` jar.
+- Forge 1.20.2 replaced the `SimpleChannel` networking API, so a Forge 1.20.1 mod that opens a channel with
+  `NetworkRegistry.newSimpleChannel` stops at construction on Forge 1.20.2 to 1.20.4, the Forge test mod included.
 
 ### Leads From Compatibility Reports
 

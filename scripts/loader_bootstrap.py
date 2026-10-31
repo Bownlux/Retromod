@@ -37,30 +37,43 @@ BOOT_PROTOCOL = "1"
 BOOT_MODULE_NAME = "retromod.boot"
 BOOT_PACKAGE = "com/retromod/boot/"
 ICON_ENTRY = "assets/retromod/icon.png"
+# The mods toml names this root copy as logoFile; a mod list may reject a slash in that path.
+LOGO_ENTRY = "retromod_logo.png"
 FIXED_TIMESTAMP = (1980, 2, 1, 0, 0, 0)
 MAX_RUNTIME_BYTES = 256 * 1024 * 1024
 
-# One locator per SPI shape. The outer jar carries exactly one of these service files.
-GENERATIONS = {
+# One locator per SPI shape. The outer jar carries the service file of each locator its
+# generation lists.
+LOCATORS = {
     # Forge 46 to 66 and NeoForge 1.20.1 (FML 47.2.2 keeps net.minecraftforge packages).
     "A": (
         "net.minecraftforge.forgespi.locating.IModLocator",
         "com.retromod.boot.forge.ForgeBootLocator",
         "com/retromod/boot/forge/",
     ),
-    # NeoForge 20.2 to 20.4 (FML 1 and 2).
+    # NeoForge 20.2 to 20.4 (FML 1 and 2), and FML 3.0.18, which kept that SPI.
     "A-neo": (
         "net.neoforged.neoforgespi.locating.IModLocator",
         "com.retromod.boot.neoforge.LegacyNeoForgeBootLocator",
         "com/retromod/boot/neoforge/",
     ),
-    # NeoForge 20.5 to 26.3 (FML 3 to 12).
+    # NeoForge 20.6 to 26.3 (FML 3.0.19 to 12).
     "BC": (
         "net.neoforged.neoforgespi.locating.IModFileCandidateLocator",
         "com.retromod.boot.neoforge.NeoForgeBootLocator",
         "com/retromod/boot/neoforge/",
     ),
 }
+
+# Every NeoForge 20.5 build and the first 13 of 20.6 ship FML 3.0.18, the last with the folder
+# locator SPI; later 20.6 builds ship 3.0.19 and newer. One jar per Minecraft version has to start
+# on both, so these generations carry both locators.
+DUAL_GENERATION = "A-neo+BC"
+
+
+def locators(generation):
+    """The (service, locator class, package) of each locator a generation's jar carries."""
+    return [LOCATORS[part] for part in generation.split("+")]
 
 # Every service that makes Forge or NeoForge claim a jar as a service jar instead of a mod.
 # The nested runtime must declare none of them, or RetromodForge and RetromodNeoForge never
@@ -102,6 +115,8 @@ def boot_generation(loader, minecraft):
         return "A"
     if key <= (1, 20, 4):
         return "A-neo"
+    if key <= (1, 20, 6):
+        return DUAL_GENERATION
     return "BC"
 
 
@@ -127,7 +142,7 @@ def runtime_toml(loader, minecraft):
     generation = boot_generation(loader, minecraft)
     if generation is None:
         raise BootstrapError(f"{loader} does not use a bootstrap jar")
-    return NEOFORGE_TOML if generation == "BC" else FORGE_TOML
+    return NEOFORGE_TOML if "BC" in generation.split("+") else FORGE_TOML
 
 
 def _sha256_bytes(data):
@@ -179,7 +194,8 @@ def assemble(runtime_path, boot_jar_path, loader, minecraft, version, output_pat
     generation = boot_generation(loader, minecraft)
     if generation is None:
         raise BootstrapError(f"{loader} does not use a bootstrap jar")
-    service, locator_class, generation_package = GENERATIONS[generation]
+    carried = locators(generation)
+    generation_packages = {package for _, _, package in carried}
 
     runtime_bytes = Path(runtime_path).read_bytes()
     if len(runtime_bytes) > MAX_RUNTIME_BYTES:
@@ -192,6 +208,7 @@ def assemble(runtime_path, boot_jar_path, loader, minecraft, version, output_pat
             raise BootstrapError(f"runtime jar has no {toml_entry}")
         toml_bytes = runtime.read(toml_entry)
         icon_bytes = runtime.read(ICON_ENTRY) if ICON_ENTRY in names else None
+        logo_bytes = runtime.read(LOGO_ENTRY) if LOGO_ENTRY in names else None
 
     boot_classes = []
     with zipfile.ZipFile(boot_jar_path) as boot:
@@ -200,11 +217,12 @@ def assemble(runtime_path, boot_jar_path, loader, minecraft, version, output_pat
                 continue
             relative = name[len(BOOT_PACKAGE):]
             shared = "/" not in relative
-            if shared or name.startswith(generation_package):
+            if shared or any(name.startswith(package) for package in generation_packages):
                 boot_classes.append((name, boot.read(name)))
-    locator_entry = locator_class.replace(".", "/") + ".class"
-    if locator_entry not in {name for name, _ in boot_classes}:
-        raise BootstrapError(f"boot jar has no {locator_entry}")
+    for _, locator_class, _ in carried:
+        locator_entry = locator_class.replace(".", "/") + ".class"
+        if locator_entry not in {name for name, _ in boot_classes}:
+            raise BootstrapError(f"boot jar has no {locator_entry}")
 
     manifest = _manifest_lines([
         ("Manifest-Version", "1.0"),
@@ -227,8 +245,9 @@ def assemble(runtime_path, boot_jar_path, loader, minecraft, version, output_pat
     try:
         with zipfile.ZipFile(temporary, "w") as jar:
             jar.writestr(_zip_info("META-INF/MANIFEST.MF", True), manifest)
-            jar.writestr(_zip_info(f"META-INF/services/{service}", True),
-                         (locator_class + "\n").encode("utf-8"))
+            for service, locator_class, _ in carried:
+                jar.writestr(_zip_info(f"META-INF/services/{service}", True),
+                             (locator_class + "\n").encode("utf-8"))
             for name, data in boot_classes:
                 jar.writestr(_zip_info(name, True), data)
             # Stored, not deflated: it is already compressed and is read once per launch.
@@ -238,6 +257,8 @@ def assemble(runtime_path, boot_jar_path, loader, minecraft, version, output_pat
             jar.writestr(_zip_info(toml_entry, True), toml_bytes)
             if icon_bytes is not None:
                 jar.writestr(_zip_info(ICON_ENTRY, True), icon_bytes)
+            if logo_bytes is not None:
+                jar.writestr(_zip_info(LOGO_ENTRY, False), logo_bytes)
         # mkstemp creates an owner-only file. Release jars are copied to servers that often
         # run as another user, so give this one the same mode as the Fabric and CLI jars.
         os.chmod(temporary, 0o644)
@@ -262,7 +283,8 @@ def validate(jar_path, loader, minecraft, version, runtime_sha256=None, self_has
     generation = boot_generation(loader, minecraft)
     if generation is None:
         raise BootstrapError(f"{loader} does not use a bootstrap jar")
-    service, locator_class, generation_package = GENERATIONS[generation]
+    carried = locators(generation)
+    generation_packages = {package for _, _, package in carried}
     errors = []
 
     def require(condition, message):
@@ -291,16 +313,18 @@ def validate(jar_path, loader, minecraft, version, runtime_sha256=None, self_has
             require(manifest.get(key) == value,
                     f"manifest {key} is {manifest.get(key)!r}, expected {value!r}")
 
-        services = [n for n in names
-                    if n.startswith("META-INF/services/") and not n.endswith("/")]
-        require(services == [f"META-INF/services/{service}"],
-                f"expected exactly one service file for {service}, found {services}")
-        if f"META-INF/services/{service}" in names:
-            declared = jar.read(f"META-INF/services/{service}").decode("utf-8").split()
-            require(declared == [locator_class],
-                    f"service file names {declared}, expected {locator_class}")
-        require(locator_class.replace(".", "/") + ".class" in names,
-                f"{locator_class} is missing")
+        services = sorted(n for n in names
+                          if n.startswith("META-INF/services/") and not n.endswith("/"))
+        expected_services = sorted(f"META-INF/services/{service}" for service, _, _ in carried)
+        require(services == expected_services,
+                f"expected the service files {expected_services}, found {services}")
+        for service, locator_class, _ in carried:
+            if f"META-INF/services/{service}" in names:
+                declared = jar.read(f"META-INF/services/{service}").decode("utf-8").split()
+                require(declared == [locator_class],
+                        f"service file names {declared}, expected {locator_class}")
+            require(locator_class.replace(".", "/") + ".class" in names,
+                    f"{locator_class} is missing")
         for name in names:
             if name.endswith("/"):
                 continue
@@ -310,7 +334,8 @@ def validate(jar_path, loader, minecraft, version, runtime_sha256=None, self_has
                 errors.append(f"runtime entry leaked into the outer jar: {name}")
             if name.startswith(BOOT_PACKAGE):
                 relative = name[len(BOOT_PACKAGE):]
-                require("/" not in relative or name.startswith(generation_package),
+                require("/" not in relative
+                        or any(name.startswith(package) for package in generation_packages),
                         f"boot class from another generation: {name}")
 
         toml_entry = runtime_toml(loader, minecraft)

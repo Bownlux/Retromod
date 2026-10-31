@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Union srg->mojang across the whole Forge SRG era (1.16.5 .. 1.21.8).
+"""Union srg->mojang across the Forge SRG era that has Mojang mappings (1.14.4 .. 1.21.8).
 
 For each version: join MCPConfig joined.tsrg (obf<->srg) with Mojang official
 client+server mappings (official<->obf) on obf names, within each obf class:
@@ -17,9 +17,13 @@ W = os.environ.get("SRG_WORK", os.path.join(os.path.dirname(__file__), "..", "ta
 os.makedirs(W, exist_ok=True)
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-# SRG-era versions worth harvesting (stable modding targets).
-VERSIONS = ["1.16.5", "1.17.1", "1.18.2", "1.19.2", "1.19.4", "1.20.1", "1.20.4", "1.20.6",
-            "1.21.1", "1.21.3", "1.21.4", "1.21.5", "1.21.6", "1.21.7", "1.21.8"]
+# Every SRG-era version with Mojang mappings. A version left out loses the ids only it had,
+# such as 1.15.2's func_ ids or the m_ ids 1.18 added and 1.18.2 removed. 1.13.2 and 1.14.3
+# have no Mojang mappings, so their ids cannot be named exactly.
+VERSIONS = ["1.14.4", "1.15.1", "1.15.2", "1.16.4", "1.16.5", "1.17", "1.17.1", "1.18", "1.18.1",
+            "1.18.2", "1.19", "1.19.1", "1.19.2", "1.19.3", "1.19.4", "1.20", "1.20.1", "1.20.2",
+            "1.20.3", "1.20.4", "1.20.6", "1.21.1", "1.21.3", "1.21.4", "1.21.5", "1.21.6",
+            "1.21.7", "1.21.8"]
 
 _UA = {"User-Agent": "Mozilla/5.0 (retromod-srg-harvest)"}
 

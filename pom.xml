@@ -6,7 +6,7 @@
 
     <groupId>com.retromod</groupId>
     <artifactId>retromod</artifactId>
-    <version>1.4.0-snapshot.2</version>
+    <version>1.4.0-snapshot.3</version>
     <packaging>jar</packaging>
 
     <name>Retromod</name>
@@ -36,11 +36,11 @@
         <fabric.api.version>0.114.0+1.21.4</fabric.api.version>
         
         <!-- ASM version -->
-        <asm.version>9.10.1</asm.version>
+        <asm.version>9.11.1</asm.version>
         
         <!-- Other dependencies -->
         <gson.version>2.14.0</gson.version>
-        <slf4j.version>2.0.18</slf4j.version>
+        <slf4j.version>2.0.20</slf4j.version>
         <toml4j.version>0.7.2</toml4j.version>
         <retromod.shade.classifier>all</retromod.shade.classifier>
     </properties>
@@ -147,7 +147,7 @@
         <dependency>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
-            <version>33.7.1-jre</version>
+            <version>33.7.2-jre</version>
             <scope>provided</scope>
         </dependency>
 
@@ -231,7 +231,7 @@
                                     <!--
                                         Build floor is 17 (matches the bytecode target). Maven
                                         release builds use Java 25 so generation and verification
-                                        paths can read Minecraft 26.x through ASM 9.10.1. Local
+                                        paths can read Minecraft 26.x through ASM 9.11.1. Local
                                         builds work on Java 17+ when they do not read those class
                                         files.
                                     -->
@@ -248,7 +248,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.15.0</version>
+                <version>3.16.0</version>
                 <configuration>
                     <source>17</source>
                     <target>17</target>
@@ -283,6 +283,57 @@
                             <proc>none</proc>
                         </configuration>
                     </execution>
+                    <!--
+                        Loader APIs a host removed, rebuilt as real classes that Retromod embeds into
+                        each translated jar that uses them (com.retromod.legacyapi). They compile
+                        against the compile-only stubs in src/legacyapi/stubs, which mirror the few
+                        host members they call. Only com/retromod/legacyapi/** is copied into the
+                        runtime jar below, so no stub ever ships.
+                    -->
+                    <execution>
+                        <id>legacyapi-compile</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                        <configuration>
+                            <compileSourceRoots>
+                                <compileSourceRoot>${project.basedir}/src/legacyapi/java</compileSourceRoot>
+                                <compileSourceRoot>${project.basedir}/src/legacyapi/stubs</compileSourceRoot>
+                            </compileSourceRoots>
+                            <outputDirectory>${project.build.directory}/legacyapi-classes</outputDirectory>
+                            <generatedSourcesDirectory>${project.build.directory}/generated-sources/legacyapi-annotations</generatedSourcesDirectory>
+                            <proc>none</proc>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- The rebuilt loader API classes join the runtime jar; their stubs stay behind. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.4.0</version>
+                <executions>
+                    <execution>
+                        <id>legacyapi-classes</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.build.directory}/legacyapi-classes</directory>
+                                    <filtering>false</filtering>
+                                    <includes>
+                                        <include>com/retromod/legacyapi/**</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
 
@@ -294,7 +345,7 @@
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>build-helper-maven-plugin</artifactId>
-                <version>3.6.0</version>
+                <version>3.6.2</version>
                 <executions>
                     <execution>
                         <id>boot-test-sources</id>
@@ -599,7 +650,7 @@
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
-                        <version>3.6.3</version>
+                        <version>3.6.4</version>
                         <executions>
                             <execution>
                                 <id>create-dist</id>
@@ -632,7 +683,7 @@
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
-                        <version>3.6.3</version>
+                        <version>3.6.4</version>
                         <executions>
                             <execution>
                                 <id>create-dist</id>
