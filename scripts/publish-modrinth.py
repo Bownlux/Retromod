@@ -95,7 +95,8 @@ def find_changelog_heading(version, text):
     "### Snapshot 1, October 1, 2026" inside "## 1.4.0 Snapshot Line" or "## 1.4.0 Release
     Candidates", and every line restarts its numbering, so the search stays inside that section.
     """
-    pre = re.fullmatch(r"(.+)-(snapshot|rc)\.(\d+)", version)
+    # A rebuilt snapshot such as 1.4.0-snapshot.3.1 is numbered "Snapshot 3.1".
+    pre = re.fullmatch(r"(.+)-(snapshot|rc)\.(\d+(?:\.\d+)*)", version)
     if not pre:
         m = re.search(rf"^## ({re.escape(version)},[^\n]*)$", text, re.M)
         return m.group(1) if m else None
@@ -105,7 +106,7 @@ def find_changelog_heading(version, text):
     section = re.search(rf"^## {re.escape(base)} {section_title}\n(.*?)(?=^## |\Z)", text, re.M | re.S)
     if not section:
         return None
-    m = re.search(rf"^### ({label} {number},[^\n]*)$", section.group(1), re.M)
+    m = re.search(rf"^### ({label} {re.escape(number)},[^\n]*)$", section.group(1), re.M)
     return m.group(1) if m else None
 
 

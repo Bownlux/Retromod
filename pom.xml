@@ -6,7 +6,7 @@
 
     <groupId>com.retromod</groupId>
     <artifactId>retromod</artifactId>
-    <version>1.4.0-snapshot.3</version>
+    <version>1.4.0-snapshot.3.1</version>
     <packaging>jar</packaging>
 
     <name>Retromod</name>

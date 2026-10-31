@@ -107,7 +107,7 @@ Retromod refuses a jar whose contents exceed 500 MB unpacked, or that holds a si
 
 Current builds stamp AOT caches and invalidate mismatches automatically. During same-version development runs, delete `config/retromod/aot-cache/` to force a rebuild.
 
-The Forge and NeoForge translation cache is rebuilt after a Retromod or loader update, or a change to `polyfills_enabled` or `transform_mixins`. To force it, close the game and run `java -jar retromod-1.4.0-snapshot.3-cli.jar cache clear <game-dir>`. `cache status <game-dir>` shows what the cache holds and why a mod failed.
+The Forge and NeoForge translation cache is rebuilt after a Retromod or loader update, or a change to `polyfills_enabled` or `transform_mixins`. To force it, close the game and run `java -jar retromod-1.4.0-snapshot.3.1-cli.jar cache clear <game-dir>`. `cache status <game-dir>` shows what the cache holds and why a mod failed.
 
 ## A Current Mod Requires an Old Mod
 

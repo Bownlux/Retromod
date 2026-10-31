@@ -8,7 +8,7 @@ Last reviewed: 2026-10-12
 
 ## Current Work
 
-Retromod 1.3.4 is the current stable release, and 1.4.0-snapshot.3 is the current snapshot. The 1.3 line's goal was mixin translation, and it is
+Retromod 1.3.4 is the current stable release, and 1.4.0-snapshot.3.1 is the current snapshot. The 1.3 line's goal was mixin translation, and it is
 met: every repair that line set out to build has shipped code and a passing test, so the list of
 what it does now lives in the [changelog](CHANGELOG.md). What follows is what 1.3 did not close.
 
@@ -255,9 +255,9 @@ Worldgen and rendering:
 - World types from before 1.16 load but are not offered (#339). Offering them needs a density
   function, a biome source, and a generated world preset.
 
-### 1.4.0-snapshot.3
+### 1.4.0-snapshot.3.1
 
-Snapshot 3 refreshes the mapping data. The audits behind it also found these gaps on 26.2 and 26.3, none fixed yet:
+Snapshot 3.1 refreshes the mapping data. The audits behind it also found these gaps on 26.2 and 26.3, none fixed yet:
 
 - 26.3 removed Fabric API's content registries and moved their jobs into data and item components. Batch C1
   serves stripping, tilling, flattening, composting and the old `FuelRegistry`. Still open (batch C2):

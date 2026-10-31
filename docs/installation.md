@@ -18,7 +18,7 @@ Download the jar that matches both your loader and Minecraft version from [Modri
 
 Every build is also on [GitHub Releases](https://github.com/Bownlux/Retromod/releases) if you prefer to grab it directly.
 
-Choose a jar from the matching loader and Minecraft folder. Quilt uses the Fabric jar for the same Minecraft version. That artifact carries both `fabric.mod.json` and `quilt.mod.json`. There is no separate Quilt jar. The release matrix contains 24 shared Fabric and Quilt jars, 24 Forge jars, and 23 NeoForge jars. The separate `retromod-1.4.0-snapshot.3-cli.jar` is a command-line tool, not a mod, and does not belong in `mods/`. That is 68 loader jars and 1 CLI artifact, or 69 artifacts total.
+Choose a jar from the matching loader and Minecraft folder. Quilt uses the Fabric jar for the same Minecraft version. That artifact carries both `fabric.mod.json` and `quilt.mod.json`. There is no separate Quilt jar. The release matrix contains 24 shared Fabric and Quilt jars, 24 Forge jars, and 23 NeoForge jars. The separate `retromod-1.4.0-snapshot.3.1-cli.jar` is a command-line tool, not a mod, and does not belong in `mods/`. That is 68 loader jars and 1 CLI artifact, or 69 artifacts total.
 
 Before testing a translated mod, copy the instance or back up every world you care about. Retromod keeps your original mod jars, not Minecraft saves. Start with a new test world when the mod changes world generation, registries, inventories, entities, or save data.
 
@@ -63,11 +63,11 @@ To let in-place loading handle one of those mods:
 2. Move the original into `mods/`. Earlier versions kept it in `retromod-input/processed/` or `mods/retromod-backups/`.
 3. Launch, and restart when prompted.
 
-`java -jar retromod-1.4.0-snapshot.3-cli.jar cache status <game-dir>` lists the translated jars in `mods/` and where each original is.
+`java -jar retromod-1.4.0-snapshot.3.1-cli.jar cache status <game-dir>` lists the translated jars in `mods/` and where each original is.
 
 ### Sharing a Translated Mod
 
-`java -jar retromod-1.4.0-snapshot.3-cli.jar export <game-dir>` copies every translated mod from the cache to `<game-dir>/retromod-output/mods/`. Each jar is translated for one loader and Minecraft version. A game you share it with needs that same loader and version, with Retromod installed for them, because a translated jar can call Retromod's code. Put the jar in that game's `mods/`. See [CLI]({{ '/cli' | relative_url }}) for choosing single mods.
+`java -jar retromod-1.4.0-snapshot.3.1-cli.jar export <game-dir>` copies every translated mod from the cache to `<game-dir>/retromod-output/mods/`. Each jar is translated for one loader and Minecraft version. A game you share it with needs that same loader and version, with Retromod installed for them, because a translated jar can call Retromod's code. Put the jar in that game's `mods/`. See [CLI]({{ '/cli' | relative_url }}) for choosing single mods.
 
 ## Resource and Data Packs
 

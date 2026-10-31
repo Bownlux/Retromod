@@ -219,8 +219,9 @@ class ReleaseVersionConsistencyTest {
         // two formats and can drift apart. That matters more now that the published site is built
         // from docs/: a wrong date there is what readers see.
         String publicHeading;
-        Matcher snapshot = Pattern.compile("-snapshot\\.(\\d+)$").matcher(version);
-        Matcher candidate = Pattern.compile("-rc\\.(\\d+)$").matcher(version);
+        // A rebuilt snapshot such as 1.4.0-snapshot.3.1 is headed "Snapshot 3.1".
+        Matcher snapshot = Pattern.compile("-snapshot\\.(\\d+(?:\\.\\d+)*)$").matcher(version);
+        Matcher candidate = Pattern.compile("-rc\\.(\\d+(?:\\.\\d+)*)$").matcher(version);
         if (snapshot.find()) {
             publicHeading = "### Snapshot " + snapshot.group(1);
         } else if (candidate.find()) {

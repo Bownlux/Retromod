@@ -2,7 +2,7 @@
 
 [![Minecraft 1.20-26.3](https://img.shields.io/badge/Minecraft-1.20--26.3-green.svg)](https://minecraft.net/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.4.0--snapshot.3-blueviolet.svg)](https://github.com/Bownlux/Retromod/releases)
+[![Version](https://img.shields.io/badge/Version-1.4.0--snapshot.3.1-blueviolet.svg)](https://github.com/Bownlux/Retromod/releases)
 [![Modrinth](https://img.shields.io/badge/Download-Modrinth-00AF5C.svg)](https://modrinth.com/mod/retromod)
 [![CurseForge](https://img.shields.io/badge/Download-CurseForge-F16436.svg)](https://www.curseforge.com/minecraft/mc-mods/retromod)
 
@@ -59,7 +59,7 @@ Content mods, libraries, and quality-of-life mods work best. Test each mod in ga
 The standalone CLI runs the same transform core without launching Minecraft. Use it for servers, modpacks, CI, and compatibility checks.
 
 ```bash
-java -jar retromod-1.4.0-snapshot.3-cli.jar batch path/to/mods \
+java -jar retromod-1.4.0-snapshot.3.1-cli.jar batch path/to/mods \
   --aot --mc-jar path/to/minecraft-26.3-client.jar --verify
 ```
 

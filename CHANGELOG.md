@@ -2,7 +2,7 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
-## [1.4.0-snapshot.3] - 2026-10-30
+## [1.4.0-snapshot.3.1] - 2026-10-30
 
 Third 1.4.0 snapshot. Refreshes the older mapping data that Forge SRG and Fabric intermediary translation depend on, checked against the game jars each name has to match.
 

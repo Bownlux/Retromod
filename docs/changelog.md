@@ -10,7 +10,7 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.4.0 Snapshot Line
 
-### Snapshot 3, October 30, 2026
+### Snapshot 3.1, October 30, 2026
 
 - Translates old Forge mods on Forge 1.20, 1.20.2, 1.20.3, and 1.20.4, which run SRG names with their own numbering.
 - Names thousands more Forge SRG ids exactly, including ids from 1.14.4 to 1.16.4 mods, and corrects old 1.12.2 names.

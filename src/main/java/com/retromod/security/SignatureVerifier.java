@@ -42,7 +42,7 @@ public final class SignatureVerifier {
      * <p>Empty in dev/source builds: status is then {@link Status#UNKNOWN} and the computed
      * hash is logged so a release build can embed it. See {@code docs/authenticity.md}.
      */
-    private static final String EXPECTED_SELF_HASH = "65B6087A0DEE0B8DC69544A140F91D81BE0E7BCF7A0ECA72AE3278FEC891EE9B";
+    private static final String EXPECTED_SELF_HASH = "8216F9289F485F6758A88FD14BB6D3A143D94DBABFEB90063191CF5160F284CA";
 
     /** This class's own jar entry, excluded from the hash (it carries the hash). */
     private static final String SELF_ENTRY = "com/retromod/security/SignatureVerifier.class";

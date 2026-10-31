@@ -158,12 +158,12 @@ mvn package -P lite -DskipTests -Dexec.skip=true
 mvn exec:java -Dexec.mainClass="com.retromod.cli.RetromodCli" -Dexec.args="<command>" -q
 
 # Run the executable release CLI (dependencies bundled)
-java -jar dist/CLI/retromod-1.4.0-snapshot.3-cli.jar <command>
+java -jar dist/CLI/retromod-1.4.0-snapshot.3.1-cli.jar <command>
 ```
 
 **Important:** Always pass `-Dexec.skip=true` during build to prevent Maven from running the CLI entrypoint.
 
-Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 71 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.4.0-snapshot.3-cli.jar`.
+Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 71 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.4.0-snapshot.3.1-cli.jar`.
 
 ## Release integrity (self-hash)
 
@@ -172,7 +172,7 @@ Official builds embed a SHA-256 of the executable release surface in `SignatureV
 **Embed the hash as the LAST release step** (any covered code, provider, or transformation-data change shifts it):
 ```bash
 mvn clean package -Dexec.skip=true                          # build the final jars
-python3 scripts/compute-self-hash.py target/retromod-1.4.0-snapshot.3-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.4.0-snapshot.3.1-all.jar
 # embed the 64-hex result into SignatureVerifier.EXPECTED_SELF_HASH PROGRAMMATICALLY
 # (sed/python - never hand-typed), rebuild, then re-run the compute script and
 # compare against the embedded value (closed-loop verify)
@@ -186,7 +186,7 @@ After embedding and rebuilding, run `bash build-all.sh --skip-build --require-se
 ## Deploy to Minecraft
 
 ```bash
-cp dist/Fabric/26.1/retromod-1.4.0-snapshot.3+26.1.jar ~/Library/Application\ Support/minecraft/mods/
+cp dist/Fabric/26.1/retromod-1.4.0-snapshot.3.1+26.1.jar ~/Library/Application\ Support/minecraft/mods/
 ```
 
 Game directory (macOS): `~/Library/Application Support/minecraft/`
