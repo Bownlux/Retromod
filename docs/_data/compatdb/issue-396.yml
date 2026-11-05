@@ -1,0 +1,14 @@
+name: "The Deer - 99 Nights In The Forest (1/5) by ZZiggs"
+badge: borked
+mod_version: "1.20.1"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.21.1"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/the-deer-99-nights-in-the-forest-by-zziggs/files/all?page=1&pageSize=20&showAlphaFiles=hide"
+summary: "The mod don't work on 1.21.1 NeoForge"
+details: "The mod don't work on 1.21.1 NeoForge, I would like the mod work on 1.21.1 NeoForge"
+reporter: "MartyRicci"
+date: "2026-11-05"
+issue: 396
+
