@@ -1,0 +1,14 @@
+name: "Villager Recruits: Claim and Siege Update!"
+badge: borked
+mod_version: "1.20.1"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.21.1"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/recruits"
+summary: "the mod don't work on 1.21.1"
+details: "the mod don't work on 1.21.1"
+reporter: "MartyRicci"
+date: "2026-11-05"
+issue: 394
+
