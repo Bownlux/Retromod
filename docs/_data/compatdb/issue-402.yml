@@ -1,0 +1,14 @@
+name: "BangCraft Mod"
+badge: borked
+mod_version: "1.20.1"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.21.1"
+links:
+  github: "https://www.9minecraft.net/bangcraft-mod/"
+summary: "The mod don't work on 1.21.1 NeoForge, I would like the mod work on 1.21.1 NeoForge"
+details: "The mod don't work on 1.21.1 NeoForge, I would like the mod work on 1.21.1 NeoForge"
+reporter: "MartyRicci"
+date: "2026-11-05"
+issue: 402
+
