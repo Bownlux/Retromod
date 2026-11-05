@@ -1,0 +1,14 @@
+name: "Meulti's Backrooms"
+badge: borked
+mod_version: "1.20.1"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.21.1"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/meultis-backrooms"
+summary: "the mod don´t work on 1.21.1 NeoForge"
+details: "the mod don´t work on 1.21.1 NeoForge"
+reporter: "MartyRicci"
+date: "2026-11-05"
+issue: 392
+
