@@ -1,0 +1,14 @@
+name: "1.20.1 TwelvePlaytimeChapter4"
+badge: borked
+mod_version: "1.20.1"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.21.1"
+links:
+  github: "https://drive.google.com/file/d/1-Muy2RJGVy40y1l9dYbatApwkzLuh8ZQ/view?usp=drive_link"
+summary: "java.lang.NoClassDefFoundError: com/retromod/shim/forge/embedded/NetworkShim"
+details: "The *Poppy Playtime* mod was close, I’ll send it to you via Drive. the last link was on: https://modcore.ru/mod/poppyplaytime Failure message: PoppyPlaytime (playtime) has failed to load correctly 		java.lang.NoClassDefFoundError: com/retromod/shim/forge/embedded/NetworkShim 	Mod version: 3.0 	Mod issues URL: <No issues URL found> 	Exception message: java.lang.ClassNotFoundException: ... full log in the linked issue."
+reporter: "MartyRicci"
+date: "2026-11-06"
+issue: 410
+
