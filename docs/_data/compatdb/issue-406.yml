@@ -1,0 +1,14 @@
+name: "The Box of Horrors [Forge]"
+badge: borked
+mod_version: "1.20.1"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.21.1"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/box-of-horrors/files/all?page=1&pageSize=20&showAlphaFiles=hide"
+summary: "java.lang.NoClassDefFoundError: com/retromod/shim/forge/embedded/NetworkShim"
+details: "-- Mod loading issue for: boh -- Details: 	Caused by 0: java.lang.NoClassDefFoundError: com/retromod/shim/forge/embedded/NetworkShim 		at TRANSFORMER/boh@0.0.8.1/net.mcreator.boh.BohMod.<clinit>(BohMod.java:75) ~[?:?] {re:classloading} 		at java.base/jdk.internal.misc.Unsafe.ensureClassInitialized0(Native Method) ~[?:?] {} 		at ... full log in the linked issue."
+reporter: "MartyRicci"
+date: "2026-11-06"
+issue: 406
+
