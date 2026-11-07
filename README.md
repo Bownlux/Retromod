@@ -97,7 +97,8 @@ Retromod builds on open-source work, and thanks the people who keep it open:
 
 - [OW2 ASM](https://asm.ow2.io/), which reads and writes every class Retromod translates
 - [FabricMC](https://fabricmc.net/) for Fabric Loader, Fabric API, and the intermediary mappings
-- the [Quilt](https://quiltmc.org/), [NeoForge](https://neoforged.net/), and [Minecraft Forge](https://minecraftforge.net/) teams for their open loaders
+- the [Quilt](https://quiltmc.org/) and [NeoForge](https://neoforged.net/), Teams for always innovating, improving loaders, and keeping them open source.
+- [Minecraft Forge](https://minecraftforge.net/) For starting a big Minecraft Modding Culture and keeping Forge open source.
 - [SpongePowered Mixin](https://github.com/SpongePowered/Mixin) and [MixinExtras](https://github.com/LlamaLad7/MixinExtras)
 - [Sinytra Connector](https://github.com/Sinytra/Connector), parts of which Retromod adapts under the MIT License
 - [Gson](https://github.com/google/gson), [Guava](https://github.com/google/guava), and [SLF4J](https://www.slf4j.org/)
