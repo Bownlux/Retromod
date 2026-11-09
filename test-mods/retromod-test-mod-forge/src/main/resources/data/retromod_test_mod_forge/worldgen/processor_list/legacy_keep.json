@@ -1,0 +1,7 @@
+{
+  "processors": [
+    {
+      "processor_type": "retromod_test_mod_forge:legacy_keep"
+    }
+  ]
+}

@@ -186,6 +186,34 @@ class FmlLoaderStaticToInstanceTest {
     }
 
     @Test
+    @DisplayName("a mod built for 26.1 keeps FMLLoader.getCurrent().getDist() and isProduction() as instance calls")
+    void newModKeepsInstanceCalls() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, USER, null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "side", "()Z", null, null);
+        mv.visitCode();
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, LOADER, "getCurrent", "()L" + LOADER + ";", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, LOADER, "getDist", "()" + DIST, false);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, LOADER, "getCurrent", "()L" + LOADER + ";", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, LOADER, "isProduction", "()Z", false);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        try {
+            transformer.setModSourceVersion("26.1");
+            List<Ref> refs = referencesIn(transformer.transformClass(cw.toByteArray(), USER));
+            assertTrue(refs.contains(new Ref(Opcodes.INVOKEVIRTUAL, LOADER, "getDist", "()" + DIST)), refs.toString());
+            assertTrue(refs.contains(new Ref(Opcodes.INVOKEVIRTUAL, LOADER, "isProduction", "()Z")), refs.toString());
+            assertTrue(refs.stream().noneMatch(r -> r.owner().equals(ENV)),
+                    "an instance call sent to FMLEnvironment's static would leave the loader on the stack: " + refs);
+        } finally {
+            transformer.setModSourceVersion(null);
+        }
+    }
+
+    @Test
     @DisplayName("every rewritten reference resolves against a real NeoForge loader jar")
     void resolvesAgainstRealNeoForge() throws Exception {
         Path jar = loaderJar();

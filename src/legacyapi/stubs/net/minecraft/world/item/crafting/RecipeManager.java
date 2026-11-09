@@ -2,5 +2,5 @@
 package net.minecraft.world.item.crafting;
 
 public class RecipeManager {
-    public RecipeMap recipeMap() { throw new UnsupportedOperationException(); }
+    public java.util.Collection<RecipeHolder<?>> getRecipes() { throw new UnsupportedOperationException(); }
 }

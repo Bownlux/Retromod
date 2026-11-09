@@ -24,7 +24,7 @@ These need a manual port from the mod author.
 |---|---|
 | Code that builds vanilla features on Minecraft 26.3 | 26.3 removed the worldgen configuration classes, so code that constructs `Feature.TREE`, `OreConfiguration`, or another vanilla feature configuration has nothing to bind to. A mod's own feature types and its worldgen data are converted |
 | Custom beds and signs on Minecraft 26.3 | 26.3 removed `BedItem` and `SignItem`, finishing the move to data-driven items. Tools that extend the removed `AxeItem`, `HoeItem`, or `ShovelItem` are rebuilt on item components |
-| Create and Flywheel | Custom rendering, contraption internals, and deep loader integration |
+| Create and Flywheel | Flywheel draws with its own OpenGL engine inside Minecraft's world renderer, which 26.3 replaced with render passes and a Vulkan option. Create 6 for 1.21.1 also uses hundreds of classes and members that 26.3 removed or reshaped |
 | OptiFine | Proprietary coremod and renderer replacement |
 | VIC's Modern Warfare 1.12.2 | An FML core plugin rewrites the 1.12.2 camera, player model, and held-item renderers. Modern loaders never run core plugins, and those renderer classes no longer exist |
 | Veil and Veil-based mods | Custom rendering and post-processing pipeline |

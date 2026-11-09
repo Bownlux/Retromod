@@ -5,11 +5,13 @@
 package com.retromod.polyfill;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.ServiceConfigurationError;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Registry that discovers and manages polyfill providers.
@@ -21,6 +23,10 @@ import java.util.ServiceConfigurationError;
 public class PolyfillRegistry {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Polyfills");
+
+    // Batch and AOT runs register the same polyfills for every mod, so only the first pass in
+    // a JVM prints the summary.
+    private static final AtomicBoolean LISTED = new AtomicBoolean();
 
     private final List<PolyfillProvider> providers = new ArrayList<>();
     private final Set<String> enabledCategories = new HashSet<>();
@@ -65,6 +71,7 @@ public class PolyfillRegistry {
             LOGGER.info("Polyfills are disabled in config");
             return;
         }
+        boolean summaryAtInfo = LISTED.compareAndSet(false, true);
 
         // Discover providers via ServiceLoader
         // Lite builds intentionally omit some provider classes, so discovery must tolerate a
@@ -93,8 +100,9 @@ public class PolyfillRegistry {
                     provider.registerPolyfills(transformer);
                     registered++;
 
+                    // One line per provider is detail; the summary below is the INFO line.
                     String[] removed = provider.getRemovedClasses();
-                    LOGGER.info("Loaded {} from the {} category ({})",
+                    LOGGER.debug(RetromodLog.DETAIL, "Loaded {} from the {} category ({})",
                             provider.getName(), provider.getCategory(),
                             removedClassSummary(removed.length));
                 } catch (Exception e) {
@@ -106,7 +114,16 @@ public class PolyfillRegistry {
             }
         }
 
-        LOGGER.info("Loaded {} polyfills and skipped {}", registered, skipped);
+        if (summaryAtInfo) {
+            LOGGER.info("Loaded {} polyfills and skipped {}", registered, skipped);
+        } else {
+            LOGGER.debug(RetromodLog.DETAIL, "Loaded {} polyfills and skipped {}", registered, skipped);
+        }
+    }
+
+    /** Lets the next pass in this JVM print the summary at INFO again. */
+    static void resetListingForTesting() {
+        LISTED.set(false);
     }
 
     private static String removedClassSummary(int count) {

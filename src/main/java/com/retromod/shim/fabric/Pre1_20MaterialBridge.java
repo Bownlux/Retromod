@@ -6,6 +6,7 @@ package com.retromod.shim.fabric;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.ClassResourceInspector;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -72,7 +73,7 @@ public final class Pre1_20MaterialBridge {
                 "()Lnet/minecraft/class_3620;",
                 POLY, "nullMaterialProperty", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
 
-        LOGGER.info("Registered pre-1.20 Material bridge "
+        LOGGER.debug(RetromodLog.DETAIL, "Registered pre-1.20 Material bridge "
                 + "(class_3614 -> MaterialPolyfill, getMaterial -> fromState)");
     }
 }

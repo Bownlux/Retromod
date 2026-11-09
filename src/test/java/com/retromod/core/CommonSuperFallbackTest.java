@@ -125,6 +125,26 @@ class CommonSuperFallbackTest {
     }
 
     @Test
+    void clientOnlyMergesAnswerTheSameWithTheServerGuardOnAndOff() throws Exception {
+        for (boolean dedicatedServer : new boolean[] {false, true}) {
+            ClientOnlyTypeFixtures.ServerJarLoader jar = new ClientOnlyTypeFixtures.ServerJarLoader();
+            String[] answers = ClientOnlyTypeFixtures.onSide(dedicatedServer, jar, () -> new String[] {
+                    // morehitboxes: ClientMobMixin.tickCustomParts joins the mixin's own type with
+                    // ClientLevel. They share only Object, so this reaches classifyThrowable(ClientLevel).
+                    RetromodTransformer.resolveCommonSuperClass(ClientOnlyTypeFixtures.MOB_MIXIN,
+                            ClientOnlyTypeFixtures.CLIENT_LEVEL, ClientOnlyTypeFixtures.SERVER_JAR::get, null),
+                    RetromodTransformer.resolveCommonSuperClass(ClientOnlyTypeFixtures.SERVER_PLAYER,
+                            ClientOnlyTypeFixtures.ABSTRACT_CLIENT_PLAYER,
+                            ClientOnlyTypeFixtures.SERVER_JAR::get, null)});
+
+            String side = dedicatedServer ? "a dedicated server" : "a client";
+            assertEquals("java/lang/Object", answers[0], "the morehitboxes merge on " + side);
+            assertEquals(ClientOnlyTypeFixtures.PLAYER, answers[1],
+                    "ServerPlayer and AbstractClientPlayer share Player on " + side);
+        }
+    }
+
+    @Test
     void commonSuperViaBytesStaysNullWhenItCannotProveAResolvableAncestor() {
         assertNull(RetromodTransformer.commonSuperViaBytes("mod/a/X", "mod/b/Y", null));
 

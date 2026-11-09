@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.commons.ClassRemapper;
@@ -88,7 +89,7 @@ final class GeckoLib3Coexistence {
                 Files.delete(directory);
             }
         }
-        LOGGER.info("Moved {} GeckoLib 3 demo class(es) to {} so it can load beside GeckoLib 4",
+        LOGGER.debug(RetromodLog.DETAIL, "Moved {} GeckoLib 3 demo class(es) to {} so it can load beside GeckoLib 4",
                 moved, RELOCATED_DEMO_PACKAGE);
         return moved;
     }

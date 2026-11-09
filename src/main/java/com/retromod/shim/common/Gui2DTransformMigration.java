@@ -5,6 +5,7 @@
 package com.retromod.shim.common;
 
 import java.nio.charset.StandardCharsets;
+import com.retromod.core.RetromodVersion;
 import com.retromod.util.SafeClassWriter;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
@@ -35,9 +36,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 26.x GUI 2D-transform migration, Phase 0 (peephole).
+ * GUI 2D-transform migration for 1.21.6 and newer hosts, Phase 0 (peephole).
  *
- * <p>26.x moved GUI rendering off the 3D {@code com.mojang.blaze3d.vertex.PoseStack} onto a 2D
+ * <p>1.21.6 moved GUI rendering off the 3D {@code com.mojang.blaze3d.vertex.PoseStack} onto a 2D
  * {@code org.joml.Matrix3x2fStack}: {@code GuiGraphics.pose()} now returns the 2D stack, whose ops
  * are {@code pushMatrix()/popMatrix()} (fluent) rather than {@code pushPose()/popPose()} (void).
  * {@code PoseStack} still exists for 3D world rendering, so a type-blind redirect would corrupt 3D
@@ -71,7 +72,8 @@ import java.util.Set;
  *
  * <p>Runs both BEFORE the remap (NeoForge/Forge, Mojang-named) and AFTER it (Fabric, whose {@code
  * class_XXXX} names only become {@code GuiGraphics(Extractor)}/{@code PoseStack} post-remap); the
- * second pass is idempotent on an already-migrated class. Gated by the caller to 26.1+ hosts.
+ * second pass is idempotent on an already-migrated class. The callers gate the first pass with
+ * {@link #appliesOnHost} and the second to 26.1+ hosts.
  */
 public final class Gui2DTransformMigration {
 
@@ -157,6 +159,15 @@ public final class Gui2DTransformMigration {
     }
 
     private Gui2DTransformMigration() {}
+
+    /** The first version whose {@code GuiGraphics.pose()} returns the 2D {@code Matrix3x2fStack}. */
+    public static final String FIRST_2D_POSE_HOST = "1.21.6";
+
+    /** Whether a Mojang-named mod needs this migration on {@code host}. */
+    public static boolean appliesOnHost(String host) {
+        // Every host from 1.21.6 on, 26.x included, compared the way the shim gate compares them.
+        return !RetromodVersion.mcVersionExceeds(FIRST_2D_POSE_HOST, host);
+    }
 
     /**
      * Rewrite the immediate {@code guiGraphics.pose().pushPose()/popPose()} peephole. Returns the

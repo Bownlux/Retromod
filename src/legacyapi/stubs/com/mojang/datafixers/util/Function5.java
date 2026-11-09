@@ -1,0 +1,6 @@
+// Compile-only stub of a 26.3 host type for src/legacyapi; never packaged.
+package com.mojang.datafixers.util;
+
+public interface Function5<T1, T2, T3, T4, T5, R> {
+    R apply(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5);
+}

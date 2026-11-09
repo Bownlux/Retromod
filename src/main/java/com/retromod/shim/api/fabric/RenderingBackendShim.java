@@ -7,6 +7,7 @@ package com.retromod.shim.api.fabric;
 import com.retromod.core.EnvironmentDetector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.MinecraftVersionedApiShim;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,7 +43,7 @@ public class RenderingBackendShim implements MinecraftVersionedApiShim {
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
         EnvironmentDetector.RenderingBackend backend = EnvironmentDetector.getRenderingBackend();
-        LOGGER.info("Rendering backend: {} (arch: {}, os: {})",
+        LOGGER.debug(RetromodLog.DETAIL, "Rendering backend: {} (arch: {}, os: {})",
             backend, EnvironmentDetector.getCpuArch(), EnvironmentDetector.getOsFamily());
 
         if (backend == EnvironmentDetector.RenderingBackend.VULKAN) {
@@ -53,12 +54,12 @@ public class RenderingBackendShim implements MinecraftVersionedApiShim {
 
         registerFutureProofRedirects(transformer);
 
-        LOGGER.info("Rendering backend shim registered");
+        LOGGER.debug(RetromodLog.DETAIL, "Rendering backend shim registered");
     }
 
     /** Redirects for the OpenGL to Vulkan transition. */
     private void registerVulkanRedirects(RetromodTransformer transformer) {
-        LOGGER.info("Registering Vulkan rendering redirects");
+        LOGGER.debug(RetromodLog.DETAIL, "Registering Vulkan rendering redirects");
 
         transformer.registerClassRedirect(
             "com/mojang/blaze3d/platform/GlStateManager",
@@ -97,7 +98,7 @@ public class RenderingBackendShim implements MinecraftVersionedApiShim {
     }
 
     private void registerMetalRedirects(RetromodTransformer transformer) {
-        LOGGER.info("Registering Metal rendering redirects (macOS)");
+        LOGGER.debug(RetromodLog.DETAIL, "Registering Metal rendering redirects (macOS)");
 
         // Metal's abstractions track Vulkan's, so reuse those redirects
         registerVulkanRedirects(transformer);

@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 
 import org.slf4j.Logger;
@@ -73,7 +74,7 @@ public class CrossModDependencyResolver {
 
         if (!dependencyGraph.isEmpty()) {
             int totalDeps = dependencyGraph.values().stream().mapToInt(List::size).sum();
-            LOGGER.info("Found {} mods with {} dependencies", dependencyGraph.size(), totalDeps);
+            LOGGER.debug(RetromodLog.DETAIL, "Found {} mods with {} dependencies", dependencyGraph.size(), totalDeps);
         }
     }
 
@@ -215,10 +216,10 @@ public class CrossModDependencyResolver {
     public void logResolutionInfo() {
         if (dependencyGraph.isEmpty()) return;
 
-        LOGGER.info("Cross-mod dependencies detected:");
+        LOGGER.debug(RetromodLog.DETAIL, "Cross-mod dependencies detected:");
         for (var entry : dependencyGraph.entrySet()) {
             String status = nativeMods.contains(entry.getKey()) ? "native" : "transform";
-            LOGGER.info("  {} [{}] → {}", entry.getKey(), status, entry.getValue());
+            LOGGER.debug(RetromodLog.DETAIL, "  {} [{}] → {}", entry.getKey(), status, entry.getValue());
         }
     }
 

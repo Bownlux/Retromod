@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.function.Consumer;
@@ -66,7 +67,7 @@ public class WorldRenderEventsShim {
         }
 
         private void invokeListener(T listener, Object[] args) throws Exception {
-            for (Method m : listener.getClass().getMethods()) {
+            for (Method m : LegacyPublicMethods.methods(listener.getClass())) {
                 if (!m.isDefault() && !Modifier.isStatic(m.getModifiers()) &&
                     m.getDeclaringClass() != Object.class) {
 

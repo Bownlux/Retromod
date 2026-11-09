@@ -5,6 +5,9 @@
   "net/minecraftforge/fml/InterModComms$QueueFilteringSpliterator": "net/neoforged/fml/InterModComms$QueueFilteringSpliterator",
   "net/minecraftforge/fml/ModContainer": "net/neoforged/fml/ModContainer",
   "net/minecraftforge/fml/ModList": "net/neoforged/fml/ModList",
+  "net/minecraftforge/fml/VersionChecker": "net/neoforged/fml/VersionChecker",
+  "net/minecraftforge/fml/VersionChecker$CheckResult": "net/neoforged/fml/VersionChecker$CheckResult",
+  "net/minecraftforge/fml/VersionChecker$Status": "net/neoforged/fml/VersionChecker$Status",
   "net/minecraftforge/fml/event/IModBusEvent": "net/neoforged/fml/event/IModBusEvent",
   "net/minecraftforge/fml/event/config/ModConfigEvent": "net/neoforged/fml/event/config/ModConfigEvent",
   "net/minecraftforge/fml/event/config/ModConfigEvent$Loading": "net/neoforged/fml/event/config/ModConfigEvent$Loading",
@@ -19,6 +22,8 @@
   "net/minecraftforge/fml/event/lifecycle/InterModProcessEvent": "net/neoforged/fml/event/lifecycle/InterModProcessEvent",
   "net/minecraftforge/fml/event/lifecycle/ModLifecycleEvent": "net/neoforged/fml/event/lifecycle/ModLifecycleEvent",
   "net/minecraftforge/fml/event/lifecycle/ParallelDispatchEvent": "net/neoforged/fml/event/lifecycle/ParallelDispatchEvent",
+  "net/minecraftforge/fml/loading/FMLConfig": "net/neoforged/fml/loading/FMLConfig",
+  "net/minecraftforge/fml/loading/FMLConfig$ConfigValue": "net/neoforged/fml/loading/FMLConfig$ConfigValue",
   "net/minecraftforge/fml/loading/FMLLoader": "net/neoforged/fml/loading/FMLLoader",
   "net/minecraftforge/fml/loading/LoadingModList": "net/neoforged/fml/loading/LoadingModList",
   "net/minecraftforge/fml/loading/moddiscovery/ModFileInfo": "net/neoforged/fml/loading/moddiscovery/ModFileInfo"

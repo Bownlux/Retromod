@@ -119,5 +119,17 @@ public class ItemComponentPolyfill implements PolyfillProvider {
             "getOrCreateTag",
             "(Ljava/lang/Object;)Ljava/lang/Object;"
         );
+
+        // The tag element calls read and write the same stored tag.
+        String bridge = "com/retromod/polyfill/minecraft/item/embedded/ItemStackNbtBridge";
+        String[][] elements = {
+            {"getTagElement", "(Ljava/lang/String;)Lnet/minecraft/nbt/CompoundTag;", "(Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/Object;"},
+            {"getOrCreateTagElement", "(Ljava/lang/String;)Lnet/minecraft/nbt/CompoundTag;", "(Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/Object;"},
+            {"addTagElement", "(Ljava/lang/String;Lnet/minecraft/nbt/Tag;)V", "(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/Object;)V"},
+            {"removeTagKey", "(Ljava/lang/String;)V", "(Ljava/lang/Object;Ljava/lang/String;)V"}};
+        for (String[] element : elements) {
+            transformer.registerMethodRedirect("net/minecraft/world/item/ItemStack", element[0], element[1],
+                bridge, element[0], element[2], true);
+        }
     }
 }

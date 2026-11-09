@@ -4,6 +4,8 @@
  */
 package com.retromod.polyfill.minecraft.gui.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
+
 /**
  * Reimplementation of ScaledResolution (removed in 1.14).
  *
@@ -23,10 +25,10 @@ public class ScaledResolutionShim {
 
     public ScaledResolutionShim(Object minecraft) {
         try {
-            Object window = minecraft.getClass().getMethod("getWindow").invoke(minecraft);
-            this.scaledWidth = (int) window.getClass().getMethod("getGuiScaledWidth").invoke(window);
-            this.scaledHeight = (int) window.getClass().getMethod("getGuiScaledHeight").invoke(window);
-            this.scaleFactor = (double) window.getClass().getMethod("getGuiScale").invoke(window);
+            Object window = LegacyPublicMethods.method(minecraft.getClass(), "getWindow").invoke(minecraft);
+            this.scaledWidth = (int) LegacyPublicMethods.method(window.getClass(), "getGuiScaledWidth").invoke(window);
+            this.scaledHeight = (int) LegacyPublicMethods.method(window.getClass(), "getGuiScaledHeight").invoke(window);
+            this.scaleFactor = (double) LegacyPublicMethods.method(window.getClass(), "getGuiScale").invoke(window);
         } catch (Exception e) {
             // Fallback to sensible defaults if reflection fails
             this.scaledWidth = 854;

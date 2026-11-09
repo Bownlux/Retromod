@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 
 /**
@@ -49,11 +50,11 @@ public final class FabricDimensionsShim {
             } catch (Exception ignored) {}
 
             try {
-                Method changeDim = entityClass.getMethod("changeDimension", destination.getClass());
+                Method changeDim = LegacyPublicMethods.method(entityClass, "changeDimension", destination.getClass());
                 Object result = changeDim.invoke(entity, destination);
 
                 if (result != null) {
-                    Method setPos = result.getClass().getMethod("setPos", double.class, double.class, double.class);
+                    Method setPos = LegacyPublicMethods.method(result.getClass(), "setPos", double.class, double.class, double.class);
                     setPos.invoke(result, x, y, z);
                     
                     Method setRot = findMethod(result.getClass(), "setYaw", "setRotation");
@@ -71,7 +72,7 @@ public final class FabricDimensionsShim {
             } catch (Exception ignored) {}
 
             // last resort: move in place, no dimension change
-            Method setPos = entityClass.getMethod("setPos", double.class, double.class, double.class);
+            Method setPos = LegacyPublicMethods.method(entityClass, "setPos", double.class, double.class, double.class);
             setPos.invoke(entity, x, y, z);
 
             return entity;
@@ -83,7 +84,7 @@ public final class FabricDimensionsShim {
     
     private static Method findMethod(Class<?> clazz, String... names) {
         for (String name : names) {
-            for (Method m : clazz.getMethods()) {
+            for (Method m : LegacyPublicMethods.methods(clazz)) {
                 if (m.getName().equals(name)) {
                     return m;
                 }

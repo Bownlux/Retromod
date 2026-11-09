@@ -105,8 +105,8 @@ public final class LibraryRegistryFields {
             }
         }
         throw new IncompatibleClassChangeError(describe(field) + " holds a " + value.getClass().getName()
-                + ", which a Forge mod cannot read as a RegistryObject. Use a build of the mod reading it"
-                + " made for this Minecraft version.");
+                + ", which a Forge mod cannot read as a RegistryObject. Retromod has no replacement for"
+                + " this read yet. Report it with both mods and their versions.");
     }
 
     private static Class<?> type(String name, ClassLoader loader) {

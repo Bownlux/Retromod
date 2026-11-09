@@ -2,19 +2,20 @@
 
 [![Minecraft 1.20-26.3](https://img.shields.io/badge/Minecraft-1.20--26.3-green.svg)](https://minecraft.net/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.4.0--snapshot.3.1-blueviolet.svg)](https://github.com/Bownlux/Retromod/releases)
+[![Version](https://img.shields.io/badge/Version-1.4.0--snapshot.4-blueviolet.svg)](https://github.com/Bownlux/Retromod/releases)
 [![Modrinth](https://img.shields.io/badge/Download-Modrinth-00AF5C.svg)](https://modrinth.com/mod/retromod)
 [![CurseForge](https://img.shields.io/badge/Download-CurseForge-F16436.svg)](https://www.curseforge.com/minecraft/mc-mods/retromod)
+[![wakatime](https://wakatime.com/badge/github/Bownlux/Retromod.svg)](https://wakatime.com/badge/github/Bownlux/Retromod)
 
 [Download on Modrinth](https://modrinth.com/mod/retromod) · [CurseForge](https://www.curseforge.com/minecraft/mc-mods/retromod) · [Docs](https://bownlux.github.io/Retromod/) · [Compatibility database](https://bownlux.github.io/Retromod/compatdb/)
 
 Retromod runs older Minecraft mods on newer versions of the game, without waiting for the mod's author to update it. It works on Fabric, Quilt, and Forge for Minecraft 1.20 through 26.3, and on NeoForge 1.20.1 through 26.3. Mods built around their own renderer or deep loader internals, such as Create or OptiFine, still need a real port.
 
-Retromod translates with fixed rules and mapping tables, not AI. It updates a mod's names, mixins, and metadata for your Minecraft version, fills in removed APIs where it can, and reports anything it could not resolve. Everything runs on your computer with no network requests. AI tools helped build Retromod, but no AI runs when a mod is translated.
+Also, Retromod translates with fixed rules and mapping tables, It does not use AI. It updates a mod's names, mixins, and metadata for your Minecraft version, fills in removed APIs where it can, and reports anything it could not resolve. Everything runs on your computer with no network requests. AI tools helped build Retromod, but no AI runs when a mod is translated.
 
 ## 📥 Downloads
 
-Download Retromod from [Modrinth](https://modrinth.com/mod/retromod) or [CurseForge](https://www.curseforge.com/minecraft/mc-mods/retromod). Pick the jar that matches both your loader and your Minecraft version. Quilt uses the Fabric jar, which carries both `fabric.mod.json` and `quilt.mod.json`.
+You can Download Retromod from [Modrinth](https://modrinth.com/mod/retromod) or [CurseForge](https://www.curseforge.com/minecraft/mc-mods/retromod). Pick the jar that matches both your loader and your Minecraft version. Quilt uses the Fabric jar, which carries both `fabric.mod.json` and `quilt.mod.json`.
 
 
 ## 🖥️ Installation
@@ -31,13 +32,13 @@ Start with `logs/latest.log`. The first Retromod, loader, or mixin error usually
 
 ## 📬 Reporting Issues
 
-Open a [bug report](https://github.com/Bownlux/Retromod/issues/new?template=bug_report.yml) when a mod fails to transform, crashes, or behaves incorrectly after Retromod runs. Attach `logs/latest.log`, any report in `config/retromod/verify-reports/`, and `config/retromod/config.json`. Include a link to the exact mod version and the Minecraft version it was built for. Also name your loader and give your Minecraft, loader, Java, and Retromod versions. On Quilt, pick Fabric in the loader field and mention Quilt in the description.
+Please open a [bug report](https://github.com/Bownlux/Retromod/issues/new?template=bug_report.yml) when a mod fails to transform, crashes, or behaves incorrectly after Retromod runs. Attach `logs/latest.log`, any report in `config/retromod/verify-reports/`, and `config/retromod/config.json`. Include a link to the exact mod version and the Minecraft version it was built for. Also name your loader and give your Minecraft, loader, Java, and Retromod versions. On Quilt, pick Fabric in the loader field and mention Quilt in the description.n.
 
 Report security problems privately through [GitHub's private vulnerability reporting](https://github.com/Bownlux/Retromod/security/advisories/new), as [SECURITY.md](SECURITY.md) describes. Do not open a public issue for them.
 
 ## 💬 Join the Community
 
-Ask questions and propose designs in [GitHub Discussions](https://github.com/Bownlux/Retromod/discussions). Small, focused pull requests are welcome. Open a discussion before you start a large new subsystem. See [Contributing](https://bownlux.github.io/Retromod/contributing).
+Ask questions and propose designs in [GitHub Discussions](https://github.com/Bownlux/Retromod/discussions). Small, focused pull requests are welcome. Open a discussion before you start a large new subsystem (I have Broken this rule Multiple times on other Repos and I Wasted a lot of time). See [Contributing](https://bownlux.github.io/Retromod/contributing).
 
 After you test a mod, file a [compatibility report](https://github.com/Bownlux/Retromod/issues/new?template=compat_report.yml), including partial results. Merged reports appear in the compatibility database.
 
@@ -59,7 +60,7 @@ Content mods, libraries, and quality-of-life mods work best. Test each mod in ga
 The standalone CLI runs the same transform core without launching Minecraft. Use it for servers, modpacks, CI, and compatibility checks.
 
 ```bash
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar batch path/to/mods \
+java -jar retromod-1.4.0-snapshot.4-cli.jar batch path/to/mods \
   --aot --mc-jar path/to/minecraft-26.3-client.jar --verify
 ```
 
@@ -67,11 +68,10 @@ java -jar retromod-1.4.0-snapshot.3.1-cli.jar batch path/to/mods \
 
 ## 🛠️ Building from Source
 
-Retromod builds with Maven. You need JDK 25 and Maven 3.8 or newer. It compiles with Java 25 but emits Java 17 bytecode, so the same code runs on Java 17, 21, and 25. Each jar still needs the Java version its Minecraft requires.
+Retromod builds with Maven, Not Gradle. You need JDK 25 and Maven 3.8 or newer. It compiles with Java 25 but emits Java 17 bytecode, so the same code runs on Java 17, 21, and 25. Each jar still needs the Java version its Minecraft requires.
 
+Once You have Cloned the Repo, run this command in the root directory to build Retromod jars:
 ```bash
-git clone https://github.com/Bownlux/Retromod.git
-cd Retromod
 mvn package -Dexec.skip=true
 ```
 
@@ -102,4 +102,3 @@ Retromod builds on open-source work, and thanks the people who keep it open:
 - [Sinytra Connector](https://github.com/Sinytra/Connector), parts of which Retromod adapts under the MIT License
 - [Gson](https://github.com/google/gson), [Guava](https://github.com/google/guava), and [SLF4J](https://www.slf4j.org/)
 
-[![wakatime](https://wakatime.com/badge/github/Bownlux/Retromod.svg)](https://wakatime.com/badge/github/Bownlux/Retromod)

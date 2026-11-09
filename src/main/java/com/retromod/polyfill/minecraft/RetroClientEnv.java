@@ -4,6 +4,8 @@
  */
 package com.retromod.polyfill.minecraft;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
+
 /**
  * 1.3.0: client-environment state whose old public homes were removed in 26.x.
  *
@@ -148,8 +150,8 @@ public final class RetroClientEnv {
             if (hd == null) {
                 return null; // same transient shape one hop further
             }
-            java.lang.reflect.Method isHidden = hd.getClass().getMethod("isHidden");
-            java.lang.reflect.Method toggle = hd.getClass().getMethod("toggle");
+            java.lang.reflect.Method isHidden = LegacyPublicMethods.method(hd.getClass(), "isHidden");
+            java.lang.reflect.Method toggle = LegacyPublicMethods.method(hd.getClass(), "toggle");
             isHiddenMethod = isHidden;
             toggleMethod = toggle;
             hud = hd; // publish last: readers that see hud != null also see the methods

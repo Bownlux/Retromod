@@ -105,4 +105,40 @@ class Worldgen26_3MigratorTest {
         JsonElement result = Worldgen26_3Migrator.migrate(JsonParser.parseString(old));
         assertEquals(JsonParser.parseString(expected), result, result.toString());
     }
+
+    @Test
+    @DisplayName("worldgen in a pack overlay the host applies is rewritten and moved like the base data")
+    void overlayWorldgen() {
+        assertEquals("f41/data/mod/worldgen/feature/rock.json",
+                Worldgen26_3Migrator.migratedEntryName("f41/data/mod/worldgen/configured_feature/rock.json", "26.3"));
+        assertTrue(Worldgen26_3Migrator.isWorldgen("f41/data/mod/worldgen/placed_feature/rock.json"));
+        assertFalse(Worldgen26_3Migrator.isWorldgen("f41/assets/mod/worldgen/rock.json"));
+    }
+
+    @Test
+    @DisplayName("a feature with loader conditions beside its config is unwrapped, and the conditions move with it")
+    void conditionedFeatureIsUnwrapped() {
+        assertJson("""
+                {"forge:conditions": [{"type": "forge:mod_loaded", "modid": "create"}], "type": "minecraft:ore",
+                 "size": 4}""",
+                """
+                {"forge:conditions": [{"type": "forge:mod_loaded", "modid": "create"}], "type": "minecraft:ore",
+                 "config": {"size": 4}}""");
+    }
+
+    @Test
+    @DisplayName("a provider named without its namespace is renamed too, and a spring keeps its fluid state an object")
+    void unnamespacedProviderAndSpring() {
+        assertJson("""
+                {"type": "minecraft:simple_block", "to_place": {"type": "minecraft:weighted",
+                 "entries": [{"data": "waxed_copper_block", "weight": 1}]}}""",
+                """
+                {"type": "minecraft:simple_block", "config": {"to_place": {"type": "weighted_state_provider",
+                 "entries": [{"data": {"Name": "waxed_copper_block"}, "weight": 1}]}}}""");
+        assertJson("""
+                {"type": "minecraft:spring_feature", "state": {"id": "minecraft:lava"}, "valid_blocks": ["minecraft:stone"]}""",
+                """
+                {"type": "minecraft:spring_feature", "config": {"state": {"Name": "minecraft:lava"},
+                 "valid_blocks": ["minecraft:stone"]}}""");
+    }
 }

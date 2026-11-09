@@ -1,5 +1,6 @@
 package com.retromod.shim.api.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.util.List;
 
@@ -16,7 +17,7 @@ public class ReiShim {
 
     public static void addCategory(Object registry, Object category) {
         try {
-            Method add = registry.getClass().getMethod("add", Class.forName("me.shedaniel.rei.api.client.registry.display.DisplayCategory"));
+            Method add = LegacyPublicMethods.method(registry.getClass(), "add", Class.forName("me.shedaniel.rei.api.client.registry.display.DisplayCategory"));
             add.invoke(registry, category);
         } catch (Exception e) {
             // REI absent or signature drifted

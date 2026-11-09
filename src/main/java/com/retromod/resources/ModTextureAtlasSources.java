@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import com.retromod.util.RetromodLog;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -90,7 +91,7 @@ public final class ModTextureAtlasSources implements ModResourceConverter {
         int changed = addSingleSources(tree, BLOCKS_ATLAS, blockSprites)
                 + addSingleSources(tree, ITEMS_ATLAS, itemSprites);
         if (changed > 0) {
-            LOGGER.info("Listed {} mod texture(s) in the atlases Minecraft {} stitches",
+            LOGGER.debug(RetromodLog.DETAIL, "Listed {} mod texture(s) in the atlases Minecraft {} stitches",
                     blockSprites.size() + itemSprites.size(), context.targetMcVersion());
         }
         return changed;
@@ -148,7 +149,17 @@ public final class ModTextureAtlasSources implements ModResourceConverter {
 
     /** Appends a {@code single} source per sprite to one atlas file; returns 1 when it was written. */
     private static int addSingleSources(ResourceTree tree, String atlas, Set<String> sprites) throws IOException {
-        if (sprites.isEmpty()) return 0;
+        Map<String, String> sources = new TreeMap<>();
+        for (String sprite : sprites) sources.put(sprite, sprite);
+        return addSources(tree, atlas, sources);
+    }
+
+    /**
+     * Appends a {@code single} source to one atlas file for each sprite id, stitched from its texture,
+     * which may differ from the id; returns 1 when the file was written.
+     */
+    static int addSources(ResourceTree tree, String atlas, Map<String, String> texturesBySprite) throws IOException {
+        if (texturesBySprite.isEmpty()) return 0;
         // An atlas file the mod already ships keeps its own sources, and new ones go after them.
         JsonObject definition = new JsonObject();
         JsonArray sources = new JsonArray();
@@ -162,28 +173,52 @@ public final class ModTextureAtlasSources implements ModResourceConverter {
             sources = listed.getAsJsonArray();
         }
         // Skip sprites the file already lists, then add one single source for each of the rest.
+        Set<String> listedTextures = new HashSet<>();
         Set<String> listedSprites = new HashSet<>();
         for (JsonElement source : sources) {
             if (!source.isJsonObject()) continue;
-            JsonElement resource = source.getAsJsonObject().get("resource");
-            if (resource != null && resource.isJsonPrimitive()) {
-                String id = ModModels.qualify(resource.getAsString());
-                if (id != null) listedSprites.add(id);
-            }
+            String resource = qualifiedString(source.getAsJsonObject().get("resource"));
+            String sprite = qualifiedString(source.getAsJsonObject().get("sprite"));
+            if (resource != null) listedTextures.add(resource);
+            if (sprite != null || resource != null) listedSprites.add(sprite != null ? sprite : resource);
         }
-        List<String> added = new ArrayList<>();
-        for (String sprite : sprites) {
-            if (!listedSprites.contains(sprite)) added.add(sprite);
+        List<Map.Entry<String, String>> added = new ArrayList<>();
+        for (Map.Entry<String, String> source : texturesBySprite.entrySet()) {
+            boolean plain = source.getKey().equals(source.getValue());
+            if (listedSprites.contains(source.getKey()) || (plain && listedTextures.contains(source.getValue()))) continue;
+            added.add(source);
         }
         if (added.isEmpty()) return 0;
-        for (String sprite : added) {
+        for (Map.Entry<String, String> source : added) {
             JsonObject single = new JsonObject();
             single.addProperty("type", "single");
-            single.addProperty("resource", sprite);
+            single.addProperty("resource", source.getValue());
+            // A sprite id of its own names the texture's copy in this atlas.
+            if (!source.getKey().equals(source.getValue())) single.addProperty("sprite", source.getKey());
             sources.add(single);
         }
         definition.add("sources", sources);
         ModModels.write(tree, atlas, definition);
         return 1;
+    }
+
+    /** The sprite ids an atlas file in the jar defines one by one. */
+    static Set<String> listedSprites(ResourceTree tree, String atlas) {
+        Set<String> listed = new HashSet<>();
+        JsonObject definition = tree.exists(atlas) ? ModModels.read(tree, atlas) : null;
+        JsonElement sources = definition == null ? null : definition.get("sources");
+        if (sources == null || !sources.isJsonArray()) return listed;
+        for (JsonElement source : sources.getAsJsonArray()) {
+            if (!source.isJsonObject()) continue;
+            JsonObject single = source.getAsJsonObject();
+            String sprite = qualifiedString(single.get("sprite"));
+            String resource = qualifiedString(single.get("resource"));
+            if (sprite != null || resource != null) listed.add(sprite != null ? sprite : resource);
+        }
+        return listed;
+    }
+
+    private static String qualifiedString(JsonElement value) {
+        return value != null && value.isJsonPrimitive() ? ModModels.qualify(value.getAsString()) : null;
     }
 }

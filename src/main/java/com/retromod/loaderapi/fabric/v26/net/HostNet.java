@@ -8,6 +8,7 @@ import com.retromod.loaderapi.fabric.v26.HostLink;
 import com.retromod.loaderapi.fabric.v26.HostLink.Member;
 import com.retromod.shim.api.fabric.embedded.RawChannelPayloads;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.invoke.MethodHandle;
 import java.lang.reflect.Method;
 import java.util.Map;
@@ -142,10 +143,10 @@ final class HostNet {
      */
     static Object registeredCodec(Object registry, Object id) {
         try {
-            Method get = registry.getClass().getMethod("get", type(IDENTIFIER));
+            Method get = LegacyPublicMethods.method(registry.getClass(), "get", type(IDENTIFIER));
             Object typeAndCodec = get.invoke(registry, id);
             if (typeAndCodec == null) return null;
-            return typeAndCodec.getClass().getMethod("codec").invoke(typeAndCodec);
+            return LegacyPublicMethods.method(typeAndCodec.getClass(), "codec").invoke(typeAndCodec);
         } catch (ReflectiveOperationException | RuntimeException e) {
             return null;
         }

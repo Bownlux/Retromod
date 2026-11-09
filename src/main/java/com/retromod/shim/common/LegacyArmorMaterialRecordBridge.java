@@ -42,11 +42,16 @@ public final class LegacyArmorMaterialRecordBridge {
         SyntheticEmbedder.registerClassResource(t, SUPPORT, LegacyEquipmentSupport.class);
         t.registerSyntheticClass(CALLS, generateCalls());
         t.registerSyntheticClass(LAYER, generateLayer());
-        // The registry is rebuilt under Retromod's own id, so both of its old names reach it.
-        t.registerExactFieldRedirect("net/minecraft/core/registries/Registries", "ARMOR_MATERIAL", "L" + KEY + ";",
-                CALLS, "armorMaterialKey", "()L" + KEY + ";");
-        t.registerExactFieldRedirect("net/minecraft/core/registries/BuiltInRegistries", "ARMOR_MATERIAL", "L" + REGISTRY + ";",
-                CALLS, "armorMaterialRegistry", "()L" + REGISTRY + ";");
+        // The registry is rebuilt under Retromod's own id, so both of its old names reach it. A Fabric mod
+        // keeps the intermediary ids, which left before the 1.21.4 base of Retromod's intermediary table.
+        for (String key : List.of("ARMOR_MATERIAL", "field_48977")) {
+            t.registerExactFieldRedirect("net/minecraft/core/registries/Registries", key, "L" + KEY + ";",
+                    CALLS, "armorMaterialKey", "()L" + KEY + ";");
+        }
+        for (String registry : List.of("ARMOR_MATERIAL", "field_48976")) {
+            t.registerExactFieldRedirect("net/minecraft/core/registries/BuiltInRegistries", registry, "L" + REGISTRY + ";",
+                    CALLS, "armorMaterialRegistry", "()L" + REGISTRY + ";");
+        }
         // The old record constructor, under its old name and the package 1.21.2 moved it to.
         String factory = OLD_CTOR.substring(0, OLD_CTOR.length() - 1) + "L" + RECORD + ";";
         for (String owner : List.of(OLD_RECORD, RECORD)) {

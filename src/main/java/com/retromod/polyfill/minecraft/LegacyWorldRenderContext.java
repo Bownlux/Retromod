@@ -4,6 +4,7 @@
  */
 package com.retromod.polyfill.minecraft;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 
 /**
@@ -80,7 +81,7 @@ public final class LegacyWorldRenderContext {
     public static Object nearPlane(Object camera) {
         try {
             float fov = (Float) call(camera, "getFov");
-            return camera.getClass().getMethod("getNearPlane", float.class).invoke(camera, fov);
+            return LegacyPublicMethods.method(camera.getClass(), "getNearPlane", float.class).invoke(camera, fov);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Retromod could not compute the camera near plane", e);
         }
@@ -93,7 +94,7 @@ public final class LegacyWorldRenderContext {
     }
 
     private static Method zeroArg(Class<?> type, String name) {
-        for (Method method : type.getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(type)) {
             if (method.getName().equals(name) && method.getParameterCount() == 0) return method;
         }
         return null;

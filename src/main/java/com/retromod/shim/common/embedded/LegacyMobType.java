@@ -62,7 +62,7 @@ public class LegacyMobType {
 
     private static LegacyMobType fromTags(Object entity) {
         try {
-            Object type = entity.getClass().getMethod("getType").invoke(entity);
+            Object type = LegacyPublicMethods.method(entity.getClass(), "getType").invoke(entity);
             Class<?> tags = Class.forName("net.minecraft.tags.EntityTypeTags", false,
                     entity.getClass().getClassLoader());
             Method is = findIs(type.getClass());

@@ -48,7 +48,7 @@ Fabric and Quilt still use `retromod-input/`. Fabric resolves every jar in `mods
 
 ## Can I share a translated mod?
 
-Yes, with limits. `java -jar retromod-1.4.0-snapshot.3.1-cli.jar export <game-dir>` copies translations out of a Forge or NeoForge game's cache to `retromod-output/mods/`. A jar translated for NeoForge on 1.21.1 only fits NeoForge on 1.21.1. The game you share it with also needs Retromod for that loader and version, because a translated jar can call Retromod's code. Sharing the original jar is usually simpler, since Retromod on the other game translates it there.
+Yes, with limits. `java -jar retromod-1.4.0-snapshot.4-cli.jar export <game-dir>` copies translations out of a Forge or NeoForge game's cache to `retromod-output/mods/`. A jar translated for NeoForge on 1.21.1 only fits NeoForge on 1.21.1. The game you share it with also needs Retromod for that loader and version, because a translated jar can call Retromod's code. Sharing the original jar is usually simpler, since Retromod on the other game translates it there.
 
 ## What happens to dependencies?
 
@@ -68,13 +68,21 @@ The accessor owner move accepts `remap = false` only because an exact shim redir
 
 Curated adapters cover a few semantic migrations. Other save, worldgen, renderer, or networking changes still need a real bridge and feature testing.
 
-## Should Minecraft 26.2 use OpenGL or Vulkan?
+## Should Minecraft 26.2 and newer use OpenGL or Vulkan?
 
-Use OpenGL for translated mods. Old rendering code often assumes OpenGL, while Vulkan is the new default. Retromod selects OpenGL automatically unless you already chose a backend.
+Use OpenGL for translated mods. Old rendering code often assumes OpenGL, and Minecraft still marks Vulkan as experimental. Retromod selects OpenGL automatically unless you already chose a backend.
 
 ## Does it work with OptiFine, Sodium, Iris, or Create?
 
 Simple integrations may work, but renderer replacements and deep coremods are the hardest category and often cannot be translated. Check [Mods That Can't Be Translated]({{ '/incompatible-mods' | relative_url }}) and the [compatibility database]({{ '/compatdb' | relative_url }}).
+
+## If Retromod rebuilds the old loader, why can't it run any mod?
+
+The loader is only a small part of what a mod uses. Most of a mod's calls go to Minecraft itself, and each Minecraft release renames, reshapes, or removes hundreds of classes and members. Retromod repairs those one change at a time, and each repair is checked against the real game. A mod that touches more changed code needs more repairs before it starts, and a repair cannot bring back a system Minecraft replaced outright.
+
+Create shows both limits. In a test of Create 6.0.10 for NeoForge 1.21.1 on NeoForge 26.3, Create and the libraries it bundles named 118 classes and 465 members that 26.3 removed or reshaped, and 56 of their mixin targets no longer matched. Retromod now repairs the shared problems that test found, such as bundled libraries, client-only methods on dedicated servers, and removed data generation classes. The remaining changes surface one at a time as the game reaches them.
+
+The renderer is the part a translation cannot cover. Create draws its machines with Flywheel, its own OpenGL engine that hooks into Minecraft's world renderer. Minecraft 26.3 replaced that renderer with render passes and added a Vulkan option with no OpenGL at all, so the hooks Flywheel needs no longer exist. Running it needs a new Flywheel backend written for the 26.3 renderer, which is a port by the mod's authors.
 
 ## What does a modified-build warning mean?
 
@@ -82,7 +90,7 @@ The running classes do not match the embedded release hash. That can be a legiti
 
 ## Where are my files written?
 
-On Forge and NeoForge, translated mods live in `retromod-cache/translated/<loader>/<version>/`. Retromod also uses `retromod-cache/runtime/` for its own extracted code and `retromod-cache/serve/` on Forge and on NeoForge 1.20.1. `export` writes to `retromod-output/mods/`. Runtime inputs and originals use `retromod-input/`, `retromod-input/processed/`, `mods/retromod-backups/`, and the game-directory `retromod-backups/` health-recovery folder. Staged resource packs use `retromod-input/resourcepacks/`, then successful output moves to `resourcepacks/`. Staged data packs use `retromod-input/datapacks/`, with successful output in `retromod-output/datapacks/` for you to copy into a world. Successful pack sources move into the matching input folder's `processed/` subfolder.
+On Forge and NeoForge, translated mods live in `retromod-cache/translated/<loader>/<version>/`. Retromod also uses `retromod-cache/runtime/` for its own extracted code and `retromod-cache/serve/` on Forge and on NeoForge 1.20.1. On every loader, Retromod stages translation work in `retromod-cache/work/` instead of the system temp folder. Each launch works in its own folder there, named after its process id. An empty one can stay after the game closes, and the next start removes it. The file picker remembers its last folder in `retromod-cache/file-picker.properties`. `export` writes to `retromod-output/mods/`. Runtime inputs and originals use `retromod-input/`, `retromod-input/processed/`, `mods/retromod-backups/`, and the game-directory `retromod-backups/` health-recovery folder. Staged resource packs use `retromod-input/resourcepacks/`, then successful output moves to `resourcepacks/`. Staged data packs use `retromod-input/datapacks/`, with successful output in `retromod-output/datapacks/` for you to copy into a world. Successful pack sources move into the matching input folder's `processed/` subfolder.
 
 Generated reports use `config/retromod/verify-reports/`. The normal AOT cache is `config/retromod/aot-cache/`. Full AOT state uses `retromod-cache/full-aot/`. API archives use `config/retromod/api-archive/`. CLI `transform` output defaults to a sibling jar, `batch` uses an input-folder `retromod-output/`, and `aot` uses the normal AOT cache unless you choose `--output`. The CLI initializes the standard input and backup folders in its current working directory.
 

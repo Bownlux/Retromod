@@ -48,6 +48,33 @@ public class NeoForge_26_2_to_26_3 implements VersionShim {
         LegacyReloadRegistryBridge.register(transformer);
         // BiomeModifier.modify gained a RegistryAccess parameter.
         LegacyBiomeModifierBridge.register(transformer);
+        // FancyModLoader 12.0.8 renamed the config types COMMON and SERVER to LOCAL and SYNCED.
+        LegacyModConfigTypeBridge.register(transformer);
+        // The brewing registration event went with 26.3's brewing recipe files; old listeners get it rebuilt.
+        LegacyNeoForgeBrewingBridge.register(transformer);
+        if (hostMergedEntityInteract()) registerEntityInteractMerge(transformer);
+    }
+
+    private static final String PLAYER_EVENTS = "net/neoforged/neoforge/event/entity/player/PlayerInteractEvent$";
+
+    /** Read from the host; offline, NeoForge 26.3 has only the merged event. */
+    static boolean hostMergedEntityInteract() {
+        if (com.retromod.core.ClassResourceInspector.read(PLAYER_EVENTS + "EntityInteract") == null) {
+            return OfflineHostVersion.neoForgeFrom("26.3");
+        }
+        return !com.retromod.core.ClassResourceInspector.exists(PLAYER_EVENTS + "EntityInteractSpecific");
+    }
+
+    /**
+     * 26.3 folded {@code EntityInteractSpecific} into {@code EntityInteract}, which now carries the same
+     * position on the entity as {@code getLocation()}. Open Parties and Claims and others listen for it.
+     */
+    static void registerEntityInteractMerge(RetromodTransformer transformer) {
+        // The class first, so the old getter is also matched once its owner names the merged event.
+        transformer.registerClassRedirect(PLAYER_EVENTS + "EntityInteractSpecific", PLAYER_EVENTS + "EntityInteract");
+        transformer.registerMethodRedirect(PLAYER_EVENTS + "EntityInteractSpecific", "getLocalPos",
+                "()Lnet/minecraft/world/phys/Vec3;", PLAYER_EVENTS + "EntityInteract", "getLocation",
+                "()Lnet/minecraft/world/phys/Vec3;");
     }
 
     private static final String REGISTRIES = "net/neoforged/neoforge/registries/";

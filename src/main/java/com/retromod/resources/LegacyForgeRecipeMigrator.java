@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import com.retromod.util.RetromodLog;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -79,11 +80,11 @@ final class LegacyForgeRecipeMigrator implements ModResourceConverter {
             }
         }
         if (changed > 0) {
-            LOGGER.info("Translated Forge 1.12 recipe features in {} copied recipe(s) for {} {}",
+            LOGGER.debug(RetromodLog.DETAIL, "Translated Forge 1.12 recipe features in {} copied recipe(s) for {} {}",
                     changed, context.targetLoader(), context.targetMcVersion());
         }
         if (removed > 0) {
-            LOGGER.info("Kept {} copied 1.12 recipe(s) out of {} {}: their Forge 1.12 conditions have "
+            LOGGER.debug(RetromodLog.DETAIL, "Kept {} copied 1.12 recipe(s) out of {} {}: their Forge 1.12 conditions have "
                     + "no equivalent there, so they would load unconditionally", removed,
                     context.targetLoader(), context.targetMcVersion());
         }

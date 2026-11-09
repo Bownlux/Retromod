@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.capability;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -172,7 +173,7 @@ public final class LegacyCapabilityRuntime {
                     Class<?> neoForge = Class.forName("net.neoforged.neoforge.common.NeoForge", true, loader);
                     Class<?> eventType = Class.forName("net.neoforged.bus.api.Event", false, loader);
                     bus = neoForge.getField("EVENT_BUS").get(null);
-                    post = bus.getClass().getMethod("post", eventType);
+                    post = LegacyPublicMethods.method(bus.getClass(), "post", eventType);
                 }
                 post.invoke(bus, event);
             } catch (java.lang.reflect.InvocationTargetException e) {
@@ -202,7 +203,7 @@ public final class LegacyCapabilityRuntime {
                 Object type = attachmentType(holder.getClass().getClassLoader());
                 if (type == null) return;
                 Method getData = null;
-                for (Method method : holder.getClass().getMethods()) {
+                for (Method method : LegacyPublicMethods.methods(holder.getClass())) {
                     if (method.getName().equals("getData") && method.getParameterCount() == 1
                             && method.getParameterTypes()[0].isInstance(type)) {
                         getData = method;
@@ -224,7 +225,7 @@ public final class LegacyCapabilityRuntime {
         }
 
         private static void deserialize(Object provider, Object saved) throws ReflectiveOperationException {
-            for (Method method : provider.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(provider.getClass())) {
                 if (method.getName().equals("deserializeNBT") && method.getParameterCount() == 1
                         && method.getParameterTypes()[0].isInstance(saved)) {
                     method.setAccessible(true);
@@ -251,7 +252,7 @@ public final class LegacyCapabilityRuntime {
             }
             if (id == null) return null;
             for (String lookup : new String[]{"get", "getValue"}) {
-                for (Method method : registry.getClass().getMethods()) {
+                for (Method method : LegacyPublicMethods.methods(registry.getClass())) {
                     if (method.getName().equals(lookup) && method.getParameterCount() == 1
                             && method.getParameterTypes()[0].isInstance(id)) {
                         type = method.invoke(registry, id);
@@ -292,11 +293,11 @@ public final class LegacyCapabilityRuntime {
 
         private static Object blockCapability(Object blockEntity, Object neoCapability, Object side)
                 throws ReflectiveOperationException {
-            Object level = blockEntity.getClass().getMethod("getLevel").invoke(blockEntity);
+            Object level = LegacyPublicMethods.method(blockEntity.getClass(), "getLevel").invoke(blockEntity);
             if (level == null) return null;
-            Object pos = blockEntity.getClass().getMethod("getBlockPos").invoke(blockEntity);
-            Object state = blockEntity.getClass().getMethod("getBlockState").invoke(blockEntity);
-            for (Method method : level.getClass().getMethods()) {
+            Object pos = LegacyPublicMethods.method(blockEntity.getClass(), "getBlockPos").invoke(blockEntity);
+            Object state = LegacyPublicMethods.method(blockEntity.getClass(), "getBlockState").invoke(blockEntity);
+            for (Method method : LegacyPublicMethods.methods(level.getClass())) {
                 if (method.getName().equals("getCapability") && method.getParameterCount() == 5
                         && method.getParameterTypes()[0].isInstance(neoCapability)) {
                     return method.invoke(level, neoCapability, pos, state, blockEntity, side);
@@ -307,7 +308,7 @@ public final class LegacyCapabilityRuntime {
 
         private static Object call(Object holder, String name, Object neoCapability, Object context)
                 throws ReflectiveOperationException {
-            for (Method method : holder.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(holder.getClass())) {
                 if (method.getName().equals(name) && method.getParameterCount() == 2
                         && method.getParameterTypes()[0].isInstance(neoCapability)) {
                     return method.invoke(holder, neoCapability, context);

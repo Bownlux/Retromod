@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.InvocationTargetException;
 import java.util.function.Supplier;
 
@@ -15,7 +16,7 @@ public final class LegacyForgeNetworkEventAdapter {
     public static Supplier<Object> getSource(Object event) {
         return () -> {
             try {
-                return event.getClass().getMethod("getSource").invoke(event);
+                return LegacyPublicMethods.method(event.getClass(), "getSource").invoke(event);
             } catch (ReflectiveOperationException e) {
                 Throwable cause = e instanceof InvocationTargetException && e.getCause() != null
                         ? e.getCause() : e;

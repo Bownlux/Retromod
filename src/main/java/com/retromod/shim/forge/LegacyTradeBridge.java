@@ -8,6 +8,7 @@ import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import com.retromod.core.SyntheticEmbedder;
+import com.retromod.shim.forge.embedded.LegacyDataPackSource;
 import com.retromod.shim.forge.embedded.LegacyTradeStore;
 import com.retromod.util.McReflect;
 import org.objectweb.asm.ClassReader;
@@ -21,29 +22,12 @@ import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
 
 import static org.objectweb.asm.Opcodes.*;
 
-/**
- * Puts back the villager and wandering trader trade events for Forge and NeoForge mods on 26.x.
- *
- * <p>26.1 made villager trades data: each profession level reads a trade set, which draws from a
- * {@code villager_trade} tag. {@code VillagerTrades.ItemListing} and both trade events were removed,
- * so a mod that added trades through them lost the trades, and on NeoForge every one of its event
- * subscriptions failed until Retromod started dropping the handler.
- *
- * <p>The events come back as generated classes with the old getters. Once the server has started,
- * Retromod posts one villager event per profession and one wandering trader event, then writes
- * each listing the mod added as a {@code villager_trade} entry in a data pack and appends it to the
- * tag the matching trade set reads. 26.x loads trades before item stacks can be built and keeps
- * them for the session, so the trades apply from the next start. Vanilla's trades and other packs'
- * additions stay in the tag. Forge's
- * {@code BasicItemListing} carries its stacks, so it converts exactly. Any other listing is asked
- * for one offer, so a listing that picks its items or prices at random keeps the one it picked, and
- * one that cannot build an offer without a villager is skipped. Item components on the stacks are
- * not carried over. Professions with no trade set for a level, such as a mod's own profession that
- * ships no trade data, get no trades.
- */
+/** Puts back the villager and wandering trader trade events and their listings for Forge and NeoForge mods on 26.x. */
 public final class LegacyTradeBridge {
 
     public static final String ITEM_LISTING = "com/retromod/generated/LegacyItemListing";
@@ -53,7 +37,19 @@ public final class LegacyTradeBridge {
     static final String STORE = "com/retromod/shim/forge/embedded/LegacyTradeStore";
     public static final String PROFESSIONS = "com/retromod/generated/LegacyVillagerProfessions";
 
-    private static final String EVENT = "net/neoforged/bus/api/Event";
+    static final String NEOFORGE_EVENT = "net/neoforged/bus/api/Event";
+    static final String FORGE_EVENT = "net/minecraftforge/eventbus/api/event/MutableEvent";
+    static final String FORGE_EVENT_BUS = "net/minecraftforge/eventbus/api/bus/EventBus";
+    static final String FORGE_VILLAGER_EVENT = "net/minecraftforge/event/village/VillagerTradesEvent";
+    static final String FORGE_WANDERER_EVENT = "net/minecraftforge/event/village/WandererTradesEvent";
+    // The event base, and the events the store listens to; javap shows both with a static BUS on Forge 65.0.0 and 66.1.2.
+    private static final List<String> FORGE_HOST_CLASSES = List.of(FORGE_EVENT,
+            "net/minecraftforge/event/AddPackFindersEvent", "net/minecraftforge/event/server/ServerStartedEvent");
+    private static final String PACK_SOURCE = "com/retromod/shim/forge/embedded/LegacyDataPackSource";
+    private static final List<String> FORGE_TRADE_EVENTS = List.of(FORGE_VILLAGER_EVENT, FORGE_WANDERER_EVENT);
+    private static final ModConstructorHooks.Call START_STORE =
+            new ModConstructorHooks.Call(ModConstructorHooks.Position.HEAD, STORE, "watch", "()V", List.of());
+
     private static final String ITEM_STACK = "net/minecraft/world/item/ItemStack";
     private static final String L_STACK = "L" + ITEM_STACK + ";";
     private static final String PROFESSION = "net/minecraft/world/entity/npc/villager/VillagerProfession";
@@ -63,7 +59,7 @@ public final class LegacyTradeBridge {
 
     private LegacyTradeBridge() {}
 
-    /** NeoForge 26.x only: older hosts still have the events, and Forge's bus has no {@code Event} to extend. */
+    /** NeoForge 26.x only: older hosts still have the events, and Forge goes through {@link #registerForge}. */
     static boolean supportsHost(String host) {
         return RetromodVersion.isUnobfuscatedTarget(host) && McReflect.isNeoForge()
                 && !ClassResourceInspector.exists("net/neoforged/neoforge/event/village/VillagerTradesEvent");
@@ -74,6 +70,9 @@ public final class LegacyTradeBridge {
         registerRedirects(transformer);
     }
 
+    // 26.1 made trades data: each profession level reads a trade set, which draws from a villager_trade
+    // tag. ItemListing and both events went away, so a mod lost its trades, and on NeoForge every event
+    // subscription of the mod failed until Retromod started dropping the handler.
     static void registerRedirects(RetromodTransformer transformer) {
         SyntheticEmbedder.registerClassResource(transformer, STORE, LegacyTradeStore.class);
         registerItemListings(transformer);
@@ -85,6 +84,43 @@ public final class LegacyTradeBridge {
             transformer.registerClassRedirect(loader + "event/village/WandererTradesEvent", WANDERER_EVENT);
             transformer.registerClassRedirect(loader + "common/BasicItemListing", BASIC_LISTING);
         }
+    }
+
+    /** Forge 26.2 and newer, which dropped both events with EventBus 6; offline, a Forge target from 26.2. */
+    public static void registerForge(RetromodTransformer transformer) {
+        // A subscriber class naming a removed event fails to load, which stops every listener in it.
+        if (!ForgeHostShape.matches(FORGE_HOST_CLASSES, FORGE_TRADE_EVENTS)) return;
+        SyntheticEmbedder.registerClassResource(transformer, STORE, LegacyTradeStore.class);
+        // The store offers its pack through this helper, which a Forge 1.21.1 mod's chain may not register.
+        SyntheticEmbedder.registerClassResource(transformer, PACK_SOURCE, LegacyDataPackSource.class);
+        registerItemListings(transformer);
+        transformer.registerSyntheticClass(BASIC_LISTING, generateBasicListing());
+        transformer.registerSyntheticClass(VILLAGER_EVENT, generateVillagerEvent(FORGE_EVENT));
+        transformer.registerSyntheticClass(WANDERER_EVENT, generateWandererEvent(FORGE_EVENT));
+        // javap shows neither event nor BasicItemListing on Forge 65.0.0 or 66.1.2, so no native mod names them.
+        transformer.registerClassRedirect(FORGE_VILLAGER_EVENT, VILLAGER_EVENT);
+        transformer.registerClassRedirect(FORGE_WANDERER_EVENT, WANDERER_EVENT);
+        transformer.registerClassRedirect("net/minecraftforge/common/BasicItemListing", BASIC_LISTING);
+        // FML initializes only the subscriber classes it subscribes itself, so the mod's constructor starts the store.
+        ModConstructorHooks.register(transformer, "legacy-trades", LegacyTradeBridge::planStoreStart);
+    }
+
+    /** The store's start in each {@code @Mod} constructor of a jar whose classes name a Forge trade event; null for other jars. */
+    static ModConstructorHooks.JarPlan planStoreStart(Map<String, byte[]> classes, Map<String, String> modIds) {
+        for (byte[] original : classes.values()) {
+            if (namesForgeTradeEvent(original)) return (modClass, modId) -> List.of(START_STORE);
+        }
+        return null;
+    }
+
+    /** Whether the internal name is one of the generated trade events, before the embed moves it into a mod. */
+    static boolean isTradeEvent(String internalName) {
+        return internalName.equals(VILLAGER_EVENT) || internalName.equals(WANDERER_EVENT);
+    }
+
+    private static boolean namesForgeTradeEvent(byte[] classBytes) {
+        String text = new String(classBytes, StandardCharsets.ISO_8859_1);
+        return FORGE_TRADE_EVENTS.stream().anyMatch(text::contains);
     }
 
     /**
@@ -126,7 +162,8 @@ public final class LegacyTradeBridge {
     /**
      * Makes a class that handles a trade event start the trade store when it initializes. NeoForge
      * initializes a subscriber class while it constructs the mod, which is when the store can find
-     * the mod's event bus. Returns the input array when the class has no such handler.
+     * the mod's event bus; on Forge the mod's constructor starts it first. Returns the input array
+     * when the class has no such handler.
      */
     public static byte[] watchHandlers(byte[] classBytes) {
         if (classBytes == null) return null;
@@ -257,8 +294,13 @@ public final class LegacyTradeBridge {
      * the class file allows two methods that differ only in return type.
      */
     static byte[] generateVillagerEvent() {
+        return generateVillagerEvent(NEOFORGE_EVENT);
+    }
+
+    /** The villager event on {@code base}: NeoForge's {@code Event}, or EventBus 7's {@code MutableEvent} on Forge. */
+    static byte[] generateVillagerEvent(String base) {
         ClassWriter cw = newWriter();
-        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, VILLAGER_EVENT, null, EVENT, null);
+        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, VILLAGER_EVENT, null, base, null);
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "trades", "L" + INT_MAP + ";", null, null).visitEnd();
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "type", "Ljava/lang/Object;", null, null).visitEnd();
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "key", "Ljava/lang/Object;", null, null).visitEnd();
@@ -267,7 +309,7 @@ public final class LegacyTradeBridge {
                 "(L" + INT_MAP + ";Ljava/lang/Object;Ljava/lang/Object;)V", null, null);
         ctor.visitCode();
         ctor.visitVarInsn(ALOAD, 0);
-        ctor.visitMethodInsn(INVOKESPECIAL, EVENT, "<init>", "()V", false);
+        ctor.visitMethodInsn(INVOKESPECIAL, base, "<init>", "()V", false);
         String[][] fields = {{"trades", "L" + INT_MAP + ";"}, {"type", "Ljava/lang/Object;"}, {"key", "Ljava/lang/Object;"}};
         for (int i = 0; i < fields.length; i++) {
             ctor.visitVarInsn(ALOAD, 0);
@@ -281,14 +323,20 @@ public final class LegacyTradeBridge {
         emitGetter(cw, VILLAGER_EVENT, "getTrades", "trades", "L" + INT_MAP + ";", null);
         emitGetter(cw, VILLAGER_EVENT, "getType", "type", "Ljava/lang/Object;", PROFESSION);
         emitGetter(cw, VILLAGER_EVENT, "getType", "key", "Ljava/lang/Object;", "net/minecraft/resources/ResourceKey");
+        if (base.equals(FORGE_EVENT)) emitForgeBus(cw, VILLAGER_EVENT);
         cw.visitEnd();
         return cw.toByteArray();
     }
 
     /** {@code WandererTradesEvent}: the common, rare, and (NeoForge 1.21.5 and newer) buying listings. */
     static byte[] generateWandererEvent() {
+        return generateWandererEvent(NEOFORGE_EVENT);
+    }
+
+    /** The wandering trader event on {@code base}, as for {@link #generateVillagerEvent(String)}. */
+    static byte[] generateWandererEvent(String base) {
         ClassWriter cw = newWriter();
-        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, WANDERER_EVENT, null, EVENT, null);
+        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, WANDERER_EVENT, null, base, null);
         String[] lists = {"generic", "rare", "buying"};
         for (String list : lists) cw.visitField(ACC_PRIVATE | ACC_FINAL, list, "Ljava/util/List;", null, null).visitEnd();
 
@@ -296,7 +344,7 @@ public final class LegacyTradeBridge {
                 null, null);
         ctor.visitCode();
         ctor.visitVarInsn(ALOAD, 0);
-        ctor.visitMethodInsn(INVOKESPECIAL, EVENT, "<init>", "()V", false);
+        ctor.visitMethodInsn(INVOKESPECIAL, base, "<init>", "()V", false);
         for (int i = 0; i < lists.length; i++) {
             ctor.visitVarInsn(ALOAD, 0);
             ctor.visitVarInsn(ALOAD, i + 1);
@@ -309,8 +357,27 @@ public final class LegacyTradeBridge {
         emitGetter(cw, WANDERER_EVENT, "getGenericTrades", "generic", "Ljava/util/List;", null);
         emitGetter(cw, WANDERER_EVENT, "getRareTrades", "rare", "Ljava/util/List;", null);
         emitGetter(cw, WANDERER_EVENT, "getBuyingTrades", "buying", "Ljava/util/List;", null);
+        if (base.equals(FORGE_EVENT)) emitForgeBus(cw, WANDERER_EVENT);
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    /**
+     * {@code public static final EventBus BUS = EventBus.create(owner.class)}, as each Forge 26.2 game
+     * event has. It is the bus FML and EventBus 7 make for the class in the game group, and Retromod's
+     * bus bridge reads it for a listener a mod adds on any bus.
+     */
+    private static void emitForgeBus(ClassWriter cw, String owner) {
+        String busDesc = "L" + FORGE_EVENT_BUS + ";";
+        cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "BUS", busDesc, null, null).visitEnd();
+        MethodVisitor clinit = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null);
+        clinit.visitCode();
+        clinit.visitLdcInsn(Type.getObjectType(owner));
+        clinit.visitMethodInsn(INVOKESTATIC, FORGE_EVENT_BUS, "create", "(Ljava/lang/Class;)" + busDesc, true);
+        clinit.visitFieldInsn(PUTSTATIC, owner, "BUS", busDesc);
+        clinit.visitInsn(RETURN);
+        clinit.visitMaxs(0, 0);
+        clinit.visitEnd();
     }
 
     /** A getter for {@code field}, cast to {@code castTo} when it is stored as a plain object. */

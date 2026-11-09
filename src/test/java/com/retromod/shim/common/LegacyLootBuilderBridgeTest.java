@@ -81,11 +81,12 @@ class LegacyLootBuilderBridgeTest {
     }
 
     @Test
-    @DisplayName("a method with no registries keeps its nested table call unchanged")
-    void withoutRegistriesTheCallStays() {
+    @DisplayName("a method with no registries builds an entry that finds the table when it rolls")
+    void withoutRegistriesTheTableIsFoundWhenItRolls() {
         List<String> calls = calls(transformed(), "withoutRegistries");
-        assertTrue(calls.contains(NESTED_TABLE + ".lootTableReference" + OLD_REFERENCE), calls.toString());
-        assertTrue(calls.stream().noneMatch(call -> call.startsWith(HELPER)), calls.toString());
+        assertTrue(calls.contains(NAMED_TABLE + ".reference" + OLD_REFERENCE), calls.toString());
+        assertTrue(calls.stream().noneMatch(call -> call.startsWith(HELPER) || call.startsWith(NESTED_TABLE)), calls.toString());
+        assertNotNull(transformer.getSyntheticClasses().get(NAMED_TABLE), "the entry travels with the mod");
     }
 
     @Test

@@ -10,6 +10,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.retromod.core.RetromodVersion;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -155,7 +156,7 @@ public final class MixinBlocklist {
         if (!result.isEmpty()) {
             long fullStrips = result.values().stream().flatMap(List::stream)
                     .filter(BlockRule::fullStrip).count();
-            LOGGER.info("Mixin blocklist active: {} mixin class(es) ({} full-class strip rules)",
+            LOGGER.debug(RetromodLog.DETAIL, "Mixin blocklist active: {} mixin class(es) ({} full-class strip rules)",
                     result.size(), fullStrips);
         }
         return result;

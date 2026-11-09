@@ -61,6 +61,12 @@ public class SafeClassWriter extends ClassWriter {
 
     @Override
     protected String getCommonSuperClass(String type1, String type2) {
+        // A dedicated server's loader refuses a client-only Minecraft type after logging an
+        // ERROR, so ask the transformer directly, which is where that refusal would end up.
+        if (com.retromod.core.RetromodTransformer.refusedOnThisSide(type1)
+                || com.retromod.core.RetromodTransformer.refusedOnThisSide(type2)) {
+            return com.retromod.core.RetromodTransformer.resolveCommonSuperClass(type1, type2);
+        }
         try {
             return super.getCommonSuperClass(type1, type2);
         } catch (Exception | LinkageError e) {

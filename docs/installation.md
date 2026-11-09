@@ -18,7 +18,7 @@ Download the jar that matches both your loader and Minecraft version from [Modri
 
 Every build is also on [GitHub Releases](https://github.com/Bownlux/Retromod/releases) if you prefer to grab it directly.
 
-Choose a jar from the matching loader and Minecraft folder. Quilt uses the Fabric jar for the same Minecraft version. That artifact carries both `fabric.mod.json` and `quilt.mod.json`. There is no separate Quilt jar. The release matrix contains 24 shared Fabric and Quilt jars, 24 Forge jars, and 23 NeoForge jars. The separate `retromod-1.4.0-snapshot.3.1-cli.jar` is a command-line tool, not a mod, and does not belong in `mods/`. That is 68 loader jars and 1 CLI artifact, or 69 artifacts total.
+Choose a jar from the matching loader and Minecraft folder. Quilt uses the Fabric jar for the same Minecraft version. That artifact carries both `fabric.mod.json` and `quilt.mod.json`. There is no separate Quilt jar. The release matrix contains 24 shared Fabric and Quilt jars, 24 Forge jars, and 23 NeoForge jars. The separate `retromod-1.4.0-snapshot.4-cli.jar` is a command-line tool, not a mod, and does not belong in `mods/`. That is 71 loader jars and 1 CLI artifact, or 72 artifacts total.
 
 Before testing a translated mod, copy the instance or back up every world you care about. Retromod keeps your original mod jars, not Minecraft saves. Start with a new test world when the mod changes world generation, registries, inventories, entities, or save data.
 
@@ -39,6 +39,8 @@ Fabric and Quilt check mod versions before Retromod runs. Old mods placed direct
 
 Retromod leaves your old jars unchanged. It translates each one into `retromod-cache/translated/` and gives the loader that copy in place of the original. The first launch with a new old mod translates it and asks for one restart. Later launches load the cached copy with no restart. A Retromod or loader update, or a change to `polyfills_enabled` or `transform_mixins`, translates every old mod again and asks for one more restart.
 
+On NeoForge 1.20.2 to 1.20.4, and on NeoForge 1.20.5 and 1.20.6 builds that run FML 3.0.18, in-place loading is not available and Retromod leaves `mods/` unchanged. On those 1.20.5 and 1.20.6 builds, set `write_translated_jars` to `true` to translate old mods.
+
 A failed translation is not tried again until Retromod or the jar changes, so a broken mod cannot ask for a restart on every launch. `logs/latest.log` names the jar and the reason. Removing an old mod from `mods/` also removes its translation.
 
 A current mod that requires an old mod Retromod has not translated yet can stop the loader before Retromod runs. Move the current mod out of `mods/` for one launch, then put it back after the restart.
@@ -55,7 +57,7 @@ In this mode Forge and NeoForge can reject an old Minecraft range while scanning
 
 Jars that Retromod wrote into `mods/` itself, in rewrite mode or through its file picker, keep loading. Retromod recognizes that output and does not translate it again, so nothing has to change. When an original and its translated jar are both in `mods/`, Retromod loads the translated jar and leaves the original out.
 
-Jars made with the CLI `transform` or `batch` commands carry no such mark. In-place loading translates them a second time into `retromod-cache/`. Retromod does not test a second pass over translated code, so put the original jar in `mods/` instead.
+Forge and NeoForge jars made with the CLI `transform` or `batch` commands carry the same mark, so they keep loading as well. That holds only for a jar made for this game's Minecraft version and loader. Pass `--target <version>` or `--mc-jar`, and `--target-loader neoforge` for NeoForge. A jar made for another Minecraft version is left as it is, with a warning in the log, and NeoForge can skip a jar made for Forge. In either case, put the original jar in `mods/` instead.
 
 To let in-place loading handle one of those mods:
 
@@ -63,11 +65,11 @@ To let in-place loading handle one of those mods:
 2. Move the original into `mods/`. Earlier versions kept it in `retromod-input/processed/` or `mods/retromod-backups/`.
 3. Launch, and restart when prompted.
 
-`java -jar retromod-1.4.0-snapshot.3.1-cli.jar cache status <game-dir>` lists the translated jars in `mods/` and where each original is.
+`java -jar retromod-1.4.0-snapshot.4-cli.jar cache status <game-dir>` lists the translated jars in `mods/` and where each original is.
 
 ### Sharing a Translated Mod
 
-`java -jar retromod-1.4.0-snapshot.3.1-cli.jar export <game-dir>` copies every translated mod from the cache to `<game-dir>/retromod-output/mods/`. Each jar is translated for one loader and Minecraft version. A game you share it with needs that same loader and version, with Retromod installed for them, because a translated jar can call Retromod's code. Put the jar in that game's `mods/`. See [CLI]({{ '/cli' | relative_url }}) for choosing single mods.
+`java -jar retromod-1.4.0-snapshot.4-cli.jar export <game-dir>` copies every translated mod from the cache to `<game-dir>/retromod-output/mods/`. Each jar is translated for one loader and Minecraft version. A game you share it with needs that same loader and version, with Retromod installed for them, because a translated jar can call Retromod's code. Put the jar in that game's `mods/`. See [CLI]({{ '/cli' | relative_url }}) for choosing single mods.
 
 ## Resource and Data Packs
 
@@ -77,9 +79,9 @@ Put an old data pack in `retromod-input/datapacks/`. The world is not known duri
 
 Pack processing runs on Fabric, Quilt, Forge, and NeoForge. On 26.x targets, data packs receive compatible content migration even when `pack.mcmeta` already advertises the target. Legacy resource packs receive item-definition and content migration only during an actual format upgrade. Retromod does not port arbitrary resource schemas, world generation, overlays, or custom code. Unsupported or newer-only packs stay in the input folder.
 
-## Minecraft 26.2
+## Minecraft 26.2 and Newer
 
-Use **Video Settings > Graphics API > OpenGL**. Retromod selects OpenGL automatically unless you already chose a graphics backend.
+Use **Video Settings > Graphics API > Prefer OpenGL**. On Minecraft 26.2 and newer, Retromod selects OpenGL automatically unless you already chose a graphics backend.
 
 ## Updating
 

@@ -7,6 +7,7 @@ package com.retromod.core;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,7 +28,7 @@ public final class RetromodConfig {
     private static final long MAX_CONFIG_BYTES = 1024L * 1024;
 
     /** Written when no config exists; kept here so every loader writes the same file. */
-    private static final String DEFAULT_CONFIG = """
+    static final String DEFAULT_CONFIG = """
             {
               "_comment": "Retromod Configuration - https://github.com/Bownlux/Retromod",
 
@@ -50,8 +51,6 @@ public final class RetromodConfig {
 
               "debug": false,
               "dump_bytecode": false,
-
-              "force_translate_complex": false,
 
               "polyfills_enabled": true,
 
@@ -82,7 +81,7 @@ public final class RetromodConfig {
         }
         try {
             Files.writeString(CONFIG_PATH, DEFAULT_CONFIG);
-            LOGGER.info("Generated default config at {}", CONFIG_PATH);
+            LOGGER.debug(RetromodLog.DETAIL, "Generated default config at {}", CONFIG_PATH);
         } catch (Exception e) {
             LOGGER.warn("Could not generate default config at {}: {}", CONFIG_PATH, e.getMessage());
         }

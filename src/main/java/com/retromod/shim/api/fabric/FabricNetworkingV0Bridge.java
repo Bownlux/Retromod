@@ -6,7 +6,9 @@ package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.AuxiliaryVersionShim;
+import com.retromod.util.GeneratedLog;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.slf4j.Logger;
@@ -68,7 +70,8 @@ public class FabricNetworkingV0Bridge implements AuxiliaryVersionShim {
         transformer.registerClassRedirect(OLD_SERVER_REGISTRY, NEW_SERVER_REGISTRY);
         transformer.registerClassRedirect(OLD_CLIENT_REGISTRY, NEW_CLIENT_REGISTRY);
 
-        LOGGER.warn("Loaded support for Fabric networking v0. Mods can start, but packets sent "
+        // Every Fabric launch registers this bridge, so the stand-ins warn when a mod uses them instead.
+        LOGGER.debug("Loaded support for Fabric networking v0. Mods can start, but packets sent "
                 + "through that removed API will be ignored.");
     }
 
@@ -167,7 +170,7 @@ public class FabricNetworkingV0Bridge implements AuxiliaryVersionShim {
         noopVoid(cw, "sendToPlayer", "(" + L_SERVER_PLAYER + L_IDENTIFIER + L_BYTE_BUF + ")V");
         noopVoid(cw, "sendToPlayer", "(" + L_SERVER_PLAYER + L_PACKET + ")V");
         returnFalse(cw, "canPlayerReceive", "(" + L_PLAYER + L_IDENTIFIER + ")Z");
-        completedFuture(cw, "register", "(" + L_IDENTIFIER + L_PACKET_CONSUMER + ")Ljava/util/concurrent/CompletableFuture;");
+        registerIgnoringChannel(cw, IMPL_SERVER_REGISTRY);
         returnFalse(cw, "unregister", "(" + L_IDENTIFIER + ")Z");
         cw.visitEnd();
         return cw.toByteArray();
@@ -182,7 +185,7 @@ public class FabricNetworkingV0Bridge implements AuxiliaryVersionShim {
         noopVoid(cw, "sendToServer", "(" + L_IDENTIFIER + L_BYTE_BUF + ")V");
         noopVoid(cw, "sendToServer", "(" + L_PACKET + ")V");
         returnFalse(cw, "canServerReceive", "(" + L_IDENTIFIER + ")Z");
-        completedFuture(cw, "register", "(" + L_IDENTIFIER + L_PACKET_CONSUMER + ")Ljava/util/concurrent/CompletableFuture;");
+        registerIgnoringChannel(cw, IMPL_CLIENT_REGISTRY);
         returnFalse(cw, "unregister", "(" + L_IDENTIFIER + ")Z");
         cw.visitEnd();
         return cw.toByteArray();
@@ -229,10 +232,32 @@ public class FabricNetworkingV0Bridge implements AuxiliaryVersionShim {
         m.visitEnd();
     }
 
-    /** Emits {@code return CompletableFuture.completedFuture(null);}. */
-    private static void completedFuture(ClassWriter cw, String name, String desc) {
-        MethodVisitor m = cw.visitMethod(Opcodes.ACC_PUBLIC, name, desc, null, null);
+    /** Emits a {@code register} that warns about the first channel, then returns a completed future. */
+    private static void registerIgnoringChannel(ClassWriter cw, String owner) {
+        // One warning per stand-in class, so a mod that registers many channels logs one line.
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "warned", "Z", null, null).visitEnd();
+        MethodVisitor m = cw.visitMethod(Opcodes.ACC_PUBLIC, "register",
+                "(" + L_IDENTIFIER + L_PACKET_CONSUMER + ")Ljava/util/concurrent/CompletableFuture;", null, null);
         m.visitCode();
+        Label done = new Label();
+        m.visitFieldInsn(Opcodes.GETSTATIC, owner, "warned", "Z");
+        m.visitJumpInsn(Opcodes.IFNE, done);
+        m.visitInsn(Opcodes.ICONST_1);
+        m.visitFieldInsn(Opcodes.PUTSTATIC, owner, "warned", "Z");
+        // The channel id is local 1; String.valueOf keeps the message free of Minecraft types.
+        GeneratedLog.pushLogger(m);
+        m.visitLdcInsn("[Retromod] An old mod registered the Fabric networking v0 channel ");
+        m.visitVarInsn(Opcodes.ALOAD, 1);
+        m.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/String", "valueOf",
+                "(Ljava/lang/Object;)Ljava/lang/String;", false);
+        m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "concat",
+                "(Ljava/lang/String;)Ljava/lang/String;", false);
+        m.visitLdcInsn(". Retromod has no working replacement for that API, so packets on this channel are ignored.");
+        m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "concat",
+                "(Ljava/lang/String;)Ljava/lang/String;", false);
+        GeneratedLog.warn(m);
+        m.visitLabel(done);
+        // return CompletableFuture.completedFuture(null);
         m.visitInsn(Opcodes.ACONST_NULL);
         m.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/concurrent/CompletableFuture",
                 "completedFuture", "(Ljava/lang/Object;)Ljava/util/concurrent/CompletableFuture;", false);

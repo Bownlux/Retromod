@@ -128,11 +128,12 @@ class MergeFrameModClassTest {
         assertEquals("rmtest/OldCombat", mergedFrameType(withProvider),
                 "the merged stack type must be the real mod superclass, not Object");
 
-        // Contrast: without the provider the merge collapses to Object (the #180 bug), which would be
-        // a too-wide frame the JVM rejects at the OldCombat.open() call.
+        // Without the provider the join cannot be read. It used to collapse to Object (the #180 bug),
+        // a too-wide frame the JVM rejects at the OldCombat.open() call; the method kept its shape, so
+        // the compiler's own frame is kept instead.
         transformer.clearJarClassBytesProvider();
         byte[] noProvider = transformer.transformClass(caller(), "rmtest/Caller");
-        assertEquals("java/lang/Object", mergedFrameType(noProvider),
-                "without the jar bytes the merge collapses to Object (the pre-fix behavior)");
+        assertEquals("rmtest/OldCombat", mergedFrameType(noProvider),
+                "without the jar bytes the original frame is kept rather than widened to Object");
     }
 }

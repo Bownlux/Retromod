@@ -4,6 +4,7 @@
  */
 package com.retromod.mixin;
 
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.*;
 import org.objectweb.asm.tree.*;
 import org.slf4j.Logger;
@@ -445,6 +446,6 @@ public class MixinTargetRedirector {
     public static void loadRedirectsFromMappings(java.nio.file.Path mappingFile) {
         // TODO: Load from Yarn/Mojmap diff files
         // This would allow automatic generation of redirects
-        LOGGER.info("Loading redirects from: {}", mappingFile);
+        LOGGER.debug(RetromodLog.DETAIL, "Loading redirects from: {}", mappingFile);
     }
 }

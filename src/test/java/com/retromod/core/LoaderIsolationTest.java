@@ -102,7 +102,6 @@ class LoaderIsolationTest {
     void sharedGuiDoesNotReferenceFabricEntrypoint() throws IOException {
         String fabricEntrypoint = "com/retromod/core/Retromod";
         for (String className : new String[] {
-                "com/retromod/gui/RetromodGui",
                 "com/retromod/gui/RetromodScreen",
                 "com/retromod/gui/ModCompatibilityChecker"}) {
             ClassNode node = classNode(className);

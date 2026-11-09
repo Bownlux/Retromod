@@ -39,7 +39,7 @@ class ModComplexityAnalyzerTest {
 
         assertEquals(25, report.score());
         assertTrue(report.riskFactors().contains(
-                "Uses eager legacy Forge registry entries (needs DeferredRegister migration)"));
+                "Builds legacy Forge registry entries in static initializers"));
     }
 
     private static byte[] legacyRegistryHolder() {

@@ -76,7 +76,7 @@ public final class LegacyEquipmentSupport {
                 warned = true;
                 Throwable cause = failure instanceof java.lang.reflect.InvocationTargetException invoked
                         && invoked.getCause() != null ? invoked.getCause() : failure;
-                System.err.println("[Retromod] Could not rebuild an old " + key + " item's components, so it "
+                LegacyLog.warn("Could not rebuild an old " + key + " item's components, so it "
                         + "loads as a plain item: " + cause);
             }
             return properties;
@@ -104,11 +104,11 @@ public final class LegacyEquipmentSupport {
         Object record = armorRecord(material, typeClass, loader);
         if (OLD_RECORD_REPAIRS.containsKey(record)) return armorComponents(properties, record, type, loader);
         Class<?> recordClass = Class.forName(ARMOR_MATERIAL, false, loader);
-        Object result = properties.getClass().getMethod("humanoidArmor", recordClass, typeClass)
+        Object result = LegacyPublicMethods.method(properties.getClass(), "humanoidArmor", recordClass, typeClass)
                 .invoke(properties, record, type);
         if (isLegacy(material, recordClass)) {
             int durability = ((Number) call(material, "getDurabilityForType", type)).intValue();
-            result = result.getClass().getMethod("durability", int.class).invoke(result, durability);
+            result = LegacyPublicMethods.method(result.getClass(), "durability", int.class).invoke(result, durability);
             result = repairable(result, repairIngredient(material), loader);
         }
         return result;
@@ -137,7 +137,7 @@ public final class LegacyEquipmentSupport {
         Class<?> recordClass = Class.forName(ARMOR_MATERIAL, false, loader);
         Object record = recordClass.getConstructors()[0].newInstance(0, defense, 0, sound, 0.0F, 0.0F,
                 unusedRepairTag(loader), assetId);
-        return properties.getClass().getMethod("horseArmor", recordClass).invoke(properties, record);
+        return LegacyPublicMethods.method(properties.getClass(), "horseArmor", recordClass).invoke(properties, record);
     }
 
     private static Object tool(String key, Object[] args, Object properties, ClassLoader loader) throws Exception {
@@ -160,10 +160,10 @@ public final class LegacyEquipmentSupport {
         Object result;
         if ("digger".equals(key)) {
             if (blocks == null) return properties;
-            result = properties.getClass().getMethod("tool", toolClass, tagClass, float.class, float.class, float.class)
+            result = LegacyPublicMethods.method(properties.getClass(), "tool", toolClass, tagClass, float.class, float.class, float.class)
                     .invoke(properties, record, blocks, numbers.get(0), numbers.get(1), 0.0F);
         } else {
-            result = properties.getClass().getMethod(key, toolClass, float.class, float.class)
+            result = LegacyPublicMethods.method(properties.getClass(), key, toolClass, float.class, float.class)
                     .invoke(properties, record, numbers.get(0), numbers.get(1));
         }
         if (isLegacy(material, toolClass)) {
@@ -222,7 +222,7 @@ public final class LegacyEquipmentSupport {
             Class<?> recordClass = Class.forName(ARMOR_MATERIAL, false, loader);
             List<?> layerList = (List<?>) layers;
             Object asset = layerList.isEmpty() ? identifier(loader, "minecraft:iron")
-                    : layerList.get(0).getClass().getMethod("assetName").invoke(layerList.get(0));
+                    : LegacyPublicMethods.method(layerList.get(0).getClass(), "assetName").invoke(layerList.get(0));
             Object assetId = resourceKey(loader, "net.minecraft.world.item.equipment.EquipmentAssets", "ROOT_ID", asset);
             Object record = recordClass.getConstructors()[0].newInstance(0, defense, enchantmentValue, equipSound,
                     toughness, knockbackResistance, unusedRepairTag(loader), assetId);
@@ -321,7 +321,7 @@ public final class LegacyEquipmentSupport {
                 java.util.function.Consumer<Object> components = builder -> setArmorComponents(builder, record, pending[1], loader);
                 modifyComponents(event, itemLike, item, components, loader);
             } catch (ReflectiveOperationException | RuntimeException failure) {
-                System.err.println("[Retromod] Could not give an old armor item its armor components: " + failure);
+                LegacyLog.warn("Could not give an old armor item its armor components: " + failure);
             }
         });
     }
@@ -333,7 +333,7 @@ public final class LegacyEquipmentSupport {
     private static void modifyComponents(Object event, Class<?> itemLike, Object item,
             java.util.function.Consumer<Object> components, ClassLoader loader) throws ReflectiveOperationException {
         try {
-            event.getClass().getMethod("modify", itemLike, java.util.function.Consumer.class).invoke(event, item, components);
+            LegacyPublicMethods.method(event.getClass(), "modify", itemLike, java.util.function.Consumer.class).invoke(event, item, components);
             return;
         } catch (NoSuchMethodException consumerFormRemoved) {
             // Falls through to the initializer form.
@@ -350,13 +350,13 @@ public final class LegacyEquipmentSupport {
                     case "toString" -> "Retromod armor components";
                     default -> java.lang.reflect.InvocationHandler.invokeDefault(proxy, method, arguments);
                 });
-        event.getClass().getMethod("modify", itemLike, initializer).invoke(event, item, run);
+        LegacyPublicMethods.method(event.getClass(), "modify", itemLike, initializer).invoke(event, item, run);
     }
 
     /** The components humanoid armor gets from its material, without durability, which the item sets. */
     private static Object armorComponents(Object properties, Object record, Object type, ClassLoader loader) throws Exception {
         Class<?> componentType = Class.forName("net.minecraft.core.component.DataComponentType", false, loader);
-        Method component = properties.getClass().getMethod("component", componentType, Object.class);
+        Method component = LegacyPublicMethods.method(properties.getClass(), "component", componentType, Object.class);
         for (Object[] value : armorComponentValues(record, type, loader)) {
             properties = component.invoke(properties, value[0], value[1]);
         }
@@ -366,7 +366,7 @@ public final class LegacyEquipmentSupport {
     private static void setArmorComponents(Object builder, Object record, Object type, ClassLoader loader) {
         try {
             Class<?> componentType = Class.forName("net.minecraft.core.component.DataComponentType", false, loader);
-            Method set = builder.getClass().getMethod("set", componentType, Object.class);
+            Method set = LegacyPublicMethods.method(builder.getClass(), "set", componentType, Object.class);
             for (Object[] value : armorComponentValues(record, type, loader)) set.invoke(builder, value[0], value[1]);
         } catch (Exception failure) {
             throw new IllegalStateException(failure);
@@ -378,7 +378,7 @@ public final class LegacyEquipmentSupport {
         Class<?> components = Class.forName("net.minecraft.core.component.DataComponents", false, loader);
         List<Object[]> values = new ArrayList<>();
         values.add(new Object[]{components.getField("ATTRIBUTE_MODIFIERS").get(null),
-                record.getClass().getMethod("createAttributes", type.getClass()).invoke(record, type)});
+                LegacyPublicMethods.method(record.getClass(), "createAttributes", type.getClass()).invoke(record, type)});
         int enchantmentValue = ((Number) call(record, "enchantmentValue")).intValue();
         if (enchantmentValue > 0) {
             Object enchantable = Class.forName("net.minecraft.world.item.enchantment.Enchantable", false, loader)
@@ -386,13 +386,13 @@ public final class LegacyEquipmentSupport {
             values.add(new Object[]{components.getField("ENCHANTABLE").get(null), enchantable});
         }
         Class<?> equippable = Class.forName("net.minecraft.world.item.equipment.Equippable", false, loader);
-        Object slot = type.getClass().getMethod("getSlot").invoke(type);
+        Object slot = LegacyPublicMethods.method(type.getClass(), "getSlot").invoke(type);
         Object builder = equippable.getMethod("builder", slot.getClass()).invoke(null, slot);
-        builder = builder.getClass().getMethod("setEquipSound", Class.forName("net.minecraft.core.Holder", false, loader))
+        builder = LegacyPublicMethods.method(builder.getClass(), "setEquipSound", Class.forName("net.minecraft.core.Holder", false, loader))
                 .invoke(builder, call(record, "equipSound"));
-        builder = builder.getClass().getMethod("setAsset", Class.forName("net.minecraft.resources.ResourceKey", false, loader))
+        builder = LegacyPublicMethods.method(builder.getClass(), "setAsset", Class.forName("net.minecraft.resources.ResourceKey", false, loader))
                 .invoke(builder, call(record, "assetId"));
-        values.add(new Object[]{components.getField("EQUIPPABLE").get(null), builder.getClass().getMethod("build").invoke(builder)});
+        values.add(new Object[]{components.getField("EQUIPPABLE").get(null), LegacyPublicMethods.method(builder.getClass(), "build").invoke(builder)});
         return values;
     }
 
@@ -413,8 +413,8 @@ public final class LegacyEquipmentSupport {
             throws ReflectiveOperationException {
         ClassLoader loader = LegacyEquipmentSupport.class.getClassLoader();
         Object context = Class.forName("net.neoforged.fml.ModLoadingContext", false, loader).getMethod("get").invoke(null);
-        Object container = context.getClass().getMethod("getActiveContainer").invoke(context);
-        Object bus = container.getClass().getMethod("getEventBus").invoke(container);
+        Object container = LegacyPublicMethods.method(context.getClass(), "getActiveContainer").invoke(context);
+        Object bus = LegacyPublicMethods.method(container.getClass(), "getEventBus").invoke(container);
         if (bus == null || !LISTENING_BUSES.add(System.identityHashCode(bus) + ":" + event.getName())) return;
         Class<?> busClass = Class.forName("net.neoforged.bus.api.IEventBus", false, loader);
         busClass.getMethod("addListener", Class.class, java.util.function.Consumer.class).invoke(bus, event, listener);
@@ -458,13 +458,13 @@ public final class LegacyEquipmentSupport {
             float bonus = ((Number) call(tier, "getAttackDamageBonus")).floatValue();
             Object builder = Class.forName("net.minecraft.world.item.component.ItemAttributeModifiers", false, loader)
                     .getMethod("builder").invoke(null);
-            Method add = builder.getClass().getMethod("add", holder, modifier, slotGroup);
+            Method add = LegacyPublicMethods.method(builder.getClass(), "add", holder, modifier, slotGroup);
             Constructor<?> newModifier = modifier.getConstructor(item.getField("BASE_ATTACK_DAMAGE_ID").getType(), double.class, operation);
             add.invoke(builder, attributes.getField("ATTACK_DAMAGE").get(null),
                     newModifier.newInstance(item.getField("BASE_ATTACK_DAMAGE_ID").get(null), (double) (damage + bonus), addValue), mainHand);
             add.invoke(builder, attributes.getField("ATTACK_SPEED").get(null),
                     newModifier.newInstance(item.getField("BASE_ATTACK_SPEED_ID").get(null), (double) speed, addValue), mainHand);
-            return builder.getClass().getMethod("build").invoke(builder);
+            return LegacyPublicMethods.method(builder.getClass(), "build").invoke(builder);
         } catch (Exception failure) {
             throw new IllegalStateException("Retromod could not build an old tool's attack attributes", failure);
         }
@@ -529,7 +529,7 @@ public final class LegacyEquipmentSupport {
             Class<?> componentType = Class.forName("net.minecraft.core.component.DataComponentType", false, loader);
             Object type = Class.forName("net.minecraft.core.component.DataComponents", false, loader)
                     .getField("DYED_COLOR").get(null);
-            stack.getClass().getMethod("set", componentType, Object.class).invoke(stack, type, value);
+            LegacyPublicMethods.method(stack.getClass(), "set", componentType, Object.class).invoke(stack, type, value);
         } catch (Exception failure) {
             throw new IllegalStateException("Retromod could not dye " + stack, failure);
         }
@@ -540,7 +540,7 @@ public final class LegacyEquipmentSupport {
         Class<?> componentType = Class.forName("net.minecraft.core.component.DataComponentType", false, loader);
         Object type = Class.forName("net.minecraft.core.component.DataComponents", false, loader)
                 .getField("DYED_COLOR").get(null);
-        return stack.getClass().getMethod(method, componentType).invoke(stack, type);
+        return LegacyPublicMethods.method(stack.getClass(), method, componentType).invoke(stack, type);
     }
 
     /** The current tool record for an old tier, built once per tier. */
@@ -586,7 +586,7 @@ public final class LegacyEquipmentSupport {
             ClassLoader loader = record.getClass().getClassLoader();
             switch (method) {
                 case "getDurabilityForType":
-                    return arg.getClass().getMethod("getDurability", int.class)
+                    return LegacyPublicMethods.method(arg.getClass(), "getDurability", int.class)
                             .invoke(arg, ((Number) call(record, "durability")).intValue());
                 case "getDefenseForType":
                     Object defense = ((Map<?, ?>) call(record, "defense")).get(arg);
@@ -630,7 +630,7 @@ public final class LegacyEquipmentSupport {
         Object items = Class.forName("net.minecraft.core.registries.BuiltInRegistries", false, loader)
                 .getField("ITEM").get(null);
         Object holderSet = null;
-        for (Method method : items.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(items.getClass())) {
             if (method.getName().equals("getOrThrow") && method.getParameterCount() == 1
                     && method.getParameterTypes()[0].getName().equals("net.minecraft.tags.TagKey")) {
                 holderSet = method.invoke(items, tag);
@@ -647,13 +647,13 @@ public final class LegacyEquipmentSupport {
         Class<?> componentType = Class.forName("net.minecraft.core.component.DataComponentType", false, loader);
         Object enchantable = Class.forName("net.minecraft.core.component.DataComponents", false, loader)
                 .getField("ENCHANTABLE").get(null);
-        return properties.getClass().getMethod("component", componentType, Object.class).invoke(properties, enchantable, null);
+        return LegacyPublicMethods.method(properties.getClass(), "component", componentType, Object.class).invoke(properties, enchantable, null);
     }
 
     /** Sets the repair items from an old ingredient, which has no tag to give the record. */
     private static Object repairable(Object properties, Object ingredient, ClassLoader loader) throws Exception {
         if (ingredient == null) return properties;
-        Stream<?> holders = (Stream<?>) ingredient.getClass().getMethod("items").invoke(ingredient);
+        Stream<?> holders = (Stream<?>) LegacyPublicMethods.method(ingredient.getClass(), "items").invoke(ingredient);
         List<?> list = holders.toList();
         if (list.isEmpty()) return properties;
         Class<?> holderSetClass = Class.forName("net.minecraft.core.HolderSet", false, loader);
@@ -663,7 +663,7 @@ public final class LegacyEquipmentSupport {
         Object component = Class.forName("net.minecraft.core.component.DataComponents", false, loader)
                 .getField("REPAIRABLE").get(null);
         Class<?> componentType = Class.forName("net.minecraft.core.component.DataComponentType", false, loader);
-        return properties.getClass().getMethod("component", componentType, Object.class)
+        return LegacyPublicMethods.method(properties.getClass(), "component", componentType, Object.class)
                 .invoke(properties, component, repairable);
     }
 
@@ -745,7 +745,7 @@ public final class LegacyEquipmentSupport {
                 }
             }
         }
-        for (Method method : target.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(target.getClass())) {
             if (method.getName().equals(name) && method.getParameterCount() == args.length) {
                 return method.invoke(target, args);
             }

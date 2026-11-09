@@ -5,20 +5,26 @@
 package com.retromod.gui;
 
 import com.retromod.inplace.InPlaceLaunch;
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import com.retromod.util.McI18n;
+import com.retromod.util.McOpener;
 import com.retromod.util.McReflect;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 /** Builds the Retromod screen opened from the title menu. */
 public final class MainScreenFactory {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
+    // The alert stacks its text above its button, so a long list pushes the button off screen.
+    private static final int MAX_NAMED_FILES = 5;
 
     private static Class<?> screenClass;
     private static Class<?> textClass;
@@ -31,6 +37,8 @@ public final class MainScreenFactory {
 
     public static void open(Object parentScreen) {
         LOGGER.debug("Opening the Retromod main screen");
+        // This screen only opens on a running client, so Minecraft's own openers may run now.
+        McOpener.markClientRunning();
         if (!resolveClasses()) {
             LOGGER.warn("Cannot open the Retromod screen because the required Minecraft "
                     + "GUI classes are unavailable");
@@ -43,10 +51,13 @@ public final class MainScreenFactory {
             return;
         }
 
+        // Escape returns to the screen the player came from, like Done. Jars dropped on the
+        // screen go the same way as picked ones.
         Object screen = ScreenClassGenerator.createScreen(
                 title,
                 s -> addAllWidgets(s, parentScreen),
-                () -> LOGGER.debug("Closing the Retromod main screen")
+                () -> setScreen(parentScreen),
+                MainScreenFactory::takeDroppedFiles
         );
         if (screen == null) {
             LOGGER.warn("Could not create the Retromod main screen");
@@ -57,8 +68,8 @@ public final class MainScreenFactory {
 
     private static void addAllWidgets(Object screen, Object parentScreen) {
         try {
-            int width  = McReflect.getIntField(screen, screenClass, 854, "width");
-            int height = McReflect.getIntField(screen, screenClass, 480, "height");
+            int width  = McReflect.getIntField(screen, screenClass, 854, "width", "field_22789");
+            int height = McReflect.getIntField(screen, screenClass, 480, "height", "field_22790");
 
             // Uses a Unicode gear glyph since SpriteIconButton is unreliable
             // across MC versions. The text is short ("⚙") so the button can
@@ -96,10 +107,10 @@ public final class MainScreenFactory {
                     x, startY + btnHeight + gap, btnWidth, btnHeight);
             addWidget(screen, addBtn);
 
-            // Open Mods Folder button: reliable cross-platform alternative
+            // Open retromod-input/ button: the folder Retromod reads old jars from
             Object folderBtn = buildButton(
                     McI18n.translatable("retromod.main.open_folder"),
-                    makePressAction(MainScreenFactory::openInputFolder),
+                    makePressAction(() -> openAndShowInputFolder(screen)),
                     x, startY + (btnHeight + gap) * 2, btnWidth, btnHeight);
             addWidget(screen, folderBtn);
 
@@ -134,81 +145,100 @@ public final class MainScreenFactory {
 
     // ACTIONS
 
-    /**
-     * Open the OS native file picker on a daemon thread so we don't block
-     * the render thread. macOS-specific system properties are set first to
-     * give AWT the best chance of initializing alongside LWJGL/GLFW.
-     */
+    /** Opens the system file picker; without a client, it shows retromod-input/ instead. */
     private static void openNativeFilePicker(Object parentScreen) {
-        // macOS hardening: GLFW owns the main thread (-XstartOnFirstThread),
-        // which can prevent AppKit from initializing AWT. These properties
-        // make AWT behave more like a background utility than a foreground
-        // app, which sidesteps the worst of the conflict.
-        System.setProperty("apple.laf.useScreenMenuBar", "false");
-        System.setProperty("apple.awt.UIElement", "true");
-        System.setProperty("apple.awt.application.appearance", "system");
-        System.setProperty("java.awt.headless", "false");
-
-        Thread t = new Thread(() -> {
-            try {
-                Class<?> retroScreenCls = Class.forName("com.retromod.gui.RetromodScreen");
-                Object client = getClientInstance();
-                Object instance = retroScreenCls
-                        .getConstructor(Object.class, Object.class)
-                        .newInstance(client, parentScreen);
-                retroScreenCls.getMethod("open").invoke(instance);
-            } catch (Throwable t2) {
-                LOGGER.warn("File picker failed ({}). Fall back to 'Open Mods Folder'.",
-                        t2.getMessage());
-            }
-        }, "Retromod-FilePicker");
-        t.setDaemon(true);
-        t.start();
+        Object client = getClientInstance();
+        if (client == null) {
+            LOGGER.warn("Retromod could not show a file picker because the Minecraft client "
+                    + "was not found. It opens retromod-input/ instead.");
+            showInputFolderInstead(parentScreen, true);
+            return;
+        }
+        new RetromodScreen(client, parentScreen).open();
     }
 
-    /**
-     * Open {@code retromod-input/} in the OS file manager so the user can
-     * drop JARs into it. Works on every platform, using MC's own
-     * Util.getOperatingSystem().open() (same call as the vanilla
-     * "Open Resource Pack Folder" button).
-     */
-    private static void openInputFolder() {
-        try {
-            Path inputDir = resolveInputDir();
-            Files.createDirectories(inputDir);
-
-            Class<?> utilClass = McReflect.findClass(
-                "net.minecraft.util.Util",
-                "net.minecraft.Util"
-            );
-            if (utilClass != null) {
-                Method getOs = McReflect.findMethod(utilClass, "getOperatingSystem", "getPlatform");
-                if (getOs != null) {
-                    Object os = getOs.invoke(null);
-                    Method open = McReflect.findMethod(os.getClass(),
-                            new Class[]{java.io.File.class}, "open");
-                    if (open != null) {
-                        open.invoke(os, inputDir.toFile());
-                        return;
-                    }
-                }
-            }
-            // Fallback: java.awt.Desktop
-            if (java.awt.Desktop.isDesktopSupported()) {
-                java.awt.Desktop.getDesktop().open(inputDir.toFile());
-            }
-        } catch (Exception e) {
-            LOGGER.warn("Could not open retromod-input folder: {}", e.getMessage());
+    /** Hands jars dropped on the Retromod screen to the same path as picked ones. */
+    private static void takeDroppedFiles(Object screen, List<Path> dropped) {
+        Object client = getClientInstance();
+        if (client == null) {
+            LOGGER.warn("Retromod could not take the dropped files because the Minecraft client "
+                    + "was not found. Put them in retromod-input/ instead.");
+            return;
         }
+        new RetromodScreen(client, screen).takeDropped(dropped);
+    }
+
+    /** The folder button: opens retromod-input/ and shows its path, since no opener reports back. */
+    private static void openAndShowInputFolder(Object parentScreen) {
+        boolean opened = openInputFolder();
+        InGameScreenFactory.showAlert(parentScreen, "Retromod",
+                opened ? openedFolderMessage(inputDir()) : inputFolderMessage(false, inputDir()));
+    }
+
+    /** Opens retromod-input/ if it can and shows its path; call on Minecraft's main thread. */
+    static void showInputFolderInstead(Object parentScreen, boolean pickerFailed) {
+        // A picker failure still opens the folder, so the player has somewhere to put the jars.
+        if (pickerFailed) openInputFolder();
+        InGameScreenFactory.showAlert(parentScreen, "Retromod",
+                inputFolderMessage(pickerFailed, inputDir()));
+    }
+
+    /** Names the chosen jars Retromod cannot read, opens retromod-input/, and shows its path. */
+    static void showUnreadableInstead(Object parentScreen, List<String> fileNames) {
+        openInputFolder();
+        InGameScreenFactory.showAlert(parentScreen, "Retromod",
+                unreadableMessage(fileNames, inputDir()));
+    }
+
+    /** What the player reads when Retromod names retromod-input/ instead of picking or opening. */
+    static String inputFolderMessage(boolean pickerFailed, Path folder) {
+        String failure = pickerFailed
+                ? "Retromod could not show a file picker. Put the old mod jars in this folder"
+                : "Retromod could not open this folder. Put the old mod jars in it";
+        return failure + ", then restart Minecraft:\n\n" + folder;
+    }
+
+    /** What the folder button shows after handing the folder to the system. */
+    static String openedFolderMessage(Path folder) {
+        return "Put the old mod jars in this folder, then restart Minecraft. If no folder window "
+                + "opened, open this path in your file manager:\n\n" + folder;
+    }
+
+    /** What the player reads when a picked or dropped jar cannot be read where it is. */
+    static String unreadableMessage(List<String> fileNames, Path folder) {
+        int named = Math.min(fileNames.size(), MAX_NAMED_FILES);
+        String files = String.join(", ", fileNames.subList(0, named));
+        if (fileNames.size() > named) files += " and " + (fileNames.size() - named) + " more";
+        return "Retromod cannot read " + files + " where it is. Put the old mod jars in this "
+                + "folder, then restart Minecraft:\n\n" + folder;
+    }
+
+    /** Opens retromod-input/ through Minecraft; false when Retromod could only log its path. */
+    private static boolean openInputFolder() {
+        Path inputDir = inputDir();
+        try {
+            Files.createDirectories(inputDir);
+        } catch (IOException e) {
+            LOGGER.warn("Retromod could not create {}: {}", inputDir, e.getMessage());
+            return false;
+        }
+        return McOpener.openFolder(inputDir);
+    }
+
+    /** retromod-input/ as the entry points read it, as an absolute path. */
+    private static Path inputDir() {
+        return resolveInputDir().toAbsolutePath().normalize();
     }
 
     private static Path resolveInputDir() {
         try {
             Object loader = Class.forName("net.fabricmc.loader.api.FabricLoader")
                     .getMethod("getInstance").invoke(null);
-            Path gameDir = (Path) loader.getClass().getMethod("getGameDir").invoke(loader);
+            Path gameDir = (Path) LegacyPublicMethods.method(loader.getClass(), "getGameDir").invoke(loader);
             return gameDir.resolve("retromod-input");
         } catch (Throwable t) {
+            // Forge and NeoForge read it from the working folder, as RetromodForge and
+            // RetromodNeoForge do.
             return Path.of("retromod-input");
         }
     }
@@ -221,17 +251,17 @@ public final class MainScreenFactory {
             if (text == null || pressAction == null) return null;
 
             Method builder = McReflect.findMethod(buttonWidgetClass,
-                    new Class[]{textClass, pressActionClass}, "builder");
+                    new Class[]{textClass, pressActionClass}, "builder", "method_46430");
             if (builder == null) return null;
 
             Object b = builder.invoke(null, text, pressAction);
 
             Method dim = McReflect.findMethod(b.getClass(),
                     new Class[]{int.class, int.class, int.class, int.class},
-                    "dimensions", "bounds", "pos");
+                    "dimensions", "bounds", "method_46434", "pos");
             if (dim != null) b = dim.invoke(b, x, y, w, h);
 
-            Method build = McReflect.findMethod(b.getClass(), "build");
+            Method build = McReflect.findMethod(b.getClass(), "build", "method_46431");
             return build != null ? build.invoke(b) : null;
         } catch (Exception e) {
             LOGGER.debug("Could not build main-screen button: {}", e.getMessage());
@@ -254,7 +284,7 @@ public final class MainScreenFactory {
         if (widget == null) return;
         try {
             Method add = McReflect.findMethod(screenClass,
-                    "addDrawableChild", "addRenderableWidget", "addWidget");
+                    "addDrawableChild", "addRenderableWidget", "method_37063", "addWidget");
             if (add != null) {
                 add.setAccessible(true);
                 add.invoke(screen, widget);
@@ -272,22 +302,32 @@ public final class MainScreenFactory {
 
         screenClass = McReflect.findClass(
             "net.minecraft.client.gui.screen.Screen",
-            "net.minecraft.client.gui.screens.Screen"
+            "net.minecraft.client.gui.screens.Screen",
+            "net.minecraft.class_437"  // intermediary, pre-26.1 Fabric
         );
         textClass = McReflect.findClass(
             "net.minecraft.text.Text",
-            "net.minecraft.network.chat.Component"
+            "net.minecraft.network.chat.Component",
+            "net.minecraft.class_2561"
         );
         buttonWidgetClass = McReflect.findClass(
             "net.minecraft.client.gui.widget.ButtonWidget",
-            "net.minecraft.client.gui.components.Button"
+            "net.minecraft.client.gui.components.Button",
+            "net.minecraft.class_4185"
         );
         minecraftClientClass = McReflect.findClass(
             "net.minecraft.client.MinecraftClient",
-            "net.minecraft.client.Minecraft"
+            "net.minecraft.client.Minecraft",
+            "net.minecraft.class_310"
         );
 
-        if (buttonWidgetClass != null) {
+        // Named first, because Button's other one-method interface is CreateNarration.
+        pressActionClass = McReflect.findClass(
+            "net.minecraft.client.gui.widget.ButtonWidget$PressAction",
+            "net.minecraft.client.gui.components.Button$OnPress",
+            "net.minecraft.class_4185$class_4241"
+        );
+        if (pressActionClass == null && buttonWidgetClass != null) {
             for (Class<?> inner : buttonWidgetClass.getDeclaredClasses()) {
                 if (inner.isInterface() && inner.getMethods().length <= 2) {
                     pressActionClass = inner;
@@ -295,31 +335,18 @@ public final class MainScreenFactory {
                 }
             }
         }
-        if (pressActionClass == null) {
-            pressActionClass = McReflect.findClass(
-                "net.minecraft.client.gui.widget.ButtonWidget$PressAction",
-                "net.minecraft.client.gui.components.Button$OnPress"
-            );
-        }
 
         return screenClass != null && textClass != null && buttonWidgetClass != null;
     }
 
     private static void setScreen(Object screen) {
-        try {
-            Object client = getClientInstance();
-            if (client == null) return;
-            Method set = McReflect.findMethod(minecraftClientClass,
-                    new Class[]{screenClass}, "setScreen");
-            if (set != null) set.invoke(client, screen);
-        } catch (Exception e) {
-            LOGGER.debug("Could not set screen: {}", e.getMessage());
-        }
+        McScreens.show(screen);
     }
 
     private static Object getClientInstance() {
         try {
-            Method getInstance = McReflect.findMethod(minecraftClientClass, "getInstance");
+            Method getInstance = McReflect.findMethod(minecraftClientClass, "getInstance",
+                    "method_1551");
             if (getInstance != null) return getInstance.invoke(null);
         } catch (Exception e) {
             LOGGER.debug("Could not get MC client: {}", e.getMessage());

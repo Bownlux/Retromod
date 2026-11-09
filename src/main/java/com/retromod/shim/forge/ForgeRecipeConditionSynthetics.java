@@ -6,6 +6,7 @@ package com.retromod.shim.forge;
 
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Type;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -34,16 +35,22 @@ final class ForgeRecipeConditionSynthetics {
     static final String CONTEXT = CONDITION + "$IContext";
     static final String SERIALIZER = "net/minecraftforge/common/crafting/conditions/IConditionSerializer";
     static final String CRAFTING_HELPER = "net/minecraftforge/common/crafting/CraftingHelper";
+    private static final String IDENTIFIER = "Lnet/minecraft/resources/Identifier;";
 
     private ForgeRecipeConditionSynthetics() {}
 
     /** Every stand-in, keyed by internal name. */
     static Map<String, byte[]> generateAll() {
+        return generateAll(false);
+    }
+
+    /** Every stand-in; with {@code ingredients}, CraftingHelper also registers old ingredient serializers. */
+    static Map<String, byte[]> generateAll(boolean ingredients) {
         Map<String, byte[]> classes = new LinkedHashMap<>();
         classes.put(CONDITION, emptyInterface(CONDITION));
         classes.put(CONTEXT, emptyInterface(CONTEXT));
         classes.put(SERIALIZER, emptyInterface(SERIALIZER));
-        classes.put(CRAFTING_HELPER, craftingHelper());
+        classes.put(CRAFTING_HELPER, craftingHelper(ingredients));
         return classes;
     }
 
@@ -54,8 +61,8 @@ final class ForgeRecipeConditionSynthetics {
         return cw.toByteArray();
     }
 
-    /** {@code CraftingHelper.register(IConditionSerializer)} returns its argument unchanged. */
-    private static byte[] craftingHelper() {
+    /** {@code CraftingHelper}: {@code register(IConditionSerializer)} returns its argument unchanged. */
+    private static byte[] craftingHelper(boolean ingredients) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, CRAFTING_HELPER, null, "java/lang/Object", null);
         String desc = "(L" + SERIALIZER + ";)L" + SERIALIZER + ";";
@@ -65,7 +72,26 @@ final class ForgeRecipeConditionSynthetics {
         mv.visitInsn(ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
+        // On Forge 26.2 and newer, register(id, serializer) and getID(serializer) go to Retromod's rebuilt
+        // registration, in the shape an old call has after the redirects.
+        if (ingredients) {
+            String serializer = "L" + LegacyIngredientSerializerBridge.SERIALIZER + ";";
+            delegate(cw, "register", "(" + IDENTIFIER + serializer + ")" + serializer);
+            delegate(cw, "getID", "(" + serializer + ")" + IDENTIFIER);
+        }
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    /** A static method that passes its arguments to the same method of Retromod's rebuilt registration. */
+    private static void delegate(ClassWriter cw, String name, String desc) {
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, name, desc, null, null);
+        mv.visitCode();
+        int arguments = Type.getArgumentTypes(desc).length;
+        for (int i = 0; i < arguments; i++) mv.visitVarInsn(ALOAD, i);
+        mv.visitMethodInsn(INVOKESTATIC, LegacyIngredientSerializerBridge.SERIALIZERS, name, desc, false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 }

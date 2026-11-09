@@ -5,6 +5,8 @@
 package com.retromod.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +37,17 @@ class OfflineRegistrationResetTest {
         transformer.resetOfflineRegistrations();
         assertEquals(OLD_CLASS.replace('/', '.'), reflectedClassName(
                 transformer.transformClass(reflectiveLookup(), "fixture/SecondInput")));
+    }
+
+    @Test
+    void bridgeNoticesPrintOncePerPassAndAgainForEachOfflineInput() {
+        String key = "fixture.SharedBridge";
+        transformer.resetOfflineRegistrations();
+        assertTrue(transformer.firstRegistrationNotice(key), "the first call in a pass logs");
+        assertFalse(transformer.firstRegistrationNotice(key), "a second chain calling the bridge stays quiet");
+
+        transformer.resetOfflineRegistrations();
+        assertTrue(transformer.firstRegistrationNotice(key), "each offline input logs its own notices");
     }
 
     private static byte[] reflectiveLookup() {

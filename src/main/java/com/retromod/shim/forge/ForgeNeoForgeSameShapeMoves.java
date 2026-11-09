@@ -29,6 +29,9 @@ final class ForgeNeoForgeSameShapeMoves {
         // WORKQUEUE, CLIENTWORLD, and get(LogicalSide); LogicalSide is already renamed.
         {"net/minecraftforge/common/util/LogicalSidedProvider",
          "net/neoforged/neoforge/common/util/LogicalSidedProvider"},
+        // test, and, negate and or; also checked against NeoForge 26.3. Spawn placement tests are built on it.
+        {"net/minecraftforge/common/util/TriPredicate",
+         "net/neoforged/neoforge/common/util/TriPredicate"},
         // register(type, placement, heightmap, predicate, operation) keeps its shape once the
         // placement enum is renamed by LegacySpawnPlacementTypeBridge; AND, OR, REPLACE are kept.
         {"net/minecraftforge/event/entity/SpawnPlacementRegisterEvent",
@@ -38,6 +41,9 @@ final class ForgeNeoForgeSameShapeMoves {
         // All four constructors and getOffer(Entity, RandomSource).
         {"net/minecraftforge/common/BasicItemListing",
          "net/neoforged/neoforge/common/BasicItemListing"},
+        // A fluid type's bucket sounds: the three constants, get(String) and name(); also checked against 26.3.
+        {"net/minecraftforge/common/SoundAction", "net/neoforged/neoforge/common/SoundAction"},
+        {"net/minecraftforge/common/SoundActions", "net/neoforged/neoforge/common/SoundActions"},
     };
 
     private ForgeNeoForgeSameShapeMoves() {}

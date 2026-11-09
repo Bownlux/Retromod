@@ -23,12 +23,15 @@ import static org.objectweb.asm.Opcodes.*;
  * <p>Both classes move to a generated {@code ColoredFallingBlock} subclass that keeps the old
  * constructors: the sand one wraps its color, and the gravel one supplies gravel's old dust color.
  * It is registered by the Forge 1.20 to NeoForge 1.21 shim, so it applies to Forge-family mods on
- * NeoForge and Forge 1.21 and newer, where class names are Mojang's. A type test or cast against
- * the old classes now names the generated class, so vanilla sand and gravel no longer match it.
+ * NeoForge and Forge 1.21 and newer, where class names are Mojang's. For a mod built before 1.21.5,
+ * a type test or cast against the old classes now names the generated class, so vanilla sand and
+ * gravel no longer match it.
  */
 public final class LegacyFallingBlockBridge {
 
     public static final String GENERATED = "com/retromod/generated/LegacyColoredFallingBlock";
+    /** The version that brought {@code SandBlock} back, as a {@code ColoredFallingBlock} subclass. */
+    public static final String SAND_RETURNED = "1.21.5";
     static final String SAND = "net/minecraft/world/level/block/SandBlock";
     static final String GRAVEL = "net/minecraft/world/level/block/GravelBlock";
     private static final String COLORED = "net/minecraft/world/level/block/ColoredFallingBlock";
@@ -45,6 +48,8 @@ public final class LegacyFallingBlockBridge {
         if (RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20.3") < 0) return;
         transformer.registerSyntheticClass(GENERATED, generate());
         transformer.registerClassRedirect(SAND, GENERATED);
+        // 1.21.5 brought SandBlock back as a ColoredFallingBlock, so a mod built for it keeps the host class.
+        transformer.limitClassRedirectToModsBefore(SAND, SAND_RETURNED);
         transformer.registerClassRedirect(GRAVEL, GENERATED);
     }
 

@@ -6,6 +6,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,16 +19,16 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Structured sink for {@link FuzzyMethodResolver} outcomes. The resolver's WARN lines for the
- * 50-84 "possible match" band are exactly the data needed to author explicit shim bridges from a
- * real failing mod, but scraping them out of an interleaved launch log is error-prone. This writes
- * one TSV row per distinct unresolved reference to {@code config/retromod/fuzzy-report.tsv}
- * (created lazily on the first record, truncated once per JVM run so each launch yields a fresh
- * report).
+ * Structured sink for {@link FuzzyMethodResolver} outcomes. The resolver's 50-84 "possible match"
+ * band is exactly the data needed to author explicit shim bridges from a real failing mod, so it
+ * lands here instead of in the launch log, where it only logs at DEBUG. This writes one TSV row
+ * per distinct unresolved reference to {@code config/retromod/fuzzy-report.tsv} (created lazily
+ * on the first record, truncated once per JVM run so each launch yields a fresh report), and
+ * names that file in one INFO line per run.
  *
  * <p>Rows: {@code kind  band  score  owner  name  descriptor  candidateOwner  candidateName
- * candidateDescriptor}. Bands: {@code NEAR} (50-84, logged but not applied: the bridge-authoring
- * backlog), {@code AUTO} (85+, applied; listed so an auto-redirect can be reviewed or pinned as an
+ * candidateDescriptor}. Bands: {@code NEAR} (50-84, not applied: the bridge-authoring backlog),
+ * {@code AUTO} (85+, applied; listed so an auto-redirect can be reviewed or pinned as an
  * explicit shim), {@code SUPPRESSED} (85+ but type-incompatible, needs a hand-written adapter
  * bridge, not a rename).
  *
@@ -45,6 +46,7 @@ public final class FuzzyMatchReport {
     private static final Set<String> written = ConcurrentHashMap.newKeySet();
     private static volatile boolean headerWritten = false;
     private static volatile boolean broken = false;
+    private static volatile boolean announced = false;
 
     private FuzzyMatchReport() {}
 
@@ -54,6 +56,7 @@ public final class FuzzyMatchReport {
         written.clear();
         headerWritten = false;
         broken = false;
+        announced = false;
     }
 
     /** The current report path (for CLI summaries: "wrote N fuzzy rows to ..."). */
@@ -61,7 +64,7 @@ public final class FuzzyMatchReport {
         return outputFile;
     }
 
-    /** Rows recorded so far this run. */
+    /** Distinct outcomes seen so far this run, written or not. */
     public static int recordedCount() {
         return written.size();
     }
@@ -72,13 +75,16 @@ public final class FuzzyMatchReport {
      *
      * @param kind "METHOD" or "FIELD"
      * @param band {@link #BAND_AUTO}, {@link #BAND_NEAR} or {@link #BAND_SUPPRESSED}
+     * @return true the first time this run sees the outcome, so the caller logs it only once
      */
-    public static void record(String kind, String band, int score,
-                              String owner, String name, String descriptor,
-                              String candOwner, String candName, String candDescriptor) {
-        if (broken) return;
+    public static boolean record(String kind, String band, int score,
+                                 String owner, String name, String descriptor,
+                                 String candOwner, String candName, String candDescriptor) {
+        // Deduplicate before the broken check, so a report that cannot be written still lets
+        // the caller log each outcome once.
         String key = kind + "|" + band + "|" + owner + "." + name + descriptor;
-        if (!written.add(key)) return;
+        if (!written.add(key)) return false;
+        if (broken) return true;
         String row = kind + "\t" + band + "\t" + score + "\t"
                 + owner + "\t" + name + "\t" + descriptor + "\t"
                 + candOwner + "\t" + candName + "\t" + candDescriptor + "\n";
@@ -99,10 +105,17 @@ public final class FuzzyMatchReport {
                 }
                 Files.writeString(outputFile, row, StandardCharsets.UTF_8,
                         StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                // Name the report once per run, as given, so no home path lands in shared logs.
+                if (!announced) {
+                    announced = true;
+                    LOGGER.debug(RetromodLog.DETAIL, "Retromod lists fuzzy matches, applied and not applied, in {}",
+                            outputFile);
+                }
             } catch (IOException e) {
                 broken = true;
                 LOGGER.warn("Fuzzy report disabled, cannot write {}: {}", outputFile, e.toString());
             }
         }
+        return true;
     }
 }

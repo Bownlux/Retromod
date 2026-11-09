@@ -21,20 +21,9 @@ public class Forge_1_17_1_to_1_18 implements VersionShim {
             "net/minecraft/world/level/levelgen/feature/StructureFeature",
             "net/minecraft/world/level/levelgen/structure/Structure"
         );
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/level/Level", "getMinBuildHeight", "()I",
-            "com/retromod/shim/forge/embedded/WorldHeightShim", "getMinBuildHeight",
-            "(Ljava/lang/Object;)I"
-        );
         transformer.registerClassRedirect(
             "net/minecraft/world/level/biome/BiomeSource",
             "net/minecraft/world/level/biome/BiomeSource"
-        );
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/level/chunk/LevelChunk", "getHighestSection",
-            "()Lnet/minecraft/world/level/chunk/LevelChunkSection;",
-            "com/retromod/shim/forge/embedded/ChunkShim", "getHighestSection",
-            "(Ljava/lang/Object;)Ljava/lang/Object;"
         );
 
         // World->Level rename

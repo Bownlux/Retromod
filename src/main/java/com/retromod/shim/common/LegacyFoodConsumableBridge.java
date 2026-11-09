@@ -63,6 +63,8 @@ public final class LegacyFoodConsumableBridge {
     static final String EFFECT_DESC = "(L" + EFFECT_INSTANCE + ";F)" + L_BUILDER;
     static final String EFFECT_HELPER_DESC = "(" + L_BUILDER + "L" + EFFECT_INSTANCE + ";F)" + L_BUILDER;
     static final String FAST_HELPER_DESC = "(" + L_BUILDER + ")" + L_BUILDER;
+    static final String SUPPLIED_EFFECT_DESC = "(Ljava/util/function/Supplier;F)" + L_BUILDER;
+    static final String SUPPLIED_EFFECT_HELPER_DESC = "(" + L_BUILDER + "Ljava/util/function/Supplier;F)" + L_BUILDER;
     static final String CONVERTS_DESC = "(L" + ITEM_LIKE + ";)" + L_BUILDER;
     static final String CONVERTS_HELPER_DESC = "(" + L_BUILDER + "L" + ITEM_LIKE + ";)" + L_BUILDER;
     static final String BUILD_HELPER_DESC = "(" + L_BUILDER + ")L" + FOOD + ";";
@@ -88,6 +90,9 @@ public final class LegacyFoodConsumableBridge {
         }
         transformer.registerMethodRedirect(BUILDER, "effect", EFFECT_DESC,
                 INTERNAL, "effect", EFFECT_HELPER_DESC);
+        // Forge 1.20.1 also took the effect as a supplier, which Farmer's Delight's foods use.
+        transformer.registerMethodRedirect(BUILDER, "effect", SUPPLIED_EFFECT_DESC,
+                INTERNAL, "effect", SUPPLIED_EFFECT_HELPER_DESC);
         transformer.registerMethodRedirect(BUILDER, "fast", "()" + L_BUILDER,
                 INTERNAL, "fast", FAST_HELPER_DESC);
         for (String name : new String[]{"usingConvertsTo", CONVERTS_INTERMEDIARY}) {
@@ -118,6 +123,7 @@ public final class LegacyFoodConsumableBridge {
         generateSettings(cw);
         generateConsumable(cw);
         generateEffect(cw);
+        generateSuppliedEffect(cw);
         generateFast(cw);
         generateUsingConvertsTo(cw);
         generateBuild(cw);
@@ -218,6 +224,25 @@ public final class LegacyFoodConsumableBridge {
                 "(L" + CONSUME_EFFECT + ";)L" + CONSUMABLE_BUILDER + ";", false);
         mv.visitInsn(POP);
         mv.visitVarInsn(ALOAD, 0);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /**
+     * {@code effect(builder, supplier, probability)}: the supplier is read now. A food's effects are
+     * built while items register, after mob effects, so a mod's own effect is already there.
+     */
+    private static void generateSuppliedEffect(ClassWriter cw) {
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "effect", SUPPLIED_EFFECT_HELPER_DESC,
+                null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitVarInsn(ALOAD, 1);
+        mv.visitMethodInsn(INVOKEINTERFACE, "java/util/function/Supplier", "get", "()Ljava/lang/Object;", true);
+        mv.visitTypeInsn(CHECKCAST, EFFECT_INSTANCE);
+        mv.visitVarInsn(FLOAD, 2);
+        mv.visitMethodInsn(INVOKESTATIC, INTERNAL, "effect", EFFECT_HELPER_DESC, false);
         mv.visitInsn(ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

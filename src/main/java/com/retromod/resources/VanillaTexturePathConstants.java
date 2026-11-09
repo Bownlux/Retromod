@@ -5,6 +5,7 @@
 package com.retromod.resources;
 
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
@@ -201,7 +202,7 @@ public final class VanillaTexturePathConstants {
         // The host only has the art redrawn in another layout.
         if (redrawnAt != null) {
             if (REPORTED_PATHS.add(path)) {
-                LOGGER.info("{} binds minecraft:textures/{}, which Minecraft {} only has redrawn as textures/{} "
+                LOGGER.debug(RetromodLog.DETAIL, "{} binds minecraft:textures/{}, which Minecraft {} only has redrawn as textures/{} "
                         + "in another layout. The old coordinates would draw the wrong parts of it, so that "
                         + "drawing shows the missing texture.", className, path, hostVersion, redrawnAt);
             }
@@ -211,7 +212,7 @@ public final class VanillaTexturePathConstants {
         String splitIn = SPLIT_SHEETS.get(path);
         if (splitIn == null || RetromodVersion.compareMcVersions(hostVersion, splitIn) < 0) return;
         if (REPORTED_PATHS.add(path)) {
-            LOGGER.info("{} binds minecraft:textures/{}, which Minecraft {} split into several textures. "
+            LOGGER.debug(RetromodLog.DETAIL, "{} binds minecraft:textures/{}, which Minecraft {} split into several textures. "
                     + "No single path replaces it, so that drawing shows the missing texture.",
                     className, path, splitIn);
         }

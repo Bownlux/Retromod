@@ -6,6 +6,7 @@ package com.retromod.boot.neoforge;
 
 import com.retromod.boot.BootCore;
 import com.retromod.boot.BootLog;
+import com.retromod.boot.InPlaceBoot;
 import com.retromod.boot.LoaderHooks;
 import net.neoforged.neoforgespi.locating.IModFile;
 import net.neoforged.neoforgespi.locating.IModLocator;
@@ -55,6 +56,9 @@ public final class LegacyNeoForgeBootLocator implements IModLocator {
             Optional<BootCore.Prepared> prepared = BootCore.prepare(gameDir, modsDir, GENERATION,
                     hostMinecraft, LegacyNeoForgeBootLocator.class, System.getProperties(), log);
             if (prepared.isEmpty()) return List.of();
+            // This locator runs no in-place discovery pass. Say so, so the entry point treats
+            // an unchanged mods/ as a known limit of these hosts, not as a failure to report.
+            InPlaceBoot.markNoDiscoveryPass(System.getProperties());
 
             // Same job as the Forge locator under NeoForge's package names: hand FML the runtime
             // nested inside this jar as an ordinary mod file.
@@ -68,7 +72,7 @@ public final class LegacyNeoForgeBootLocator implements IModLocator {
             // A bootstrap failure must never stop the loader. The game starts without Retromod.
             log.error("Retromod could not start: " + LoaderHooks.unwrap(failure)
                     + ". Retromod is inactive for this launch. Please report this with "
-                    + "logs/latest.log.");
+                    + "logs/latest.log." + System.lineSeparator() + LoaderHooks.describe(failure));
             return List.of();
         }
     }

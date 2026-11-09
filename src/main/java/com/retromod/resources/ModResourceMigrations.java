@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import com.retromod.inplace.WorkFolder;
 import com.retromod.shim.common.LegacyBannerPatternBridge;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,6 +50,8 @@ public final class ModResourceMigrations {
             new LegacyBuiltinEntityBlockModels(),
             new ModVanillaTextureReferences(),
             new ModTextureAtlasSources(),
+            // Item models that mix block and item textures, after the atlas files list the mod's own sprites.
+            new ItemModelAtlasAliases(),
             new ModelElementFieldMigrator(),
             // Banner pattern tags, from the constant patterns in the mod's transformed classes.
             new BannerPatternTags(),
@@ -59,6 +62,11 @@ public final class ModResourceMigrations {
             // A Forge mod's data under the names NeoForge and newer Forge read, before the content
             // rewrites that read the final keys and paths.
             new ForgeDataNamespaceMigrator(),
+            // Vanilla worldgen and registry entries that 1.21.2 to 26.3 renamed or rebuilt, in the
+            // mod's own shapes, so the content rewrites after them update the result further.
+            new LegacyWorldgenFeatures(),
+            new LegacyRegistryEntries(),
+            new LegacyNumberProviders(),
             // Data content rewrites, per file.
             new DataContent(),
             // Client item definitions (1.21.4), with old model overrides, spawn eggs and
@@ -277,7 +285,7 @@ public final class ModResourceMigrations {
         private static int migratePack(ResourceTree tree, String root, SortedSet<String> assets,
                                        PackFormat declared, String targetMcVersion)
                 throws IOException {
-            Path scratch = Files.createTempDirectory("retromod-nested-pack-");
+            Path scratch = WorkFolder.createTempDirectory("retromod-nested-pack-");
             try {
                 for (String name : assets) {
                     Path file = scratch.resolve(name.substring(root.length()));

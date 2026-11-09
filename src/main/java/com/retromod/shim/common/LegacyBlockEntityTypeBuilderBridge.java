@@ -20,6 +20,8 @@ public final class LegacyBlockEntityTypeBuilderBridge {
     private static final String TYPE = "net/minecraft/world/level/block/entity/BlockEntityType";
     private static final String SUPPLIER = "L" + TYPE + "$BlockEntitySupplier;";
     private static final String BLOCKS = "[Lnet/minecraft/world/level/block/Block;";
+    /** The constructor every 26.x host makes public; only NeoForge adds a Block... form. */
+    static final String TYPE_CONSTRUCTOR = "(" + SUPPLIER + "Ljava/util/Set;)V";
 
     private LegacyBlockEntityTypeBuilderBridge() {}
 
@@ -71,9 +73,14 @@ public final class LegacyBlockEntityTypeBuilderBridge {
         build.visitInsn(DUP);
         build.visitVarInsn(ALOAD, 0);
         build.visitFieldInsn(GETFIELD, BUILDER, "factory", SUPPLIER);
+        // An ordered set, so a block listed twice is kept once as the old builder did.
+        build.visitTypeInsn(NEW, "java/util/LinkedHashSet");
+        build.visitInsn(DUP);
         build.visitVarInsn(ALOAD, 0);
         build.visitFieldInsn(GETFIELD, BUILDER, "blocks", BLOCKS);
-        build.visitMethodInsn(INVOKESPECIAL, TYPE, "<init>", "(" + SUPPLIER + BLOCKS + ")V", false);
+        build.visitMethodInsn(INVOKESTATIC, "java/util/Arrays", "asList", "([Ljava/lang/Object;)Ljava/util/List;", false);
+        build.visitMethodInsn(INVOKESPECIAL, "java/util/LinkedHashSet", "<init>", "(Ljava/util/Collection;)V", false);
+        build.visitMethodInsn(INVOKESPECIAL, TYPE, "<init>", TYPE_CONSTRUCTOR, false);
         build.visitInsn(ARETURN);
         build.visitMaxs(0, 0);
         build.visitEnd();

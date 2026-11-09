@@ -6,6 +6,7 @@ package com.retromod.embedder;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.util.JarSignatureSanitizer;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.*;
 import org.slf4j.Logger;
@@ -97,36 +98,41 @@ public class ApiEmbedder {
      * Analyze a mod and embed all required shims for removed APIs.
      */
     public void embedRequiredShims(Path modJarPath, ModVersionInfo modInfo) {
+        try {
+            embedRemovedApis(modJarPath, modInfo);
+        } catch (Exception e) {
+            LOGGER.error("Failed to embed shims into: {}", modJarPath, e);
+        }
+    }
+
+    /** Embeds archived classes for the removed APIs a mod calls and reports what it wrote. */
+    public EmbedResult embedRemovedApis(Path modJarPath, ModVersionInfo modInfo) throws IOException {
         com.retromod.loaderapi.LoaderApiRuntime.prepare(RetromodTransformer.getInstance(),
                 new com.retromod.loaderapi.LoaderApiContext(
                         modInfo == null ? null : modInfo.modLoaderType(),
                         com.retromod.core.RetromodVersion.TARGET_MC_VERSION,
                         com.retromod.loaderapi.LoaderApiContext.TransformPath.API_EMBEDDER,
                         modInfo == null ? null : modInfo.targetMcVersion()));
-        try {
-            // Step 1: Find all API dependencies in the mod
-            Set<ApiDependency> dependencies = analyzeModDependencies(modJarPath);
-            
-            // Step 2: Filter to only removed/changed APIs
-            Set<ApiDependency> removedDeps = new HashSet<>();
-            for (ApiDependency dep : dependencies) {
-                if (isRemovedApi(dep)) {
-                    removedDeps.add(dep);
-                    LOGGER.info("Mod uses removed API: {}.{}", 
-                            dep.className(), dep.methodName());
-                }
+        // Step 1: Find all API dependencies in the mod
+        Set<ApiDependency> dependencies = analyzeModDependencies(modJarPath);
+        
+        // Step 2: Filter to only removed/changed APIs
+        Set<ApiDependency> removedDeps = new HashSet<>();
+        for (ApiDependency dep : dependencies) {
+            if (isRemovedApi(dep)) {
+                removedDeps.add(dep);
+                LOGGER.debug(RetromodLog.DETAIL, "Mod uses removed API: {}.{}", 
+                        dep.className(), dep.methodName());
             }
-            
-            if (removedDeps.isEmpty()) {
-                return;
-            }
-            
-            // Step 3: Extract and embed the required APIs
-            embedApisIntoJar(modJarPath, removedDeps);
-            
-        } catch (Exception e) {
-            LOGGER.error("Failed to embed shims into: {}", modJarPath, e);
         }
+        
+        // A mod that calls no listed removed API gets no output jar.
+        if (removedDeps.isEmpty()) {
+            return new EmbedResult(null, 0, 0);
+        }
+        
+        // Step 3: Extract and embed the required APIs
+        return embedApisIntoJar(modJarPath, removedDeps);
     }
     
     /**
@@ -206,7 +212,7 @@ public class ApiEmbedder {
     /**
      * Embed extracted API classes into a mod JAR.
      */
-    void embedApisIntoJar(Path modJarPath, Set<ApiDependency> removedDeps)
+    EmbedResult embedApisIntoJar(Path modJarPath, Set<ApiDependency> removedDeps)
             throws IOException {
         
         // Create output path for modified JAR
@@ -244,8 +250,9 @@ public class ApiEmbedder {
             Files.deleteIfExists(stagedJar);
         }
 
-        LOGGER.info("Created Retromod-enhanced JAR: {} ({} embedded classes)",
+        LOGGER.debug(RetromodLog.DETAIL, "Created Retromod-enhanced JAR: {} ({} embedded classes)",
                 outputPath.getFileName(), classesToEmbed.size());
+        return new EmbedResult(outputPath, removedDeps.size(), classesToEmbed.size());
     }
 
     private void writeEmbeddedJar(Path sourcePath, Path stagedJar,
@@ -648,6 +655,9 @@ public class ApiEmbedder {
     // --- Record classes ---
     
     public record ApiDependency(String className, String methodName, String descriptor) {}
+
+    /** What one embed run wrote: the output jar (null when none), removed APIs found, classes added. */
+    public record EmbedResult(Path outputJar, int removedApis, int embeddedClasses) {}
     
     public record ArchivedApiInfo(
         String className,

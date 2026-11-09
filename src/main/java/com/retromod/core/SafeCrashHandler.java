@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -241,13 +242,13 @@ public final class SafeCrashHandler {
         try {
             if (minecraftClient != null) {
                 try {
-                    Method pauseMethod = minecraftClient.getClass().getMethod("pause");
+                    Method pauseMethod = LegacyPublicMethods.method(minecraftClient.getClass(), "pause");
                     pauseMethod.invoke(minecraftClient);
                     LOGGER.info("Game paused via client");
                 } catch (NoSuchMethodException e) {
                     // fall back to clearing the screen
                     try {
-                        Method setScreen = minecraftClient.getClass().getMethod("setScreen", Object.class);
+                        Method setScreen = LegacyPublicMethods.method(minecraftClient.getClass(), "setScreen", Object.class);
                         setScreen.invoke(minecraftClient, (Object) null);
                     } catch (Exception e2) {
                         LOGGER.debug("Could not pause via setScreen");
@@ -257,7 +258,7 @@ public final class SafeCrashHandler {
 
             if (minecraftServer != null) {
                 try {
-                    Method halt = minecraftServer.getClass().getMethod("halt", boolean.class);
+                    Method halt = LegacyPublicMethods.method(minecraftServer.getClass(), "halt", boolean.class);
                     halt.invoke(minecraftServer, false); // false = don't wait
                 } catch (Exception e) {
                     LOGGER.debug("Could not halt server");
@@ -308,7 +309,7 @@ public final class SafeCrashHandler {
 
     // Find a method by name, ignoring parameter types.
     private Method findMethod(Class<?> clazz, String name) {
-        for (Method m : clazz.getMethods()) {
+        for (Method m : LegacyPublicMethods.methods(clazz)) {
             if (m.getName().equals(name)) {
                 return m;
             }
@@ -374,7 +375,9 @@ public final class SafeCrashHandler {
     }
 
     private void showConsoleCrashMessage(String modId, String message) {
-        LOGGER.error("Retromod is stopping the server after a mod compatibility error.");
+        // A client without Swing lands here too, so the line names the side that stops.
+        String side = EnvironmentDetector.isDedicatedServer() ? "the server" : "Minecraft";
+        LOGGER.error("Retromod is stopping {} after a mod compatibility error.", side);
         for (String line : message.split("\n")) {
             LOGGER.error("{}", line);
         }
@@ -385,7 +388,7 @@ public final class SafeCrashHandler {
             Thread.sleep(1000);
         } catch (InterruptedException ignored) {}
 
-        LOGGER.error("Shutting down the server");
+        LOGGER.error("Shutting down {}", side);
         System.exit(1);
     }
 

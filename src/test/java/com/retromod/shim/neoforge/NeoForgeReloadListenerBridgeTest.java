@@ -140,7 +140,8 @@ class NeoForgeReloadListenerBridgeTest {
             out.closeEntry();
         }
 
-        assertEquals(1, SyntheticEmbedder.embedIntoJar(jar, "caelum.jar", transformer));
+        // The bridge and the shared method lookup it calls.
+        assertEquals(2, SyntheticEmbedder.embedIntoJar(jar, "caelum.jar", transformer));
         String embedded = SyntheticEmbedder.embeddedBase("caelum.jar") + SHIM;
         try (var zip = new ZipFile(jar.toFile())) {
             assertNotNull(zip.getEntry(embedded + ".class"),

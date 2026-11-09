@@ -5,7 +5,11 @@
 package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
 import org.objectweb.asm.Opcodes;
+
+import java.util.List;
+import java.util.Set;
 
 /** Maps the vanilla classes Mojang moved or renamed from 1.21.11 to 26.1, for every loader (#64). */
 public final class Common_1_21_11_to_26_1_ClassMoves {
@@ -20,10 +24,17 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
 
     /** Registers every vanilla and blaze3d move; loader API renames stay in each loader's shim. */
     public static void register(RetromodTransformer transformer) {
+        // The Gson adapter that ResourceLocation.Serializer moves to, built on the game's own Gson.
+        LegacyIdentifierSerializer.register(transformer);
+        registerIdentifierMemberRenames(transformer);
         // 26.1 removed the single-argument is() overloads from BlockState, ItemStack and FluidState,
         // so block placement, tag checks and item comparisons failed with NoSuchMethodError. A per-mod
         // synthetic bridges them.
         IsOverloadBridgeSynthetic.register(transformer);
+        // The loot entry type constants and getType() went with the type records the line above stands in for.
+        LegacyLootEntryTypeBridge.register(transformer);
+        // TagsProvider$TagAppender is gone from 26.1 too, and Registrate's provider types name it at startup.
+        LegacyDatagenStandIns.registerVanilla(transformer);
 
         // Deleted item bases that mods extend. A class move cannot express a deletion, and
         // pointing one at the nearest surviving name produced an inheritance error instead (#260).
@@ -35,13 +46,33 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         LegacyBiomeEffectsBridge.register(transformer);
         LegacyBiomeSpawnsBridge.register(transformer);
         LegacyPaintingVariantBridge.register(transformer);
+        // Random patch features became placement data; a mod's own patch feature keeps the old configuration.
+        LegacyRandomPatchApi.register(transformer);
         LegacyArmorLayerBridge.register(transformer);
         LegacyPoseGuiBridge.register(transformer);
         LegacyEitherHolderBridge.register(transformer);
+        // Mods build item renderers while items register, before 26.x has a model manager to ask.
+        LegacyEntityModelsBridge.register(transformer);
+        // A mod's own sprite atlas, such as JEI's GUI sprites, built on the removed TextureAtlasHolder.
+        LegacyTextureAtlasHolderBridge.register(transformer);
+        // A container component's slots hold item templates, not stacks.
+        LegacyContainerSlotBridge.register(transformer);
+        // getSkinMap(), the private renderer map and old RenderLayer subclasses, through which mods add player layers.
+        LegacyPlayerLayersBridge.register(transformer);
+        // ItemRenderer and the dispatcher's old entity draw, which old layers and renderers call while they draw.
+        LegacyItemDrawBridge.register(transformer);
+        // ItemProperties, which client setup calls so that model overrides can pick a model by a mod's own value.
+        LegacyItemPropertiesBridge.register(transformer);
+        // Block model elements, faces and rotations, which old geometry code reads while it bakes.
+        LegacyBlockElementBridge.register(transformer);
+        // 26.1 dropped the connection's own id, which JEI reads while joining a world.
+        LegacyClientConnectionBridge.registerConnectionId(transformer);
         registerParticleRegistrationMove(transformer);
 
         registerOfficialEntityTypeBuildBridge(transformer);
         registerLegacyContainerInput(transformer);
+        // World gen options left the level data for the server's world gen settings.
+        LegacyWorldGenOptionsAdapter.register(transformer);
 
         // GuiGraphics -> GuiGraphicsExtractor
         transformer.registerClassRedirect(
@@ -85,6 +116,22 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
             "net/minecraft/world/level/ChunkPos", "(J)V",
             "net/minecraft/world/level/ChunkPos", "unpack",
             "(J)Lnet/minecraft/world/level/ChunkPos;");
+        // The BlockPos constructor went too; containing(pos) takes the same section coordinates.
+        transformer.registerConstructorRedirect(
+            "net/minecraft/world/level/ChunkPos", "(Lnet/minecraft/core/BlockPos;)V",
+            "net/minecraft/world/level/ChunkPos", "containing",
+            "(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/ChunkPos;");
+        // ChunkPos became a record, so its public x and z fields went private behind x() and z().
+        // They were final, so a read is all an old mod can do and no setter is needed.
+        String chunkPos = "net/minecraft/world/level/ChunkPos";
+        transformer.registerFieldAccessorRedirect(chunkPos, "x", "x", "()I", null, null);
+        transformer.registerFieldAccessorRedirect(chunkPos, "z", "z", "()I", null, null);
+        // The packed-long helpers took the name pack and pack the same bits. TerraBlender keys
+        // its region layer cache with asLong(x, z) while it builds biomes for a new world.
+        transformer.registerMethodRedirect(chunkPos, "asLong", "(II)J", chunkPos, "pack", "(II)J");
+        transformer.registerMethodRedirect(chunkPos, "asLong", "(Lnet/minecraft/core/BlockPos;)J",
+                chunkPos, "pack", "(Lnet/minecraft/core/BlockPos;)J");
+        transformer.registerMethodRedirect(chunkPos, "toLong", "()J", chunkPos, "pack", "()J");
 
         // Painting + PaintingVariant moved into an entity/decoration/painting sub-package in 26.1
         // (verified: absent at the old path, present at the new path on 26.1 and 26.2). Fixes any mod
@@ -109,14 +156,19 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
             "net/minecraft/world/entity/EntitySpawnReason");
 
         // Neutralize the imperative RenderSystem state setters deleted in the blaze3d
-        // GpuDevice/RenderPipeline refactor (Forge wires this directly instead).
+        // GpuDevice/RenderPipeline refactor.
         RemovedRenderStateNeutralize.register(transformer);
 
         registerRegistryValueGetterRename(transformer);
+        registerSoundEventLocation(transformer, "net/minecraft/resources/Identifier");
+        registerRegistryLookupRenames(transformer);
         registerClientAccessorRenames26_1(transformer);
         registerCorpus26xDescriptorAdaptations(transformer);
         LegacyGuiDrawBridge.register(transformer);
+        LegacyGuiExtractBridge.register(transformer);
         LegacyDepthBlendBridge.registerDepthState(transformer);
+        // The chunk's moved flag, the spawn entry codec and the villager type constants, for every loader on 26.1.
+        LegacyWorldgenMembersBridge.registerOlder(transformer);
 
         // BlockState.getBlockHolder() took the TypedInstance spelling typeHolder() in 26.1 (same
         // Holder return; getBlockHolder is absent on 26.1.2, 26.2 and 26.3). The fuzzy resolver
@@ -130,8 +182,21 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         // Every loader needs this: the old RULE_* spelling is the pre-26.1 Mojang name, so a
         // NeoForge or Forge mod from 1.20 or 1.21 carries it just as a Fabric one does.
         registerGameRuleFieldRenames(transformer);
+        registerPathTypeRenames26_1(transformer);
         registerTagRenames26_1(transformer);
 }
+
+    /** The PathType constants 26.1 renamed; each keeps its ordinal and malus. */
+    public static void registerPathTypeRenames26_1(RetromodTransformer transformer) {
+        String pathType = "net/minecraft/world/level/pathfinder/PathType";
+        String[][] renames = {
+            {"DAMAGE_FIRE", "FIRE"}, {"DANGER_FIRE", "FIRE_IN_NEIGHBOR"},
+            {"DAMAGE_OTHER", "DAMAGING"}, {"DANGER_OTHER", "DAMAGING_IN_NEIGHBOR"},
+            {"DANGER_POWDER_SNOW", "ON_TOP_OF_POWDER_SNOW"}, {"DANGER_TRAPDOOR", "ON_TOP_OF_TRAPDOOR"}};
+        for (String[] rename : renames) {
+            transformer.registerFieldRedirect(pathType, rename[0], pathType, rename[1]);
+        }
+    }
 
     /** The block and item tags 26.1 renamed, with the same entries or the same job under the new name. */
     public static void registerTagRenames26_1(RetromodTransformer transformer) {
@@ -323,23 +388,13 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                 + "Lnet/minecraft/client/renderer/state/level/CameraRenderState;)V";
         transformer.registerMethodRedirect(blockEntityRenderer, "render", submitDesc,
                 blockEntityRenderer, "submit", submitDesc);
+        // A mod's own chat line is a client system message, which is what addMessage(text) added.
+        String chat = "net/minecraft/client/gui/components/ChatComponent";
+        transformer.registerMethodRedirect(chat, "addMessage", "(Lnet/minecraft/network/chat/Component;)V",
+                chat, "addClientSystemMessage", "(Lnet/minecraft/network/chat/Component;)V");
 
-        // JOML const-interface widening: the vertex API's Matrix4f parameter became the immutable
-        // Matrix4fc interface by 26.1 (verified present on 26.1+26.2). A 1.21.1 mod links against the
-        // concrete Matrix4f overload, which no longer exists; the concrete Matrix4f IS-A Matrix4fc, so
-        // rewriting just the parameter descriptor keeps the call valid. addVertex(Matrix4f,FFF) is the
-        // hottest of the cluster (VertexConsumer 12 mods, BufferBuilder 7). BufferBuilder inherits the
-        // widened default from VertexConsumer, so the same-owner rewrite resolves fine.
-        transformer.registerMethodRedirect(
-                "com/mojang/blaze3d/vertex/VertexConsumer", "addVertex",
-                "(Lorg/joml/Matrix4f;FFF)Lcom/mojang/blaze3d/vertex/VertexConsumer;",
-                "com/mojang/blaze3d/vertex/VertexConsumer", "addVertex",
-                "(Lorg/joml/Matrix4fc;FFF)Lcom/mojang/blaze3d/vertex/VertexConsumer;");
-        transformer.registerMethodRedirect(
-                "com/mojang/blaze3d/vertex/BufferBuilder", "addVertex",
-                "(Lorg/joml/Matrix4f;FFF)Lcom/mojang/blaze3d/vertex/VertexConsumer;",
-                "com/mojang/blaze3d/vertex/BufferBuilder", "addVertex",
-                "(Lorg/joml/Matrix4fc;FFF)Lcom/mojang/blaze3d/vertex/VertexConsumer;");
+        // The vertex API's Matrix4f parameter became Matrix4fc in 1.21.11; that shim shares this.
+        JomlParameterWidening.registerVertexMatrixWidening(transformer);
     }
 
     /**
@@ -367,12 +422,12 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
      * {@code Forge_1_21_11_to_26_1}; Fabric mods arrive here after the intermediary->Mojang remap has
      * already produced these Mojang names.
      * <ul>
-     *   <li>{@code Mth.cos(F)F}/{@code Mth.sin(F)F} widened their arg to {@code (D)F} (16 mods): F2D
+     *   <li>{@code Mth.cos(F)F}/{@code Mth.sin(F)F} widened their arg to {@code (D)F} in 1.21.11 (16 mods): F2D
      *       the single arg (the last value pushed) and call the double overload.</li>
      *   <li>{@code Window.getGuiScale()D} narrowed its return to {@code ()I} (16 mods): call it, then
      *       I2D the int back to the double the caller expects.</li>
-     *   <li>{@code SoundManager.play(SoundInstance)V} now returns a {@code SoundEngine$PlayResult}
-     *       (24 mods): call the returning form, then POP the result the void call never had.</li>
+     *   <li>{@code SoundManager.play(SoundInstance)V} returns a {@code SoundEngine$PlayResult} from
+     *       1.21.6 (24 mods): call the returning form, then POP the result the void call never had.</li>
      *   <li>{@code CompoundTag.getList(String,int)ListTag} dropped its type-hint int for
      *       {@code getListOrEmpty(String)ListTag} (15 mods): drop the trailing int, rename.</li>
      *   <li>{@code Screen.hasControlDown()/hasShiftDown()/hasAltDown()} moved from static helpers on
@@ -382,60 +437,15 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
      */
     public static void registerCorpus26xDescriptorAdaptations(RetromodTransformer t) {
         // Mth.cos/sin: (F)F -> (D)F, widen the single arg (F2D).
-        t.registerConvertingRedirect("net/minecraft/util/Mth", "cos", "(F)F",
-                "net/minecraft/util/Mth", "cos", "(D)F", Opcodes.F2D, 0);
-        t.registerConvertingRedirect("net/minecraft/util/Mth", "sin", "(F)F",
-                "net/minecraft/util/Mth", "sin", "(D)F", Opcodes.F2D, 0);
+        registerMthDoubleTrig(t);
         // Window.getGuiScale: ()D -> ()I, widen the result (I2D).
         t.registerConvertingRedirect("com/mojang/blaze3d/platform/Window", "getGuiScale", "()D",
                 "com/mojang/blaze3d/platform/Window", "getGuiScale", "()I", 0, Opcodes.I2D);
         // SoundManager.play: (SoundInstance)V -> ()PlayResult, discard the new result (POP).
-        t.registerConvertingRedirect(
-                "net/minecraft/client/sounds/SoundManager", "play",
-                "(Lnet/minecraft/client/resources/sounds/SoundInstance;)V",
-                "net/minecraft/client/sounds/SoundManager", "play",
-                "(Lnet/minecraft/client/resources/sounds/SoundInstance;)Lnet/minecraft/client/sounds/SoundEngine$PlayResult;",
-                0, Opcodes.POP);
-        // Vec3.<init>(org.joml.Vector3f) widened its param to the Vector3fc INTERFACE in 26.x (the
-        // joml concrete->interface modernization; the concrete-typed ctor is gone). Vector3f
-        // implements Vector3fc, so the value on the stack is already assignable (no checkcast
-        // needed); just widen the INVOKESPECIAL descriptor, no arg/return adaptation. Found in-game
-        // on 26.2 Fabric: jade's CommonProxy died NoSuchMethodError Vec3.<init>(Vector3f).
-        t.registerConvertingRedirect(
-                "net/minecraft/world/phys/Vec3", "<init>", "(Lorg/joml/Vector3f;)V",
-                "net/minecraft/world/phys/Vec3", "<init>", "(Lorg/joml/Vector3fc;)V",
-                0, 0);
-        // Keyframe's constructors took the same joml concrete->interface widening as Vec3 above:
-        // (float, Vector3f, Interpolation) and the four-arg pre/post form now declare Vector3fc.
-        // Vector3f implements Vector3fc, so the value on the stack is already assignable and only
-        // the descriptor moves. Entity animation mods build every keyframe through these, so the
-        // gap is wide: two corpus mods alone account for 4,760 call sites, and every one of them
-        // was a NoSuchMethodError on 26.2 and 26.3.
-        String keyframe = "net/minecraft/client/animation/Keyframe";
-        String interp = "Lnet/minecraft/client/animation/AnimationChannel$Interpolation;";
-        t.registerConvertingRedirect(
-                keyframe, "<init>", "(FLorg/joml/Vector3f;" + interp + ")V",
-                keyframe, "<init>", "(FLorg/joml/Vector3fc;" + interp + ")V",
-                0, 0);
-        t.registerConvertingRedirect(
-                keyframe, "<init>", "(FLorg/joml/Vector3f;Lorg/joml/Vector3f;" + interp + ")V",
-                keyframe, "<init>", "(FLorg/joml/Vector3fc;Lorg/joml/Vector3fc;" + interp + ")V",
-                0, 0);
-
-        // PoseStack.mulPose(Quaternionf)/(Matrix4f) widened their arg to the joml INTERFACE
-        // (Quaternionfc/Matrix4fc) in 26.x, same concrete->interface modernization as Vec3 above and
-        // the addVertex(Matrix4f) rename. The concrete-typed overloads are gone, so a rendering mod
-        // calling them dies NoSuchMethodError. The value on the stack already implements the
-        // interface, so just widen the descriptor (no cast). PoseStack.mulPose is ubiquitous in
-        // rendering mods (found via CERBON's Better Beacons, issue #159).
-        t.registerConvertingRedirect(
-                "com/mojang/blaze3d/vertex/PoseStack", "mulPose", "(Lorg/joml/Quaternionf;)V",
-                "com/mojang/blaze3d/vertex/PoseStack", "mulPose", "(Lorg/joml/Quaternionfc;)V",
-                0, 0);
-        t.registerConvertingRedirect(
-                "com/mojang/blaze3d/vertex/PoseStack", "mulPose", "(Lorg/joml/Matrix4f;)V",
-                "com/mojang/blaze3d/vertex/PoseStack", "mulPose", "(Lorg/joml/Matrix4fc;)V",
-                0, 0);
+        registerSoundPlayResult(t);
+        // Vec3, Keyframe, PoseStack, and the vertex calls took JOML's read-only interfaces from
+        // 1.21.5 to 1.21.11. The 1.21.x shims register the same widenings on their own hosts.
+        JomlParameterWidening.registerAll(t);
         // Util.backgroundExecutor()/ioPool()/nonCriticalIoPool() returned java.util.concurrent
         // .ExecutorService and now return net.minecraft.TracingExecutor (a record wrapping the
         // service) in 26.x. Retarget to the TracingExecutor-returning form, then append
@@ -443,12 +453,7 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         // on 26.2 Fabric: jade's ClientProxy died NoSuchMethodError Util.backgroundExecutor()
         // ExecutorService. (Util is at net/minecraft/util/Util on 26.x; Fabric mods reach it via the
         // intermediary->Mojang remap, NeoForge/Forge via the class-move.)
-        for (String pool : new String[]{"backgroundExecutor", "ioPool", "nonCriticalIoPool"}) {
-            t.registerReturnUnwrapRedirect(
-                    "net/minecraft/util/Util", pool, "()Ljava/util/concurrent/ExecutorService;",
-                    "()Lnet/minecraft/TracingExecutor;",
-                    "net/minecraft/TracingExecutor", "service", "()Ljava/util/concurrent/ExecutorService;");
-        }
+        registerUtilExecutorUnwrap(t, "net/minecraft/util/Util");
         // Inventory.setPickedItem(ItemStack) -> addAndPickItem(ItemStack) by 26.1 (the middle-click
         // pick-block method that puts the picked stack into the hotbar; setPickedItem is gone on 26.1,
         // addAndPickItem is the rename, identical (ItemStack)V descriptor and role, pickSlot(int) kept
@@ -461,19 +466,22 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                 "(Lnet/minecraft/world/item/ItemStack;)V",
                 "net/minecraft/world/entity/player/Inventory", "addAndPickItem",
                 "(Lnet/minecraft/world/item/ItemStack;)V");
-        // CompoundTag.getList(String,int) -> getListOrEmpty(String): drop the type-hint int.
-        t.registerArgDropMethodRedirect(
-                "net/minecraft/nbt/CompoundTag", "getList",
-                "(Ljava/lang/String;I)Lnet/minecraft/nbt/ListTag;",
-                "net/minecraft/nbt/CompoundTag", "getListOrEmpty",
-                "(Ljava/lang/String;)Lnet/minecraft/nbt/ListTag;");
-        // Screen.hasControlDown/hasShiftDown/hasAltDown static -> Minecraft.getInstance().hasX().
-        for (String m : new String[]{"hasControlDown", "hasShiftDown", "hasAltDown"}) {
-            t.registerSingletonStaticRedirect(
-                    "net/minecraft/client/gui/screens/Screen", m, "()Z",
-                    "net/minecraft/client/Minecraft", "getInstance",
-                    "()Lnet/minecraft/client/Minecraft;", m, "()Z");
+        // Particle.getLightColor(F)I became getLightCoords(F)I by 26.1 (1.21.11 still has the old
+        // name). Particle classes call it on themselves, so the call often names a subclass.
+        String particles = "net/minecraft/client/particle/";
+        t.registerInheritedMethodRedirect(particles + "Particle", "getLightColor", "(F)I",
+                particles + "Particle", "getLightCoords", "(F)I");
+        // An override's super call names the vanilla base it extends and cannot move to Particle,
+        // so each base old particle mods extend keeps its own owner. The JVM finds the method above it.
+        for (String base : new String[]{"SingleQuadParticle", "SimpleAnimatedParticle",
+                "RisingParticle", "WaterDropParticle"}) {
+            t.registerMethodRedirect(particles + base, "getLightColor", "(F)I",
+                    particles + base, "getLightCoords", "(F)I");
         }
+        // BoatModel.createBodyModel() is createBoatModel() since 1.21.2. The class move runs first,
+        // so the call arrives under the moved owner.
+        registerBoatLayerRename(t, MOVED_BOAT_MODEL);
+        registerScreenModifierKeys(t);
 
         registerNbtApiAdaptations26x(t);
         registerTextEventBridges26x(t);
@@ -482,6 +490,109 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         registerClientStructureBridges26x(t);
         registerLegacyClientInteractionBridges26x(t);
         registerLegacyGuiCalls26x(t);
+        // Item.getName() and getDescription() lost their no-argument forms in 26.1.
+        LegacyItemNameBridge.register26x(t);
+        // Item stacks need bound components from 26.1, which a world's data binds; old mods build them earlier.
+        LegacyEarlyItemStackBridge.register26x(t);
+    }
+
+    /**
+     * Points the static {@code Screen.hasControlDown/hasShiftDown/hasAltDown} checks that 1.21.9
+     * removed at the {@code Minecraft} instance methods that replaced them. The 1.21.9 shims call
+     * this too.
+     */
+    public static void registerScreenModifierKeys(RetromodTransformer t) {
+        for (String m : new String[]{"hasControlDown", "hasShiftDown", "hasAltDown"}) {
+            t.registerSingletonStaticRedirect(
+                    "net/minecraft/client/gui/screens/Screen", m, "()Z",
+                    "net/minecraft/client/Minecraft", "getInstance",
+                    "()Lnet/minecraft/client/Minecraft;", m, "()Z");
+        }
+    }
+
+    /** 1.21.11 changed Mth.sin and Mth.cos to take a double. The 1.21.11 shims call this too. */
+    public static void registerMthDoubleTrig(RetromodTransformer t) {
+        registerMthDoubleTrig(t, "net/minecraft/util/Mth", "sin", "cos");
+    }
+
+    /** The same change under other names, so Fabric 1.21.11 can key it on its intermediary names. */
+    public static void registerMthDoubleTrig(RetromodTransformer t, String mth, String sin, String cos) {
+        // F2D the float the old call pushed last, then call the double form.
+        for (String name : new String[]{sin, cos}) {
+            t.registerConvertingRedirect(mth, name, "(F)F", mth, name, "(D)F", Opcodes.F2D, 0);
+        }
+    }
+
+    /** 1.21.6 made SoundManager.play return a PlayResult. The 1.21.6 shims call this too. */
+    public static void registerSoundPlayResult(RetromodTransformer t) {
+        // Call the returning form, then POP the result the void call never had.
+        String soundManager = "net/minecraft/client/sounds/SoundManager";
+        String takesInstance = "(Lnet/minecraft/client/resources/sounds/SoundInstance;)";
+        t.registerConvertingRedirect(soundManager, "play", takesInstance + "V", soundManager, "play",
+                takesInstance + "Lnet/minecraft/client/sounds/SoundEngine$PlayResult;", 0, Opcodes.POP);
+    }
+
+    /** 1.21.11 named the buffer's and the id's ResourceLocation members after Identifier. The 1.21.11 and 26.1 shims call this. */
+    public static void registerIdentifierMemberRenames(RetromodTransformer t) {
+        // A rename reaches method references too, such as FriendlyByteBuf::writeResourceLocation in a stream codec,
+        // which a call redirect cannot. A call through RegistryFriendlyByteBuf names that owner.
+        for (String buffer : new String[]{"net/minecraft/network/FriendlyByteBuf",
+                "net/minecraft/network/RegistryFriendlyByteBuf"}) {
+            t.registerMethodRename(buffer, "writeResourceLocation", "writeIdentifier");
+            t.registerMethodRename(buffer, "readResourceLocation", "readIdentifier");
+        }
+        t.registerMethodRename("net/minecraft/resources/ResourceLocation", "isAllowedInResourceLocation",
+                "isAllowedInIdentifier");
+    }
+
+    /** 1.21.9 removed Listener.setGain, so the old call becomes a no-op. The 1.21.9 and 26.1 shims call this. */
+    public static void registerListenerSetGainNoOp(RetromodTransformer t) {
+        // The listener lost its gain field with the setter, so a mod that muted through it keeps
+        // running but no longer changes the volume.
+        t.registerMethodRedirect("com/mojang/blaze3d/audio/Listener", "setGain", "(F)V",
+                "com/retromod/shim/fabric/embedded/ItemSafetyShim", "noOp", "(Ljava/lang/Object;F)V", true);
+    }
+
+    /** 1.21.6 renamed GameNarrator.sayNow(Component) to saySystemNow. The 1.21.6 and 26.1 shims call this. */
+    public static void registerNarratorSayNowRename(RetromodTransformer t) {
+        String narrator = "net/minecraft/client/GameNarrator";
+        String takesComponent = "(Lnet/minecraft/network/chat/Component;)V";
+        t.registerMethodRedirect(narrator, "sayNow", takesComponent, narrator, "saySystemNow", takesComponent);
+    }
+
+    /** 1.21.2 made Util's executor getters return a TracingExecutor. The 1.21.2 shims call this. */
+    public static void registerUtilExecutorUnwrapOnHost(RetromodTransformer t) {
+        // 1.21.11 moved Util into the util package. The class move runs first, so the call
+        // arrives under the owner this host declares.
+        boolean moved = RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21.11") >= 0;
+        registerUtilExecutorUnwrap(t, moved ? "net/minecraft/util/Util" : "net/minecraft/Util");
+    }
+
+    /** Calls the TracingExecutor form of each executor getter on {@code util}, then unwraps the service. */
+    public static void registerUtilExecutorUnwrap(RetromodTransformer t, String util) {
+        for (String pool : new String[]{"backgroundExecutor", "ioPool", "nonCriticalIoPool"}) {
+            t.registerReturnUnwrapRedirect(util, pool, "()Ljava/util/concurrent/ExecutorService;",
+                    "()Lnet/minecraft/TracingExecutor;",
+                    "net/minecraft/TracingExecutor", "service", "()Ljava/util/concurrent/ExecutorService;");
+        }
+    }
+
+    static final String OLD_BOAT_MODEL = "net/minecraft/client/model/BoatModel";
+    static final String MOVED_BOAT_MODEL = "net/minecraft/client/model/object/boat/BoatModel";
+
+    /** Points the 1.21.1 boat layer factory at its 1.21.2 name, under the owner this host declares. */
+    public static void registerBoatLayerRenameOnHost(RetromodTransformer t) {
+        // 1.21.11 moved BoatModel into object/boat. A redirect's target is written as given, so
+        // key and target must both name the class the host has.
+        boolean moved = RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21.11") >= 0;
+        registerBoatLayerRename(t, moved ? MOVED_BOAT_MODEL : OLD_BOAT_MODEL);
+    }
+
+    private static void registerBoatLayerRename(RetromodTransformer t, String boatModel) {
+        // Only the plain boat. ChestBoatModel.createBodyModel() keeps its own owner, which no
+        // class redirect folds into BoatModel, so it never reaches this key.
+        String layer = "()Lnet/minecraft/client/model/geom/builders/LayerDefinition;";
+        t.registerMethodRedirect(boatModel, "createBodyModel", layer, boatModel, "createBoatModel", layer);
     }
 
     /** Exact client call migrations found by verifying AutoClicky 1.2.1 against 26.1 and 26.2. */
@@ -532,6 +643,25 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         String hudDesc = "(L" + graphics + ";Lnet/minecraft/client/DeltaTracker;)V";
         t.registerMethodRedirect("net/minecraft/client/gui/Gui", "render", hudDesc,
                 "net/minecraft/client/gui/Gui", "extractRenderState", hudDesc);
+        registerEditBoxFilter(t);
+    }
+
+    /** {@code EditBox.setFilter} is gone in 26.1, so an embedded helper keeps the filter and enforces it. */
+    static void registerEditBoxFilter(RetromodTransformer t) {
+        String box = "net/minecraft/client/gui/components/EditBox";
+        String helper = "com/retromod/shim/common/embedded/LegacyEditBoxFilter";
+        com.retromod.core.SyntheticEmbedder.registerClassResource(t, helper,
+                com.retromod.shim.common.embedded.LegacyEditBoxFilter.class);
+        // The box has no veto any more, so the helper watches changes through the box's responder
+        // and undoes the ones the filter refuses.
+        t.registerInheritedMethodRedirect(box, "setFilter", "(Ljava/util/function/Predicate;)V",
+                helper, "setFilter", "(Ljava/lang/Object;Ljava/util/function/Predicate;)V");
+        // The mod's own responder then runs behind the filter. setResponder still exists, so only
+        // mods written before 26.1 take this, and a super call keeps calling the host.
+        String responderDesc = "(Ljava/util/function/Consumer;)V";
+        t.registerWrappingMethodRedirect(box, "setResponder", responderDesc,
+                helper, "setResponder", "(Ljava/lang/Object;Ljava/util/function/Consumer;)V");
+        t.limitRedirectToModsBefore(box, "setResponder", responderDesc, "26.1");
     }
 
     /**
@@ -571,6 +701,9 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
             t.registerReturnUnwrapRedirect(skin, r[0], rlRet, r[1], assetRet,
                     asset, "texturePath", idRet, true);
             t.registerReturnUnwrapRedirect(skin, r[0], idRet, r[1], assetRet,
+                    asset, "texturePath", idRet, true);
+            // A Fabric mod's intermediary id maps straight to the 26.x name but keeps the old return.
+            t.registerReturnUnwrapRedirect(skin, r[1], idRet, r[1], assetRet,
                     asset, "texturePath", idRet, true);
         }
 
@@ -751,12 +884,8 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         String rtRet = "()L" + rt + ";";
         String idArg = "(Lnet/minecraft/resources/Identifier;)L" + rt + ";";
         String idBoolArg = "(Lnet/minecraft/resources/Identifier;Z)L" + rt + ";";
-        // Block-layer getters: nearest surviving RenderType-typed tokens.
-        t.registerMethodRedirect(rt, "solid", rtRet, rts, "solidMovingBlock", rtRet);
-        t.registerMethodRedirect(rt, "cutout", rtRet, rts, "cutoutMovingBlock", rtRet);
-        t.registerMethodRedirect(rt, "cutoutMipped", rtRet, rts, "cutoutMovingBlock", rtRet);
-        t.registerMethodRedirect(rt, "translucent", rtRet, rts, "translucentMovingBlock", rtRet);
-        t.registerMethodRedirect(rt, "tripwire", rtRet, rts, "translucentMovingBlock", rtRet);
+        registerBlockLayerGetters(t);
+        registerRenderTypeFactoryMoves(t);
         // Entity getters: same names, new owner; the cull flip per the javadoc.
         t.registerMethodRedirect(rt, "entitySolid", idArg, rts, "entitySolid", idArg);
         t.registerMethodRedirect(rt, "entityCutout", idArg, rts, "entityCutoutCull", idArg);
@@ -818,9 +947,10 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
      * rewrites those {@code new}s to {@link com.retromod.polyfill.minecraft.RetroTextEvents}, which
      * dispatches on the action to the right subtype (the dispatch the old constructor did internally).
      * The factory is registered as a synthetic so the Forge/NeoForge per-mod embedder relocates a
-     * JPMS-split-package-safe copy into any mod that references it (Fabric injects it directly). Gated
-     * 26.1+ by the caller (these are interfaces on every 26.1+ host, so the old constructor is
-     * genuinely gone; on a pre-1.21.5 host the redirect must not fire, and this shim never runs there).
+     * JPMS-split-package-safe copy into any mod that references it (Fabric injects it directly). The
+     * 1.21.5 and 26.1 shims call this. Both types are interfaces from 1.21.5 with the same subtype
+     * constructors through 26.3, so the old constructor is gone there; before 1.21.5 the redirect
+     * must not fire, and those shims never register on such a host.
      */
     public static void registerTextEventBridges26x(RetromodTransformer t) {
         ensureSyntheticRegistered(t, "com/retromod/polyfill/minecraft/RetroTextEvents");
@@ -836,18 +966,19 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                 "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
     }
 
-    /**
-     * {@code KeyMapping} (keybind) constructor bridges for the 26.x category refactor. The keybind
-     * category changed from a {@code String} translation key to a {@code KeyMapping.Category} record,
-     * so the old {@code new KeyMapping(name, [type,] code, categoryString)} constructors are gone and
-     * ANY mod that adds a keybind dies {@code NoSuchMethodError} at client init (Jade, found in-game
-     * on 26.2 Fabric). A constructor-to-factory redirect rewrites both the 4-arg (with an
-     * {@code InputConstants.Type}) and 3-arg (KEYSYM default) forms to
-     * {@link com.retromod.polyfill.minecraft.RetroKeyMapping}, which resolves the category string to
-     * a {@code Category} (vanilla constants, else a registered {@code retromod:} category, else MISC)
-     * and calls the real constructor. Broadly applicable: every keybind-adding mod hits this on 26.x.
-     */
+    /** Keybind constructors and quad loops whose 1.21.x shapes are gone on 26.x. */
     public static void registerKeyMappingBridges26x(RetromodTransformer t) {
+        // Every keybind-adding mod hits this on 26.x (Jade, found in-game on 26.2 Fabric).
+        registerStringCategoryKeyMappings(t);
+        // Quad loops a mod wrote itself: material accessors and putBulkData (see the synthetic).
+        LegacyBakedQuadSynthetic.register(t);
+    }
+
+    /** Rebuilds the String-category keybind constructors that 1.21.9 replaced with a Category record. */
+    public static void registerStringCategoryKeyMappings(RetromodTransformer t) {
+        // RetroKeyMapping turns the string into a Category: a vanilla constant, else a registered
+        // retromod_compat: category, else MISC. The 1.21.9 shims call this too, and every key below
+        // is an old descriptor that a mod built for 1.21.9 or newer never emits.
         ensureSyntheticRegistered(t, "com/retromod/polyfill/minecraft/RetroKeyMapping");
         // 4-arg: KeyMapping(String, InputConstants$Type, int, String) -> create(...). The type is
         // passed as Object (Retromod has no compile-time InputConstants$Type); a Type IS-A Object, so
@@ -864,34 +995,74 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                 "com/retromod/polyfill/minecraft/RetroKeyMapping", "createDefault",
                 "(Ljava/lang/String;ILjava/lang/String;)Ljava/lang/Object;");
 
-        // NeoForge's conflict-context constructors lost their String category at 1.21.9 as well,
-        // so a NeoForge keybind naming an IKeyConflictContext died with NoSuchMethodError.
-        String settings = "Lnet/neoforged/neoforge/client/settings/";
-        String context = settings + "IKeyConflictContext;";
-        String modifier = settings + "KeyModifier;";
+        // NeoForge's and Forge's conflict-context constructors lost their String category at 1.21.9
+        // as well, so a keybind naming an IKeyConflictContext died with NoSuchMethodError. Both
+        // loaders patch the same four shapes into KeyMapping, each with its own settings package.
         String type = "Lcom/mojang/blaze3d/platform/InputConstants$Type;";
         String key = "Lcom/mojang/blaze3d/platform/InputConstants$Key;";
-        String[][] conflictForms = {
-            {"(Ljava/lang/String;" + context + type + "ILjava/lang/String;)V", "createConflict",
-                "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;ILjava/lang/String;)"},
-            {"(Ljava/lang/String;" + context + key + "Ljava/lang/String;)V", "createConflictKey",
-                "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/String;)"},
-            {"(Ljava/lang/String;" + context + modifier + type + "ILjava/lang/String;)V",
-                "createConflictModifier",
-                "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;I"
-                    + "Ljava/lang/String;)"},
-            {"(Ljava/lang/String;" + context + modifier + key + "Ljava/lang/String;)V",
-                "createConflictModifierKey",
-                "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;"
-                    + "Ljava/lang/String;)"},
-        };
-        for (String[] form : conflictForms) {
-            t.registerConstructorRedirect("net/minecraft/client/KeyMapping", form[0],
-                    "com/retromod/polyfill/minecraft/RetroKeyMapping", form[1],
-                    form[2] + "Ljava/lang/Object;");
+        for (String settings : new String[]{"Lnet/neoforged/neoforge/client/settings/",
+                "Lnet/minecraftforge/client/settings/"}) {
+            String context = settings + "IKeyConflictContext;";
+            String modifier = settings + "KeyModifier;";
+            String[][] conflictForms = {
+                {"(Ljava/lang/String;" + context + type + "ILjava/lang/String;)V", "createConflict",
+                    "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;ILjava/lang/String;)"},
+                {"(Ljava/lang/String;" + context + key + "Ljava/lang/String;)V", "createConflictKey",
+                    "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/String;)"},
+                {"(Ljava/lang/String;" + context + modifier + type + "ILjava/lang/String;)V",
+                    "createConflictModifier",
+                    "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;I"
+                        + "Ljava/lang/String;)"},
+                {"(Ljava/lang/String;" + context + modifier + key + "Ljava/lang/String;)V",
+                    "createConflictModifierKey",
+                    "(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;"
+                        + "Ljava/lang/String;)"},
+            };
+            for (String[] form : conflictForms) {
+                t.registerConstructorRedirect("net/minecraft/client/KeyMapping", form[0],
+                        "com/retromod/polyfill/minecraft/RetroKeyMapping", form[1],
+                        form[2] + "Ljava/lang/Object;");
+            }
         }
-        // Quad loops a mod wrote itself: material accessors and putBulkData (see the synthetic).
-        LegacyBakedQuadSynthetic.register(t);
+        registerStringCategoryKeyMappingSubclasses(t);
+    }
+
+    /**
+     * A mod's own KeyMapping subclass calls the old String-category constructor as {@code super(...)}, which no
+     * redirect to a factory can reach, so Carry On's keybinds stopped the game while keys registered. The category
+     * string, on top of the stack, becomes a Category, and the key code is translated as the factories translate it.
+     */
+    static void registerStringCategoryKeyMappingSubclasses(RetromodTransformer t) {
+        String keyMapping = "net/minecraft/client/KeyMapping";
+        String category = "net/minecraft/client/KeyMapping$Category";
+        String type = "Lcom/mojang/blaze3d/platform/InputConstants$Type;";
+        String helper = "com/retromod/polyfill/minecraft/RetroKeyMapping";
+        // (name, code, category): convert the category, then the code beneath it.
+        t.registerSuperConstructorAdapter(keyMapping, "(Ljava/lang/String;ILjava/lang/String;)V",
+                "(Ljava/lang/String;IL" + category + ";)V", mv -> {
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, helper, "category", "(Ljava/lang/String;)Ljava/lang/Object;", false);
+                    mv.visitInsn(Opcodes.SWAP);
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, helper, "hostKeyCode", "(I)I", false);
+                    mv.visitInsn(Opcodes.SWAP);
+                    mv.visitTypeInsn(Opcodes.CHECKCAST, category);
+                });
+        // (name, type, code, category): the code is translated by its input type, which sits two below the category.
+        t.registerSuperConstructorAdapter(keyMapping, "(Ljava/lang/String;" + type + "ILjava/lang/String;)V",
+                "(Ljava/lang/String;" + type + "IL" + category + ";)V", mv -> {
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, helper, "category", "(Ljava/lang/String;)Ljava/lang/Object;", false);
+                    // name, type, code, cat -> name, cat, type, code
+                    mv.visitInsn(Opcodes.DUP_X2);
+                    mv.visitInsn(Opcodes.POP);
+                    // -> name, cat, type, type, code
+                    mv.visitInsn(Opcodes.SWAP);
+                    mv.visitInsn(Opcodes.DUP_X1);
+                    mv.visitInsn(Opcodes.SWAP);
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, helper, "hostCode", "(Ljava/lang/Object;I)I", false);
+                    // name, cat, type, code -> name, type, code, cat
+                    mv.visitInsn(Opcodes.DUP2_X1);
+                    mv.visitInsn(Opcodes.POP2);
+                    mv.visitTypeInsn(Opcodes.CHECKCAST, category);
+                });
     }
 
     /**
@@ -931,28 +1102,80 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
     }
 
     /**
-     * The 1.21.5 NBT read refactor (verified landed by 26.1: old signature gone, new present on the
-     * 26.1 AND 26.2 jars). A 1.20.1/1.21.1 mod's save/load code links against the pre-refactor NBT
-     * accessors, so these break broadly across content mods on a 26.x host (top-60 Fabric 1.20.1 audit
-     * frequencies noted). Each is owner+descriptor-scoped, so the co-existing {@code Optional}-returning
-     * overloads (e.g. the new {@code getCompound(String):Optional}) are never touched.
-     * <ul>
-     *   <li>{@code CompoundTag.contains(String,int)Z} dropped its tag-type-hint int for
-     *       {@code contains(String)Z} (12 mods): drop the trailing int.</li>
-     *   <li>{@code CompoundTag.getCompound(String)CompoundTag} -> {@code getCompoundOrEmpty(String)}
-     *       and {@code ListTag.getCompound(int)CompoundTag} -> {@code getCompoundOrEmpty(int)} (10+9
-     *       mods): plain renames (the plain getters now return {@code Optional}).</li>
-     *   <li>{@code CompoundTag.remove(String)V} now returns the removed {@code Tag} (9 mods): call it,
-     *       then POP the result the void call never had.</li>
-     *   <li>{@code TagParser.parseTag(String)CompoundTag} -> {@code parseCompoundFully(String)} (9
-     *       mods): plain rename (same params/return; the checked exception is not enforced in
-     *       bytecode).</li>
-     * </ul>
+     * 1.21.11 moved RenderType into the rendertype package and dropped its block-layer getters,
+     * whose nearest surviving tokens are the RenderTypes moving-block types. The class move runs
+     * first, so the calls arrive under the moved owner. The 1.21.11 shims call this too.
      */
+    public static void registerBlockLayerGetters(RetromodTransformer t) {
+        String rt = "net/minecraft/client/renderer/rendertype/RenderType";
+        String rts = "net/minecraft/client/renderer/rendertype/RenderTypes";
+        String rtRet = "()L" + rt + ";";
+        t.registerMethodRedirect(rt, "solid", rtRet, rts, "solidMovingBlock", rtRet);
+        t.registerMethodRedirect(rt, "cutout", rtRet, rts, "cutoutMovingBlock", rtRet);
+        t.registerMethodRedirect(rt, "cutoutMipped", rtRet, rts, "cutoutMovingBlock", rtRet);
+        t.registerMethodRedirect(rt, "translucent", rtRet, rts, "translucentMovingBlock", rtRet);
+        t.registerMethodRedirect(rt, "tripwire", rtRet, rts, "translucentMovingBlock", rtRet);
+    }
+
+    /** The static RenderType factories 1.21.11 moved to RenderTypes under the same names, by descriptor shape. */
+    static final String[][] RENDER_TYPE_FACTORIES = {
+            {"()", "leash", "waterMask", "armorEntityGlint", "glintTranslucent", "glint", "entityGlint",
+                    "textBackground", "textBackgroundSeeThrough", "lightning", "dragonRays", "dragonRaysDepth",
+                    "endPortal", "endGateway", "lines", "linesTranslucent", "secondaryBlockOutline",
+                    "debugFilledBox", "debugPoint", "debugQuads", "debugTriangleFan"},
+            {"(Lnet/minecraft/resources/Identifier;FF)", "breezeWind", "energySwirl"},
+            {"(Lnet/minecraft/resources/Identifier;)", "armorCutoutNoCull", "createArmorDecalCutoutNoCull",
+                    "armorTranslucent", "entitySolid", "entitySolidZOffsetForward", "entityCutout",
+                    "entityCutoutNoCull", "entityCutoutNoCullZOffset", "itemEntityTranslucentCull",
+                    "entityTranslucent", "entityTranslucentEmissive", "entitySmoothCutout", "entityDecal",
+                    "entityNoOutline", "entityShadow", "dragonExplosionAlpha", "eyes", "breezeEyes", "outline",
+                    "crumbling", "text", "textIntensity", "textPolygonOffset", "textIntensityPolygonOffset",
+                    "textSeeThrough", "textIntensitySeeThrough", "blockScreenEffect", "fireScreenEffect"},
+            {"(Lnet/minecraft/resources/Identifier;Z)", "entityCutoutNoCull", "entityCutoutNoCullZOffset",
+                    "entityTranslucent", "entityTranslucentEmissive", "beaconBeam", "weather"},
+    };
+
+    /** The factories whose meaning 26.1 flipped; the 26.1 registration maps them by meaning instead. */
+    private static final Set<String> CULL_FLIPPED_IN_26_1 = Set.of("entityCutout", "entityCutoutNoCull");
+
+    /**
+     * Moves each static RenderType factory to RenderTypes under its own name, as 1.21.11 did.
+     * Names 26.1 gave another meaning are left to the explicit 26.1 mapping. A factory a later
+     * host removed still ends up missing, as it was before the move.
+     */
+    public static void registerRenderTypeFactoryMoves(RetromodTransformer t) {
+        String rt = "net/minecraft/client/renderer/rendertype/RenderType";
+        String rts = "net/minecraft/client/renderer/rendertype/RenderTypes";
+        boolean flipped = RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.1") >= 0;
+        for (String[] shape : RENDER_TYPE_FACTORIES) {
+            String desc = shape[0] + "L" + rt + ";";
+            for (int i = 1; i < shape.length; i++) {
+                if (flipped && CULL_FLIPPED_IN_26_1.contains(shape[i])) continue;
+                t.registerMethodRedirect(rt, shape[i], desc, rts, shape[i], desc);
+            }
+        }
+    }
+
+    /** Every pre-1.21.5 NBT accessor 26.x no longer has, from the 1.21.5, 1.21.6 and 1.21.11 changes. */
     public static void registerNbtApiAdaptations26x(RetromodTransformer t) {
+        registerNbtReadRefactor1215(t);
+        registerNbtRemoveReturnsTag(t);
+        LegacyItemNbtApi.register1215(t);
+        LegacyItemNbtApi.register1216(t);
+    }
+
+    /** The 1.21.5 NBT read refactor, checked against the 1.21.4, 1.21.5 and 1.21.11 Mojang mappings. */
+    public static void registerNbtReadRefactor1215(RetromodTransformer t) {
+        // Each redirect is owner and descriptor scoped, so a newer mod's Optional getters are untouched.
         // CompoundTag.contains(String,int) -> contains(String): drop the tag-type-hint int.
         t.registerArgDropMethodRedirect("net/minecraft/nbt/CompoundTag", "contains",
                 "(Ljava/lang/String;I)Z", "net/minecraft/nbt/CompoundTag", "contains", "(Ljava/lang/String;)Z");
+        // CompoundTag.getList(String,int) -> getListOrEmpty(String): drop the type-hint int.
+        t.registerArgDropMethodRedirect(
+                "net/minecraft/nbt/CompoundTag", "getList",
+                "(Ljava/lang/String;I)Lnet/minecraft/nbt/ListTag;",
+                "net/minecraft/nbt/CompoundTag", "getListOrEmpty",
+                "(Ljava/lang/String;)Lnet/minecraft/nbt/ListTag;");
         // getCompound -> getCompoundOrEmpty (the plain getter now returns Optional). Descriptor-scoped
         // to the CompoundTag-returning form so the new Optional overload is untouched.
         t.registerMethodRedirect("net/minecraft/nbt/CompoundTag", "getCompound",
@@ -962,19 +1185,172 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         t.registerMethodRedirect("net/minecraft/nbt/ListTag", "getCompound",
                 "(I)Lnet/minecraft/nbt/CompoundTag;",
                 "net/minecraft/nbt/ListTag", "getCompoundOrEmpty", "(I)Lnet/minecraft/nbt/CompoundTag;");
-        // CompoundTag.remove(String)V -> remove(String)Tag, discard the now-returned removed tag (POP).
-        t.registerConvertingRedirect("net/minecraft/nbt/CompoundTag", "remove", "(Ljava/lang/String;)V",
-                "net/minecraft/nbt/CompoundTag", "remove", "(Ljava/lang/String;)Lnet/minecraft/nbt/Tag;",
-                0, Opcodes.POP);
         // TagParser.parseTag -> parseCompoundFully (same params/return; checked exn not enforced in bytecode).
         t.registerMethodRedirect("net/minecraft/nbt/TagParser", "parseTag",
                 "(Ljava/lang/String;)Lnet/minecraft/nbt/CompoundTag;",
                 "net/minecraft/nbt/TagParser", "parseCompoundFully",
                 "(Ljava/lang/String;)Lnet/minecraft/nbt/CompoundTag;");
+        // CompoundTag.getAllKeys() -> keySet(): a plain rename with the same Set return.
+        t.registerMethodRedirect("net/minecraft/nbt/CompoundTag", "getAllKeys", "()Ljava/util/Set;",
+                "net/minecraft/nbt/CompoundTag", "keySet", "()Ljava/util/Set;");
+        registerNbtGetterBridges(t);
+    }
+
+    /** The same 1.21.5 refactor in the intermediary names a Fabric 1.21.5 to 1.21.11 host runs. */
+    public static void registerNbtReadRefactor1215Intermediary(RetromodTransformer t) {
+        String compoundTag = "net/minecraft/class_2487";
+        String listTag = "net/minecraft/class_2499";
+        String lCompound = "Lnet/minecraft/class_2487;";
+        String lList = "Lnet/minecraft/class_2499;";
+        // contains(String,int) and getList(String,int) lose the type hint. getAllKeys and keySet
+        // share method_10541, so that rename needs no rule here.
+        t.registerArgDropMethodRedirect(compoundTag, "method_10573", "(Ljava/lang/String;I)Z",
+                compoundTag, "method_10545", "(Ljava/lang/String;)Z");
+        t.registerArgDropMethodRedirect(compoundTag, "method_10554", "(Ljava/lang/String;I)" + lList,
+                compoundTag, "method_68569", "(Ljava/lang/String;)" + lList);
+        // The compound getters moved to getCompoundOrEmpty, and parseTag to parseCompoundFully.
+        t.registerMethodRedirect(compoundTag, "method_10562", "(Ljava/lang/String;)" + lCompound,
+                compoundTag, "method_68568", "(Ljava/lang/String;)" + lCompound);
+        t.registerMethodRedirect(listTag, "method_10602", "(I)" + lCompound,
+                listTag, "method_68582", "(I)" + lCompound);
+        t.registerMethodRedirect("net/minecraft/class_2522", "method_10718", "(Ljava/lang/String;)" + lCompound,
+                "net/minecraft/class_2522", "method_67315", "(Ljava/lang/String;)" + lCompound);
+        registerNbtLookupCalls(t, true);
+    }
+
+    /** 1.21.11 made CompoundTag.remove(String) return the removed tag; 1.21.5 to 1.21.10 kept void. */
+    public static void registerNbtRemoveReturnsTag(RetromodTransformer t) {
+        registerNbtRemoveReturnsTag(t, "net/minecraft/nbt/CompoundTag", "remove", "Lnet/minecraft/nbt/Tag;");
+    }
+
+    /** The same change in the intermediary names a Fabric 1.21.11 host runs; the method kept method_10551. */
+    public static void registerNbtRemoveReturnsTagIntermediary(RetromodTransformer t) {
+        registerNbtRemoveReturnsTag(t, "net/minecraft/class_2487", "method_10551", "Lnet/minecraft/class_2520;");
+    }
+
+    private static void registerNbtRemoveReturnsTag(RetromodTransformer t, String compoundTag, String remove,
+            String lTag) {
+        // Call the returning form, then POP the result the void call never had.
+        t.registerConvertingRedirect(compoundTag, remove, "(Ljava/lang/String;)V",
+                compoundTag, remove, "(Ljava/lang/String;)" + lTag, 0, Opcodes.POP);
+    }
+
+    static final String NBT_LOOKUP = "com/retromod/polyfill/registry/NbtCompatLookup";
+
+    /** One old NBT call NbtCompatLookup answers: its Mojang and intermediary names, its old return, and the helper. */
+    record NbtLookupCall(String name, String intermediary, String returnDesc, String helper) {}
+
+    /** The CompoundTag getters 1.21.5 turned into Optional getters or removed, each taking a String key. */
+    static final List<NbtLookupCall> COMPOUND_LOOKUPS = List.of(
+            new NbtLookupCall("getString", "method_10558", "Ljava/lang/String;", "compoundGetString"),
+            new NbtLookupCall("getInt", "method_10550", "I", "compoundGetInt"),
+            new NbtLookupCall("getLong", "method_10537", "J", "compoundGetLong"),
+            new NbtLookupCall("getFloat", "method_10583", "F", "compoundGetFloat"),
+            new NbtLookupCall("getDouble", "method_10574", "D", "compoundGetDouble"),
+            new NbtLookupCall("getBoolean", "method_10577", "Z", "compoundGetBoolean"),
+            new NbtLookupCall("getByte", "method_10571", "B", "compoundGetByte"),
+            new NbtLookupCall("getShort", "method_10568", "S", "compoundGetShort"),
+            new NbtLookupCall("getByteArray", "method_10547", "[B", "compoundGetByteArray"),
+            new NbtLookupCall("getIntArray", "method_10561", "[I", "compoundGetIntArray"),
+            new NbtLookupCall("getLongArray", "method_10565", "[J", "compoundGetLongArray"),
+            new NbtLookupCall("getUUID", "method_25926", "Ljava/util/UUID;", "compoundGetUUID"),
+            new NbtLookupCall("hasUUID", "method_25928", "Z", "compoundHasUUID"),
+            new NbtLookupCall("getTagType", "method_10540", "B", "compoundGetTagType"));
+
+    /** The ListTag getters 1.21.5 turned into Optional getters, each taking an int index. */
+    static final List<NbtLookupCall> LIST_LOOKUPS = List.of(
+            new NbtLookupCall("getString", "method_10608", "Ljava/lang/String;", "listGetString"),
+            new NbtLookupCall("getInt", "method_10600", "I", "listGetInt"));
+
+    /** The NumericTag getters 1.21.5 renamed when it made NumericTag an interface; intermediary kept their ids. */
+    static final List<NbtLookupCall> NUMERIC_LOOKUPS = List.of(
+            new NbtLookupCall("getAsByte", "method_10698", "B", "numericGetAsByte"),
+            new NbtLookupCall("getAsShort", "method_10696", "S", "numericGetAsShort"),
+            new NbtLookupCall("getAsInt", "method_10701", "I", "numericGetAsInt"),
+            new NbtLookupCall("getAsLong", "method_10699", "J", "numericGetAsLong"),
+            new NbtLookupCall("getAsFloat", "method_10700", "F", "numericGetAsFloat"),
+            new NbtLookupCall("getAsDouble", "method_10697", "D", "numericGetAsDouble"),
+            new NbtLookupCall("getAsNumber", "method_10702", "Ljava/lang/Number;", "numericGetAsNumber"));
+
+    /** The tag types a pre-1.21.5 mod can name as the owner of a number getter. */
+    static final String[] NUMBER_TAGS = {"NumericTag", "ByteTag", "ShortTag", "IntTag", "LongTag", "FloatTag", "DoubleTag"};
+
+    /** Every tag type a pre-1.21.5 mod can name as the owner of getAsString(), with its intermediary name. */
+    static final String[][] TAG_TYPES = {
+            {"Tag", "class_2520"}, {"StringTag", "class_2519"}, {"CompoundTag", "class_2487"},
+            {"ListTag", "class_2499"}, {"CollectionTag", "class_2483"}, {"NumericTag", "class_2514"},
+            {"ByteTag", "class_2481"}, {"ShortTag", "class_2516"}, {"IntTag", "class_2497"},
+            {"LongTag", "class_2503"}, {"FloatTag", "class_2494"}, {"DoubleTag", "class_2489"},
+            {"ByteArrayTag", "class_2479"}, {"IntArrayTag", "class_2495"}, {"LongArrayTag", "class_2501"},
+            {"EndTag", "class_2491"}};
+
+    /** The getters 1.21.5 turned into Optional getters or renamed, and the UUID and text helpers it removed. */
+    static void registerNbtGetterBridges(RetromodTransformer t) {
+        registerNbtLookupCalls(t, false);
+    }
+
+    /** Points each old call at NbtCompatLookup, keyed by Mojang names or by intermediary ones. */
+    private static void registerNbtLookupCalls(RetromodTransformer t, boolean intermediary) {
+        String compoundTag = intermediary ? "net/minecraft/class_2487" : "net/minecraft/nbt/CompoundTag";
+        String listTag = intermediary ? "net/minecraft/class_2499" : "net/minecraft/nbt/ListTag";
+        // NbtCompatLookup tries the Optional getter and then the old one, under either name, and
+        // returns the old default for a missing key. Forge-family and offline output embed a copy.
+        ensureSyntheticRegistered(t, NBT_LOOKUP);
+
+        // Each helper takes the receiver first, since the instance call becomes a static one.
+        for (NbtLookupCall call : COMPOUND_LOOKUPS) {
+            t.registerMethodRedirect(compoundTag, intermediary ? call.intermediary() : call.name(),
+                    "(Ljava/lang/String;)" + call.returnDesc(),
+                    NBT_LOOKUP, call.helper(), "(Ljava/lang/Object;Ljava/lang/String;)" + call.returnDesc(), true);
+        }
+        t.registerMethodRedirect(compoundTag, intermediary ? "method_25927" : "putUUID",
+                "(Ljava/lang/String;Ljava/util/UUID;)V",
+                NBT_LOOKUP, "compoundPutUUID", "(Ljava/lang/Object;Ljava/lang/String;Ljava/util/UUID;)V", true);
+        for (NbtLookupCall call : LIST_LOOKUPS) {
+            t.registerMethodRedirect(listTag, intermediary ? call.intermediary() : call.name(),
+                    "(I)" + call.returnDesc(),
+                    NBT_LOOKUP, call.helper(), "(Ljava/lang/Object;I)" + call.returnDesc(), true);
+        }
+        // javac names the receiver's own type as the owner, so each tag type needs its own key.
+        for (String[] type : TAG_TYPES) {
+            String owner = intermediary ? "net/minecraft/" + type[1] : "net/minecraft/nbt/" + type[0];
+            t.registerMethodRedirect(owner, intermediary ? "method_10714" : "getAsString", "()Ljava/lang/String;",
+                    NBT_LOOKUP, "tagGetAsString", "(Ljava/lang/Object;)Ljava/lang/String;", true);
+        }
+        // The number getters go through the helper, which also covers NumericTag turning into an
+        // interface. Under intermediary ids nothing was renamed, so only that interface needs keys.
+        for (String type : intermediary ? new String[]{"class_2514"} : NUMBER_TAGS) {
+            String owner = (intermediary ? "net/minecraft/" : "net/minecraft/nbt/") + type;
+            for (NbtLookupCall call : NUMERIC_LOOKUPS) {
+                t.registerMethodRedirect(owner, intermediary ? call.intermediary() : call.name(), "()" + call.returnDesc(),
+                        NBT_LOOKUP, call.helper(), "(Ljava/lang/Object;)" + call.returnDesc(), true);
+            }
+        }
     }
 
     public static void registerRegistryValueGetterRename(RetromodTransformer transformer) {
         registerRegistryValueGetterRename(transformer, "net/minecraft/resources/Identifier");
+    }
+
+    /** The 1.21.2 renames registryOrThrow to lookupOrThrow and getHolderOrThrow to getOrThrow. */
+    public static void registerRegistryLookupRenames(RetromodTransformer transformer) {
+        // A server's registryAccess() is typed Frozen, so javac names that owner at the call.
+        String lookupDesc = "(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/core/Registry;";
+        // registry(key) became lookup(key), which now returns the same optional registry.
+        String optionalDesc = "(Lnet/minecraft/resources/ResourceKey;)Ljava/util/Optional;";
+        for (String owner : new String[]{"net/minecraft/core/RegistryAccess",
+                "net/minecraft/core/RegistryAccess$Frozen"}) {
+            transformer.registerMethodRedirect(owner, "registryOrThrow", lookupDesc, owner, "lookupOrThrow",
+                    lookupDesc);
+            transformer.registerMethodRedirect(owner, "registry", optionalDesc, owner, "lookup", optionalDesc);
+        }
+        // BuiltInRegistries.ITEM and BLOCK are DefaultedRegistry, which their calls name as the owner.
+        String holderDesc = "(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/core/Holder$Reference;";
+        for (String owner : new String[]{"net/minecraft/core/Registry",
+                "net/minecraft/core/DefaultedRegistry"}) {
+            transformer.registerMethodRedirect(owner, "getHolderOrThrow", holderDesc, owner, "getOrThrow",
+                    holderDesc);
+        }
     }
 
     /**
@@ -992,5 +1368,12 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                 "net/minecraft/core/DefaultedMappedRegistry"}) {
             transformer.registerMethodRedirect(owner, "get", getIdDesc, owner, "getValue", getIdDesc);
         }
+    }
+
+    /** SoundEvent became a record in 1.21.2, so getLocation() is location() on those hosts; {@code idClass} as for the getter above. */
+    public static void registerSoundEventLocation(RetromodTransformer transformer, String idClass) {
+        String soundEvent = "net/minecraft/sounds/SoundEvent";
+        String desc = "()L" + idClass + ";";
+        transformer.registerMethodRedirect(soundEvent, "getLocation", desc, soundEvent, "location", desc);
     }
 }

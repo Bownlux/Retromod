@@ -7,6 +7,7 @@ package com.retromod.core;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.retromod.inplace.WorkFolder;
 import com.retromod.util.JsonSecurity;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.ClassReader;
@@ -122,8 +123,10 @@ public final class NestedArchivePolicy {
             String name = ZipSecurity.safeEntryName(entry.getName());
             String canonicalName = ZipSecurity.canonicalEntryName(name);
             String qualifiedName = archiveKey + "!/" + name;
-            if (!names.add(canonicalName)) {
-                throw new IOException("duplicate nested JAR entry: " + qualifiedName);
+            // A repeated folder entry carries no content, so it is skipped.
+            if (!ZipSecurity.firstSighting(names, canonicalName, entry.isDirectory(),
+                    () -> "duplicate nested JAR entry: " + qualifiedName)) {
+                continue;
             }
             long contentLimit = evidence.contentLimit(name);
             if (!entry.isDirectory() && contentLimit >= 0) {
@@ -150,8 +153,10 @@ public final class NestedArchivePolicy {
             String name = ZipSecurity.safeEntryName(entry.getName());
             String canonicalName = ZipSecurity.canonicalEntryName(name);
             String qualifiedName = archiveKey + "!/" + name;
-            if (!names.add(canonicalName)) {
-                throw new IOException("duplicate nested JAR entry: " + qualifiedName);
+            // A repeated folder entry carries no content, so it is skipped.
+            if (!ZipSecurity.firstSighting(names, canonicalName, entry.isDirectory(),
+                    () -> "duplicate nested JAR entry: " + qualifiedName)) {
+                continue;
             }
             if (entry.isDirectory()) {
                 budget.reserve(0, qualifiedName);
@@ -366,7 +371,7 @@ public final class NestedArchivePolicy {
         }
         Path staged = null;
         try {
-            staged = Files.createTempFile("retromod-nested-provider-", ".jar");
+            staged = WorkFolder.createTempFile("retromod-nested-provider-", ".jar");
             Files.write(staged, nestedJar);
             return shouldPreserve(staged, budget, archiveKey);
         } finally {

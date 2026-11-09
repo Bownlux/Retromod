@@ -42,6 +42,13 @@ public final class RegistryIdBridgeSynthetic {
     private static final String L_TL = "L" + THREADLOCAL + ";";
     private static final String L_OBJ = "Ljava/lang/Object;";
 
+    /**
+     * The objects a supplier may return after its own {@code Registry.register} of the entry it
+     * builds was handed back instead of registered (see {@code LateVanillaRegistration}), as an
+     * {@code Object[]}, checked when the supplier returns.
+     */
+    public static final String HANDED = "HANDED";
+
     /** Flag to stamp blocks and items in registered static fields through {@link #INTERNAL}. */
     public static final String STATIC_FIELDS_FLAG = "registry-id-static-fields";
     /** The same flag for {@link #FORGE_INTERNAL} on a Forge host. */
@@ -62,9 +69,9 @@ public final class RegistryIdBridgeSynthetic {
     public static final String LEGACY_BIOMES = "LEGACY_BIOMES";
     /** Painting variant suppliers, which 1.21 also made data, kept the same way for the same pack. */
     public static final String LEGACY_PAINTINGS = "LEGACY_PAINTINGS";
-    /** Converts Forge loot modifier serializers for NeoForge; both register wrappers call it. */
+    /** Converts an old mod's codec for a registry that holds map codecs; every register wrapper calls it. */
     public static final String LOOT_MODIFIER_CODECS = "com/retromod/shim/forge/embedded/LegacyLootModifierCodecs";
-    /** The 1.20.5 to 1.21.11 biome recorder, beside {@link #INTERNAL} in the same embedded package. */
+    /** The 1.20.5 to 1.21.10 biome recorder, beside {@link #INTERNAL} in the same embedded package. */
     public static final String BIOME_RECORDER = "com/retromod/shim/forge/embedded/LegacyBiomeRecorder";
 
     /**
@@ -72,8 +79,149 @@ public final class RegistryIdBridgeSynthetic {
      * beside {@link #INTERNAL} or {@link #BIOME_RECORDER}.
      */
     public static void registerWrapperHelpers(com.retromod.core.RetromodTransformer transformer) {
-        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, LOOT_MODIFIER_CODECS,
-                com.retromod.shim.forge.embedded.LegacyLootModifierCodecs.class);
+        com.retromod.shim.common.LegacyRegistryMapCodecBridge.registerClasses(transformer);
+    }
+
+    /** System property that holds the per-thread key slot every embedded NeoForge and Forge bridge copy shares. */
+    public static final String SHARED_CURRENT_KEY = "retromod.shared.registry-id.current.v1";
+    /** System property that holds the shared per-thread slot for {@link #HANDED}. */
+    public static final String SHARED_HANDED_KEY = "retromod.shared.registry-id.handed.v1";
+
+    /** Sets a bridge's {@code CURRENT} and {@code HANDED} to the slots every copy shares, in its static initializer. */
+    static void emitSharedSlots(MethodVisitor ci, String owner) {
+        // Each translated jar embeds its own bridge copy. An addon's supplier often builds a
+        // library's item, whose constructor reads the library's copy, so the key must sit in a slot
+        // both copies reach without a shared class: the JDK's system properties, as on Fabric (#249).
+        emitSharedThreadLocal(ci, owner, "CURRENT", SHARED_CURRENT_KEY);
+        // A library's own Registry.register hands its object back to the copy that runs the supplier.
+        // SAVED stays per copy, because an initializer's isolate and restore always call the same copy.
+        emitSharedThreadLocal(ci, owner, HANDED, SHARED_HANDED_KEY);
+    }
+
+    /** {@code owner.field = } the ThreadLocal under {@code key}, or a private one when the key holds something else. */
+    private static void emitSharedThreadLocal(MethodVisitor ci, String owner, String field, String key) {
+        // System.getProperties().putIfAbsent(key, new ThreadLocal());
+        ci.visitMethodInsn(INVOKESTATIC, "java/lang/System", "getProperties", "()Ljava/util/Properties;", false);
+        ci.visitLdcInsn(key);
+        ci.visitTypeInsn(NEW, THREADLOCAL);
+        ci.visitInsn(DUP);
+        ci.visitMethodInsn(INVOKESPECIAL, THREADLOCAL, "<init>", "()V", false);
+        ci.visitMethodInsn(INVOKEVIRTUAL, "java/util/Properties", "putIfAbsent", "(" + L_OBJ + L_OBJ + ")" + L_OBJ, false);
+        ci.visitInsn(POP);
+        // Something else under the key leaves this copy with its own slot, the behavior before sharing.
+        Label shared = new Label();
+        ci.visitMethodInsn(INVOKESTATIC, "java/lang/System", "getProperties", "()Ljava/util/Properties;", false);
+        ci.visitLdcInsn(key);
+        ci.visitMethodInsn(INVOKEVIRTUAL, "java/util/Properties", "get", "(" + L_OBJ + ")" + L_OBJ, false);
+        ci.visitInsn(DUP);
+        ci.visitTypeInsn(INSTANCEOF, THREADLOCAL);
+        ci.visitJumpInsn(IFNE, shared);
+        ci.visitInsn(POP);
+        ci.visitTypeInsn(NEW, THREADLOCAL);
+        ci.visitInsn(DUP);
+        ci.visitMethodInsn(INVOKESPECIAL, THREADLOCAL, "<init>", "()V", false);
+        ci.visitLabel(shared);
+        ci.visitTypeInsn(CHECKCAST, THREADLOCAL);
+        ci.visitFieldInsn(PUTSTATIC, owner, field, L_TL);
+    }
+
+    /**
+     * Runs {@code this.sup} with CURRENT holding the key in {@code keyLocal} and stores its result
+     * in {@code resultLocal}. CURRENT and HANDED are cleared even when the supplier throws, so a
+     * stale key cannot make a later registration on this thread look like the entry being built.
+     */
+    static void emitSupplierCall(MethodVisitor mv, String owner, int keyLocal, int resultLocal,
+            int throwableLocal) {
+        Label start = new Label();
+        Label end = new Label();
+        Label failed = new Label();
+        Label done = new Label();
+        mv.visitTryCatchBlock(start, end, failed, null);
+        mv.visitFieldInsn(GETSTATIC, owner, "CURRENT", L_TL);
+        mv.visitVarInsn(ALOAD, keyLocal);
+        mv.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "set", "(" + L_OBJ + ")V", false);
+        mv.visitLabel(start);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitFieldInsn(GETFIELD, owner, "sup", L_SUP);
+        mv.visitMethodInsn(INVOKEINTERFACE, SUPPLIER, "get", "()" + L_OBJ, true);
+        mv.visitVarInsn(ASTORE, resultLocal);
+        mv.visitLabel(end);
+        mv.visitJumpInsn(GOTO, done);
+        mv.visitLabel(failed);
+        mv.visitVarInsn(ASTORE, throwableLocal);
+        mv.visitFieldInsn(GETSTATIC, owner, "CURRENT", L_TL);
+        mv.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "remove", "()V", false);
+        mv.visitFieldInsn(GETSTATIC, owner, HANDED, L_TL);
+        mv.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "remove", "()V", false);
+        mv.visitVarInsn(ALOAD, throwableLocal);
+        mv.visitInsn(ATHROW);
+        mv.visitLabel(done);
+        mv.visitFieldInsn(GETSTATIC, owner, "CURRENT", L_TL);
+        mv.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "remove", "()V", false);
+        mv.visitVarInsn(ALOAD, resultLocal);
+        mv.visitVarInsn(ALOAD, keyLocal);
+        mv.visitMethodInsn(INVOKESTATIC, owner, "checkHanded", "(" + L_OBJ + L_OBJ + ")" + L_OBJ, false);
+        mv.visitVarInsn(ASTORE, resultLocal);
+    }
+
+    /**
+     * {@code static Object checkHanded(Object returned, Object key)}: a supplier that registered one
+     * object itself and returns another would leave the registry holding something else, so it
+     * fails, as the duplicate entry did on Forge 1.20.1.
+     */
+    static void emitCheckHanded(ClassWriter cw, String owner) {
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "checkHanded",
+                "(" + L_OBJ + L_OBJ + ")" + L_OBJ, null, null);
+        mv.visitCode();
+        Label same = new Label();
+        Label next = new Label();
+        Label scan = new Label();
+        mv.visitFieldInsn(GETSTATIC, owner, HANDED, L_TL);
+        mv.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "get", "()" + L_OBJ, false);
+        mv.visitVarInsn(ASTORE, 2);
+        mv.visitFieldInsn(GETSTATIC, owner, HANDED, L_TL);
+        mv.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "remove", "()V", false);
+        mv.visitVarInsn(ALOAD, 2);
+        mv.visitJumpInsn(IFNULL, same);
+        // Any of the accepted objects passes; locals: 2 the array, 3 the index.
+        mv.visitInsn(ICONST_0);
+        mv.visitVarInsn(ISTORE, 3);
+        mv.visitLabel(scan);
+        mv.visitVarInsn(ILOAD, 3);
+        mv.visitVarInsn(ALOAD, 2);
+        mv.visitTypeInsn(CHECKCAST, "[Ljava/lang/Object;");
+        mv.visitInsn(ARRAYLENGTH);
+        mv.visitJumpInsn(IF_ICMPGE, next);
+        mv.visitVarInsn(ALOAD, 2);
+        mv.visitTypeInsn(CHECKCAST, "[Ljava/lang/Object;");
+        mv.visitVarInsn(ILOAD, 3);
+        mv.visitInsn(AALOAD);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitJumpInsn(IF_ACMPEQ, same);
+        mv.visitIincInsn(3, 1);
+        mv.visitJumpInsn(GOTO, scan);
+        mv.visitLabel(next);
+        mv.visitTypeInsn(NEW, "java/lang/IllegalStateException");
+        mv.visitInsn(DUP);
+        mv.visitTypeInsn(NEW, "java/lang/StringBuilder");
+        mv.visitInsn(DUP);
+        mv.visitLdcInsn("The deferred register supplier for ");
+        mv.visitMethodInsn(INVOKESPECIAL, "java/lang/StringBuilder", "<init>", "(Ljava/lang/String;)V", false);
+        mv.visitVarInsn(ALOAD, 1);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "append",
+                "(" + L_OBJ + ")Ljava/lang/StringBuilder;", false);
+        mv.visitLdcInsn(" registered one object and returned a different one. The id can hold only one;"
+                + " report this with the mod and its version.");
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "append",
+                "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "toString", "()Ljava/lang/String;", false);
+        mv.visitMethodInsn(INVOKESPECIAL, "java/lang/IllegalStateException", "<init>", "(Ljava/lang/String;)V", false);
+        mv.visitInsn(ATHROW);
+        mv.visitLabel(same);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     /** A ClassWriter that never needs the (absent) MC/NeoForge class hierarchy for frame computation. */
@@ -93,18 +241,16 @@ public final class RegistryIdBridgeSynthetic {
                 new String[]{FUNCTION});
 
         cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "CURRENT", L_TL, null, null).visitEnd();
+        cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, HANDED, L_TL, null, null).visitEnd();
         cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, LEGACY_BIOMES, "Ljava/util/Map;", null, null).visitEnd();
         cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, LEGACY_PAINTINGS, "Ljava/util/Map;", null, null).visitEnd();
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "sup", L_SUP, null, null).visitEnd();
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "key", L_RK, null, null).visitEnd();
 
-        // static { CURRENT = new ThreadLocal(); }
+        // static { CURRENT and HANDED from the shared slots; }
         MethodVisitor ci = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null);
         ci.visitCode();
-        ci.visitTypeInsn(NEW, THREADLOCAL);
-        ci.visitInsn(DUP);
-        ci.visitMethodInsn(INVOKESPECIAL, THREADLOCAL, "<init>", "()V", false);
-        ci.visitFieldInsn(PUTSTATIC, INTERNAL, "CURRENT", L_TL);
+        emitSharedSlots(ci, INTERNAL);
         // SAVED holds the ids an isolated static initializer sets aside.
         com.retromod.shim.common.StaticFieldIdStamper.emitSavedInit(ci, INTERNAL);
         ci.visitTypeInsn(NEW, "java/util/LinkedHashMap");
@@ -138,24 +284,16 @@ public final class RegistryIdBridgeSynthetic {
         c.visitMaxs(0, 0);
         c.visitEnd();
 
-        // Object apply(Object id): CURRENT.set(ResourceKey.create(this.key, (Identifier) id));
-        //                          Object r = this.sup.get(); CURRENT.remove(); return r;
-        // (thread-local leaks only if the supplier throws; the registration has already failed then.)
+        // Object apply(Object id): runs this.sup with CURRENT holding ResourceKey.create(this.key, id).
         MethodVisitor a = cw.visitMethod(ACC_PUBLIC, "apply", "(" + L_OBJ + ")" + L_OBJ, null, null);
         a.visitCode();
-        a.visitFieldInsn(GETSTATIC, INTERNAL, "CURRENT", L_TL);
         a.visitVarInsn(ALOAD, 0);
         a.visitFieldInsn(GETFIELD, INTERNAL, "key", L_RK);
         a.visitVarInsn(ALOAD, 1);
         a.visitTypeInsn(CHECKCAST, IDENTIFIER);
         a.visitMethodInsn(INVOKESTATIC, RK, "create", "(" + L_RK + L_ID + ")" + L_RK, false);
-        a.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "set", "(" + L_OBJ + ")V", false);
-        a.visitVarInsn(ALOAD, 0);
-        a.visitFieldInsn(GETFIELD, INTERNAL, "sup", L_SUP);
-        a.visitMethodInsn(INVOKEINTERFACE, SUPPLIER, "get", "()" + L_OBJ, true);
-        a.visitVarInsn(ASTORE, 2);
-        a.visitFieldInsn(GETSTATIC, INTERNAL, "CURRENT", L_TL);
-        a.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "remove", "()V", false);
+        a.visitVarInsn(ASTORE, 3);
+        emitSupplierCall(a, INTERNAL, 3, 2, 4);
         // From 26.1 a 1.21 recipe serializer is no longer a RecipeSerializer, so the registry takes
         // it adapted, as Registry.register does. Before 26.1 it still is one and stays as it is.
         Label registered = new Label();
@@ -214,6 +352,7 @@ public final class RegistryIdBridgeSynthetic {
         emitApply(cw, INTERNAL, "applyItem", IP, L_IP, "ITEM");
         // A block or item stored in a registered static field gets its id through these instead.
         emitEnterLeave(cw, INTERNAL);
+        emitCheckHanded(cw, INTERNAL);
         com.retromod.shim.common.StaticFieldIdStamper.emitIsolation(cw, INTERNAL);
 
         // block Properties factories -> applyBlock(<original>())
@@ -228,9 +367,10 @@ public final class RegistryIdBridgeSynthetic {
     }
 
     /**
-     * The bridge for NeoForge 1.20.5 to 1.21.11, which need no registry id on properties but also
-     * never build a data-driven registry's entries: {@code register} passes the call through and
-     * keeps biome suppliers for the legacy worldgen store, which reads them by this class's name.
+     * The bridge for NeoForge 1.20.5 to 1.21.10, which never build a data-driven registry's entries:
+     * {@code register} passes the call through and keeps biome suppliers for the legacy worldgen
+     * store, which reads them by this class's name. It stamps no registry id: 1.21.2 to 1.21.10 need
+     * one, but the full bridge names {@code Identifier}, which only 1.21.11 and newer have.
      */
     public static byte[] generateBiomeRecorder() {
         return generateBiomeRecorder(false);
@@ -318,14 +458,19 @@ public final class RegistryIdBridgeSynthetic {
     }
 
     /**
-     * At the start of {@code register}: {@code sup = LegacyLootModifierCodecs.serializer(dr.getRegistryKey(), sup)},
-     * so a Forge loot modifier serializer reaches NeoForge's registry as the {@code MapCodec} it reads.
+     * At the start of {@code register}: {@code sup = LegacyRegistryMapCodec.serializer(dr.getRegistryKey(), sup)},
+     * so an old codec reaches a registry of map codecs, such as a loot modifier serializer's, as one.
      */
     private static void emitLootModifierSerializer(MethodVisitor r) {
+        emitLootModifierSerializer(r, DR);
+    }
+
+    private static void emitLootModifierSerializer(MethodVisitor r, String deferredRegister) {
         r.visitVarInsn(ALOAD, 0);
-        r.visitMethodInsn(INVOKEVIRTUAL, DR, "getRegistryKey", "()" + L_RK, false);
+        r.visitMethodInsn(INVOKEVIRTUAL, deferredRegister, "getRegistryKey", "()" + L_RK, false);
         r.visitVarInsn(ALOAD, 2);
-        r.visitMethodInsn(INVOKESTATIC, LOOT_MODIFIER_CODECS, "serializer", "(" + L_OBJ + L_SUP + ")" + L_SUP, false);
+        r.visitMethodInsn(INVOKESTATIC, com.retromod.shim.common.LegacyRegistryMapCodecBridge.CLASS, "serializer",
+                "(" + L_OBJ + L_SUP + ")" + L_SUP, false);
         r.visitVarInsn(ASTORE, 2);
     }
 
@@ -430,9 +575,10 @@ public final class RegistryIdBridgeSynthetic {
 
     public static final String FORGE_REGISTER_DESC = "(" + L_FDR + "Ljava/lang/String;" + L_SUP + ")" + L_FRO;
 
-    /** Register the Forge-variant synthetic + redirects (call from the Forge 26.2 chain only). */
+    /** Registers the Forge bridge and its redirects; the Forge 1.21.11 and 26.1 shims call it. */
     public static void registerForgeRedirects(com.retromod.core.RetromodTransformer t) {
         t.registerSyntheticClass(FORGE_INTERNAL, generateForge());
+        registerWrapperHelpers(t);
         // Also stamp blocks and items the mod stores in registered static fields.
         t.enablePostProcess(FORGE_STATIC_FIELDS_FLAG);
         final String B = FORGE_INTERNAL;
@@ -456,15 +602,13 @@ public final class RegistryIdBridgeSynthetic {
                 new String[]{SUPPLIER});
 
         cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "CURRENT", L_TL, null, null).visitEnd();
+        cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, HANDED, L_TL, null, null).visitEnd();
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "sup", L_SUP, null, null).visitEnd();
         cw.visitField(ACC_PUBLIC, "ro", L_FRO, null, null).visitEnd();
 
         MethodVisitor ci = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null);
         ci.visitCode();
-        ci.visitTypeInsn(NEW, THREADLOCAL);
-        ci.visitInsn(DUP);
-        ci.visitMethodInsn(INVOKESPECIAL, THREADLOCAL, "<init>", "()V", false);
-        ci.visitFieldInsn(PUTSTATIC, FORGE_INTERNAL, "CURRENT", L_TL);
+        emitSharedSlots(ci, FORGE_INTERNAL);
         // SAVED holds the ids an isolated static initializer sets aside.
         com.retromod.shim.common.StaticFieldIdStamper.emitSavedInit(ci, FORGE_INTERNAL);
         ci.visitInsn(RETURN);
@@ -482,20 +626,14 @@ public final class RegistryIdBridgeSynthetic {
         c.visitMaxs(0, 0);
         c.visitEnd();
 
-        // Object get(): CURRENT.set(ro.getKey()); Object r = sup.get(); CURRENT.remove(); return r;
+        // Object get(): runs sup with CURRENT holding ro.getKey().
         MethodVisitor g = cw.visitMethod(ACC_PUBLIC, "get", "()" + L_OBJ, null, null);
         g.visitCode();
-        g.visitFieldInsn(GETSTATIC, FORGE_INTERNAL, "CURRENT", L_TL);
         g.visitVarInsn(ALOAD, 0);
         g.visitFieldInsn(GETFIELD, FORGE_INTERNAL, "ro", L_FRO);
         g.visitMethodInsn(INVOKEVIRTUAL, FRO, "getKey", "()" + L_RK, false);
-        g.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "set", "(" + L_OBJ + ")V", false);
-        g.visitVarInsn(ALOAD, 0);
-        g.visitFieldInsn(GETFIELD, FORGE_INTERNAL, "sup", L_SUP);
-        g.visitMethodInsn(INVOKEINTERFACE, SUPPLIER, "get", "()" + L_OBJ, true);
-        g.visitVarInsn(ASTORE, 1);
-        g.visitFieldInsn(GETSTATIC, FORGE_INTERNAL, "CURRENT", L_TL);
-        g.visitMethodInsn(INVOKEVIRTUAL, THREADLOCAL, "remove", "()V", false);
+        g.visitVarInsn(ASTORE, 2);
+        emitSupplierCall(g, FORGE_INTERNAL, 2, 1, 3);
         // An old recipe serializer goes in adapted, as on NeoForge. Left raw, every recipe of its
         // type throws ClassCastException in the recipe reload and the world cannot load.
         Label registered = new Label();
@@ -523,6 +661,8 @@ public final class RegistryIdBridgeSynthetic {
         MethodVisitor r = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "registerForge",
                 FORGE_REGISTER_DESC, null, null);
         r.visitCode();
+        // A biome or loot modifier serializer from Forge 1.20.1 is a codec, and Forge 26.x reads map codecs.
+        emitLootModifierSerializer(r, FDR);
         r.visitTypeInsn(NEW, FORGE_INTERNAL);
         r.visitInsn(DUP);
         r.visitVarInsn(ALOAD, 2);
@@ -546,6 +686,7 @@ public final class RegistryIdBridgeSynthetic {
         emitApply(cw, FORGE_INTERNAL, "applyBlock", BBP, L_BBP, "BLOCK");
         emitApply(cw, FORGE_INTERNAL, "applyItem", IP, L_IP, "ITEM");
         emitEnterLeave(cw, FORGE_INTERNAL);
+        emitCheckHanded(cw, FORGE_INTERNAL);
         com.retromod.shim.common.StaticFieldIdStamper.emitIsolation(cw, FORGE_INTERNAL);
         emitBlockFactory(cw, FORGE_INTERNAL, "blockOf", "of", "()" + L_BBP);
         emitBlockFactory(cw, FORGE_INTERNAL, "blockOfFullCopy", "ofFullCopy", "(" + L_BB + ")" + L_BBP);

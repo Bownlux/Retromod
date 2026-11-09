@@ -4,6 +4,7 @@
  */
 package com.retromod.mixin.runtime;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
@@ -58,7 +59,7 @@ public final class ValueIoBridge {
     public static Object outputTag(Object valueOutput) {
         if (valueOutput != null) {
             try {
-                Method m = valueOutput.getClass().getMethod("buildResult");
+                Method m = LegacyPublicMethods.method(valueOutput.getClass(), "buildResult");
                 if (COMPOUND_TAG.equals(m.getReturnType().getName())) {
                     Object tag = m.invoke(valueOutput);
                     if (tag != null) return tag;

@@ -4,6 +4,9 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyLog;
+
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -321,8 +324,8 @@ public final class LegacyWorldgenStore {
             if (colon <= 0 || !NAMESPACES.contains(id.substring(0, colon)) || !isSafeIdPart(id.substring(colon + 1))) continue;
             try {
                 Object variant = ((java.util.function.Supplier<?>) entry.getValue()).get();
-                int width = (Integer) variant.getClass().getMethod("width").invoke(variant);
-                int height = (Integer) variant.getClass().getMethod("height").invoke(variant);
+                int width = (Integer) LegacyPublicMethods.method(variant.getClass(), "width").invoke(variant);
+                int height = (Integer) LegacyPublicMethods.method(variant.getClass(), "height").invoke(variant);
                 Path file = root.resolve("data").resolve(id.substring(0, colon)).resolve("painting_variant")
                         .resolve(id.substring(colon + 1) + ".json");
                 Files.createDirectories(file.getParent());
@@ -353,16 +356,16 @@ public final class LegacyWorldgenStore {
                 if (setter != null) setter.invoke(effects, color[1]);
             }
             Object builder = Class.forName(biome + "Biome$BiomeBuilder", true, loader).getConstructor().newInstance();
-            builder.getClass().getMethod("hasPrecipitation", boolean.class).invoke(builder, false);
-            builder.getClass().getMethod("temperature", float.class).invoke(builder, 0.5F);
-            builder.getClass().getMethod("downfall", float.class).invoke(builder, 0.5F);
-            Object built = effects.getClass().getMethod("build").invoke(effects);
+            LegacyPublicMethods.method(builder.getClass(), "hasPrecipitation", boolean.class).invoke(builder, false);
+            LegacyPublicMethods.method(builder.getClass(), "temperature", float.class).invoke(builder, 0.5F);
+            LegacyPublicMethods.method(builder.getClass(), "downfall", float.class).invoke(builder, 0.5F);
+            Object built = LegacyPublicMethods.method(effects.getClass(), "build").invoke(effects);
             findSingleArgMethod(builder.getClass(), "specialEffects", built.getClass()).invoke(builder, built);
             Object spawns = Class.forName(biome + "MobSpawnSettings", true, loader).getField("EMPTY").get(null);
             findSingleArgMethod(builder.getClass(), "mobSpawnSettings", spawns.getClass()).invoke(builder, spawns);
             Object generation = Class.forName(biome + "BiomeGenerationSettings", true, loader).getField("EMPTY").get(null);
             findSingleArgMethod(builder.getClass(), "generationSettings", generation.getClass()).invoke(builder, generation);
-            return builder.getClass().getMethod("build").invoke(builder);
+            return LegacyPublicMethods.method(builder.getClass(), "build").invoke(builder);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
             log("could not build a plain stand-in biome: " + e);
             return null;
@@ -379,7 +382,7 @@ public final class LegacyWorldgenStore {
 
     /** The recorded suppliers in one of the register bridge's maps, or null. */
     private static Map<?, ?> deferred(String map) {
-        // RegistryIdBridge on 26.1 and newer, LegacyBiomeRecorder on NeoForge 1.20.5 to 1.21.11.
+        // RegistryIdBridge on 1.21.11 and newer, LegacyBiomeRecorder on NeoForge 1.20.5 to 1.21.10.
         for (String recorder : new String[] {"RegistryIdBridge", "LegacyBiomeRecorder"}) {
             try {
                 Class<?> bridge = Class.forName(LegacyWorldgenStore.class.getPackageName() + "." + recorder,
@@ -417,18 +420,18 @@ public final class LegacyWorldgenStore {
         try {
             Object context = Class.forName("net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext")
                     .getMethod("get").invoke(null);
-            if (context != null) return context.getClass().getMethod("getModEventBus").invoke(context);
+            if (context != null) return LegacyPublicMethods.method(context.getClass(), "getModEventBus").invoke(context);
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             // No active mod context on this thread: look the mod up by its namespace instead.
         }
         if (namespace == null) return null;
         Object modList = firstClass("net.minecraftforge.fml.ModList", "net.neoforged.fml.ModList")
                 .getMethod("get").invoke(null);
-        Object found = modList.getClass().getMethod("getModContainerById", String.class)
+        Object found = LegacyPublicMethods.method(modList.getClass(), "getModContainerById", String.class)
                 .invoke(modList, namespace);
         Object container = found instanceof java.util.Optional<?> optional ? optional.orElse(null) : null;
         if (container == null) return null;
-        Method getEventBus = container.getClass().getMethod("getEventBus");
+        Method getEventBus = LegacyPublicMethods.method(container.getClass(), "getEventBus");
         return getEventBus.invoke(container);
     }
 
@@ -436,7 +439,7 @@ public final class LegacyWorldgenStore {
         try {
             Object context = firstClass("net.minecraftforge.fml.ModLoadingContext", "net.neoforged.fml.ModLoadingContext")
                     .getMethod("get").invoke(null);
-            Object namespace = context.getClass().getMethod("getActiveNamespace").invoke(context);
+            Object namespace = LegacyPublicMethods.method(context.getClass(), "getActiveNamespace").invoke(context);
             return namespace == null ? null : namespace.toString();
         } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
             return null;
@@ -450,7 +453,7 @@ public final class LegacyWorldgenStore {
             if (with == null || (ENTRIES.isEmpty() && NAMESPACES.isEmpty())) return;
         }
         try {
-            Object packType = event.getClass().getMethod("getPackType").invoke(event);
+            Object packType = LegacyPublicMethods.method(event.getClass(), "getPackType").invoke(event);
             if (!(packType instanceof Enum<?> type) || !type.name().equals("SERVER_DATA")) return;
 
             String packId = packId();
@@ -468,7 +471,7 @@ public final class LegacyWorldgenStore {
                 return;
             }
             add.invoke(event, source);
-            log("restored " + written + " code-registered worldgen entries for "
+            info("restored " + written + " code-registered worldgen entries for "
                     + String.join(", ", NAMESPACES) + " as data pack " + packId);
         } catch (IOException | ReflectiveOperationException | LinkageError | RuntimeException e) {
             log("could not write the legacy worldgen data pack: " + e);
@@ -479,7 +482,7 @@ public final class LegacyWorldgenStore {
         try {
             Class<?> paths = firstClass("net.minecraftforge.fml.loading.FMLPaths", "net.neoforged.fml.loading.FMLPaths");
             Object gameDir = paths.getField("GAMEDIR").get(null);
-            Object path = gameDir.getClass().getMethod("get").invoke(gameDir);
+            Object path = LegacyPublicMethods.method(gameDir.getClass(), "get").invoke(gameDir);
             if (path instanceof Path resolved) return resolved;
         } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
             // Fall back to the working directory, which is the game directory on every launcher.
@@ -497,7 +500,7 @@ public final class LegacyWorldgenStore {
     }
 
     private static Method findSingleArgMethod(Class<?> owner, String name, Class<?> argument) {
-        for (Method method : owner.getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(owner)) {
             if (method.getName().equals(name) && method.getParameterCount() == 1
                     && method.getParameterTypes()[0].isAssignableFrom(argument)) {
                 return method;
@@ -507,7 +510,11 @@ public final class LegacyWorldgenStore {
     }
 
     private static void log(String message) {
-        System.out.println("[Retromod] Legacy worldgen: " + message);
+        LegacyLog.warn("Legacy worldgen: " + message);
+    }
+
+    private static void info(String message) {
+        LegacyLog.info("Legacy worldgen: " + message);
     }
 
     // ---- test hooks -----------------------------------------------------------------------

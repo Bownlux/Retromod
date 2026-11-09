@@ -8,14 +8,21 @@ import com.retromod.core.RetromodTransformer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.MethodNode;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -31,11 +38,31 @@ class MixinBlocklistTest {
         MixinBlocklist.resetForTesting();
     }
 
-    /** A minimal @Mixin class with a blocked handler, an injector helper, and a plain helper. */
+    private static final String FIXTURE_TARGET = "com/example/Target";
+    private static final String FIXTURE_INTERFACE = "com/example/AddedInterface";
+
+    /** A minimal @Mixin class with a blocked handler, an injector, members, and a plain helper. */
     private static byte[] mixinClass(String internalName) {
         ClassWriter cw = new ClassWriter(0);
-        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null);
-        cw.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false).visitEnd();
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object",
+                new String[]{FIXTURE_INTERFACE});
+        AnnotationVisitor mixin = cw.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        AnnotationVisitor targets = mixin.visitArray("value");
+        targets.visit(null, Type.getObjectType(FIXTURE_TARGET));
+        targets.visitEnd();
+        mixin.visitEnd();
+
+        // @Shadow field and @Accessor method: members, not handlers, so a handler strip keeps them
+        FieldVisitor shadow = cw.visitField(Opcodes.ACC_PRIVATE, "shadowedValue", "I", null, null);
+        shadow.visitAnnotation("Lorg/spongepowered/asm/mixin/Shadow;", false).visitEnd();
+        shadow.visitEnd();
+        MethodVisitor accessor = cw.visitMethod(Opcodes.ACC_PUBLIC, "getShadowedValue", "()I", null, null);
+        accessor.visitAnnotation("Lorg/spongepowered/asm/mixin/gen/Accessor;", false).visitEnd();
+        accessor.visitCode();
+        accessor.visitInsn(Opcodes.ICONST_0);
+        accessor.visitInsn(Opcodes.IRETURN);
+        accessor.visitMaxs(1, 1);
+        accessor.visitEnd();
 
         MethodVisitor ctor = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
         ctor.visitCode();
@@ -74,11 +101,15 @@ class MixinBlocklistTest {
     }
 
     private static Set<String> methodNames(byte[] bytes) {
+        Set<String> names = new HashSet<>();
+        for (MethodNode m : classNode(bytes).methods) names.add(m.name);
+        return names;
+    }
+
+    private static ClassNode classNode(byte[] bytes) {
         ClassNode cn = new ClassNode();
         new ClassReader(bytes).accept(cn, 0);
-        Set<String> names = new HashSet<>();
-        for (MethodNode m : cn.methods) names.add(m.name);
-        return names;
+        return cn;
     }
 
     @Test
@@ -115,16 +146,38 @@ class MixinBlocklistTest {
     }
 
     @Test
-    @DisplayName("Whole-class (empty methods): every injector dropped, helpers/ctor kept")
+    @DisplayName("No methods: every injector dropped, accessors, shadows, helpers and target kept")
     void wholeClassStripsInjectorsKeepsHelpers() {
         MixinBlocklist.setForTesting(Map.of("test/BarMixin", Set.of())); // empty means all injectors
         var t = new MixinCompatibilityTransformer(RetromodTransformer.getInstance());
 
-        Set<String> names = methodNames(t.transformMixinClass(mixinClass("test/BarMixin")));
+        byte[] out = t.transformMixinClass(mixinClass("test/BarMixin"));
+        Set<String> names = methodNames(out);
         assertFalse(names.contains("deeperdarker$decrementStackOnServer"), "MixinExtras handler stripped");
         assertFalse(names.contains("onSomething"), "@Inject handler stripped");
         assertTrue(names.contains("plainHelper"), "plain helper kept");
         assertTrue(names.contains("<init>"), "constructor kept");
+
+        // docs/troubleshooting.md promises these stay; only "strip": "class" disables the whole mixin.
+        ClassNode node = classNode(out);
+        assertTrue(names.contains("getShadowedValue"), "@Accessor method kept without \"strip\": \"class\"");
+        assertTrue(node.fields.stream().anyMatch(f -> f.name.equals("shadowedValue")), "@Shadow field kept");
+        assertTrue(node.interfaces.contains(FIXTURE_INTERFACE), "the interface the mixin adds is kept");
+        assertTrue(hasMixinValueTargets(out), "the original @Mixin target is kept");
+        assertTrue(mixinStringTargets(out).isEmpty(),
+                "no retromod/stripped placeholder target without \"strip\": \"class\"");
+    }
+
+    @Test
+    @DisplayName("Troubleshooting page shows the whole-mixin switch and the version range keys")
+    void troubleshootingDocumentsWholeMixinSwitch() throws IOException {
+        String page = Files.readString(Path.of("docs/troubleshooting.md"));
+
+        // MixinBlocklist reads these keys; leaving out "methods" does not disable a whole mixin.
+        for (String key : List.of("\"strip\": \"class\"", "\"targetAtLeast\"", "\"targetAtMost\"")) {
+            assertTrue(page.contains(key),
+                    "docs/troubleshooting.md should show " + key + " in the mixin blocklist example");
+        }
     }
 
     @Test

@@ -4,6 +4,7 @@
  */
 package com.retromod.mixin.runtime;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.AbstractMap;
@@ -84,7 +85,7 @@ public final class AttributeSupplierBuilderBridge {
 
         private Object invoke(String name, Class<?>[] parameters, Object... arguments) {
             try {
-                Method method = builder.getClass().getMethod(name, parameters);
+                Method method = LegacyPublicMethods.method(builder.getClass(), name, parameters);
                 return method.invoke(builder, arguments);
             } catch (ReflectiveOperationException | RuntimeException e) {
                 throw new UnsupportedOperationException(

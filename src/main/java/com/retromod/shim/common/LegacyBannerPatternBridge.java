@@ -6,6 +6,7 @@ package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.GeneratedLog;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
@@ -104,11 +105,13 @@ public final class LegacyBannerPatternBridge {
         create.visitJumpInsn(GOTO, done);
         create.visitLabel(failed);
         create.visitVarInsn(ASTORE, 5);
-        create.visitFieldInsn(GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;");
+        // The pattern still works as an object, so the failure is a warning with its cause.
+        GeneratedLog.pushLogger(create);
         create.visitLdcInsn("[Retromod] Could not register the old banner pattern ");
         create.visitVarInsn(ALOAD, 1);
         create.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat", "(Ljava/lang/String;)Ljava/lang/String;", false);
-        create.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+        create.visitVarInsn(ALOAD, 5);
+        GeneratedLog.warnWithCause(create);
         create.visitLabel(done);
         create.visitVarInsn(ALOAD, 4);
         create.visitInsn(ARETURN);

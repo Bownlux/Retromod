@@ -79,7 +79,7 @@ public final class LegacyCauldronInteractions {
                 Object dispatcher = Class.forName(DISPATCHERS, true, loader).getField(name).get(null);
                 return writeThrough(dispatcher, interaction, Class.forName(ITEM, false, loader));
             }
-            return (Map<?, ?>) table.getClass().getMethod("map").invoke(table);
+            return (Map<?, ?>) LegacyPublicMethods.method(table.getClass(), "map").invoke(table);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
             throw new IllegalStateException("Retromod could not find the vanilla cauldron table " + name, e);
         }
@@ -127,7 +127,7 @@ public final class LegacyCauldronInteractions {
     private static Object namedMap(Method newMap, Map<?, ?> legacy) throws ReflectiveOperationException {
         // The name only labels the map for the block codec; each old cauldron gets its own.
         Object interactions = newMap.invoke(null, "retromod_legacy_cauldron_" + NEXT_NAME.incrementAndGet());
-        Map<Object, Object> map = (Map<Object, Object>) interactions.getClass().getMethod("map").invoke(interactions);
+        Map<Object, Object> map = (Map<Object, Object>) LegacyPublicMethods.method(interactions.getClass(), "map").invoke(interactions);
         map.putAll(legacy);
         return interactions;
     }

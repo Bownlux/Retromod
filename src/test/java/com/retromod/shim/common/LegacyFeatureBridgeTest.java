@@ -46,7 +46,7 @@ class LegacyFeatureBridgeTest {
                 List.of(subclass("mod/RockFeature", LegacyFeatureBridge.FEATURE), registration));
 
         assertEquals(List.of("FEATURE_TYPE", "FEATURE"),
-                fieldsRead(LegacyFeatureBridge.apply(registration, "mod/ModFeatures")));
+                fieldsRead(LegacyFeatureBridge.apply(registration)));
     }
 
     @Test
@@ -55,7 +55,7 @@ class LegacyFeatureBridgeTest {
         byte[] registration = readsRegistries("other/NewFeatures", "FEATURE");
         LegacyFeatureBridge.markOldModelJar(List.of(subclass("other/Plain", "java/lang/Object"), registration));
 
-        assertSame(registration, LegacyFeatureBridge.apply(registration, "other/NewFeatures"));
+        assertSame(registration, LegacyFeatureBridge.apply(registration));
     }
 
     @Test

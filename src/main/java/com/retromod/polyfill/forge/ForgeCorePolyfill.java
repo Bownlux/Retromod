@@ -7,6 +7,8 @@ package com.retromod.polyfill.forge;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.polyfill.PolyfillProvider;
 import com.retromod.util.McReflect;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Polyfill for removed Forge core APIs.
@@ -14,6 +16,9 @@ import com.retromod.util.McReflect;
  * capability system (LazyOptional, ICapabilityProvider).
  */
 public class ForgeCorePolyfill implements PolyfillProvider {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
+    private static final String MINECRAFT_FORGE = "net/minecraftforge/common/MinecraftForge";
 
     @Override
     public String getName() {
@@ -57,17 +62,21 @@ public class ForgeCorePolyfill implements PolyfillProvider {
         // Forge_1_20_to_NeoForge_1_21 maps it to NeoForge (which has EVENT_BUS), and on a Forge
         // host it is live, so this redirect exists only for hosts where the class is absent.
         // Probes use initialize=false (pitfall #14: never initialize an MC class).
-        // On NeoForge, ForgeNeoForgeApiBridge supplies the whole capability API under Forge's names,
-        // and a redirect here would rename the mod's references before those stand-ins apply.
-        if (!McReflect.isNeoForge()) {
+        if (McReflect.isForgeTarget()) {
+            // Every Forge host checked (1.20.1, 1.21.11, 26.2, 26.3) ships all three. Offline the
+            // probe cannot see Forge at all, so a Forge target decides instead of the probe.
+            LOGGER.debug("Forge target: keeping MinecraftForge, ICapabilityProvider and LazyOptional "
+                    + "(the class probe found MinecraftForge: {})", hostHas(MINECRAFT_FORGE));
+        } else if (!McReflect.isNeoForge()) {
+            // Not NeoForge either: there ForgeNeoForgeApiBridge supplies the capability API under
+            // Forge's names, and a redirect here would rename the mod's references before it applies.
             redirectWhereAbsent(transformer,
                     "net/minecraftforge/common/capabilities/ICapabilityProvider",
                     "com/retromod/shim/api/forge/embedded/CapabilityProviderShim");
             redirectWhereAbsent(transformer,
                     "net/minecraftforge/common/util/LazyOptional",
                     "com/retromod/shim/api/forge/embedded/LazyOptionalShim");
-            redirectWhereAbsent(transformer,
-                    "net/minecraftforge/common/MinecraftForge",
+            redirectWhereAbsent(transformer, MINECRAFT_FORGE,
                     "com/retromod/shim/api/forge/embedded/ForgeCapabilitiesShim");
         }
 

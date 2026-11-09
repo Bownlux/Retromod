@@ -5,6 +5,7 @@
 package com.retromod.mapping;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -94,7 +95,7 @@ public final class TargetSrgMapper {
             return EMPTY;
         }
 
-        LOGGER.info("Loaded Forge {} target SRG mappings for {} methods and {} fields",
+        LOGGER.debug(RetromodLog.DETAIL, "Loaded Forge {} target SRG mappings for {} methods and {} fields",
                 version, methods.size(), fields.size());
         return new TargetSrgMapper(Map.copyOf(methods), Map.copyOf(fields));
     }

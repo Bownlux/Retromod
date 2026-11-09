@@ -6,6 +6,7 @@ package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.GeneratedLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -36,7 +37,7 @@ import static org.objectweb.asm.Opcodes.*;
  * </ul>
  *
  * <p>The shapes were checked against the 26.1.2 jar, so the bridge registers nothing on older
- * hosts. 26.3 removed {@code SignItem}, so an old sign item there still needs a real port.
+ * hosts. 26.3 removed {@code SignItem}; there {@link LegacyRemovedBlockItems} rebuilds it with the old constructors.
  */
 public final class LegacyItemConstructorBridge {
 
@@ -72,12 +73,18 @@ public final class LegacyItemConstructorBridge {
 
     static void register(RetromodTransformer transformer, String hostVersion) {
         if (!RetromodVersion.isUnobfuscatedTarget(hostVersion)) return;
+        // From 26.3 the rebuilt SignItem keeps this constructor itself (LegacyRemovedBlockItems), and the
+        // factory class must not name the removed class.
+        boolean hostHasSignItem = !LegacyRemovedBlockItems.hostLacks(
+                com.retromod.core.ClassResourceInspector::read, SIGN_ITEM, hostVersion);
         if (!transformer.getSyntheticClasses().containsKey(INTERNAL)) {
             transformer.registerSyntheticClass(BOAT_TYPE, generateBoatType());
-            transformer.registerSyntheticClass(INTERNAL, generate());
+            transformer.registerSyntheticClass(INTERNAL, generate(hostHasSignItem));
         }
-        transformer.registerConstructorRedirect(SIGN_ITEM, OLD_SIGN_DESC,
-                INTERNAL, "signItem", OLD_SIGN_DESC.replace(")V", ")L" + SIGN_ITEM + ";"));
+        if (hostHasSignItem) {
+            transformer.registerConstructorRedirect(SIGN_ITEM, OLD_SIGN_DESC,
+                    INTERNAL, "signItem", OLD_SIGN_DESC.replace(")V", ")L" + SIGN_ITEM + ";"));
+        }
         transformer.registerConstructorRedirect(STANDING_ITEM, OLD_STANDING_DESC,
                 INTERNAL, "standingAndWallBlockItem",
                 OLD_STANDING_DESC.replace(")V", ")L" + STANDING_ITEM + ";"));
@@ -93,6 +100,10 @@ public final class LegacyItemConstructorBridge {
     }
 
     public static byte[] generate() {
+        return generate(true);
+    }
+
+    static byte[] generate(boolean withSignItem) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES) {
             @Override
             protected String getCommonSuperClass(String first, String second) {
@@ -104,19 +115,21 @@ public final class LegacyItemConstructorBridge {
 
         // static SignItem signItem(Properties p, Block standing, Block wall) {
         //     return new SignItem(standing, wall, p); }
-        MethodVisitor sign = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "signItem",
-                OLD_SIGN_DESC.replace(")V", ")L" + SIGN_ITEM + ";"), null, null);
-        sign.visitCode();
-        sign.visitTypeInsn(NEW, SIGN_ITEM);
-        sign.visitInsn(DUP);
-        sign.visitVarInsn(ALOAD, 1);
-        sign.visitVarInsn(ALOAD, 2);
-        sign.visitVarInsn(ALOAD, 0);
-        sign.visitMethodInsn(INVOKESPECIAL, SIGN_ITEM, "<init>",
-                "(" + BLOCK + BLOCK + ITEM_PROPS + ")V", false);
-        sign.visitInsn(ARETURN);
-        sign.visitMaxs(0, 0);
-        sign.visitEnd();
+        if (withSignItem) {
+            MethodVisitor sign = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "signItem",
+                    OLD_SIGN_DESC.replace(")V", ")L" + SIGN_ITEM + ";"), null, null);
+            sign.visitCode();
+            sign.visitTypeInsn(NEW, SIGN_ITEM);
+            sign.visitInsn(DUP);
+            sign.visitVarInsn(ALOAD, 1);
+            sign.visitVarInsn(ALOAD, 2);
+            sign.visitVarInsn(ALOAD, 0);
+            sign.visitMethodInsn(INVOKESPECIAL, SIGN_ITEM, "<init>",
+                    "(" + BLOCK + BLOCK + ITEM_PROPS + ")V", false);
+            sign.visitInsn(ARETURN);
+            sign.visitMaxs(0, 0);
+            sign.visitEnd();
+        }
 
         // static StandingAndWallBlockItem standingAndWallBlockItem(Block s, Block w, Properties p,
         //     Direction d) { return new StandingAndWallBlockItem(s, w, d, p); }
@@ -261,7 +274,7 @@ public final class LegacyItemConstructorBridge {
         warn.visitVarInsn(ALOAD, 0);
         warn.visitInsn(ICONST_1);
         warn.visitFieldInsn(PUTFIELD, BOAT_TYPE, "warned", "Z");
-        warn.visitFieldInsn(GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;");
+        GeneratedLog.pushLogger(warn);
         warn.visitLdcInsn("[Retromod] Boat type ");
         warn.visitVarInsn(ALOAD, 0);
         warn.visitFieldInsn(GETFIELD, BOAT_TYPE, "name", "Ljava/lang/String;");
@@ -271,8 +284,7 @@ public final class LegacyItemConstructorBridge {
                 + " a vanilla oak boat.");
         warn.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
                 "(Ljava/lang/String;)Ljava/lang/String;", false);
-        warn.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println",
-                "(Ljava/lang/String;)V", false);
+        GeneratedLog.warn(warn);
         warn.visitLabel(done);
         warn.visitInsn(RETURN);
         warn.visitMaxs(0, 0);

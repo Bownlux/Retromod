@@ -4,6 +4,7 @@
  */
 package com.retromod.mixin.runtime;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -47,7 +48,7 @@ public final class SynchedEntityDataBridge {
         Object items = readItemArray(entityData);
         if (items == null) return map;
         try {
-            Method put = map.getClass().getMethod("put", int.class, Object.class);
+            Method put = LegacyPublicMethods.method(map.getClass(), "put", int.class, Object.class);
             for (int id = 0; id < Array.getLength(items); id++) {
                 Object item = Array.get(items, id);
                 if (item != null) put.invoke(map, id, item);

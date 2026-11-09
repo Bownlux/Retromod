@@ -78,7 +78,7 @@ class LegacyEitherHolderBridgeTest {
     void everyLoaderRegistersTheBridge() {
         assertBridged("Fabric", () -> new Fabric_1_21_11_to_26_1().registerRedirects(transformer));
         assertBridged("NeoForge", () -> new NeoForge_1_21_11_to_26_1().registerRedirects(transformer));
-        // Forge assembles its own list of the shared 26.1 adaptations.
+        // Forge reaches the bridge through the common register(), like the others.
         assertBridged("Forge", () -> new Forge_1_21_11_to_26_1().registerRedirects(transformer));
     }
 

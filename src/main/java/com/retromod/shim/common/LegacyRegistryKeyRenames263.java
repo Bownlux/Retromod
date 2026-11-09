@@ -30,23 +30,32 @@ public final class LegacyRegistryKeyRenames263 {
             "CONFIGURED_CARVER", "CARVER",
             "MATERIAL_CONDITION", "MATERIAL_CONDITION_TYPE",
             "MATERIAL_RULE", "MATERIAL_RULE_TYPE");
+    // BuiltInRegistries never had CONFIGURED_FEATURE, so its FEATURE moves to FEATURE_TYPE in every jar. A jar
+    // with old features has both of its feature keys renamed earlier, by LegacyFeatureBridge.
     static final Map<String, String> BUILT_IN_REGISTRIES = Map.of(
             "CARVER", "CARVER_TYPE",
             "MATERIAL_CONDITION", "MATERIAL_CONDITION_TYPE",
             "MATERIAL_RULE", "MATERIAL_RULE_TYPE",
-            "BLOCKSTATE_PROVIDER_TYPE", "BLOCK_STATE_PROVIDER_TYPE");
+            "BLOCKSTATE_PROVIDER_TYPE", "BLOCK_STATE_PROVIDER_TYPE",
+            "FEATURE", "FEATURE_TYPE");
 
     private static volatile Boolean hostRenamed;
+    private static volatile Boolean hostDroppedBuiltInFeature;
 
     private LegacyRegistryKeyRenames263() {}
 
     /** The class with its old registry keys renamed, or the same array on an older host or when it names none. */
     public static byte[] apply(byte[] classBytes) {
         if (classBytes == null || !hostRenamedKeys()) return classBytes;
-        return rename(classBytes);
+        return rename(classBytes, hostDroppedBuiltInFeature());
     }
 
     static byte[] rename(byte[] classBytes) {
+        return rename(classBytes, true);
+    }
+
+    /** Renames the old keys; {@code builtInFeatureGone} false keeps BuiltInRegistries.FEATURE, which the host still has. */
+    static byte[] rename(byte[] classBytes, boolean builtInFeatureGone) {
         ClassNode node = new ClassNode();
         new ClassReader(classBytes).accept(node, 0);
         boolean changed = false;
@@ -57,6 +66,8 @@ public final class LegacyRegistryKeyRenames263 {
                         : field.owner.equals(BUILT_IN) ? BUILT_IN_REGISTRIES : null;
                 String renamed = renames == null ? null : renames.get(field.name);
                 if (renamed == null) continue;
+                // A host that still has BuiltInRegistries.FEATURE answers the read as written.
+                if (!builtInFeatureGone && field.owner.equals(BUILT_IN) && field.name.equals("FEATURE")) continue;
                 field.name = renamed;
                 changed = true;
             }
@@ -80,5 +91,18 @@ public final class LegacyRegistryKeyRenames263 {
         boolean renamed = registries.fields.stream().map((FieldNode f) -> f.name).anyMatch("CARVER_TYPE"::equals);
         hostRenamed = renamed;
         return renamed;
+    }
+
+    /** Read from the host once: 26.3 dropped BuiltInRegistries.FEATURE. Offline, the target version decides. */
+    static boolean hostDroppedBuiltInFeature() {
+        Boolean known = hostDroppedBuiltInFeature;
+        if (known != null) return known;
+        ClassNode builtIn = ClassResourceInspector.read(BUILT_IN);
+        if (builtIn == null) {
+            return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.3") >= 0;
+        }
+        boolean dropped = builtIn.fields.stream().noneMatch(field -> field.name.equals("FEATURE"));
+        hostDroppedBuiltInFeature = dropped;
+        return dropped;
     }
 }

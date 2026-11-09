@@ -4,10 +4,12 @@
  */
 package com.retromod.core;
 
+import com.retromod.inplace.WorkFolder;
 import com.retromod.mixin.MixinCompatibilityTransformer;
 import com.retromod.util.ArchivePublication;
 import com.retromod.util.JarSignatureSanitizer;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.*;
 import org.objectweb.asm.tree.*;
@@ -26,8 +28,8 @@ public class FabricModTransformer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-FabricTransform");
 
-    /** Per-entry extraction cap (zip-bomb guard). */
-    private static final long MAX_ENTRY_SIZE = 50 * 1024 * 1024;
+    /** Per-entry extraction cap (zip-bomb guard), shared with every other archive reader. */
+    private static final long MAX_ENTRY_SIZE = ZipSecurity.DEFAULT_MAX_ENTRY_SIZE;
     /** Loader metadata cap. These files are parsed as text and should stay small. */
     private static final long MAX_METADATA_SIZE = 2L * 1024 * 1024;
     /** Total extraction cap (zip-bomb guard). */
@@ -163,7 +165,7 @@ public class FabricModTransformer {
         String outputName = baseName + "-retromod.jar";
         Path outputJar = outputDir.resolve(outputName);
 
-        LOGGER.info("Checking Fabric mod: {}", originalName);
+        LOGGER.debug(RetromodLog.DETAIL, "Checking Fabric mod: {}", originalName);
 
         validateArchiveInput(sourceJar);
 
@@ -175,11 +177,12 @@ public class FabricModTransformer {
             return passthrough;
         }
 
-        String modMcVersion = sourceVersionIsAuthoritative
-            ? sourceMcVersion
-            : extractMinecraftVersion(sourceJar);
-        if (isNativeVersionMod(modMcVersion)) {
-            LOGGER.info("{} already targets Minecraft {}; copying it unchanged",
+        // Fabric accepts any listed range, so the mod is native when one starts at the host.
+        List<String> declaredRanges = sourceVersionIsAuthoritative
+            ? (sourceMcVersion == null ? List.of() : List.of(sourceMcVersion))
+            : readMinecraftRanges(sourceJar);
+        if (anyRangeIsNative(declaredRanges)) {
+            LOGGER.debug(RetromodLog.DETAIL, "{} already targets Minecraft {}; copying it unchanged",
                 originalName, targetMcVersion);
 
             Path directCopy = outputDir.resolve(originalName);
@@ -189,10 +192,10 @@ public class FabricModTransformer {
 
         boolean hasMixins = checkForMixins(sourceJar);
         if (hasMixins) {
-            LOGGER.info("Mixin transforms are enabled for {}", originalName);
+            LOGGER.debug(RetromodLog.DETAIL, "Mixin transforms are enabled for {}", originalName);
         }
 
-        LOGGER.info("Updating Fabric mod {} as {}", originalName, outputName);
+        LOGGER.debug(RetromodLog.DETAIL, "Updating Fabric mod {} as {}", originalName, outputName);
 
         ModEnvironmentDetector.logModEnvironment(sourceJar);
 
@@ -213,13 +216,18 @@ public class FabricModTransformer {
 
         // Extract the jar, transform its bytecode, patch fabric.mod.json, and repackage it with a
         // -retromod suffix.
-        Path tempDir = Files.createTempDirectory("retromod-fabric-");
+        Path tempDir = WorkFolder.createTempDirectory("retromod-fabric-");
 
         // For error reporting
         String modId = extractModId(sourceJar);
+        // The bytecode pass reads the same source version as the resource pass below.
+        String modMcVersion = sourceVersionIsAuthoritative
+            ? sourceMcVersion
+            : com.retromod.resources.SourceVersionResolver.resolve(sourceJar);
         String sourceVersion = modMcVersion;
         // The bytecode pass reads the mod's own version until the finally block clears it.
         bytecodeTransformer.setModSourceVersion(modMcVersion);
+        bytecodeTransformer.setModSourceJar(sourceJar);
         com.retromod.loaderapi.LoaderApiRuntime.prepare(bytecodeTransformer,
                 new com.retromod.loaderapi.LoaderApiContext("fabric", targetMcVersion,
                         com.retromod.loaderapi.LoaderApiContext.TransformPath.FABRIC_JAR,
@@ -231,7 +239,7 @@ public class FabricModTransformer {
             com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs =
                     collectRefmapRepairs(tempDir);
             int classesTransformed = transformClasses(tempDir, refmapRepairs);
-            LOGGER.info("Transformed {} class files", classesTransformed);
+            LOGGER.debug(RetromodLog.DETAIL, "Transformed {} class files", classesTransformed);
 
             // Wrap entrypoints in try-catch so one mod's init failure doesn't kill the game.
             wrapEntrypoints(tempDir);
@@ -239,6 +247,8 @@ public class FabricModTransformer {
             // 26.1+ uses the official namespace; remap class_/field_/method_ in mixin
             // configs, refmaps, and access wideners.
             boolean nestedArchivesPrepared = remapIntermediaryNames(tempDir, originalName);
+            // A pre-26.1 host keeps intermediary refmaps, so only the targets of repaired handlers move.
+            if (!RetromodPreLaunch.isUnobfuscatedTarget(targetMcVersion)) retargetRefmaps(tempDir);
 
             // Old mods bundle stale Fabric API modules that clash with the installed one.
             stripBundledFabricApiJars(tempDir);
@@ -252,13 +262,13 @@ public class FabricModTransformer {
             int dataMigrated = com.retromod.resources.ModResourceMigrations.migrateDirectory(
                     tempDir, resourceContext(sourceJar, false));
             if (dataMigrated > 0) {
-                LOGGER.info("Updated {} resource and data file(s)", dataMigrated);
+                LOGGER.debug(RetromodLog.DETAIL, "Updated {} resource and data file(s)", dataMigrated);
             }
 
             repackageJar(tempDir, outputJar, sourceJar,
                     originalName, 0, !nestedArchivesPrepared);
 
-            LOGGER.info("Created transformed mod: {}", outputJar.getFileName());
+            LOGGER.debug(RetromodLog.DETAIL, "Created transformed mod: {}", outputJar.getFileName());
 
             // With the loader API runtime on, name each Fabric API reference it still cannot serve.
             if (loaderApiIdentity() != null) {
@@ -289,7 +299,7 @@ public class FabricModTransformer {
             }
 
             if (ModEnvironmentDetector.isServerOnly(sourceJar)) {
-                LOGGER.info("{} is server-only. Joining clients do not need Retromod for this mod.",
+                LOGGER.debug(RetromodLog.DETAIL, "{} is server-only. Joining clients do not need Retromod for this mod.",
                     originalName);
             }
 
@@ -301,17 +311,6 @@ public class FabricModTransformer {
             TransformationErrorHandler.handleError(
                 sourceJar, e, modId, "fabric", sourceVersion
             );
-
-            if (EnvironmentDetector.isDedicatedServer()) {
-                TransformationErrorHandler.logBugReportToConsole(
-                    new TransformationErrorHandler.FailedMod(
-                        originalName, modId, "fabric", sourceVersion,
-                        e.getClass().getSimpleName(),
-                        e.getMessage() != null ? e.getMessage() : "Unknown error",
-                        ""
-                    )
-                );
-            }
 
             throw new IOException("Transformation failed for " + originalName + ": " + e.getMessage(), e);
 
@@ -372,21 +371,17 @@ public class FabricModTransformer {
         return null;
     }
 
-    /** Read the Minecraft version requirement from fabric.mod.json. */
-    private String extractMinecraftVersion(Path jarPath) throws IOException {
+    /** Read the Minecraft ranges fabric.mod.json depends on, or an empty list. */
+    private List<String> readMinecraftRanges(Path jarPath) throws IOException {
         validateArchiveInput(jarPath);
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             ZipEntry entry = jar.getEntry("fabric.mod.json");
-            if (entry != null) {
-                String content = readUtf8Metadata(jar, entry);
-                Pattern pattern = Pattern.compile("\"minecraft\"\\s*:\\s*\"([^\"]+)\"");
-                Matcher matcher = pattern.matcher(content);
-                if (matcher.find()) {
-                    return matcher.group(1);
-                }
+            if (entry == null) return List.of();
+            try (InputStream input = jar.getInputStream(entry)) {
+                return FabricMetadataCompat.readMinecraftRanges(
+                        ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE));
             }
         }
-        return null;
     }
 
     /** Read the mod display name from fabric.mod.json. */
@@ -430,7 +425,11 @@ public class FabricModTransformer {
     boolean isNativeVersionMod(String modMcVersion) {
         if (modMcVersion == null) return false;
 
+        // A trailing '-' (">=26.1-") is Fabric's "prereleases included" marker, not the version.
         String expression = modMcVersion.trim();
+        while (expression.endsWith("-")) {
+            expression = expression.substring(0, expression.length() - 1).trim();
+        }
 
         // Exact match
         if (expression.equals(targetMcVersion)) {
@@ -458,6 +457,11 @@ public class FabricModTransformer {
         }
 
         return false;
+    }
+
+    /** Whether any declared range passes {@link #isNativeVersionMod(String)}. */
+    boolean anyRangeIsNative(List<String> declaredRanges) {
+        return declaredRanges.stream().anyMatch(this::isNativeVersionMod);
     }
 
     /** Returns >0 if v1 > v2, 0 if equal, &lt;0 if v1 &lt; v2. */
@@ -528,9 +532,10 @@ public class FabricModTransformer {
                             + " entries: " + jarPath.getFileName());
                 }
                 String canonicalName = ZipSecurity.canonicalEntryName(entry.getName());
-                if (!entryNames.add(canonicalName)) {
-                    throw new IOException("ZIP contains a duplicate normalized entry: "
-                            + entry.getName());
+                // A repeated folder entry carries no content, so it is skipped.
+                if (!ZipSecurity.firstSighting(entryNames, canonicalName, entry.isDirectory(),
+                        () -> "ZIP contains a duplicate normalized entry: " + entry.getName())) {
+                    continue;
                 }
                 Path outputPath = ZipSecurity.safeResolve(outputDir, entry.getName());
 
@@ -612,12 +617,18 @@ public class FabricModTransformer {
         final java.util.concurrent.atomic.AtomicInteger counter =
                 new java.util.concurrent.atomic.AtomicInteger();
 
-        // ASM needs the mod's own class hierarchy before those classes are on the classpath.
-        bytecodeTransformer.setJarClassBytesProvider(originalClasses::get);
+        // ASM needs the mod's own class hierarchy before those classes are on the classpath, and
+        // the hierarchy of the libraries it bundles.
+        bytecodeTransformer.setJarClassBytesProvider(BundledJarClasses.attach(
+                originalClasses::get, BundledJarClasses.fromDirectory(dir)));
+        // An addon's frame join of two of its library's types reads the library translated before it, as on Forge.
+        bytecodeTransformer.setLinkedLibraries(syntheticLibraries);
         // A block filled into a static field of one class can be registered by another, so the
         // jar's registry ids are indexed from all its classes before any is transformed.
         bytecodeTransformer.setJarRegistryIds(
                 bytecodeTransformer.indexJarRegistryIds(originalClasses.values()));
+        // A final host method the jar's own access widener opens can still be overridden.
+        bytecodeTransformer.setJarOpenedFinals(com.retromod.shim.common.OpenedFinalMethods.read(dir, targetMcVersion));
         // Workers and Mixin both load ASM lazily under Knot; load it here so they cannot deadlock.
         com.retromod.core.parallel.SharedLibraryPreloader.preload(
                 FabricModTransformer.class.getClassLoader());
@@ -668,12 +679,10 @@ public class FabricModTransformer {
                         wroteFirst = true;
                     }
 
-                    // Inject missing abstract methods for Button subclasses. The method names a
-                    // 26.x type, so only an unobfuscated host gets it, as in the CLI path.
+                    // Inject missing abstract methods for Button subclasses, in the shape the host
+                    // version declares (1.21.11 or 26.x), as in the CLI path.
                     byte[] current = (transformed != null && transformed != original) ? transformed : original;
-                    byte[] patched = com.retromod.core.RetromodVersion.isUnobfuscatedTarget(targetMcVersion)
-                            ? com.retromod.shim.common.LegacyAbstractButtonBridge.apply(current)
-                            : current;
+                    byte[] patched = com.retromod.shim.common.LegacyAbstractButtonBridge.apply(current, targetMcVersion);
                     if (patched != null && patched != current) {
                         Files.write(classFile, patched);
                         if (!wroteFirst) counter.incrementAndGet();
@@ -685,7 +694,9 @@ public class FabricModTransformer {
             });
         } finally {
             bytecodeTransformer.clearJarClassBytesProvider();
+            bytecodeTransformer.clearLinkedLibraries();
             bytecodeTransformer.clearJarRegistryIds();
+            bytecodeTransformer.clearJarOpenedFinals();
         }
 
         return counter.get();
@@ -745,7 +756,7 @@ public class FabricModTransformer {
             ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
             classNode.accept(writer);
             byte[] result = writer.toByteArray();
-            LOGGER.info("Injected missing extractContents() into {} (extends {})", className, superName);
+            LOGGER.debug(RetromodLog.DETAIL, "Injected missing extractContents() into {} (extends {})", className, superName);
             return result;
         } catch (Exception e) {
             LOGGER.debug("Could not inject abstract methods into {}: {}", className, e.getMessage());
@@ -794,7 +805,7 @@ public class FabricModTransformer {
                             if (wrapMethodInTryCatch(method, classNode.name)) {
                                 modified = true;
                                 hasEntrypoint = true;
-                                LOGGER.info("Wrapped entrypoint {}.{}() in try-catch for safety",
+                                LOGGER.debug(RetromodLog.DETAIL, "Wrapped entrypoint {}.{}() in try-catch for safety",
                                     classNode.name.replace('/', '.'), method.name);
                             } else {
                                 hasEntrypoint = true;
@@ -824,7 +835,7 @@ public class FabricModTransformer {
                             if (isCallbackLambda || isCallbackMethod) {
                                 if (wrapMethodInTryCatch(method, classNode.name)) {
                                     modified = true;
-                                    LOGGER.info("Wrapped callback {}.{}() in try-catch",
+                                    LOGGER.debug(RetromodLog.DETAIL, "Wrapped callback {}.{}() in try-catch",
                                         classNode.name.replace('/', '.'), method.name);
                                 }
                             }
@@ -994,7 +1005,7 @@ public class FabricModTransformer {
                 .filter(p -> !NestedArchivePolicy.shouldPreserve(p))
                 .toList();
             for (Path jar : toDelete) {
-                LOGGER.info("Stripping bundled Fabric API module: {}", jar.getFileName());
+                LOGGER.debug(RetromodLog.DETAIL, "Stripping bundled Fabric API module: {}", jar.getFileName());
                 Files.delete(jar);
             }
         } catch (Exception e) {
@@ -1011,7 +1022,7 @@ public class FabricModTransformer {
         // mod's metadata already matches it and remapping would make every mixin target
         // miss (#29). Same gate as the bytecode remap in RetromodPreLaunch.
         if (!RetromodPreLaunch.isUnobfuscatedTarget(targetMcVersion)) {
-            LOGGER.info("Host MC {} is pre-26.1 - skipping intermediary→Mojang metadata "
+            LOGGER.debug(RetromodLog.DETAIL, "Host MC {} is pre-26.1 - skipping intermediary→Mojang metadata "
                 + "remap (mods keep their working intermediary names)", targetMcVersion);
             return false;
         }
@@ -1027,6 +1038,8 @@ public class FabricModTransformer {
         int remappedFiles = 0;
         RetromodTransformer.NestedArchiveBudget nestedBudget =
                 RetromodTransformer.NestedArchiveBudget.defaults();
+        // Fabric applies the wideners its metadata declares under any name, so those are remapped too.
+        Set<String> declaredWideners = AccessWidenerRemapper.declaredWideners(dir);
 
         try (var stream = Files.walk(dir)) {
             for (Path file : stream.filter(Files::isRegularFile).toList()) {
@@ -1034,8 +1047,7 @@ public class FabricModTransformer {
                 String entryPath = dir.relativize(file).toString()
                     .replace(File.separator, "/");
 
-                String nameLower = name.toLowerCase(java.util.Locale.ROOT);
-                if (nameLower.endsWith(".accesswidener") || nameLower.endsWith(".classtweaker")) {
+                if (AccessWidenerRemapper.isWidener(entryPath, declaredWideners)) {
                     remapAccessWidener(file, mapper);
                     remappedFiles++;
                 } else if (isMixinConfigFile(entryPath)) {
@@ -1047,14 +1059,14 @@ public class FabricModTransformer {
                         remappedFiles++;
                     }
                 } else if (isRefmapResource(entryPath)) {
-                    remapRefmap(file, mapper);
+                    remapRefmap(file, dir, mapper);
                     remappedFiles++;
                 }
             }
         }
 
         if (remappedFiles > 0) {
-            LOGGER.info("Remapped intermediary→Mojang in {} metadata files", remappedFiles);
+            LOGGER.debug(RetromodLog.DETAIL, "Remapped intermediary→Mojang in {} metadata files", remappedFiles);
         }
         unsealSealedSupertypes(dir);
         return true;
@@ -1082,7 +1094,7 @@ public class FabricModTransformer {
             String remapped = AccessWidenerRemapper.remapToOfficial(content, mapper);
             if (!remapped.equals(content)) {
                 Files.writeString(awFile, remapped);
-                LOGGER.info("  Remapped access widener: {}", awFile.getFileName());
+                LOGGER.debug(RetromodLog.DETAIL, "  Remapped access widener: {}", awFile.getFileName());
             }
         } catch (Exception e) {
             LOGGER.warn("Failed to remap access widener {}: {}", awFile.getFileName(), e.getMessage());
@@ -1111,7 +1123,7 @@ public class FabricModTransformer {
      * Refmaps look like
      * {@code {"mappings":{"MixinClass":{"field_XXXX:Ldesc;":"target"}},"data":{"intermediary":{...}}}}.
      */
-    private void remapRefmap(Path refmapFile,
+    private void remapRefmap(Path refmapFile, Path classRoot,
                               com.retromod.mapping.IntermediaryToMojangMapper mapper) {
         try {
             String content = readJsonFile(refmapFile, "Mixin refmap JSON");
@@ -1119,9 +1131,13 @@ public class FabricModTransformer {
                     new MixinCompatibilityTransformer(bytecodeTransformer);
             String remapped = MixinRefmapRemapper.remapWithRepairs(
                     content, mapper, mixinTransformer).json();
+            // The classes are already repaired, so an entry can follow the handler a repair retyped.
+            remapped = com.retromod.mixin.MixinRefmapTargetRepair.apply(remapped,
+                    com.retromod.mixin.MixinRefmapTargetRepair.classesIn(classRoot),
+                    bytecodeTransformer.getFuzzyResolver());
             if (!remapped.equals(content)) {
                 Files.writeString(refmapFile, remapped);
-                LOGGER.info("  Remapped refmap: {}", refmapFile.getFileName());
+                LOGGER.debug(RetromodLog.DETAIL, "  Remapped refmap: {}", refmapFile.getFileName());
             }
         } catch (Exception e) {
             LOGGER.warn("Failed to remap refmap {}: {}", refmapFile.getFileName(), e.getMessage());
@@ -1178,7 +1194,7 @@ public class FabricModTransformer {
         }
         // A bundled library is built for whatever its own metadata says, read before it is rewritten.
         com.retromod.resources.MigrationContext resources = resourceContext(jarFile, true);
-        Path tempDir = Files.createTempDirectory("retromod-jij-");
+        Path tempDir = WorkFolder.createTempDirectory("retromod-jij-");
         try {
             extractJar(jarFile, tempDir, nestedBudget);
 
@@ -1192,6 +1208,7 @@ public class FabricModTransformer {
 
                 int remapped = classesTransformed;
                 Map<String, byte[]> nestedClassLookup = null;
+                Set<String> declaredWideners = AccessWidenerRemapper.declaredWideners(tempDir);
 
                 try (var stream = Files.walk(tempDir)) {
                     for (Path file : stream.filter(Files::isRegularFile).toList()) {
@@ -1199,8 +1216,7 @@ public class FabricModTransformer {
                         String entryPath = tempDir.relativize(file).toString()
                             .replace(File.separator, "/");
 
-                        String nameLower = name.toLowerCase(java.util.Locale.ROOT);
-                        if (nameLower.endsWith(".accesswidener") || nameLower.endsWith(".classtweaker")) {
+                        if (AccessWidenerRemapper.isWidener(entryPath, declaredWideners)) {
                             remapAccessWidener(file, mapper);
                             remapped++;
                         } else if (isMixinConfigFile(entryPath)) {
@@ -1230,7 +1246,7 @@ public class FabricModTransformer {
                                 remapped++;
                             }
                         } else if (isRefmapResource(entryPath)) {
-                            remapRefmap(file, mapper);
+                            remapRefmap(file, tempDir, mapper);
                             remapped++;
                         }
                     }
@@ -1261,7 +1277,7 @@ public class FabricModTransformer {
                         repackageJar(tempDir, tempJar, jarFile,
                                 syntheticKey, depth, false);
                         moveReplacing(tempJar, jarFile);
-                        LOGGER.info("  Updated nested JAR: {} (classes remapped: {}, metadata changed: {})",
+                        LOGGER.debug(RetromodLog.DETAIL, "  Updated nested JAR: {} (classes remapped: {}, metadata changed: {})",
                                 jarFile.getFileName(), remapped, metadataChanged);
                         return true;
                     } finally {
@@ -1290,6 +1306,27 @@ public class FabricModTransformer {
         String name = entryPath.substring(entryPath.lastIndexOf('/') + 1)
                 .toLowerCase(java.util.Locale.ROOT);
         return name.endsWith(".json") && name.contains("refmap");
+    }
+
+    /** Points the refmap entries in {@code dir} at the host methods its repaired handlers fit; returns how many files changed. */
+    private int retargetRefmaps(Path dir) {
+        int changed = 0;
+        try (var files = Files.walk(dir)) {
+            for (Path refmap : files.filter(Files::isRegularFile)
+                    .filter(path -> isRefmapResource(dir.relativize(path).toString().replace(File.separator, "/")))
+                    .toList()) {
+                String content = readJsonFile(refmap, "Mixin refmap JSON");
+                String retargeted = com.retromod.mixin.MixinRefmapTargetRepair.apply(content,
+                        com.retromod.mixin.MixinRefmapTargetRepair.classesIn(dir), bytecodeTransformer.getFuzzyResolver());
+                if (!retargeted.equals(content)) {
+                    Files.writeString(refmap, retargeted);
+                    changed++;
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.debug("Could not retarget the refmaps of {}: {}", dir.getFileName(), e.toString());
+        }
+        return changed;
     }
 
     private static final Pattern MIXIN_PKG_PATTERN = Pattern.compile("\"package\"\\s*:\\s*\"([^\"]+)\"");
@@ -1360,8 +1397,10 @@ public class FabricModTransformer {
         String content = JsonSecurity.readUtf8(modJson, MAX_METADATA_SIZE,
                 JsonSecurity.DEFAULT_MAX_DEPTH, "fabric.mod.json");
         String originalMcVersion = extractVersionFromContent(content);
-        String migrated = new String(FabricMetadataCompat.migrateLegacyFabricApiDependency(
-                content.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+        // A Java pin such as "21" refuses the newer Java the target needs.
+        String migrated = new String(FabricMetadataCompat.openJavaDependency(
+                FabricMetadataCompat.migrateLegacyFabricApiDependency(
+                        content.getBytes(java.nio.charset.StandardCharsets.UTF_8))),
                 java.nio.charset.StandardCharsets.UTF_8);
         String updated = updateVersionRequirements(migrated, originalMcVersion);
 
@@ -1383,7 +1422,7 @@ public class FabricModTransformer {
         }
 
         Files.writeString(modJson, updated);
-        LOGGER.info("Updated fabric.mod.json: {} → {}", originalMcVersion, targetMcVersion);
+        LOGGER.debug(RetromodLog.DETAIL, "Updated fabric.mod.json: {} → {}", originalMcVersion, targetMcVersion);
     }
 
     /**
@@ -1392,14 +1431,7 @@ public class FabricModTransformer {
      * no-op for those mods.
      */
     private boolean declaredTweakersMatchRuntime(String json, Path dir) {
-        List<String> declared = new ArrayList<>();
-        Matcher single = Pattern.compile("\"accessWidener\"\\s*:\\s*\"([^\"]*)\"").matcher(json);
-        if (single.find()) declared.add(single.group(1));
-        Matcher array = Pattern.compile("(?s)\"classTweakers\"\\s*:\\s*\\[([^\\]]*)\\]").matcher(json);
-        if (array.find()) {
-            Matcher entry = Pattern.compile("\"([^\"]+)\"").matcher(array.group(1));
-            while (entry.find()) declared.add(entry.group(1));
-        }
+        List<String> declared = declaredTweakers(json);
         if (declared.isEmpty()) return false;
         String runtimeNamespace = RetromodPreLaunch.isUnobfuscatedTarget(targetMcVersion)
                 ? "official" : "intermediary";
@@ -1417,21 +1449,37 @@ public class FabricModTransformer {
         Path root = dir.toAbsolutePath().normalize();
         Path file = root.resolve(relative).normalize();
         if (!file.startsWith(root) || !Files.isRegularFile(file)) return "";
-        try (java.io.BufferedReader reader = Files.newBufferedReader(file,
-                java.nio.charset.StandardCharsets.UTF_8)) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                String header = line.trim();
-                if (header.isEmpty() || header.startsWith("#")) continue;
-                String[] parts = header.split("\\s+");
-                boolean knownHeader = parts.length == 3
-                        && (parts[0].equals("accessWidener") || parts[0].equals("classTweaker"));
-                return knownHeader ? parts[2] : "";
-            }
+        try {
+            return tweakerHeaderNamespace(Files.readString(file, java.nio.charset.StandardCharsets.UTF_8));
         } catch (IOException | RuntimeException e) {
             return "";
         }
+    }
+
+    /** The namespace a widener or tweaker header names, or an empty string when the text has no such header. */
+    public static String tweakerHeaderNamespace(String content) {
+        for (String line : content.split("\n")) {
+            String header = line.trim();
+            if (header.isEmpty() || header.startsWith("#")) continue;
+            String[] parts = header.split("\\s+");
+            boolean knownHeader = parts.length == 3
+                    && (parts[0].equals("accessWidener") || parts[0].equals("classTweaker"));
+            return knownHeader ? parts[2] : "";
+        }
         return "";
+    }
+
+    /** The access widener and class tweaker paths a fabric.mod.json declares, whatever their extension. */
+    public static List<String> declaredTweakers(String json) {
+        List<String> declared = new ArrayList<>();
+        Matcher single = Pattern.compile("\"accessWidener\"\\s*:\\s*\"([^\"]*)\"").matcher(json);
+        if (single.find()) declared.add(single.group(1));
+        Matcher array = Pattern.compile("(?s)\"classTweakers\"\\s*:\\s*\\[([^\\]]*)\\]").matcher(json);
+        if (array.find()) {
+            Matcher entry = Pattern.compile("\"([^\"]+)\"").matcher(array.group(1));
+            while (entry.find()) declared.add(entry.group(1));
+        }
+        return declared;
     }
 
     /**
@@ -1616,7 +1664,7 @@ public class FabricModTransformer {
                 String relaxed = matcher.replaceAll("$1\"*\"");
 
                 if (!relaxed.equals(updated)) {
-                    LOGGER.info("  Relaxed API dependency: {} → \"*\" (Retromod has shims)", modId);
+                    LOGGER.debug(RetromodLog.DETAIL, "  Relaxed API dependency: {} → \"*\" (Retromod has shims)", modId);
                     updated = relaxed;
                     relaxedCount++;
                 }
@@ -1624,7 +1672,7 @@ public class FabricModTransformer {
         }
 
         if (relaxedCount > 0) {
-            LOGGER.info("Relaxed {} third-party API version constraint(s)", relaxedCount);
+            LOGGER.debug(RetromodLog.DETAIL, "Relaxed {} third-party API version constraint(s)", relaxedCount);
         }
 
         return updated;
@@ -1656,7 +1704,7 @@ public class FabricModTransformer {
             String constraint = matcher.group(2);
 
             if (!keepStrict.contains(depId) && !SHIMMED_API_MOD_IDS.contains(depId)) {
-                LOGGER.info("  Relaxed unknown API dependency: {} (was: {})", depId, constraint);
+                LOGGER.debug(RetromodLog.DETAIL, "  Relaxed unknown API dependency: {} (was: {})", depId, constraint);
                 matcher.appendReplacement(sb, "\"" + depId + "\": \"*\"");
             }
         }
@@ -1701,7 +1749,7 @@ public class FabricModTransformer {
             for (String key : toMove) {
                 suggests.add(key, depends.get(key));
                 depends.remove(key);
-                LOGGER.info("  Moved dependency to suggests: {}", key);
+                LOGGER.debug(RetromodLog.DETAIL, "  Moved dependency to suggests: {}", key);
             }
 
             root.add("suggests", suggests);
@@ -1712,7 +1760,7 @@ public class FabricModTransformer {
                 .create();
             String result = gson.toJson(root);
 
-            LOGGER.info("Moved {} non-core dependencies from depends to suggests", toMove.size());
+            LOGGER.debug(RetromodLog.DETAIL, "Moved {} non-core dependencies from depends to suggests", toMove.size());
             return result;
 
         } catch (Exception e) {
@@ -1975,7 +2023,7 @@ public class FabricModTransformer {
             com.google.gson.Gson gson = new com.google.gson.GsonBuilder()
                 .setPrettyPrinting().disableHtmlEscaping().create();
             Files.writeString(refmapFile, gson.toJson(root));
-            LOGGER.info("Cleaned {} broken refmap entries for mixin classes: {}",
+            LOGGER.debug(RetromodLog.DETAIL, "Cleaned {} broken refmap entries for mixin classes: {}",
                 brokenMixinClasses.size(), brokenMixinClasses);
         }
     }
@@ -2059,7 +2107,7 @@ public class FabricModTransformer {
         }
         // A bundled library is built for whatever its own metadata says, read before it is rewritten.
         com.retromod.resources.MigrationContext resources = resourceContext(jijJar, true);
-        Path tempDir = Files.createTempDirectory("retromod-jij-");
+        Path tempDir = WorkFolder.createTempDirectory("retromod-jij-");
         try {
                 extractJar(jijJar, tempDir, nestedBudget);
 
@@ -2081,12 +2129,14 @@ public class FabricModTransformer {
                             internalName -> hierarchyClassLookup.get(internalName + ".class"));
                      var registryIds = bytecodeTransformer.pushJarRegistryIds(
                             bytecodeTransformer.indexJarRegistryIds(hierarchyClassLookup.values()));
+                     var openedFinals = bytecodeTransformer.pushJarOpenedFinals(
+                            com.retromod.shim.common.OpenedFinalMethods.read(tempDir, targetMcVersion));
                      var classStream = Files.walk(tempDir)) {
                     for (Path file : classStream.filter(f -> f.toString().endsWith(".class")).toList()) {
+                        String className = tempDir.relativize(file).toString()
+                            .replace(File.separator, "/").replace(".class", "");
                         try {
                             byte[] original = Files.readAllBytes(file);
-                            String className = tempDir.relativize(file).toString()
-                                .replace(File.separator, "/").replace(".class", "");
                             byte[] preRemap = nestedMixins.transformMixinClass(original);
                             byte[] transformed = bytecodeTransformer.transformClass(
                                     preRemap != null ? preRemap : original, className);
@@ -2101,7 +2151,10 @@ public class FabricModTransformer {
                                 modified = true;
                             }
                         } catch (Exception e) {
-                            LOGGER.debug("Failed to transform class in JiJ {}: {}", name, e.getMessage());
+                            // The class ships untranslated, so log it at a level users see.
+                            LOGGER.warn("Could not transform class {} in nested jar {} ({}: {})",
+                                    className, syntheticKey, e.getClass().getSimpleName(),
+                                    e.getMessage());
                         }
                     }
                 }
@@ -2121,6 +2174,10 @@ public class FabricModTransformer {
                             }
                         }
                     }
+                }
+                // A pre-26.1 host keeps intermediary refmaps, so only the targets of repaired handlers move.
+                if (!RetromodPreLaunch.isUnobfuscatedTarget(targetMcVersion) && retargetRefmaps(tempDir) > 0) {
+                    modified = true;
                 }
 
                 // Pre-26.1 hosts reach nested jars only through this method, so their data and
@@ -2145,7 +2202,7 @@ public class FabricModTransformer {
                 }
                 if (embedded > 0) {
                     modified = true;
-                    LOGGER.info("  Embedded {} referenced synthetic class(es) in JiJ {}",
+                    LOGGER.debug(RetromodLog.DETAIL, "  Embedded {} referenced synthetic class(es) in JiJ {}",
                             embedded, name);
                 }
 
@@ -2173,7 +2230,7 @@ public class FabricModTransformer {
                                 transformed = makeMixinConfigNonFatal(transformed);
                                 Files.writeString(file, transformed, java.nio.charset.StandardCharsets.UTF_8);
                                 modified = true;
-                                LOGGER.info("  Patched JiJ mixin config: {} in {}", entryName, name);
+                                LOGGER.debug(RetromodLog.DETAIL, "  Patched JiJ mixin config: {} in {}", entryName, name);
                             } catch (Exception e) {
                                 LOGGER.warn("Failed to process JiJ mixin config {}: {}", entryName, e.getMessage());
                             }
@@ -2238,7 +2295,7 @@ public class FabricModTransformer {
                     } finally {
                         Files.deleteIfExists(tempJar);
                     }
-                    LOGGER.info("  Repacked JiJ mod: {}", name);
+                    LOGGER.debug(RetromodLog.DETAIL, "  Repacked JiJ mod: {}", name);
                     return true;
                 }
         } finally {

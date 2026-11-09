@@ -4,6 +4,8 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyLog;
+
 import java.lang.reflect.Method;
 
 /**
@@ -33,8 +35,9 @@ public final class LegacyRarities {
                 if (String.valueOf(serializedName.invoke(value)).endsWith(":" + name)) return value;
             }
             Object sameColor = sameColor(rarity, values, color);
-            System.getLogger("Retromod").log(System.Logger.Level.WARNING,
-                    "Rarity " + name + " cannot be added on this loader; using " + sameColor + ", the rarity of its color");
+            // Once per name, because a mod can build the same rarity for every item that uses it.
+            LegacyLog.warnOnce("rarity:" + name, "Rarity " + name + " cannot be added on this loader, so it uses "
+                    + sameColor + ", the vanilla rarity of its color, or the first one when no color matches");
             return sameColor;
         } catch (ReflectiveOperationException | LinkageError e) {
             throw new IllegalStateException("Retromod could not find the rarity " + name, e);

@@ -13,7 +13,7 @@ public final class LegacyBlockPropertiesBridge {
 
     static final String PROPERTIES = "net/minecraft/world/level/block/state/BlockBehaviour$Properties";
     static final String COPY_DESC = "(Lnet/minecraft/world/level/block/state/BlockBehaviour;)L" + PROPERTIES + ";";
-    static final String SUPPORT = "com/retromod/shim/common/embedded/LegacyBlockProperties";
+    public static final String SUPPORT = "com/retromod/shim/common/embedded/LegacyBlockProperties";
 
     private LegacyBlockPropertiesBridge() {}
 

@@ -67,7 +67,7 @@ public class JeiApiShim implements AuxiliaryVersionShim {
             "()Lnet/minecraft/resources/ResourceLocation;",
             "com/retromod/shim/api/forge/embedded/JeiShim",
             "getCategoryUid",
-            "(Ljava/lang/Object;)Lnet/minecraft/resources/ResourceLocation;"
+            "(Ljava/lang/Object;)Ljava/lang/Object;"
         );
 
         transformer.registerMethodRedirect(
@@ -86,7 +86,7 @@ public class JeiApiShim implements AuxiliaryVersionShim {
             "(Ljava/util/Collection;Lnet/minecraft/resources/ResourceLocation;)V",
             "com/retromod/shim/api/forge/embedded/JeiShim",
             "addRecipesLegacy",
-            "(Ljava/lang/Object;Ljava/util/Collection;Lnet/minecraft/resources/ResourceLocation;)V"
+            "(Ljava/lang/Object;Ljava/util/Collection;Ljava/lang/Object;)V"
         );
 
         // IGuiHandler renamed to IGuiContainerHandler.

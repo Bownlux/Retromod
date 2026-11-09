@@ -6,12 +6,17 @@ package com.retromod.shim.api.forge;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.AuxiliaryVersionShim;
+import com.retromod.shim.api.common.LibraryMoves;
 
 /**
  * Curios API shim (accessory slots on Forge/NeoForge). Bridges the v1 to v5 breaks:
  * ICurio signatures, slot context, registration, capabilities.
  */
 public class CuriosApiShim implements AuxiliaryVersionShim {
+
+    // getCuriosHelper and SlotTypePreset are still in 9.5.1 and gone in 17.0.0; the release between that dropped
+    // them was not checked, so with no Curios readable only 26.3 counts.
+    static final LibraryMoves.Table CURIOS_HELPER_GONE = new LibraryMoves.Table("26.3", "26.3");
     
     @Override
     public String getShimName() {
@@ -74,31 +79,27 @@ public class CuriosApiShim implements AuxiliaryVersionShim {
             "top/theillusivec4/curios/api/type/capability/ICurio$DropRule"
         );
 
-        transformer.registerMethodRedirect(
+        LibraryMoves.registerMemberRedirect(transformer,
             "top/theillusivec4/curios/api/CuriosApi",
             "getCuriosHelper",
             "()Ltop/theillusivec4/curios/api/type/util/ICuriosHelper;",
             "com/retromod/shim/api/forge/embedded/CuriosShim",
             "getCuriosHelper",
-            "()Ljava/lang/Object;"
+            "()Ljava/lang/Object;",
+            CURIOS_HELPER_GONE
         );
         
-        transformer.registerMethodRedirect(
-            "top/theillusivec4/curios/api/type/util/ICuriosHelper",
-            "getCuriosHandler",
-            "(Lnet/minecraft/world/entity/LivingEntity;)Lnet/minecraftforge/common/util/LazyOptional;",
-            "com/retromod/shim/api/forge/embedded/CuriosShim",
-            "getCuriosHandler",
-            "(Lnet/minecraft/world/entity/LivingEntity;)Ljava/util/Optional;"
-        );
+        // getCuriosHandler and getAttributeModifiers(String) stay unbridged: the old calls expect LazyOptional and a
+        // Multimap the embedded helpers do not return, so a redirect would fail the whole class when it loads.
 
-        transformer.registerMethodRedirect(
+        LibraryMoves.registerMemberRedirect(transformer,
             "top/theillusivec4/curios/api/SlotTypePreset",
             "getIdentifier",
             "()Ljava/lang/String;",
             "com/retromod/shim/api/forge/embedded/CuriosShim",
             "getSlotIdentifier",
-            "(Ljava/lang/Object;)Ljava/lang/String;"
+            "(Ljava/lang/Object;)Ljava/lang/String;",
+            CURIOS_HELPER_GONE
         );
 
         transformer.registerMethodRedirect(
@@ -108,16 +109,6 @@ public class CuriosApiShim implements AuxiliaryVersionShim {
             "com/retromod/shim/api/forge/embedded/CuriosShim",
             "registerSlotType",
             "(Ljava/lang/String;Ljava/lang/Object;)V"
-        );
-
-        // ICurio.getAttributeModifiers(slot) -> getAttributeModifiers(SlotContext, uuid)
-        transformer.registerMethodRedirect(
-            "top/theillusivec4/curios/api/type/capability/ICurio",
-            "getAttributeModifiers",
-            "(Ljava/lang/String;)Lcom/google/common/collect/Multimap;",
-            "com/retromod/shim/api/forge/embedded/CuriosShim",
-            "getAttributeModifiers",
-            "(Ljava/lang/Object;Ljava/lang/String;)Lcom/google/common/collect/Multimap;"
         );
 
         // ICurio.canRender(slot, entity) -> canRender(SlotContext)

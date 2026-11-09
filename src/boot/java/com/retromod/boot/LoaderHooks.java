@@ -4,6 +4,8 @@
  */
 package com.retromod.boot;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Path;
 import java.util.Optional;
@@ -105,5 +107,24 @@ public final class LoaderHooks {
             current = current.getCause();
         }
         return current;
+    }
+
+    /** The full stack trace of {@link #unwrap(Throwable)}, causes included; never throws. */
+    public static String describe(Throwable failure) {
+        Throwable reported = failure;
+        try {
+            // Print every frame: a limit could cut off the Retromod frame below deep ASM or JDK
+            // frames, and this runs at most once per launch.
+            reported = unwrap(failure);
+            StringWriter text = new StringWriter();
+            try (PrintWriter out = new PrintWriter(text)) {
+                reported.printStackTrace(out);
+            }
+            return text.toString().stripTrailing();
+        } catch (Throwable unprintable) {
+            // Printing runs the exception's own toString, which may be what failed. The class
+            // name runs none of its code, so a catch-all that must never stop the loader is safe.
+            return reported == null ? "null" : reported.getClass().getName();
+        }
     }
 }

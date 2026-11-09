@@ -8,6 +8,7 @@ import com.retromod.testutil.SignedJarTestSupport;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.objectweb.asm.Opcodes.*;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -318,6 +319,84 @@ class SyntheticEmbedderTest {
     }
 
     @Test
+    @DisplayName("a jar that still names a stand-in after a failed embed is removed with the class named")
+    void embedIntoJarOrDiscardRemovesAJarThatStillNamesAStandIn(@TempDir Path dir) throws Exception {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        try {
+            t.registerSyntheticClass(SYNTH, simpleClass(SYNTH));
+            Path jar = dir.resolve("collision.jar");
+            String generatedName = SyntheticEmbedder.embeddedBase("collision.jar") + SYNTH;
+            writeZip(jar, java.util.Map.of("mod/Uses.class", classReferencing("mod/Uses"),
+                    generatedName + ".class", simpleClass(generatedName)));
+
+            IOException failure = assertThrows(IOException.class, () -> SyntheticEmbedder
+                    .embedIntoJarOrDiscard(jar, "collision.jar", t, SyntheticLibraries.NONE));
+
+            assertTrue(failure.getMessage().contains("net.fake.loaderpkg.Removed"), failure.getMessage());
+            assertTrue(failure.getMessage().contains("collides"), failure.getMessage());
+            assertFalse(Files.exists(jar), "a jar that would fail with NoClassDefFoundError is not published");
+        } finally {
+            t.clearRedirectsForTesting();
+        }
+    }
+
+    @Test
+    @DisplayName("a relocated jar is kept and no longer names the stand-in")
+    void embedIntoJarOrDiscardKeepsARelocatedJar(@TempDir Path dir) throws Exception {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        try {
+            t.registerSyntheticClass(SYNTH, simpleClass(SYNTH));
+            Path jar = dir.resolve("plain.jar");
+            writeZip(jar, java.util.Map.of("mod/Uses.class", classReferencing("mod/Uses")));
+
+            assertEquals(1, SyntheticEmbedder.embedIntoJarOrDiscard(jar, "plain.jar", t,
+                    SyntheticLibraries.NONE));
+
+            assertTrue(Files.exists(jar));
+            try (var zip = new java.util.zip.ZipFile(jar.toFile())) {
+                byte[] uses = zip.getInputStream(zip.getEntry("mod/Uses.class")).readAllBytes();
+                assertFalse(SyntheticEmbedder.referencedClasses(uses).contains(SYNTH));
+            }
+        } finally {
+            t.clearRedirectsForTesting();
+        }
+    }
+
+    @Test
+    @DisplayName("a failed embed keeps a jar that never named a stand-in, since the scan decides")
+    void embedIntoJarOrDiscardKeepsAJarWithNoStandInReferences(@TempDir Path dir) throws Exception {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        try {
+            t.registerSyntheticClass(SYNTH, simpleClass(SYNTH));
+            Path jar = dir.resolve("backslash.jar");
+            // The embed refuses a backslash in an entry name, but nothing here needs a stand-in.
+            writeZip(jar, java.util.Map.of("assets\\mod\\lang.json", "{}".getBytes(),
+                    "mod/Plain.class", simpleClass("mod/Plain")));
+            byte[] original = Files.readAllBytes(jar);
+
+            assertEquals(0, SyntheticEmbedder.embedIntoJarOrDiscard(jar, "backslash.jar", t,
+                    SyntheticLibraries.NONE));
+
+            assertArrayEquals(original, Files.readAllBytes(jar));
+        } finally {
+            t.clearRedirectsForTesting();
+        }
+    }
+
+    private static void writeZip(Path jar, java.util.Map<String, byte[]> entries) throws IOException {
+        try (var output = new java.util.zip.ZipOutputStream(Files.newOutputStream(jar))) {
+            for (var entry : new java.util.TreeMap<>(entries).entrySet()) {
+                output.putNextEntry(new java.util.zip.ZipEntry(entry.getKey()));
+                output.write(entry.getValue());
+                output.closeEntry();
+            }
+        }
+    }
+
+    @Test
     @DisplayName("unsafe jar entry names abort without replacing the original jar")
     void unsafeEntryLeavesOriginalJarUntouched(@TempDir Path dir) throws Exception {
         RetromodTransformer t = RetromodTransformer.getInstance();
@@ -339,6 +418,36 @@ class SyntheticEmbedderTest {
             assertArrayEquals(original, Files.readAllBytes(jar),
                     "validation must finish before a replacement jar is written");
             assertFalse(Files.exists(dir.resolve("outside.txt")));
+        } finally {
+            t.clearRedirectsForTesting();
+        }
+    }
+
+    @Test
+    @DisplayName("an interface a class move collapses into another is written once while embedding")
+    void collapsedInterfaceIsWrittenOnceWhenEmbedding(@TempDir Path dir) throws Exception {
+        String added = "net/fake/api/EntryAddedCallback";
+        String removed = "net/fake/api/EntryRemovedCallback";
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        try {
+            t.registerSyntheticClass(SYNTH, simpleClass(SYNTH));
+            t.registerClassRedirect(removed, added);
+            // An untransformed class still names both, and its synthetic reference makes the
+            // embedder rename it with every class move.
+            ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+            cw.visit(V17, ACC_PUBLIC, "mod/Tracker", null, "java/lang/Object",
+                    new String[] {added, removed});
+            cw.visitField(ACC_PRIVATE, "ref", "L" + SYNTH + ";", null, null).visitEnd();
+            cw.visitEnd();
+            write(dir, "mod/Tracker", cw.toByteArray());
+
+            assertEquals(1, SyntheticEmbedder.embed(dir, "tracker-mod.jar", t));
+
+            ClassNode node = new ClassNode();
+            new ClassReader(Files.readAllBytes(dir.resolve("mod/Tracker.class"))).accept(node, 0);
+            assertEquals(java.util.List.of(added), node.interfaces,
+                    "a repeated interface fails the class with ClassFormatError: Duplicate interface name");
         } finally {
             t.clearRedirectsForTesting();
         }

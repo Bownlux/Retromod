@@ -80,6 +80,46 @@ class ForgeNeoForgeApiBridgeTest {
     }
 
     @Test
+    void annotationScanDataMovesToNeoForgesSpi() {
+        // YUNG's API reads its auto-registered fields from ModList.getAllScanData(); NeoForge keeps the same records.
+        String forge = "net/minecraftforge/forgespi/language/ModFileScanData";
+        String neo = "net/neoforged/neoforgespi/language/ModFileScanData";
+        Set<String> host = Set.of(neo, neo + "$AnnotationData", neo + "$ClassData");
+        ForgeNeoForgeApiBridge.registerAbsoluteMoves(transformer, host::contains);
+        for (String suffix : new String[]{"", "$AnnotationData", "$ClassData"}) {
+            assertEquals(neo + suffix, transformer.getClassRedirects().get(forge + suffix), forge + suffix);
+        }
+
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, "test/mod/ScanUser", null, "java/lang/Object", null);
+        MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "member",
+                "(L" + forge + "$AnnotationData;)Ljava/lang/String;", null, null);
+        m.visitCode();
+        m.visitVarInsn(ALOAD, 0);
+        m.visitMethodInsn(INVOKEVIRTUAL, forge + "$AnnotationData", "memberName", "()Ljava/lang/String;", false);
+        m.visitInsn(ARETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        cw.visitEnd();
+        ClassNode node = new ClassNode();
+        new ClassReader(transformer.transformClass(cw.toByteArray(), "test/mod/ScanUser.class")).accept(node, 0);
+        MethodInsnNode call = null;
+        for (AbstractInsnNode insn : node.methods.stream().filter(mn -> mn.name.equals("member"))
+                .findFirst().orElseThrow().instructions) {
+            if (insn instanceof MethodInsnNode c) call = c;
+        }
+        assertNotNull(call);
+        assertEquals(neo + "$AnnotationData", call.owner, "the record accessor is called on NeoForge's record");
+
+        // On a host that still has Forge's SPI (Forge itself), nothing moves.
+        transformer.clearRedirectsForTesting();
+        Set<String> forgeHost = new HashSet<>(host);
+        forgeHost.add(forge);
+        ForgeNeoForgeApiBridge.registerAbsoluteMoves(transformer, forgeHost::contains);
+        assertNull(transformer.getClassRedirects().get(forge));
+    }
+
+    @Test
     void callsOnForgesLazyInterfaceBecomeCallsOnNeoForgesLazyClass() {
         String forgeLazy = "net/minecraftforge/common/util/Lazy";
         String neoLazy = "net/neoforged/neoforge/common/util/Lazy";

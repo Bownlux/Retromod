@@ -63,6 +63,17 @@ public class Fabric_1_20_6_to_1_21 implements VersionShim {
             "net/minecraft/world/entity/Entity", "teleportTo",
             "(Lnet/minecraft/server/level/ServerLevel;)Lnet/minecraft/world/entity/Entity;"
         );
+
+        // DyeColor's float array color became one int. On 26.x the Mojang-named bridge in
+        // Fabric_1_21_1_to_1_21_2 takes over, and class_1767 would not resolve there.
+        if (!com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            com.retromod.shim.common.LegacyDyeColorBridge.registerIntermediary(transformer);
+            // Minecraft.getFrameTime() went the same way, to the delta tracker.
+            com.retromod.shim.common.LegacyFrameTimeBridge.registerIntermediary(transformer);
+            // The VertexConsumer builder chain became addVertex and setters.
+            com.retromod.shim.common.LegacyVertexApiBridge.registerIntermediary(transformer);
+        }
     }
 
     @Override

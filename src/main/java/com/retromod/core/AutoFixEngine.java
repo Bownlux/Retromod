@@ -8,6 +8,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -97,7 +98,7 @@ public class AutoFixEngine {
             return Collections.emptyList();
         }
 
-        LOGGER.info("[AutoFix] Analyzing {} lines from {}", logLines.size(), logFile.getFileName());
+        LOGGER.debug(RetromodLog.DETAIL, "[AutoFix] Analyzing {} lines from {}", logLines.size(), logFile.getFileName());
 
         List<AppliedFix> fixes = new ArrayList<>();
         int fixCount = 0;
@@ -131,7 +132,7 @@ public class AutoFixEngine {
                         appliedFixes.add(fix);
                         appliedFixKeys.add(fixKey);
                         fixCount++;
-                        LOGGER.info("[AutoFix] Applied: {}", fix);
+                        LOGGER.debug(RetromodLog.DETAIL, "[AutoFix] Applied: {}", fix);
                     }
                     break; // first matching pattern wins for this line
                 }
@@ -142,7 +143,7 @@ public class AutoFixEngine {
             persistFixes();
             LOGGER.info("[AutoFix] Applied {} fix(es). Retransform on next launch to take effect.", fixes.size());
         } else {
-            LOGGER.info("[AutoFix] No actionable errors found in log.");
+            LOGGER.debug(RetromodLog.DETAIL, "[AutoFix] No actionable errors found in log.");
         }
 
         return fixes;
@@ -282,11 +283,11 @@ public class AutoFixEngine {
                     appliedFixKeys.add(fix.fixKey);
                     previousRunFixKeys.add(fix.fixKey);
                     applied++;
-                    LOGGER.info("[AutoFix] Re-applied saved fix: {}", fix.description);
+                    LOGGER.debug(RetromodLog.DETAIL, "[AutoFix] Re-applied saved fix: {}", fix.description);
                 }
             }
 
-            LOGGER.info("[AutoFix] Loaded {} saved fix(es) from previous run", applied);
+            LOGGER.debug(RetromodLog.DETAIL, "[AutoFix] Loaded {} saved fix(es) from previous run", applied);
             return applied;
         } catch (Exception e) {
             LOGGER.warn("[AutoFix] Could not load saved fixes: {}", e.getMessage());
@@ -943,7 +944,7 @@ public class AutoFixEngine {
 
             String json = GSON.toJson(toSave);
             Files.writeString(FIXES_FILE, json);
-            LOGGER.info("[AutoFix] Persisted {} fix(es) to {}", toSave.size(), FIXES_FILE);
+            LOGGER.debug(RetromodLog.DETAIL, "[AutoFix] Persisted {} fix(es) to {}", toSave.size(), FIXES_FILE);
         } catch (IOException e) {
             LOGGER.warn("[AutoFix] Could not persist fixes: {}", e.getMessage());
         }

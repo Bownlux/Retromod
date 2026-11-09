@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** End-to-end regression for the 26.x primitive-key-input call-site adapter. */
+/** End-to-end regression for the primitive GUI input call-site adapter (1.21.9 and newer hosts). */
 class LegacyInputEventCallAdapterTest {
 
     private static final String KEY_EVENT = "net/minecraft/client/input/KeyEvent";
@@ -88,8 +88,9 @@ class LegacyInputEventCallAdapterTest {
     }
 
     @Test
-    void pre26HostLeavesLegacyCallByteForByteUntouched() {
-        RetromodVersion.TARGET_MC_VERSION = "1.21.11";
+    void hostBeforeTheInputEventsLeavesLegacyCallByteForByteUntouched() {
+        // 1.21.9 introduced KeyEvent; 1.21.8 still has Screen.keyPressed(III)Z.
+        RetromodVersion.TARGET_MC_VERSION = "1.21.8";
         RetromodTransformer transformer = RetromodTransformer.getInstance();
         transformer.clearRedirectsForTesting();
         byte[] input = legacyScreen(SCREEN);

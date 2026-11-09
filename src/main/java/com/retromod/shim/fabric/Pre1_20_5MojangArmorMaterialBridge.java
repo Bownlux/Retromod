@@ -7,6 +7,7 @@ package com.retromod.shim.fabric;
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.shim.fabric.embedded.LegacyArmorMaterialSupport;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
@@ -237,34 +238,41 @@ public final class Pre1_20_5MojangArmorMaterialBridge {
      * @return the number of classes rewritten
      */
     public static int renameInLegacyJar(RetromodTransformer transformer, Path classRoot) throws IOException {
-        Map<String, byte[]> synthetics = transformer.getSyntheticClasses();
-        byte[] registered = synthetics.get(Pre1_20_5ArmorMaterialBridge.LEGACY_MATERIAL);
-        // The intermediary bridge registers the same stand-in name on a Fabric host, so check
-        // that this one names the Mojang record before renaming Mojang-named classes.
-        if (registered == null || !isMojangStandIn(registered)) return 0;
+        if (!hasMojangStandIn(transformer)) return 0;
         List<Path> classFiles;
         try (var stream = Files.walk(classRoot)) {
             classFiles = stream.filter(path -> path.toString().endsWith(".class")).toList();
         }
-        boolean legacy = false;
-        for (Path classFile : classFiles) {
-            if (usesLegacyInterface(Files.readAllBytes(classFile))) {
-                legacy = true;
-                break;
-            }
-        }
-        if (!legacy) return 0;
+        Map<Path, byte[]> bytes = new java.util.LinkedHashMap<>();
+        for (Path classFile : classFiles) bytes.put(classFile, Files.readAllBytes(classFile));
+        if (!isLegacyJar(transformer, bytes.values())) return 0;
         int renamed = 0;
-        for (Path classFile : classFiles) {
-            byte[] original = Files.readAllBytes(classFile);
-            byte[] updated = renameLegacyInterface(original);
-            if (updated != original) {
-                Files.write(classFile, updated);
+        for (Map.Entry<Path, byte[]> entry : bytes.entrySet()) {
+            byte[] updated = renameLegacyInterface(entry.getValue());
+            if (updated != entry.getValue()) {
+                Files.write(entry.getKey(), updated);
                 renamed++;
             }
         }
-        LOGGER.info("Bridged the pre-1.20.5 ArmorMaterial interface in {} classes", renamed);
+        LOGGER.debug(RetromodLog.DETAIL, "Bridged the pre-1.20.5 ArmorMaterial interface in {} classes", renamed);
         return renamed;
+    }
+
+    /** Whether the Mojang stand-in is registered and some class of the jar uses the old interface. */
+    public static boolean isLegacyJar(RetromodTransformer transformer, Iterable<byte[]> classes) {
+        if (!hasMojangStandIn(transformer)) return false;
+        for (byte[] classBytes : classes) {
+            if (usesLegacyInterface(classBytes)) return true;
+        }
+        return false;
+    }
+
+    /** Whether the registered stand-in names the Mojang record, not the intermediary one. */
+    private static boolean hasMojangStandIn(RetromodTransformer transformer) {
+        // The intermediary bridge registers the same stand-in name on a Fabric host, so check
+        // that this one names the Mojang record before renaming Mojang-named classes.
+        byte[] registered = transformer.getSyntheticClasses().get(Pre1_20_5ArmorMaterialBridge.LEGACY_MATERIAL);
+        return registered != null && isMojangStandIn(registered);
     }
 
     /**
@@ -312,7 +320,7 @@ public final class Pre1_20_5MojangArmorMaterialBridge {
     }
 
     /** Renames {@code ArmorMaterial} to the generated interface, or returns the input unchanged. */
-    static byte[] renameLegacyInterface(byte[] classBytes) {
+    public static byte[] renameLegacyInterface(byte[] classBytes) {
         if (!mentions(classBytes, ARMOR_MATERIAL)) return classBytes;
         ClassReader reader = new ClassReader(classBytes);
         ClassWriter writer = new ClassWriter(0);

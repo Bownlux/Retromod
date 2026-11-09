@@ -131,6 +131,211 @@ class RetroKeyMappingSdlTest {
         assertEquals(3.0, x[0]);
     }
 
+    @Test
+    @DisplayName("a Forge conflict keybind with a text category gets the sort order vanilla fills with 0")
+    void forgeConflictKeybindGetsDefaultOrder() throws Exception {
+        // Forge 1.21.11 and 26.2 keep only conflict constructors that end in a Category and an order.
+        KeyHost host = new KeyHost(KeyHost.IDENTIFIER, "(Ljava/lang/String;"
+                + "Lnet/minecraftforge/client/settings/IKeyConflictContext;"
+                + "Lcom/mojang/blaze3d/platform/InputConstants$Type;I" + KeyHost.CATEGORY_DESC + "I)V");
+        Method create = host.keys().getMethod("createConflict", String.class, Object.class, Object.class,
+                int.class, String.class);
+
+        Object mapping = create.invoke(null, "key.mod.open", null, null, 82, "key.categories.misc");
+        assertEquals(0, KeyHost.read(mapping, "order"), "vanilla's own constructors pass order 0");
+        assertSame(host.misc(), KeyHost.read(mapping, "category"));
+    }
+
+    @Test
+    @DisplayName("on 1.21.9 and 1.21.10 a mod category registers under a ResourceLocation id")
+    void modCategoryRegistersWithResourceLocation() throws Exception {
+        KeyHost host = new KeyHost(KeyHost.RESOURCE_LOCATION,
+                "(Ljava/lang/String;I" + KeyHost.CATEGORY_DESC + ")V");
+        Method create = host.keys().getMethod("createDefault", String.class, int.class, String.class);
+
+        Object category = KeyHost.read(create.invoke(null, "key.mod.open", 82, "key.categories.mymod"),
+                "category");
+        assertNotSame(host.misc(), category, "a mod category must not fall back to MISC");
+        Object id = KeyHost.read(category, "id");
+        assertEquals("retromod_compat", KeyHost.read(id, "namespace"));
+        assertEquals("key_categories_mymod", KeyHost.read(id, "path"));
+    }
+
+    /**
+     * A loader holding its own copy of {@code RetroKeyMapping} and a minimal keybind host: a
+     * {@code KeyMapping} with one constructor, a {@code Category} record wrapping the given id type,
+     * and that id type. Other Forge and Blaze3D types its signatures name are empty classes.
+     */
+    private static final class KeyHost extends ClassLoader {
+        static final String IDENTIFIER = "net/minecraft/resources/Identifier";
+        static final String RESOURCE_LOCATION = "net/minecraft/resources/ResourceLocation";
+        private static final String KEY_MAPPING = "net/minecraft/client/KeyMapping";
+        private static final String CATEGORY = "net/minecraft/client/KeyMapping$Category";
+        static final String CATEGORY_DESC = "L" + CATEGORY + ";";
+        private final Map<String, byte[]> classes = new HashMap<>();
+        private final Map<String, Class<?>> defined = new HashMap<>();
+
+        KeyHost(String idType, String keyMappingCtor) throws Exception {
+            super(RetroKeyMappingSdlTest.class.getClassLoader());
+            String keys = RetroKeyMapping.class.getName();
+            try (InputStream in = getParent().getResourceAsStream(keys.replace('.', '/') + ".class")) {
+                classes.put(keys, in.readAllBytes());
+            }
+            classes.put(KEY_MAPPING.replace('/', '.'), keyMapping(keyMappingCtor));
+            classes.put(CATEGORY.replace('/', '.'), category(idType));
+            classes.put(idType.replace('/', '.'), id(idType));
+        }
+
+        Class<?> keys() throws ClassNotFoundException {
+            return loadClass(RetroKeyMapping.class.getName());
+        }
+
+        Object misc() throws Exception {
+            return loadClass(CATEGORY.replace('/', '.')).getField("MISC").get(null);
+        }
+
+        static Object read(Object owner, String field) throws Exception {
+            assertNotNull(owner, "expected an object with field " + field);
+            return owner.getClass().getField(field).get(owner);
+        }
+
+        @Override
+        protected synchronized Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            byte[] bytes = classes.get(name);
+            if (bytes == null && (name.startsWith("net.minecraftforge.")
+                    || name.startsWith("com.mojang.blaze3d.platform.InputConstants$"))) {
+                bytes = emptyClass(name.replace('.', '/'));
+                classes.put(name, bytes);
+            }
+            if (bytes == null) return super.loadClass(name, resolve);
+            Class<?> type = defined.get(name);
+            if (type == null) {
+                type = defineClass(name, bytes, 0, bytes.length);
+                defined.put(name, type);
+            }
+            return type;
+        }
+
+        /** {@code KeyMapping} keeping its name, its Category argument, and a trailing int as order. */
+        private static byte[] keyMapping(String ctor) {
+            ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+            cw.visit(V17, ACC_PUBLIC, KEY_MAPPING, null, "java/lang/Object", null);
+            cw.visitField(ACC_PUBLIC, "name", "Ljava/lang/String;", null, null).visitEnd();
+            cw.visitField(ACC_PUBLIC, "category", "Ljava/lang/Object;", null, null).visitEnd();
+            cw.visitField(ACC_PUBLIC, "order", "Ljava/lang/Object;", null, null).visitEnd();
+            MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, "<init>", ctor, null, null);
+            mv.visitCode();
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitFieldInsn(PUTFIELD, KEY_MAPPING, "name", "Ljava/lang/String;");
+            org.objectweb.asm.Type[] params = org.objectweb.asm.Type.getArgumentTypes(ctor);
+            int slot = 1;
+            for (int i = 0; i < params.length; i++) {
+                if (params[i].getDescriptor().equals(CATEGORY_DESC)) {
+                    mv.visitVarInsn(ALOAD, 0);
+                    mv.visitVarInsn(ALOAD, slot);
+                    mv.visitFieldInsn(PUTFIELD, KEY_MAPPING, "category", "Ljava/lang/Object;");
+                } else if (i == params.length - 1 && params[i].getSort() == org.objectweb.asm.Type.INT) {
+                    mv.visitVarInsn(ALOAD, 0);
+                    mv.visitVarInsn(ILOAD, slot);
+                    mv.visitMethodInsn(INVOKESTATIC, "java/lang/Integer", "valueOf",
+                            "(I)Ljava/lang/Integer;", false);
+                    mv.visitFieldInsn(PUTFIELD, KEY_MAPPING, "order", "Ljava/lang/Object;");
+                }
+                slot += params[i].getSize();
+            }
+            mv.visitInsn(RETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+            cw.visitEnd();
+            return cw.toByteArray();
+        }
+
+        /** {@code Category(id)} with a MISC constant and a static {@code register(id)}. */
+        private static byte[] category(String idType) {
+            String idDesc = "L" + idType + ";";
+            ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+            cw.visit(V17, ACC_PUBLIC, CATEGORY, null, "java/lang/Object", null);
+            cw.visitField(ACC_PUBLIC | ACC_FINAL, "id", "Ljava/lang/Object;", null, null).visitEnd();
+            cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "MISC", CATEGORY_DESC, null, null).visitEnd();
+            MethodVisitor init = cw.visitMethod(ACC_PUBLIC, "<init>", "(" + idDesc + ")V", null, null);
+            init.visitCode();
+            init.visitVarInsn(ALOAD, 0);
+            init.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+            init.visitVarInsn(ALOAD, 0);
+            init.visitVarInsn(ALOAD, 1);
+            init.visitFieldInsn(PUTFIELD, CATEGORY, "id", "Ljava/lang/Object;");
+            init.visitInsn(RETURN);
+            init.visitMaxs(0, 0);
+            init.visitEnd();
+            MethodVisitor clinit = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null);
+            clinit.visitCode();
+            clinit.visitTypeInsn(NEW, CATEGORY);
+            clinit.visitInsn(DUP);
+            clinit.visitInsn(ACONST_NULL);
+            clinit.visitMethodInsn(INVOKESPECIAL, CATEGORY, "<init>", "(" + idDesc + ")V", false);
+            clinit.visitFieldInsn(PUTSTATIC, CATEGORY, "MISC", CATEGORY_DESC);
+            clinit.visitInsn(RETURN);
+            clinit.visitMaxs(0, 0);
+            clinit.visitEnd();
+            MethodVisitor register = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "register",
+                    "(" + idDesc + ")" + CATEGORY_DESC, null, null);
+            register.visitCode();
+            register.visitTypeInsn(NEW, CATEGORY);
+            register.visitInsn(DUP);
+            register.visitVarInsn(ALOAD, 0);
+            register.visitMethodInsn(INVOKESPECIAL, CATEGORY, "<init>", "(" + idDesc + ")V", false);
+            register.visitInsn(ARETURN);
+            register.visitMaxs(0, 0);
+            register.visitEnd();
+            cw.visitEnd();
+            return cw.toByteArray();
+        }
+
+        /** An id with public {@code namespace} and {@code path} and a static {@code fromNamespaceAndPath}. */
+        private static byte[] id(String idType) {
+            ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+            cw.visit(V17, ACC_PUBLIC, idType, null, "java/lang/Object", null);
+            cw.visitField(ACC_PUBLIC, "namespace", "Ljava/lang/String;", null, null).visitEnd();
+            cw.visitField(ACC_PUBLIC, "path", "Ljava/lang/String;", null, null).visitEnd();
+            MethodVisitor init = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+            init.visitCode();
+            init.visitVarInsn(ALOAD, 0);
+            init.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+            init.visitInsn(RETURN);
+            init.visitMaxs(0, 0);
+            init.visitEnd();
+            MethodVisitor of = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "fromNamespaceAndPath",
+                    "(Ljava/lang/String;Ljava/lang/String;)L" + idType + ";", null, null);
+            of.visitCode();
+            of.visitTypeInsn(NEW, idType);
+            of.visitInsn(DUP);
+            of.visitMethodInsn(INVOKESPECIAL, idType, "<init>", "()V", false);
+            of.visitVarInsn(ASTORE, 2);
+            of.visitVarInsn(ALOAD, 2);
+            of.visitVarInsn(ALOAD, 0);
+            of.visitFieldInsn(PUTFIELD, idType, "namespace", "Ljava/lang/String;");
+            of.visitVarInsn(ALOAD, 2);
+            of.visitVarInsn(ALOAD, 1);
+            of.visitFieldInsn(PUTFIELD, idType, "path", "Ljava/lang/String;");
+            of.visitVarInsn(ALOAD, 2);
+            of.visitInsn(ARETURN);
+            of.visitMaxs(0, 0);
+            of.visitEnd();
+            cw.visitEnd();
+            return cw.toByteArray();
+        }
+
+        private static byte[] emptyClass(String name) {
+            ClassWriter cw = new ClassWriter(0);
+            cw.visit(V17, ACC_PUBLIC | ACC_ABSTRACT, name, null, "java/lang/Object", null);
+            cw.visitEnd();
+            return cw.toByteArray();
+        }
+    }
+
     /**
      * A loader holding its own copy of {@code RetroKeyMapping} and stand-ins for the client's
      * {@code Minecraft} and {@code MouseHandler}, so the test classpath never has a Minecraft class.

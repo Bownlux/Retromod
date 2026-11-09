@@ -46,44 +46,12 @@ public class ForgeCapabilitiesShim implements MinecraftVersionedApiShim {
         // LazyOptional, ICapabilityProvider, CapabilityManager, ForgeCapabilities and
         // AttachCapabilitiesEvent are supplied by LegacyCapabilitySynthetics on NeoForge.
 
-        transformer.registerClassRedirect(
-            "net/minecraftforge/items/IItemHandler",
-            "net/neoforged/neoforge/items/IItemHandler"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraftforge/items/ItemStackHandler",
-            "net/neoforged/neoforge/items/ItemStackHandler"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraftforge/items/SlotItemHandler",
-            "net/neoforged/neoforge/items/SlotItemHandler"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraftforge/fluids/capability/IFluidHandler",
-            "net/neoforged/neoforge/fluids/capability/IFluidHandler"
-        );
+        // The handlers move with the rest of NeoForge's transfer API, to Retromod's rebuilt classes on 26.3.
+        com.retromod.shim.forge.ForgeTransferApiMoves.register(transformer);
 
         transformer.registerClassRedirect(
             "net/minecraftforge/fluids/FluidStack",
             "net/neoforged/neoforge/fluids/FluidStack"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraftforge/fluids/capability/templates/FluidTank",
-            "net/neoforged/neoforge/fluids/capability/templates/FluidTank"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraftforge/energy/IEnergyStorage",
-            "net/neoforged/neoforge/energy/IEnergyStorage"
-        );
-
-        transformer.registerClassRedirect(
-            "net/minecraftforge/energy/EnergyStorage",
-            "net/neoforged/neoforge/energy/EnergyStorage"
         );
     }
     

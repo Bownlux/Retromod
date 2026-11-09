@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -176,7 +177,7 @@ public class ResourceManager {
         });
 
         if (!transform) {
-            LOGGER.info("Copied {} without changes", name);
+            LOGGER.debug(RetromodLog.DETAIL, "Copied {} without changes", name);
         } else {
             resourcePacksTransformed++;
         }
@@ -251,7 +252,7 @@ public class ResourceManager {
         });
 
         if (!transform) {
-            LOGGER.info("Copied data pack (already compatible): {}", name);
+            LOGGER.debug(RetromodLog.DETAIL, "Copied data pack (already compatible): {}", name);
         } else {
             dataPacksTransformed++;
         }

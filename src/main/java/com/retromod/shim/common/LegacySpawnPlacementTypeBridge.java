@@ -30,6 +30,9 @@ public final class LegacySpawnPlacementTypeBridge {
     static final String NEW_TYPE = "net/minecraft/world/entity/SpawnPlacementType";
     static final String CONSTANTS = "net/minecraft/world/entity/SpawnPlacementTypes";
     static final String HELPER = "com/retromod/generated/LegacySpawnPositionCheck";
+    static final String CREATE_HELPER = RebuiltApiClasses.ROOT + "minecraft/world/entity/SpawnPlacementTypeMembers";
+    // NeoForge renames it with the rest of Forge's same-shape classes, in the mod and in the embedded helper alike.
+    static final String TRI_PREDICATE = "net/minecraftforge/common/util/TriPredicate";
 
     private static final String NATURAL_SPAWNER = "net/minecraft/world/level/NaturalSpawner";
     private static final String CHECK_ARGS = "Lnet/minecraft/world/level/LevelReader;"
@@ -56,6 +59,17 @@ public final class LegacySpawnPlacementTypeBridge {
         transformer.registerMethodRedirect(NATURAL_SPAWNER, "isSpawnPositionOk", OLD_CHECK_DESC,
                 HELPER, "isSpawnPositionOk", NEW_STATIC_CHECK_DESC);
         registerPrivateRegister(transformer);
+        registerCreate(transformer);
+    }
+
+    /**
+     * Forge's {@code Type.create(name, test)} added a placement type to the enum. The interface takes a mod's own
+     * placement type, so the rebuilt helper answers one that asks the test. Fabric mods never call it.
+     */
+    static void registerCreate(RetromodTransformer transformer) {
+        RebuiltApiClasses.registerTree(transformer, CREATE_HELPER);
+        transformer.registerMethodRedirect(OLD_TYPE, "create", "(Ljava/lang/String;L" + TRI_PREDICATE + ";)L" + OLD_TYPE + ";",
+                CREATE_HELPER, "create", "(Ljava/lang/String;L" + TRI_PREDICATE + ";)L" + NEW_TYPE + ";");
     }
 
     /**

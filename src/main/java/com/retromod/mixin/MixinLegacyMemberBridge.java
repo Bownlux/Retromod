@@ -77,6 +77,9 @@ final class MixinLegacyMemberBridge {
     private static final String MAP_CODEC_CODEC = "com/mojang/serialization/MapCodec$MapCodecCodec";
     private static final String SMITHING_TRANSFORM_INTERMEDIARY = "net/minecraft/class_8060";
     private static final String INGREDIENT_INTERMEDIARY = "net/minecraft/class_1856";
+    private static final String SMITHING_TRANSFORM = "net/minecraft/world/item/crafting/SmithingTransformRecipe";
+    private static final String INGREDIENT = "net/minecraft/world/item/crafting/Ingredient";
+    private static final String PATCHOULI_SMITHING_ACCESSOR = "vazkii/patchouli/mixin/AccessorSmithingTransformRecipe";
     private static final String INVENTORY_SCREEN_INTERMEDIARY = "net/minecraft/class_490";
     private static final String OLD_EFFECTS_INVENTORY_SCREEN_INTERMEDIARY = "net/minecraft/class_485";
     private static final String CONTAINER_SCREEN_INTERMEDIARY = "net/minecraft/class_465";
@@ -135,7 +138,13 @@ final class MixinLegacyMemberBridge {
             modified |= bridgeGuiCameraPlayer(classNode);
         }
         if (targets.contains(SMITHING_TRANSFORM_INTERMEDIARY)) {
-            modified |= bridgeOptionalSmithingIngredients(classNode);
+            modified |= bridgeOptionalSmithingIngredients(classNode, INGREDIENT_INTERMEDIARY,
+                    "field_42030", "field_42032");
+        }
+        // Forge and NeoForge mods, and Fabric mods on 26.1 and newer, reach this point in Mojang names.
+        // Only Patchouli's accessor, the one whose callers PatchouliSmithingAccessorBridge unwraps.
+        if (targets.contains(SMITHING_TRANSFORM) && PATCHOULI_SMITHING_ACCESSOR.equals(classNode.name)) {
+            modified |= bridgeOptionalSmithingIngredients(classNode, INGREDIENT, "template", "addition");
         }
         if (targets.contains(INVENTORY_SCREEN_INTERMEDIARY)) {
             modified |= rebaseLegacyInventoryScreenMixin(classNode);
@@ -370,19 +379,20 @@ final class MixinLegacyMemberBridge {
      * rejects the interface before recipe registration completes. Retype the generated accessors;
      * the version shim adapts Patchouli's old call sites back to Ingredient.
      */
-    private static boolean bridgeOptionalSmithingIngredients(ClassNode classNode) {
+    private static boolean bridgeOptionalSmithingIngredients(ClassNode classNode, String ingredient,
+            String templateField, String additionField) {
         if ((classNode.access & Opcodes.ACC_INTERFACE) == 0) return false;
         boolean modified = false;
         modified |= bridgeOptionalSmithingIngredient(
-                classNode, "getTemplate", "field_42030");
+                classNode, ingredient, "getTemplate", templateField);
         modified |= bridgeOptionalSmithingIngredient(
-                classNode, "getAddition", "field_42032");
+                classNode, ingredient, "getAddition", additionField);
         return modified;
     }
 
-    private static boolean bridgeOptionalSmithingIngredient(ClassNode classNode,
+    private static boolean bridgeOptionalSmithingIngredient(ClassNode classNode, String ingredient,
             String oldMethodName, String fieldName) {
-        String ingredientDesc = "L" + INGREDIENT_INTERMEDIARY + ";";
+        String ingredientDesc = "L" + ingredient + ";";
         MethodNode accessor = findAnnotatedMethod(
                 classNode, oldMethodName, "()" + ingredientDesc, ACCESSOR_DESC);
         if (accessor == null) return false;
@@ -392,7 +402,8 @@ final class MixinLegacyMemberBridge {
         accessor.desc = "()Ljava/util/Optional;";
         accessor.signature = "()Ljava/util/Optional<" + ingredientDesc + ">;";
         // Patchouli relies on name inference plus its refmap. Renaming the accessor would make
-        // that inference point at a fictional field, so pin the live intermediary field name.
+        // that inference point at a fictional field, so pin the live field name. A Mojang name is
+        // also the refmap key, and Mixin takes only the name from that entry, never its type.
         AnnotationNode accessorAnnotation = findAnnotation(accessor, ACCESSOR_DESC);
         accessorAnnotation.values = new ArrayList<>(List.of("value", fieldName));
 

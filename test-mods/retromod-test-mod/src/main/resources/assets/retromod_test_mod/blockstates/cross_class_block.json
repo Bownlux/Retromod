@@ -1,0 +1,5 @@
+{
+  "variants": {
+    "": { "model": "retromod_test_mod:block/cross_class_block" }
+  }
+}

@@ -96,7 +96,7 @@ public final class LegacyBiomeEffects {
                 setAttribute(biomeBuilder, loader, "AMBIENT_SOUNDS", ambientSounds(loader, pending));
             }
         }
-        for (Method method : biomeBuilder.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(biomeBuilder.getClass())) {
             if (method.getName().equals("specialEffects") && method.getParameterCount() == 1) {
                 return call(method, biomeBuilder, effects);
             }
@@ -116,7 +116,7 @@ public final class LegacyBiomeEffects {
             Object converted = value == null ? null : convert(loader, field, value);
             if (converted == null) return;
             Class<?> attributeType = Class.forName("net.minecraft.world.attribute.EnvironmentAttribute", true, loader);
-            biomeBuilder.getClass().getMethod("setAttribute", attributeType, Object.class)
+            LegacyPublicMethods.method(biomeBuilder.getClass(), "setAttribute", attributeType, Object.class)
                     .invoke(biomeBuilder, field.get(null), converted);
         } catch (ReflectiveOperationException | LinkageError e) {
             System.out.println("[Retromod] Legacy biome effects: could not set " + name.toLowerCase()
@@ -147,10 +147,10 @@ public final class LegacyBiomeEffects {
     /** 1.21.5 made biome music a weighted list; 26.x plays one track, so the first one is kept. */
     private static Object firstWeighted(Object list) {
         try {
-            List<?> entries = (List<?>) list.getClass().getMethod("unwrap").invoke(list);
+            List<?> entries = (List<?>) LegacyPublicMethods.method(list.getClass(), "unwrap").invoke(list);
             if (entries.isEmpty()) return null;
             Object first = entries.get(0);
-            return first.getClass().getMethod("value").invoke(first);
+            return LegacyPublicMethods.method(first.getClass(), "value").invoke(first);
         } catch (ReflectiveOperationException | ClassCastException e) {
             return null;
         }
@@ -179,7 +179,7 @@ public final class LegacyBiomeEffects {
 
     private static Object invoke(Object target, String name) {
         try {
-            return call(target.getClass().getMethod(name), target);
+            return call(LegacyPublicMethods.method(target.getClass(), name), target);
         } catch (NoSuchMethodException e) {
             throw new IllegalStateException(target.getClass().getName() + " has no " + name + " method", e);
         }

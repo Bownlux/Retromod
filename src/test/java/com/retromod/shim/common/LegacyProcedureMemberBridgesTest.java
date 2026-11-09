@@ -5,6 +5,8 @@
 package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
+import com.retromod.util.McReflect;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -55,6 +57,8 @@ class LegacyProcedureMemberBridgesTest {
     private static final Path MC_26_3 = Path.of("test-jars-mixin/minecraft-26.3-client.jar");
 
     private static final String PROCEDURES = "mod/Procedures";
+    private static final String FORGE_ADVANCEMENT_EVENT = "net/minecraftforge/event/entity/player/AdvancementEvent";
+    private static final String NEO_ADVANCEMENT_EVENT = "net/neoforged/neoforge/event/entity/player/AdvancementEvent";
     private static final String OWN_HURT_MOB = "mod/OwnHurtMob";
     private static final String OWN_DROP_PLAYER = "mod/OwnDropPlayer";
     private static final String OWN_THROW_MOB = "mod/OwnThrowMob";
@@ -457,6 +461,47 @@ class LegacyProcedureMemberBridgesTest {
     }
 
     @Test
+    @DisplayName("an advancement event's old getAdvancement() gives the data, and getId() then reads the holder's id")
+    void advancementEventReachesTheHolder() throws Throwable {
+        String savedTarget = RetromodVersion.TARGET_MC_VERSION;
+        boolean savedForge = McReflect.isForceForge();
+        // A Forge 26.2 target, whose checked table lists AdvancementEvent as an interface.
+        RetromodVersion.TARGET_MC_VERSION = "26.2";
+        McReflect.setForceForge(true);
+        Run run;
+        try {
+            run = new Run();
+        } finally {
+            RetromodVersion.TARGET_MC_VERSION = savedTarget;
+            McReflect.setForceForge(savedForge);
+        }
+        Object manager = run.newInstance(MANAGER);
+        Object tea = run.addAdvancement(manager, "lootr:1chest");
+        Object other = run.addAdvancement(manager, "lootr:10chest");
+
+        Object forgeEvent = run.loadClass(FORGE_ADVANCEMENT_EVENT.replace('/', '.') + "$AdvancementEarnEvent")
+                .getConstructor(run.loadClass(LegacyAdvancementBridge.HOLDER.replace('/', '.'))).newInstance(tea);
+        assertEquals("lootr:1chest", run.field(run.call("forgeEarnedId", forgeEvent), "id"),
+                "a call through Forge's AdvancementEvent interface");
+        Object record = run.loadClass(FORGE_ADVANCEMENT_EVENT.replace('/', '.') + "$AdvancementEarnEvent")
+                .getConstructor(run.loadClass(LegacyAdvancementBridge.HOLDER.replace('/', '.'))).newInstance(other);
+        assertEquals("lootr:10chest", run.field(run.call("forgeRecordEarnedId", record), "id"),
+                "a call through the event record, as Cataclysm and Architectury make it");
+        Object neoEvent = run.loadClass(NEO_ADVANCEMENT_EVENT.replace('/', '.') + "$AdvancementEarnEvent")
+                .getConstructor(run.loadClass(LegacyAdvancementBridge.HOLDER.replace('/', '.'))).newInstance(tea);
+        assertEquals("lootr:1chest", run.field(run.call("neoEarnedId", neoEvent), "id"),
+                "a Forge 1.20.1 mod's call after its move to NeoForge's event");
+    }
+
+    @Test
+    @DisplayName("an advancement's id is null when no holder of that exact data is known")
+    void advancementWithoutHolderHasNoId() throws Throwable {
+        Run run = new Run();
+        Object loose = run.newInstance(ADVANCEMENT);
+        assertNull(run.call("idOf", loose));
+    }
+
+    @Test
     @DisplayName("ServerPlayer.server, private since 1.21.6, is read through the player's level")
     void playerServerIsReadThroughTheLevel() throws Throwable {
         Run run = new Run();
@@ -497,7 +542,7 @@ class LegacyProcedureMemberBridgesTest {
             assertTrue(Legacy1212MemberBridge.replacedIn(read(jar, PROPERTY), "getPossibleValues",
                     Legacy1212MemberBridge.VALUES_OLD, "getPossibleValues", Legacy1212MemberBridge.VALUES_NEW));
             assertEquals(IDENTIFIER, LegacyAdvancementBridge.idClassOf(read(jar, MANAGER)));
-            assertTrue(LegacyPlayerServerBridge.fieldHidden(read(jar, SERVER_PLAYER)));
+            assertTrue(LegacyPlayerServerBridge.fieldHidden(read(jar, SERVER_PLAYER), LegacyPlayerServerBridge.MOJANG));
             ClassNode stack = read(jar, ITEM_STACK);
             assertTrue(stack.methods.stream().anyMatch(m -> m.name.equals("hurtAndBreak")
                     && m.desc.equals(Legacy1205MemberBridge.HURT_AND_BREAK_LEVEL)));
@@ -521,7 +566,8 @@ class LegacyProcedureMemberBridgesTest {
         verify(Legacy1205MemberBridge.generateHelper(Legacy1205MemberBridge.MEMBERS, Legacy1205MemberBridge.HostShape.AT_1_20_5));
         verify(Legacy1205MemberBridge.generateBreakFlag());
         verify(LegacyAdvancementBridge.generateHelper(LegacyAdvancementBridge.RESOURCE_LOCATION));
-        verify(LegacyPlayerServerBridge.generateHelper());
+        verify(LegacyPlayerServerBridge.generateHelper(LegacyPlayerServerBridge.MOJANG));
+        verify(LegacyPlayerServerBridge.generateHelper(LegacyPlayerServerBridge.INTERMEDIARY));
     }
 
     // --- running the transformed procedures ---------------------------------------------------
@@ -776,6 +822,22 @@ class LegacyProcedureMemberBridgesTest {
         award.visitMethodInsn(INVOKEVIRTUAL, PLAYER_ADVANCEMENTS, "award", LegacyAdvancementBridge.CRITERION_OLD, false);
         award.visitInsn(IRETURN);
         end(award);
+        MethodVisitor idOf = begin(cw, "idOf", "(L" + ADVANCEMENT + ";)L" + IDENTIFIER + ";");
+        idOf.visitVarInsn(ALOAD, 0);
+        idOf.visitMethodInsn(INVOKEVIRTUAL, ADVANCEMENT, "getId", "()L" + IDENTIFIER + ";", false);
+        idOf.visitInsn(ARETURN);
+        end(idOf);
+        // Lootr's advancement handler: the event's advancement, then its id.
+        for (String[] event : new String[][] {{"forgeEarnedId", FORGE_ADVANCEMENT_EVENT, "true"},
+                {"forgeRecordEarnedId", FORGE_ADVANCEMENT_EVENT + "$AdvancementEarnEvent", "false"},
+                {"neoEarnedId", NEO_ADVANCEMENT_EVENT + "$AdvancementEarnEvent", "false"}}) {
+            MethodVisitor earned = begin(cw, event[0], "(L" + event[1] + ";)L" + IDENTIFIER + ";");
+            earned.visitVarInsn(ALOAD, 0);
+            earned.visitMethodInsn(INVOKEVIRTUAL, event[1], "getAdvancement", "()L" + ADVANCEMENT + ";", false);
+            earned.visitMethodInsn(INVOKEVIRTUAL, ADVANCEMENT, "getId", "()L" + IDENTIFIER + ";", false);
+            earned.visitInsn(ARETURN);
+            end(earned);
+        }
         // The advancement data a holder pairs with its id, as a mod that kept it would have it.
         String holder = LegacyAdvancementBridge.HOLDER;
         MethodVisitor valueOf = begin(cw, "valueOf", "(L" + holder + ";)L" + ADVANCEMENT + ";");
@@ -1339,6 +1401,25 @@ class LegacyProcedureMemberBridgesTest {
                             return true;
                         }
                         public boolean revoke(AdvancementHolder holder, String criterion) { return false; }
+                    }""");
+            // Forge 26.2's advancement event is an interface its records implement; NeoForge's a class.
+            add("net/minecraftforge/event/entity/player/AdvancementEvent.java", """
+                    package net.minecraftforge.event.entity.player;
+                    import net.minecraft.advancements.AdvancementHolder;
+                    public interface AdvancementEvent {
+                        AdvancementHolder getAdvancement();
+                        record AdvancementEarnEvent(AdvancementHolder getAdvancement) implements AdvancementEvent {}
+                    }""");
+            add("net/neoforged/neoforge/event/entity/player/AdvancementEvent.java", """
+                    package net.neoforged.neoforge.event.entity.player;
+                    import net.minecraft.advancements.AdvancementHolder;
+                    public abstract class AdvancementEvent {
+                        private final AdvancementHolder advancement;
+                        protected AdvancementEvent(AdvancementHolder advancement) { this.advancement = advancement; }
+                        public AdvancementHolder getAdvancement() { return advancement; }
+                        public static class AdvancementEarnEvent extends AdvancementEvent {
+                            public AdvancementEarnEvent(AdvancementHolder advancement) { super(advancement); }
+                        }
                     }""");
         }
     }

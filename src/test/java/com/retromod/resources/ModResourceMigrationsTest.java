@@ -122,8 +122,9 @@ class ModResourceMigrationsTest {
                 "pre-1.20 structure and smithing data", "1.12 and Forge v1 blockstates",
                 "vanilla model parent renames", "builtin/entity block models",
                 "vanilla texture references in mod models", "mod texture atlas sources",
-                "26.x model element fields", "banner pattern tags", "armor equipment assets",
-                "nested resource pack textures", "Forge data namespaces", "data content",
+                "item model atlas aliases", "26.x model element fields", "banner pattern tags", "armor equipment assets",
+                "nested resource pack textures", "Forge data namespaces", "legacy worldgen features",
+                "legacy registry entries", "legacy number providers", "data content",
                 "item definitions", "key category names", "renamed vanilla tags", "26.3 worldgen folders",
                 "mod pack metadata", "data load gate", "dangling recipe advancements"), names);
     }

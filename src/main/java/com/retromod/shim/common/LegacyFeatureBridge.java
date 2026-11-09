@@ -20,6 +20,7 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -74,6 +75,9 @@ public final class LegacyFeatureBridge {
             "CONFIGURED_FEATURE");
 
     private static final Set<String> LEGACY_CLASSES = ConcurrentHashMap.newKeySet();
+
+    // The registry fields an old-model jar reads, under their 26.3 names.
+    static final Map<String, String> OLD_MODEL_KEYS = Map.of("FEATURE", "FEATURE_TYPE", "CONFIGURED_FEATURE", "FEATURE");
 
     private LegacyFeatureBridge() {}
 
@@ -142,8 +146,13 @@ public final class LegacyFeatureBridge {
      * scoped to old jars, because a global field redirect for the second would run first and the
      * first would then rename its result again.
      */
-    public static byte[] apply(byte[] classBytes, String className) {
-        if (classBytes == null || !LEGACY_CLASSES.contains(className)) return classBytes;
+    public static byte[] apply(byte[] classBytes) {
+        // The name comes from the bytes, as the marking read it: callers spell class names
+        // differently, and full AOT passes dotted ones.
+        if (classBytes == null || LEGACY_CLASSES.isEmpty()
+                || !LEGACY_CLASSES.contains(new ClassReader(classBytes).getClassName())) {
+            return classBytes;
+        }
         ClassNode node = new ClassNode();
         new ClassReader(classBytes).accept(node, 0);
         boolean changed = false;
@@ -152,14 +161,10 @@ public final class LegacyFeatureBridge {
                 if (!(insn instanceof FieldInsnNode field) || field.getOpcode() != Opcodes.GETSTATIC) continue;
                 boolean registries = field.owner.equals("net/minecraft/core/registries/Registries")
                         || field.owner.equals("net/minecraft/core/registries/BuiltInRegistries");
-                if (!registries) continue;
-                if (field.name.equals("FEATURE")) {
-                    field.name = "FEATURE_TYPE";
-                    changed = true;
-                } else if (field.name.equals("CONFIGURED_FEATURE")) {
-                    field.name = "FEATURE";
-                    changed = true;
-                }
+                String renamed = registries ? OLD_MODEL_KEYS.get(field.name) : null;
+                if (renamed == null) continue;
+                field.name = renamed;
+                changed = true;
             }
         }
         if (!changed) return classBytes;

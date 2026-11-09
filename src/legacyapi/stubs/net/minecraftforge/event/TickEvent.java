@@ -2,6 +2,7 @@
 package net.minecraftforge.event;
 
 import java.util.function.BooleanSupplier;
+import net.minecraft.client.DeltaTracker;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
@@ -67,9 +68,11 @@ public interface TickEvent {
 
     interface RenderTickEvent extends TickEvent {
         final class Pre implements RenderTickEvent {
+            public DeltaTracker timer() { throw new UnsupportedOperationException(); }
         }
 
         final class Post implements RenderTickEvent {
+            public DeltaTracker timer() { throw new UnsupportedOperationException(); }
         }
     }
 }

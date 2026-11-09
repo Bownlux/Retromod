@@ -4,6 +4,7 @@
  */
 package com.retromod.legacy;
 
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -170,7 +171,7 @@ public class LegacyVersionSupport {
     /** Log support status (only if experimental/limited enabled). */
     public void logSupportStatus(Path modsFolder) {
         if (experimentalSupport || limitedSupport) {
-            LOGGER.info("Legacy support: experimental={}, limited={}", experimentalSupport, limitedSupport);
+            LOGGER.debug(RetromodLog.DETAIL, "Legacy support: experimental={}, limited={}", experimentalSupport, limitedSupport);
         }
     }
     

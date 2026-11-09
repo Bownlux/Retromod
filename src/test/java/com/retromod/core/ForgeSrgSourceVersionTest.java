@@ -67,30 +67,53 @@ class ForgeSrgSourceVersionTest {
                 "1.20 names m_9236_ level and m_20096_ onGround, like 1.20.1");
     }
 
+    @Test
+    @DisplayName("a mod with no minecraft dependency is not read as its forge range")
+    void loaderRangeIsNotAMinecraftVersion(@TempDir Path directory) throws Exception {
+        // Alex's Mobs and Citadel for 1.20.1 declare citadel and forge, but no minecraft.
+        Path input = directory.resolve("mobs-fixture.jar");
+        writeForgeMod(input, "1.22.9", dependency("citadel", "[2.6.0,)")
+                + dependency("forge", "[47.1.0,)"), levelAndStackCalls());
+
+        Path output = new ForgeModTransformer("1.21.1")
+                .transformMod(input, Files.createDirectory(directory.resolve("out")));
+
+        assertNotNull(output, "the fixture should be transformed");
+        assertEquals(List.of("getRecipeManager", "hurt"), callNames(output),
+                "forge [47.1.0,) read as Minecraft 47.1.0 gave the 1.21.2 names explode and "
+                        + "hurtAndBreak");
+    }
+
     private static void writeForgeMod(Path input, String minecraftRange) throws Exception {
+        writeForgeMod(input, "1.0.0", dependency("forge", "[46,48)")
+                + dependency("minecraft", minecraftRange), entityCalls());
+    }
+
+    /** One {@code [[dependencies]]} block of the fixture mod. */
+    private static String dependency(String modId, String versionRange) {
+        return """
+                [[dependencies.srg_source_version_test]]
+                modId="%s"
+                mandatory=true
+                versionRange="%s"
+                ordering="NONE"
+                side="BOTH"
+                """.formatted(modId, versionRange);
+    }
+
+    private static void writeForgeMod(Path input, String version, String dependencies,
+            byte[] fixture) throws Exception {
         String metadata = """
                 modLoader="javafml"
                 loaderVersion="[46,)"
                 license="MIT"
                 [[mods]]
                 modId="srg_source_version_test"
-                version="1.0.0"
-                [[dependencies.srg_source_version_test]]
-                modId="forge"
-                mandatory=true
-                versionRange="[46,48)"
-                ordering="NONE"
-                side="BOTH"
-                [[dependencies.srg_source_version_test]]
-                modId="minecraft"
-                mandatory=true
-                versionRange="%s"
-                ordering="NONE"
-                side="BOTH"
-                """.formatted(minecraftRange);
+                version="%s"
+                """.formatted(version) + dependencies;
         try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(input))) {
             jar.putNextEntry(new JarEntry("test/Fixture.class"));
-            jar.write(entityCalls());
+            jar.write(fixture);
             jar.closeEntry();
             jar.putNextEntry(new JarEntry("META-INF/mods.toml"));
             jar.write(metadata.getBytes(StandardCharsets.UTF_8));
@@ -111,6 +134,38 @@ class ForgeSrgSourceVersionTest {
         method.visitInsn(Opcodes.POP);
         method.visitVarInsn(Opcodes.ALOAD, 0);
         method.visitMethodInsn(Opcodes.INVOKEVIRTUAL, ENTITY, "m_20096_", "()Z", false);
+        method.visitInsn(Opcodes.POP);
+        method.visitInsn(Opcodes.RETURN);
+        method.visitMaxs(0, 0);
+        method.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
+    /**
+     * {@code level.m_7465_()} then {@code stack.m_220157_(1, random, player)}: getRecipeManager and
+     * hurt in 1.20.1, explode and hurtAndBreak in 1.21.2.
+     */
+    private static byte[] levelAndStackCalls() {
+        String level = "net/minecraft/world/level/Level";
+        String stack = "net/minecraft/world/item/ItemStack";
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/Fixture", null, "java/lang/Object", null);
+        MethodVisitor method = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "probe",
+                "(L" + level + ";L" + stack + ";Lnet/minecraft/util/RandomSource;"
+                        + "Lnet/minecraft/server/level/ServerPlayer;)V", null, null);
+        method.visitCode();
+        method.visitVarInsn(Opcodes.ALOAD, 0);
+        method.visitMethodInsn(Opcodes.INVOKEVIRTUAL, level, "m_7465_",
+                "()Lnet/minecraft/world/item/crafting/RecipeManager;", false);
+        method.visitInsn(Opcodes.POP);
+        method.visitVarInsn(Opcodes.ALOAD, 1);
+        method.visitInsn(Opcodes.ICONST_1);
+        method.visitVarInsn(Opcodes.ALOAD, 2);
+        method.visitVarInsn(Opcodes.ALOAD, 3);
+        method.visitMethodInsn(Opcodes.INVOKEVIRTUAL, stack, "m_220157_",
+                "(ILnet/minecraft/util/RandomSource;Lnet/minecraft/server/level/ServerPlayer;)Z",
+                false);
         method.visitInsn(Opcodes.POP);
         method.visitInsn(Opcodes.RETURN);
         method.visitMaxs(0, 0);

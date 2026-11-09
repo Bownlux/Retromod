@@ -1,0 +1,37 @@
+# NeoForge 1.21.1's data-generation classes that NeoForge 21.4 (Minecraft 1.21.4) and every later release removed.
+# Read from neoforge-21.1.252-universal.jar, keeping each class absent from neoforge-21.11.42 and neoforge-26.3.0.43-beta.
+# Columns: kind (class, abstract, interface), the class, its superclass, its interfaces (comma separated, - for none).
+class	net/neoforged/neoforge/client/model/generators/BlockModelBuilder	net/neoforged/neoforge/client/model/generators/ModelBuilder	-
+abstract	net/neoforged/neoforge/client/model/generators/BlockModelProvider	net/neoforged/neoforge/client/model/generators/ModelProvider	-
+abstract	net/neoforged/neoforge/client/model/generators/BlockStateProvider	java/lang/Object	net/minecraft/data/DataProvider
+class	net/neoforged/neoforge/client/model/generators/BlockStateProvider$ConfiguredModelList	java/lang/Object	-
+class	net/neoforged/neoforge/client/model/generators/ConfiguredModel	java/lang/Object	-
+class	net/neoforged/neoforge/client/model/generators/ConfiguredModel$Builder	java/lang/Object	-
+abstract	net/neoforged/neoforge/client/model/generators/CustomLoaderBuilder	java/lang/Object	-
+interface	net/neoforged/neoforge/client/model/generators/IGeneratedBlockState	java/lang/Object	-
+class	net/neoforged/neoforge/client/model/generators/ItemModelBuilder	net/neoforged/neoforge/client/model/generators/ModelBuilder	-
+class	net/neoforged/neoforge/client/model/generators/ItemModelBuilder$OverrideBuilder	java/lang/Object	-
+abstract	net/neoforged/neoforge/client/model/generators/ItemModelProvider	net/neoforged/neoforge/client/model/generators/ModelProvider	-
+class	net/neoforged/neoforge/client/model/generators/loaders/DynamicFluidContainerModelBuilder	net/neoforged/neoforge/client/model/generators/CustomLoaderBuilder	-
+class	net/neoforged/neoforge/client/model/generators/loaders/ItemLayerModelBuilder	net/neoforged/neoforge/client/model/generators/CustomLoaderBuilder	-
+class	net/neoforged/neoforge/client/model/generators/loaders/SeparateTransformsModelBuilder	net/neoforged/neoforge/client/model/generators/CustomLoaderBuilder	-
+class	net/neoforged/neoforge/client/model/generators/ModelBuilder	net/neoforged/neoforge/client/model/generators/ModelFile	-
+class	net/neoforged/neoforge/client/model/generators/ModelBuilder$ElementBuilder	java/lang/Object	-
+class	net/neoforged/neoforge/client/model/generators/ModelBuilder$ElementBuilder$FaceBuilder	java/lang/Object	-
+class	net/neoforged/neoforge/client/model/generators/ModelBuilder$ElementBuilder$RotationBuilder	java/lang/Object	-
+class	net/neoforged/neoforge/client/model/generators/ModelBuilder$FaceRotation	java/lang/Object	-
+class	net/neoforged/neoforge/client/model/generators/ModelBuilder$RootTransformsBuilder	java/lang/Object	-
+class	net/neoforged/neoforge/client/model/generators/ModelBuilder$TransformsBuilder	java/lang/Object	-
+class	net/neoforged/neoforge/client/model/generators/ModelBuilder$TransformsBuilder$TransformVecBuilder	java/lang/Object	-
+abstract	net/neoforged/neoforge/client/model/generators/ModelFile	java/lang/Object	-
+class	net/neoforged/neoforge/client/model/generators/ModelFile$ExistingModelFile	net/neoforged/neoforge/client/model/generators/ModelFile	-
+class	net/neoforged/neoforge/client/model/generators/ModelFile$UncheckedModelFile	net/neoforged/neoforge/client/model/generators/ModelFile	-
+abstract	net/neoforged/neoforge/client/model/generators/ModelProvider	java/lang/Object	net/minecraft/data/DataProvider
+class	net/neoforged/neoforge/client/model/generators/MultiPartBlockStateBuilder	java/lang/Object	net/neoforged/neoforge/client/model/generators/IGeneratedBlockState
+class	net/neoforged/neoforge/client/model/generators/MultiPartBlockStateBuilder$PartBuilder	java/lang/Object	-
+class	net/neoforged/neoforge/client/model/generators/MultiPartBlockStateBuilder$PartBuilder$ConditionGroup	java/lang/Object	-
+class	net/neoforged/neoforge/client/model/generators/VariantBlockStateBuilder	java/lang/Object	net/neoforged/neoforge/client/model/generators/IGeneratedBlockState
+class	net/neoforged/neoforge/client/model/generators/VariantBlockStateBuilder$PartialBlockstate	java/lang/Object	java/util/function/Predicate
+class	net/neoforged/neoforge/common/data/ExistingFileHelper	java/lang/Object	-
+interface	net/neoforged/neoforge/common/data/ExistingFileHelper$IResourceType	java/lang/Object	-
+class	net/neoforged/neoforge/common/data/ExistingFileHelper$ResourceType	java/lang/Object	net/neoforged/neoforge/common/data/ExistingFileHelper$IResourceType

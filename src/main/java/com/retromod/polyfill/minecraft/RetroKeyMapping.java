@@ -15,7 +15,6 @@ public final class RetroKeyMapping {
     private static final String KEY_MAPPING = "net.minecraft.client.KeyMapping";
     private static final String CATEGORY = "net.minecraft.client.KeyMapping$Category";
     private static final String INPUT_TYPE = "com.mojang.blaze3d.platform.InputConstants$Type";
-    private static final String IDENTIFIER = "net.minecraft.resources.Identifier";
 
     // Vanilla category translation key -> the 26.x KeyMapping.Category builtin constant field name.
     private static final java.util.Map<String, String> VANILLA = java.util.Map.of(
@@ -85,7 +84,11 @@ public final class RetroKeyMapping {
 
     private static Object tryRegister(Class<?> categoryCls, String category) {
         try {
-            Class<?> idCls = Class.forName(IDENTIFIER);
+            // Category wraps one id: Identifier from 1.21.11, ResourceLocation on 1.21.9 and 1.21.10.
+            // Its constructor names the type, so neither name is hardcoded.
+            java.lang.reflect.Constructor<?> byId = idConstructor(categoryCls);
+            if (byId == null) return null;
+            Class<?> idCls = byId.getParameterTypes()[0];
             // 26.x has fromNamespaceAndPath, not of; with of every mod category fell to MISC.
             Object id = idCls.getMethod("fromNamespaceAndPath", String.class, String.class)
                     .invoke(null, "retromod_compat", sanitize(category));
@@ -93,11 +96,19 @@ public final class RetroKeyMapping {
                 return categoryCls.getMethod("register", idCls).invoke(null, id);
             } catch (java.lang.reflect.InvocationTargetException alreadyRegistered) {
                 // Another converted mod registered the same string; an equal record finds its slot.
-                return categoryCls.getConstructor(idCls).newInstance(id);
+                return byId.newInstance(id);
             }
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /** Category's public one-argument constructor, which takes the host's id type. */
+    private static java.lang.reflect.Constructor<?> idConstructor(Class<?> categoryCls) {
+        for (java.lang.reflect.Constructor<?> ctor : categoryCls.getConstructors()) {
+            if (ctor.getParameterCount() == 1) return ctor;
+        }
+        return null;
     }
 
     /** Same id as KeyBindingShim and LegacyKeyCategoryNames, which names it in the mod's lang. */
@@ -114,28 +125,87 @@ public final class RetroKeyMapping {
         }
     }
 
-    // NeoForge's conflict-context constructors lost their String category at 1.21.9 too, so a
-    // NeoForge keybind that names an IKeyConflictContext died with NoSuchMethodError on 26.x.
+    private static volatile java.lang.reflect.Constructor<?> keyEvent;
+    private static volatile java.lang.reflect.Method matchesKey;
+    private static volatile java.lang.reflect.Constructor<?> mouseEvent;
+    private static volatile java.lang.reflect.Constructor<?> mouseButton;
+    private static volatile java.lang.reflect.Method matchesButton;
 
-    /** Old NeoForge {@code new KeyMapping(String, IKeyConflictContext, Type, int, String)}. */
+    /** Old {@code keyMapping.matches(key, scanCode)}, which 1.21.9 replaced with {@code matches(KeyEvent)}. */
+    public static boolean matches(Object keyMapping, int key, int scanCode) {
+        try {
+            if (matchesKey == null) {
+                Class<?> event = Class.forName("net.minecraft.client.input.KeyEvent");
+                keyEvent = event.getConstructor(int.class, int.class, int.class);
+                matchesKey = Class.forName(KEY_MAPPING).getMethod("matches", event);
+            }
+            // The codes came from a bridged keyPressed, which read them off the same event, so they rebuild it.
+            return (Boolean) matchesKey.invoke(keyMapping, keyEvent.newInstance(key, scanCode, 0));
+        } catch (ReflectiveOperationException e) {
+            return false;
+        }
+    }
+
+    /** Old {@code keyMapping.matchesMouse(button)}, which 1.21.9 replaced with {@code matchesMouse(MouseButtonEvent)}. */
+    public static boolean matchesMouse(Object keyMapping, int button) {
+        try {
+            if (matchesButton == null) {
+                Class<?> info = Class.forName("net.minecraft.client.input.MouseButtonInfo");
+                Class<?> event = Class.forName("net.minecraft.client.input.MouseButtonEvent");
+                mouseButton = info.getConstructor(int.class, int.class);
+                mouseEvent = event.getConstructor(double.class, double.class, info);
+                matchesButton = Class.forName(KEY_MAPPING).getMethod("matchesMouse", event);
+            }
+            // Only the button is compared, so the position stays at the origin.
+            Object click = mouseEvent.newInstance(0.0, 0.0, mouseButton.newInstance(button, 0));
+            return (Boolean) matchesButton.invoke(keyMapping, click);
+        } catch (ReflectiveOperationException e) {
+            return false;
+        }
+    }
+
+    /** Old {@code keyMapping.getCategory()}: the category string the mod gave, or the category's translation key. */
+    public static String categoryName(Object keyMapping) {
+        try {
+            Object category = keyMapping.getClass().getMethod("getCategory").invoke(keyMapping);
+            Class<?> categoryCls = Class.forName(CATEGORY);
+            for (java.util.Map.Entry<String, String> vanilla : VANILLA.entrySet()) {
+                if (category.equals(staticField(categoryCls, vanilla.getValue()))) return vanilla.getKey();
+            }
+            // A string this mod registered comes back as the mod wrote it.
+            for (java.util.Map.Entry<String, Object> registered : REGISTERED.entrySet()) {
+                if (category.equals(registered.getValue())) return registered.getKey();
+            }
+            // Anything else reads as the key its label is translated from, as the old strings were.
+            Object id = categoryCls.getMethod("id").invoke(category);
+            return (String) id.getClass().getMethod("toLanguageKey", String.class).invoke(id, "key.category");
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return "key.categories.misc";
+        }
+    }
+
+    // NeoForge's and Forge's conflict-context constructors lost their String category at 1.21.9
+    // too, so a keybind that names an IKeyConflictContext died with NoSuchMethodError.
+
+    /** Old {@code new KeyMapping(String, IKeyConflictContext, Type, int, String)}. */
     public static Object createConflict(String name, Object context, Object type, int code,
             String category) {
         return construct(name, context, type, hostCode(type, code), category(category));
     }
 
-    /** Old NeoForge {@code new KeyMapping(String, IKeyConflictContext, Key, String)}. */
+    /** Old {@code new KeyMapping(String, IKeyConflictContext, Key, String)}. */
     public static Object createConflictKey(String name, Object context, Object key,
             String category) {
         return construct(name, context, key, category(category));
     }
 
-    /** Old NeoForge {@code new KeyMapping(String, IKeyConflictContext, KeyModifier, Type, int, String)}. */
+    /** Old {@code new KeyMapping(String, IKeyConflictContext, KeyModifier, Type, int, String)}. */
     public static Object createConflictModifier(String name, Object context, Object modifier,
             Object type, int code, String category) {
         return construct(name, context, modifier, type, hostCode(type, code), category(category));
     }
 
-    /** Old NeoForge {@code new KeyMapping(String, IKeyConflictContext, KeyModifier, Key, String)}. */
+    /** Old {@code new KeyMapping(String, IKeyConflictContext, KeyModifier, Key, String)}. */
     public static Object createConflictModifierKey(String name, Object context, Object modifier,
             Object key, String category) {
         return construct(name, context, modifier, key, category(category));
@@ -311,17 +381,23 @@ public final class RetroKeyMapping {
         } catch (ClassNotFoundException e) {
             throw new IllegalStateException("Retromod: KeyMapping is not on this host", e);
         }
-        for (java.lang.reflect.Constructor<?> ctor : constructors) {
-            if (!fits(ctor.getParameterTypes(), args)) continue;
-            try {
-                return ctor.newInstance(args);
-            } catch (java.lang.reflect.InvocationTargetException e) {
-                Throwable cause = e.getCause();
-                if (cause instanceof RuntimeException runtime) throw runtime;
-                if (cause instanceof Error error) throw error;
-                throw new IllegalStateException(cause);
-            } catch (ReflectiveOperationException e) {
-                throw new IllegalStateException("Retromod could not build keybind " + args[0], e);
+        // Forge's conflict constructors end in an int sort order, which vanilla fills with 0, so
+        // arguments that fit no constructor are tried once more with that order appended.
+        Object[] withOrder = java.util.Arrays.copyOf(args, args.length + 1);
+        withOrder[args.length] = 0;
+        for (Object[] attempt : new Object[][]{args, withOrder}) {
+            for (java.lang.reflect.Constructor<?> ctor : constructors) {
+                if (!fits(ctor.getParameterTypes(), attempt)) continue;
+                try {
+                    return ctor.newInstance(attempt);
+                } catch (java.lang.reflect.InvocationTargetException e) {
+                    Throwable cause = e.getCause();
+                    if (cause instanceof RuntimeException runtime) throw runtime;
+                    if (cause instanceof Error error) throw error;
+                    throw new IllegalStateException(cause);
+                } catch (ReflectiveOperationException e) {
+                    throw new IllegalStateException("Retromod could not build keybind " + args[0], e);
+                }
             }
         }
         throw new IllegalStateException("Retromod found no KeyMapping constructor for keybind "
@@ -340,7 +416,8 @@ public final class RetroKeyMapping {
         return true;
     }
 
-    private static Object category(String category) {
+    /** The host's {@code Category} for an old category string; a subclass's adapted {@code super(...)} call uses it too. */
+    public static Object category(String category) {
         try {
             return resolveCategory(Class.forName(CATEGORY), category);
         } catch (Throwable t) {

@@ -9,8 +9,14 @@ import com.retromod.testmod121.tests.Test39PayloadPacketShapes;
 import com.retromod.testmod121.tests.Test40ClientPayloadPacket;
 import com.retromod.testmod121.tests.Test42RenderLayerAndColorShapes;
 import com.retromod.testmod121.tests.Test46ScreenShapesFrom121;
+import com.retromod.testmod121.tests.Test57LegacyRecipeLookups;
+import com.retromod.testmod121.tests.Test58LegacySaveOverrides;
+import com.retromod.testmod121.tests.Test81OldSingletonLootEntry;
+import com.retromod.testmod121.tests.Test82OldLootReads;
+import com.retromod.testmod121.tests.Test85OldPlacementTypes;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.server.MinecraftServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,12 +46,38 @@ public final class TestRunner {
 
     /** Runs every init-phase test. */
     public static void runInit() {
+        // Test81's loot entry type must be registered before the server reads the loot table that names it.
+        try {
+            Test81OldSingletonLootEntry.registerType();
+        } catch (Throwable t) {
+            LOGGER.warn("{} [init] the 1.21.1 single loot entry type did not register: fail: {}: {}", PREFIX,
+                    t.getClass().getSimpleName(), t.getMessage());
+        }
+        // Test85's placement modifier type registers while the mod initializes, as the mods' own do.
+        try {
+            Test85OldPlacementTypes.registerType();
+        } catch (Throwable t) {
+            LOGGER.warn("{} [init] the 1.21.1 placement modifier type did not register: fail: {}: {}", PREFIX,
+                    t.getClass().getSimpleName(), t.getMessage());
+        }
         runPhase("init", suite());
     }
 
     /** Runs the cases that need a started server, dedicated or integrated. */
-    public static void runServerStarted() {
-        runPhase("server-started", List.of(new Test39PayloadPacketShapes()));
+    public static void runServerStarted(MinecraftServer server) {
+        // Test58 needs the server's registries and a world to build its entity in.
+        List<Test> tests = new ArrayList<>(List.of(new Test39PayloadPacketShapes(),
+                new Test58LegacySaveOverrides(server), new Test81OldSingletonLootEntry(server), new Test82OldLootReads(server),
+                new Test85OldPlacementTypes()));
+        // Retromod bridges the old recipe lookups on Fabric from 26.1, once the mod's names are remapped to Mojang's.
+        if (!hostVersion().startsWith("1.")) tests.add(new Test57LegacyRecipeLookups(server));
+        runPhase("server-started", tests);
+    }
+
+    /** The running Minecraft version, such as 1.21.11 or 26.3. */
+    private static String hostVersion() {
+        return FabricLoader.getInstance().getModContainer("minecraft")
+                .map(minecraft -> minecraft.getMetadata().getVersion().getFriendlyString()).orElse("");
     }
 
     private static void runPhase(String phase, List<Test> tests) {

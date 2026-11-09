@@ -252,9 +252,8 @@ public final class Pre1_20_5ItemStackTagBridge {
         mv.visitTypeInsn(Opcodes.NEW, "java/lang/UnsupportedOperationException");
         mv.visitInsn(Opcodes.DUP);
         mv.visitLdcInsn("ItemStack.enchant(Enchantment, int) was removed in Minecraft 1.21, where "
-                + "enchantments are data pack entries reached through a registry holder. This "
-                + "older mod's call cannot be translated; use a version of the mod made for this "
-                + "Minecraft version to enchant items from code.");
+                + "enchantments are data pack entries reached through a registry holder. Retromod "
+                + "has no replacement for this call yet. Report it with the mod and its version.");
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/UnsupportedOperationException", "<init>",
                 "(Ljava/lang/String;)V", false);
         mv.visitInsn(Opcodes.ATHROW);

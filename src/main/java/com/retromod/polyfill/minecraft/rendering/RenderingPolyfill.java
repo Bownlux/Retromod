@@ -11,14 +11,15 @@ import com.retromod.polyfill.PolyfillProvider;
 /**
  * Polyfill for removed/refactored rendering APIs across major MC versions.
  *
- * Covers three major rendering API migrations:
+ * Covers two major rendering API migrations:
  * 1. GlStateManager → RenderSystem (1.17+): Fixed-function GL calls replaced
  *    by shader-based RenderSystem. Many GlStateManager methods become no-ops
  *    because core GL profile has no fixed-function pipeline.
  * 2. GuiComponent/PoseStack → GuiGraphics (1.20+): All 2D GUI drawing moved
  *    from static GuiComponent methods + PoseStack to the GuiGraphics context.
- * 3. RenderType → RenderTypes (26.1): Static render type accessors moved to
- *    a new RenderTypes class as part of the rendering cleanup.
+ * The RenderType block-layer getters are not handled here: the method redirects in
+ * Common_1_21_11_to_26_1_ClassMoves.registerBlockLayerGetters send them to the moving-block types
+ * on 26.1 and newer, and the Forge and NeoForge 1.21.10 to 1.21.11 shims register them on 1.21.11.
  */
 public class RenderingPolyfill implements PolyfillProvider {
 
@@ -45,8 +46,7 @@ public class RenderingPolyfill implements PolyfillProvider {
     public String[] getPolyfillClasses() {
         return new String[]{
             "com.retromod.polyfill.minecraft.rendering.embedded.GlStateManagerShim",
-            "com.retromod.polyfill.minecraft.rendering.embedded.GuiComponentShim",
-            "com.retromod.polyfill.minecraft.rendering.embedded.RenderTypeShim"
+            "com.retromod.polyfill.minecraft.rendering.embedded.GuiComponentShim"
         };
     }
 
@@ -137,15 +137,24 @@ public class RenderingPolyfill implements PolyfillProvider {
             "com/retromod/polyfill/minecraft/rendering/embedded/GlStateManagerShim", "scale", "(DDD)V"
         );
 
-        // GuiComponent → GuiGraphics redirects (1.20+)
-
-        // GuiComponent.fill(PoseStack, int, int, int, int, int) → shim that delegates to GuiGraphics
-        transformer.registerMethodRedirect(
-            "net/minecraft/client/gui/GuiComponent", "fill",
-            "(Lcom/mojang/blaze3d/vertex/PoseStack;IIIII)V",
-            "com/retromod/polyfill/minecraft/rendering/embedded/GuiComponentShim", "fill",
-            "(Ljava/lang/Object;IIIII)V"
-        );
+        // GuiComponent → GuiGraphics redirects (1.20+), on hosts before 26.1. From 26.1 the
+        // LegacyPoseGui bridge owns these draws, since this shim's 1.20 path cannot link there.
+        if (RetromodVersion.mcVersionExceeds("26.1", RetromodVersion.TARGET_MC_VERSION)) {
+            // GuiComponent.fill(PoseStack, int, int, int, int, int) → shim that delegates to GuiGraphics
+            transformer.registerMethodRedirect(
+                "net/minecraft/client/gui/GuiComponent", "fill",
+                "(Lcom/mojang/blaze3d/vertex/PoseStack;IIIII)V",
+                "com/retromod/polyfill/minecraft/rendering/embedded/GuiComponentShim", "fill",
+                "(Ljava/lang/Object;IIIII)V"
+            );
+            // GuiComponent.blit(PoseStack, int, int, int, int, int, int) → shim
+            transformer.registerMethodRedirect(
+                "net/minecraft/client/gui/GuiComponent", "blit",
+                "(Lcom/mojang/blaze3d/vertex/PoseStack;IIIIII)V",
+                "com/retromod/polyfill/minecraft/rendering/embedded/GuiComponentShim", "blit",
+                "(Ljava/lang/Object;IIIIII)V"
+            );
+        }
 
         // No drawString redirect. The old GuiComponent.drawString was static and took a PoseStack
         // first, so a key of (Font, String, int, int, int) never matched old code. Because the 1.20
@@ -153,41 +162,8 @@ public class RenderingPolyfill implements PolyfillProvider {
         // GuiGraphics.drawString, which returns void from 1.21.6, and it turned every text draw in
         // a 1.21.6 to 1.21.11 mod into a VerifyError (#281, Hold My Items on 26.3).
 
-        // GuiComponent.blit(PoseStack, int, int, int, int, int, int) → shim
-        transformer.registerMethodRedirect(
-            "net/minecraft/client/gui/GuiComponent", "blit",
-            "(Lcom/mojang/blaze3d/vertex/PoseStack;IIIIII)V",
-            "com/retromod/polyfill/minecraft/rendering/embedded/GuiComponentShim", "blit",
-            "(Ljava/lang/Object;IIIIII)V"
-        );
-
-        // RenderType → RenderTypes redirects (26.1)
-        //
-        // Host-gated to 26.1+: unlike the GlStateManager (1.17) and GuiComponent
-        // (1.20) blocks above, whose target METHODS were removed long ago (so the
-        // redirect no-ops on any modern mod that doesn't call them), RenderType.solid()
-        // and friends STILL EXIST below 26.1. A NeoForge mod (Mojang-named) built for
-        // 1.21.x calls RenderType.solid() directly; redirecting that call to the shim
-        // on a pre-26.1 host would replace a working call with one routed through the
-        // 26.1 RenderTypes API that isn't there yet. Gate it.
-
-        if (!RetromodVersion.mcVersionExceeds("26.1", RetromodVersion.TARGET_MC_VERSION)) {
-            transformer.registerMethodRedirect(
-                "net/minecraft/client/renderer/RenderType", "solid", "()Lnet/minecraft/client/renderer/RenderType;",
-                "com/retromod/polyfill/minecraft/rendering/embedded/RenderTypeShim", "solid", "()Ljava/lang/Object;"
-            );
-            transformer.registerMethodRedirect(
-                "net/minecraft/client/renderer/RenderType", "cutout", "()Lnet/minecraft/client/renderer/RenderType;",
-                "com/retromod/polyfill/minecraft/rendering/embedded/RenderTypeShim", "cutout", "()Ljava/lang/Object;"
-            );
-            transformer.registerMethodRedirect(
-                "net/minecraft/client/renderer/RenderType", "cutoutMipped", "()Lnet/minecraft/client/renderer/RenderType;",
-                "com/retromod/polyfill/minecraft/rendering/embedded/RenderTypeShim", "cutoutMipped", "()Ljava/lang/Object;"
-            );
-            transformer.registerMethodRedirect(
-                "net/minecraft/client/renderer/RenderType", "translucent", "()Lnet/minecraft/client/renderer/RenderType;",
-                "com/retromod/polyfill/minecraft/rendering/embedded/RenderTypeShim", "translucent", "()Ljava/lang/Object;"
-            );
-        }
+        // No RenderType getter redirect. Common_1_21_11_to_26_1_ClassMoves.registerBlockLayerGetters
+        // sends RenderType.solid() and friends to the RenderTypes moving-block types, the only
+        // block-layer types a 26.x host has.
     }
 }

@@ -10,6 +10,7 @@ import com.retromod.util.McReflect;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.SyntheticEmbedder;
 import com.retromod.shim.forge.embedded.LegacyRarities;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
@@ -130,7 +131,7 @@ public final class LegacyRarityBridge {
         Files.createDirectories(json.getParent());
         Files.writeString(json, extensionsJson(modId, parameters, extensions), StandardCharsets.UTF_8);
         Files.writeString(modsToml, withEnumExtensions(toml, modId), StandardCharsets.UTF_8);
-        LOGGER.info("Declared {} rarities of {} as NeoForge enum extensions", extensions.size(), modId);
+        LOGGER.debug(RetromodLog.DETAIL, "Declared {} rarities of {} as NeoForge enum extensions", extensions.size(), modId);
         return extensions.size();
     }
 

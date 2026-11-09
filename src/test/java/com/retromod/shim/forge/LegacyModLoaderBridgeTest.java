@@ -68,4 +68,88 @@ class LegacyModLoaderBridgeTest {
         assertDoesNotThrow(() -> new ClassReader(LegacyModLoaderBridge.generate()).accept(
                 new CheckClassAdapter(new ClassWriter(0), false), 0));
     }
+
+    @Test
+    @DisplayName("GeckoLib's data generation check and a loading state check get NeoForge's answers, offline as well")
+    void staticChecksGetNeoForgeAnswers() {
+        String forge = LegacyModLoaderBridge.FORGE;
+        // Offline neither ModLoader can be read; the Forge to NeoForge shim has already checked the target.
+        assertTrue(LegacyModLoaderBridge.register(transformer, Set.<String>of()::contains));
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "test/Cache", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "registerReloadListener", "()Z", null, null);
+        mv.visitCode();
+        mv.visitMethodInsn(INVOKESTATIC, forge, "isDataGenRunning", "()Z", false);
+        mv.visitMethodInsn(INVOKESTATIC, forge, "isLoadingStateValid", "()Z", false);
+        mv.visitInsn(IAND);
+        mv.visitInsn(IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        ClassNode out = new ClassNode();
+        new ClassReader(transformer.transformClass(cw.toByteArray(), "test/Cache")).accept(out, 0);
+        List<String> calls = new ArrayList<>();
+        out.methods.forEach(m -> m.instructions.forEach(insn -> {
+            if (insn instanceof MethodInsnNode call) calls.add(call.owner + "." + call.name + call.desc);
+        }));
+        assertEquals(List.of(LegacyModLoaderBridge.DATAGEN + ".isRunningDataGen()Z",
+                LegacyModLoaderBridge.HELPER + ".isLoadingStateValid()Z"), calls);
+    }
+
+    @Test
+    @DisplayName("a valid loading state is one without NeoForge loading errors")
+    void loadingStateIsValidWithoutErrors() throws Exception {
+        for (boolean errors : new boolean[] {false, true}) {
+            ClassLoader loader = new ClassLoader(getClass().getClassLoader()) {
+                @Override
+                protected Class<?> findClass(String name) throws ClassNotFoundException {
+                    byte[] bytes;
+                    if (name.equals(LegacyModLoaderBridge.HELPER.replace('/', '.'))) {
+                        bytes = LegacyModLoaderBridge.generate();
+                    } else if (name.equals(LegacyModLoaderBridge.NEO.replace('/', '.'))) {
+                        bytes = neoModLoader(errors);
+                    } else if (name.startsWith("net.neoforged.")) {
+                        // The helper's other methods name NeoForge's event type.
+                        bytes = emptyClass(name.replace('.', '/'));
+                    } else {
+                        throw new ClassNotFoundException(name);
+                    }
+                    return defineClass(name, bytes, 0, bytes.length);
+                }
+            };
+            Object valid = loader.loadClass(LegacyModLoaderBridge.HELPER.replace('/', '.'))
+                    .getMethod("isLoadingStateValid").invoke(null);
+            assertEquals(!errors, valid, "hasErrors() was " + errors);
+        }
+    }
+
+    private static byte[] emptyClass(String name) {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, name, null, "java/lang/Object", null);
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** NeoForge's ModLoader as far as the helper reads it: a static hasErrors(). */
+    private static byte[] neoModLoader(boolean errors) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, LegacyModLoaderBridge.NEO, null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "hasErrors", "()Z", null, null);
+        mv.visitCode();
+        mv.visitInsn(errors ? ICONST_1 : ICONST_0);
+        mv.visitInsn(IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    @Test
+    @DisplayName("NeoForge 1.20.1 still runs Forge's ModLoader, so nothing is registered there")
+    void forgeForkKeepsItsModLoader() {
+        assertFalse(LegacyModLoaderBridge.register(transformer,
+                Set.of(LegacyModLoaderBridge.FORGE, LegacyModLoaderBridge.NEO)::contains));
+        assertFalse(transformer.getSyntheticClasses().containsKey(LegacyModLoaderBridge.HELPER));
+    }
 }

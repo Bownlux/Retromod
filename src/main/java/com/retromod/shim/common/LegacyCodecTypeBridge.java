@@ -7,6 +7,7 @@ package com.retromod.shim.common;
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -18,6 +19,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Bridges worldgen type interfaces whose {@code codec()} returned a {@code Codec} before 1.20.5
@@ -35,8 +37,9 @@ import java.util.List;
  * its map codec; any other codec is treated as a map codec, which is what the old type promised.
  *
  * <p>Registered for each interface whose host {@code codec()} returns a {@code MapCodec}; offline,
- * the host version decides. 26.2 replaced the structure processor registry with bare codecs, which
- * {@code WorldgenTypeBridgeSynthetic} handles.
+ * the host version decides per type. 26.2 replaced the structure processor registry with bare codecs,
+ * which {@code WorldgenTypeBridgeSynthetic} handles, and 26.3 removed {@code PlacementModifierType}
+ * and {@code StructurePlacementType}.
  */
 public final class LegacyCodecTypeBridge {
 
@@ -59,6 +62,12 @@ public final class LegacyCodecTypeBridge {
             "net/minecraft/world/level/levelgen/structure/templatesystem/StructureProcessorType",
             "net/minecraft/world/level/levelgen/structure/pools/StructurePoolElementType");
 
+    /** Types whose {@code codec()} later stopped being a map codec, with the first host without it. */
+    private static final Map<String, String> MAP_CODEC_REMOVED_IN = Map.of(
+            "net/minecraft/world/level/levelgen/structure/templatesystem/StructureProcessorType", "26.2",
+            PLACEMENT_MODIFIER_TYPE, "26.3",
+            "net/minecraft/world/level/levelgen/structure/placement/StructurePlacementType", "26.3");
+
     static final String OLD_SAM = "()L" + CODEC + ";";
     static final String NEW_SAM = "()L" + MAP_CODEC + ";";
 
@@ -75,7 +84,10 @@ public final class LegacyCodecTypeBridge {
             return;
         }
         registerRedirects(transformer, bridged);
-        LOGGER.info("Bridged {} worldgen types whose codec became a MapCodec", bridged.size());
+        // NeoForge's chain and the Forge chain both register this, so the notice prints once.
+        if (transformer.firstRegistrationNotice(LegacyCodecTypeBridge.class.getName())) {
+            LOGGER.debug(RetromodLog.DETAIL, "Bridged {} worldgen types whose codec became a MapCodec", bridged.size());
+        }
     }
 
     /** Unconditional registration for transform-shape tests. */
@@ -111,7 +123,13 @@ public final class LegacyCodecTypeBridge {
         for (String[] base : CODEC_BASES) {
             if (!mapCodecOnHost(base[0])) continue;
             String[] constructors = java.util.Arrays.copyOfRange(base, 2, base.length);
-            transformer.registerSyntheticClass(base[1], generateCodecBase(base[1], base[0], constructors));
+            // Where the host dropped the old biome lookup, the base sits on the rebuilt source that answers the resolver.
+            String superName = base[0];
+            if (superName.equals(LegacyWorldgenMembersBridge.BIOME_SOURCE) && LegacyWorldgenMembersBridge.hostDropsNoiseBiome()) {
+                RebuiltApiClasses.registerTree(transformer, LegacyWorldgenMembersBridge.LEGACY_BIOME_SOURCE);
+                superName = LegacyWorldgenMembersBridge.LEGACY_BIOME_SOURCE;
+            }
+            transformer.registerSyntheticClass(base[1], generateCodecBase(base[1], superName, constructors));
             transformer.registerSuperclassRebase(base[0], base[1]);
         }
     }
@@ -171,15 +189,19 @@ public final class LegacyCodecTypeBridge {
 
     private static boolean mapCodecOnHost(String iface) {
         ClassNode node = ClassResourceInspector.read(iface);
-        if (node == null) {
-            String host = RetromodVersion.TARGET_MC_VERSION;
-            return RetromodVersion.compareMcVersions(host, "1.20.5") >= 0
-                    && RetromodVersion.compareMcVersions(host, "26.2") < 0;
-        }
+        // Offline, and for a class the host no longer has, the host version decides.
+        if (node == null) return mapCodecByVersion(iface, RetromodVersion.TARGET_MC_VERSION);
         for (MethodNode method : node.methods) {
             if (method.name.equals("codec") && method.desc.equals(NEW_SAM)) return true;
         }
         return false;
+    }
+
+    /** When the host class cannot be read: 1.20.5 made codec() a map codec, and 26.2 and 26.3 took it from some types. */
+    static boolean mapCodecByVersion(String type, String host) {
+        if (RetromodVersion.compareMcVersions(host, "1.20.5") < 0) return false;
+        String removedIn = MAP_CODEC_REMOVED_IN.get(type);
+        return removedIn == null || RetromodVersion.compareMcVersions(host, removedIn) < 0;
     }
 
     static byte[] generateHelper(List<String> interfaces) {

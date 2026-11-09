@@ -6,8 +6,10 @@ package com.retromod.core;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.retromod.loaderapi.LoaderApiTestSupport;
 import com.retromod.mapping.IntermediaryToMojangMapper;
 import com.retromod.mixin.AutomaticMixinTranslator;
+import com.retromod.mixin.MixinCompatibilityTransformer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -101,6 +103,33 @@ class MixinRefmapRemapperTest {
                 + "\"padding\":" + nested + "}";
 
         assertEquals(refmap, MixinRefmapRemapper.remap(refmap, mapper));
+    }
+
+    @Test
+    @DisplayName("A refmap that cannot be remapped is returned unchanged with a warning")
+    void failedRemapReturnsInputAndWarns() throws Exception {
+        // A null selector value makes every entry point fail partway through the refmap.
+        String refmap = "{\"mappings\":{\"ExampleMixin\":{\"tick\":null}}}";
+        MixinCompatibilityTransformer transformer =
+                new MixinCompatibilityTransformer(RetromodTransformer.getInstance());
+        MixinRefmapRemapper.RemapResult[] results = new MixinRefmapRemapper.RemapResult[2];
+        String[] plain = new String[2];
+
+        String log = LoaderApiTestSupport.captureErr(() -> {
+            plain[0] = MixinRefmapRemapper.remap(refmap, mapper);
+            results[0] = MixinRefmapRemapper.remapWithRepairs(refmap, mapper, transformer);
+            plain[1] = MixinRefmapRemapper.remapForgeSelectors(refmap, transformer);
+            results[1] = MixinRefmapRemapper.remapForgeSelectorsWithRepairs(refmap, transformer);
+        });
+
+        assertEquals(refmap, plain[0], "the Fabric remap must return its input unchanged");
+        assertEquals(refmap, plain[1], "the Forge remap must return its input unchanged");
+        for (MixinRefmapRemapper.RemapResult result : results) {
+            assertEquals(refmap, result.json(), "a repair pass must return its input unchanged");
+            assertTrue(result.repairs().isEmpty(), "a failed repair pass must report no repairs");
+        }
+        assertEquals(4, log.split("Could not remap a Mixin refmap", -1).length - 1,
+                "each entry point must log why the refmap kept its old targets:\n" + log);
     }
 
     @Test

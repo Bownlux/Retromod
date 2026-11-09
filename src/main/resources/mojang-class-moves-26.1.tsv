@@ -306,7 +306,10 @@ net/minecraft/client/renderer/block/model/multipart/KeyValueCondition	net/minecr
 net/minecraft/client/renderer/block/model/multipart/Selector	net/minecraft/client/renderer/block/dispatch/multipart/Selector
 net/minecraft/client/resources/PlayerSkin	net/minecraft/world/entity/player/PlayerSkin
 net/minecraft/client/resources/model/BlockModelRotation	net/minecraft/client/renderer/block/dispatch/BlockModelRotation
-net/minecraft/client/resources/model/Material	net/minecraft/client/resources/model/sprite/Material
+# The atlas and texture pair became SpriteId, with the same constructor and accessors. 26.1's
+# sprite/Material is an unrelated record (a sprite and a forceTranslucent flag), matched by simple
+# name alone, so this row used to break every new Material(atlas, texture).
+net/minecraft/client/resources/model/Material	net/minecraft/client/resources/model/sprite/SpriteId
 net/minecraft/client/resources/model/ModelState	net/minecraft/client/renderer/block/dispatch/ModelState
 net/minecraft/client/resources/model/SpriteGetter	net/minecraft/client/resources/model/sprite/SpriteGetter
 net/minecraft/core/component/DataComponentPredicate	net/minecraft/core/component/predicates/DataComponentPredicate
@@ -605,8 +608,8 @@ net/minecraft/client/GraphicsStatus	net/minecraft/client/GraphicsPreset
 # FastColor → ARGB
 net/minecraft/util/FastColor	net/minecraft/util/ARGB
 net/minecraft/util/FastColor$ARGB32	net/minecraft/util/ARGB
-# ResourceLocation$Serializer was removed in 26.1. Redirect it to the Retromod polyfill.
-net/minecraft/resources/ResourceLocation$Serializer	com/retromod/polyfill/minecraft/IdentifierSerializer
+# ResourceLocation$Serializer was removed in 26.1. Redirect it to the generated Gson adapter each mod carries.
+net/minecraft/resources/ResourceLocation$Serializer	com/retromod/generated/LegacyIdentifierSerializer
 # CycleOption → OptionInstance (removed in 1.19, but intermediary refs still exist)
 net/minecraft/client/CycleOption	net/minecraft/client/OptionInstance
 # A setter callback and a ValueSet share no method, so the rename cannot make any implementor
@@ -922,6 +925,11 @@ net/minecraft/client/renderer/block/ModelBlockRenderer$SizeInfo	net/minecraft/cl
 net/minecraft/client/renderer/block/model/BlockElement	net/minecraft/client/resources/model/cuboid/CuboidModelElement
 net/minecraft/client/renderer/block/model/BlockElementFace	net/minecraft/client/resources/model/cuboid/CuboidFace
 net/minecraft/client/renderer/block/model/BlockElementFace$Deserializer	net/minecraft/client/resources/model/cuboid/CuboidFace$Deserializer
+net/minecraft/client/renderer/block/model/BlockElementFace$UVs	net/minecraft/client/resources/model/cuboid/CuboidFace$UVs
+net/minecraft/client/renderer/block/model/BlockElementRotation	net/minecraft/client/resources/model/cuboid/CuboidRotation
+net/minecraft/client/renderer/block/model/BlockElementRotation$EulerXYZRotation	net/minecraft/client/resources/model/cuboid/CuboidRotation$EulerXYZRotation
+net/minecraft/client/renderer/block/model/BlockElementRotation$RotationValue	net/minecraft/client/resources/model/cuboid/CuboidRotation$RotationValue
+net/minecraft/client/renderer/block/model/BlockElementRotation$SingleAxisRotation	net/minecraft/client/resources/model/cuboid/CuboidRotation$SingleAxisRotation
 net/minecraft/client/renderer/block/model/BlockModel$Deserializer	net/minecraft/client/resources/model/cuboid/CuboidModel$Deserializer
 net/minecraft/client/renderer/block/model/BlockModel$GuiLight	net/minecraft/client/resources/model/UnbakedModel$GuiLight
 net/minecraft/client/renderer/block/model/ItemModelGenerator$SpanFacing	net/minecraft/client/resources/model/cuboid/ItemModelGenerator$SideDirection
@@ -1012,6 +1020,8 @@ net/minecraft/world/level/storage/loot/functions/LootingEnchantFunction$Builder	
 # member sets diverged, but the rename is verified against 1.21.11/26.1.2):
 net/minecraft/world/item/UseAnim	net/minecraft/world/item/ItemUseAnimation
 net/minecraft/world/level/storage/loot/parameters/LootContextParam	net/minecraft/util/context/ContextKey
+net/minecraft/world/level/storage/loot/parameters/LootContextParamSet	net/minecraft/util/context/ContextKeySet
+net/minecraft/world/level/storage/loot/parameters/LootContextParamSet$Builder	net/minecraft/util/context/ContextKeySet$Builder
 net/minecraft/client/renderer/entity/layers/ElytraLayer	net/minecraft/client/renderer/entity/layers/WingsLayer
 # --- snapshot.2: additional 26.1 package moves found by the compat audit ---
 # GlStateManager moved com.mojang.blaze3d.platform → .opengl in the 26.1 render

@@ -22,8 +22,12 @@ import java.util.Objects;
  */
 public final class ZipSecurity {
 
-    /** Default per-entry size cap (50 MB), matching Fabric/Forge extractor defaults. */
-    public static final long DEFAULT_MAX_ENTRY_SIZE = 50L * 1024 * 1024;
+    /**
+     * Default per-entry size cap (128 MiB). A bundled jar can pass 50 MB (Essential 1.5.1 carries a
+     * 54 MB jar), while a zip bomb is still stopped: the cap counts bytes read, not the size an
+     * entry declares, and the total stays capped below.
+     */
+    public static final long DEFAULT_MAX_ENTRY_SIZE = 128L * 1024 * 1024;
     /** Default total extraction cap (500 MB). */
     public static final long DEFAULT_MAX_TOTAL_SIZE = 500L * 1024 * 1024;
 
@@ -57,6 +61,19 @@ public final class ZipSecurity {
             }
         }
         return entryName;
+    }
+
+    /**
+     * Records an entry's canonical name and says whether to process it. A folder entry seen before
+     * is skipped, because it carries no content: fat jars merged from several jars repeat
+     * {@code META-INF/versions/}. Any other repeat throws, because readers could disagree about
+     * which copy wins.
+     */
+    public static boolean firstSighting(java.util.Set<String> seen, String canonicalName,
+            boolean directory, java.util.function.Supplier<String> duplicateMessage) throws IOException {
+        if (seen.add(canonicalName)) return true;
+        if (directory) return false;
+        throw new IOException(duplicateMessage.get());
     }
 
     /**

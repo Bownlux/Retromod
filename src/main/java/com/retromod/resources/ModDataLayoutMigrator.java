@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -102,7 +103,7 @@ public final class ModDataLayoutMigrator implements ModResourceConverter {
             copied++;
         }
         if (copied > 0) {
-            LOGGER.info("Copied {} data file(s) to the folders Minecraft {} reads", copied,
+            LOGGER.debug(RetromodLog.DETAIL, "Copied {} data file(s) to the folders Minecraft {} reads", copied,
                     context.targetMcVersion());
         }
         return copied;

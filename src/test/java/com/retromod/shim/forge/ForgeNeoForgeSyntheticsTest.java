@@ -55,6 +55,41 @@ class ForgeNeoForgeSyntheticsTest {
     }
 
     @Test
+    @DisplayName("#392: a context bound to a mod's container answers the Forge context calls from it")
+    void boundContext() {
+        ClassNode cn = parse(ForgeNeoForgeSynthetics.generateFmlJavaModLoadingContext());
+        assertNotNull(method(cn, ForgeNeoForgeSynthetics.CONTEXT_OF, ForgeNeoForgeSynthetics.CONTEXT_OF_DESC),
+                "the factory a rewritten @Mod constructor calls");
+        String type = "Lnet/neoforged/fml/config/ModConfig$Type;";
+        String spec = "Lnet/neoforged/fml/config/IConfigSpec;";
+        for (String[] call : new String[][]{{"registerConfig", "(" + type + spec + ")V"},
+                {"registerConfig", "(" + type + spec + "Ljava/lang/String;)V"},
+                {"registerExtensionPoint", "(Ljava/lang/Class;Ljava/util/function/Supplier;)V"},
+                {"getActiveNamespace", "()Ljava/lang/String;"},
+                {"getContainer", "()Lnet/neoforged/fml/ModContainer;"}}) {
+            assertNotNull(method(cn, call[0], call[1]), call[0] + call[1] + " that Forge's context inherited");
+        }
+    }
+
+    @Test
+    @DisplayName("#392: ForgeVersion answers with a Forge 1.20.1 build and MCPVersion with the running Minecraft")
+    void forgeVersion() {
+        byte[] version = ForgeNeoForgeSynthetics.generateForgeVersion();
+        assertStructurallySound(version, "ForgeVersion");
+        ClassNode cn = parse(version);
+        assertEquals("net/minecraftforge/versions/forge/ForgeVersion", cn.name);
+        assertNotNull(method(cn, "getVersion", "()Ljava/lang/String;"));
+        // Meulti's Backrooms stops loading when this is below the Forge 1.20.1 build it needs (47.4.0).
+        boolean answersForge = java.util.Arrays.stream(method(cn, "getVersion", "()Ljava/lang/String;")
+                .instructions.toArray()).anyMatch(in -> in instanceof org.objectweb.asm.tree.LdcInsnNode ldc
+                        && ForgeNeoForgeSynthetics.FORGE_API_VERSION.equals(ldc.cst));
+        assertTrue(answersForge, "the version is the Forge build whose API the mod sees");
+        byte[] mcp = ForgeNeoForgeSynthetics.generateMcpVersion();
+        assertStructurallySound(mcp, "MCPVersion");
+        assertNotNull(method(parse(mcp), "getMCVersion", "()Ljava/lang/String;"));
+    }
+
+    @Test
     @DisplayName("#85 FMLJavaModLoadingContext bridge: get() + getModEventBus() delegation, valid bytecode")
     void fmlJavaModLoadingContext() {
         byte[] b = ForgeNeoForgeSynthetics.generateFmlJavaModLoadingContext();

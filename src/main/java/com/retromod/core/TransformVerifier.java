@@ -5,6 +5,7 @@
 package com.retromod.core;
 
 import com.retromod.core.verify.McSymbolIndex;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.*;
 import org.slf4j.Logger;
@@ -23,8 +24,8 @@ import java.util.jar.*;
  * unmapped intermediary names, missing shims, or double-renamed classes before
  * the game loads them.
  *
- * <p>Enable with "verify_transforms": true in config/retromod/config.json.
- * Reports go to config/retromod/verify-reports/.
+ * <p>A new config/retromod/config.json turns it on with "verify_transforms": true. A config
+ * without that key leaves it off. Reports go to config/retromod/verify-reports/.
  */
 public final class TransformVerifier {
 
@@ -200,6 +201,9 @@ public final class TransformVerifier {
             addIssue(issues, new Issue(IssueType.VERIFICATION_INCOMPLETE, "", null, null));
         }
 
+        // List Minecraft gaps first, so optional integrations with absent mods do not bury them.
+        // The sort is stable, so each group keeps the order the issues were found in.
+        issues.sort(Comparator.comparingInt(TransformVerifier::reportOrder));
         return new VerifyResult(modName, targetVersion, issues);
     }
 
@@ -256,8 +260,10 @@ public final class TransformVerifier {
             while ((entry = in.getNextEntry()) != null) {
                 String name = ZipSecurity.safeEntryName(entry.getName());
                 String canonicalName = ZipSecurity.canonicalEntryName(name);
-                if (!names.add(canonicalName)) {
-                    throw new IOException("duplicate nested JAR entry: " + name);
+                // A repeated folder entry carries no content, so it is skipped.
+                if (!ZipSecurity.firstSighting(names, canonicalName, entry.isDirectory(),
+                        () -> "duplicate nested JAR entry: " + name)) {
+                    continue;
                 }
                 if (entry.isDirectory()) {
                     budget.reserve(0, canonicalName);
@@ -448,12 +454,41 @@ public final class TransformVerifier {
                 : canResolveField(owner, name, descriptor, targetIndex);
     }
 
+    /** Packages the Minecraft jar ships. 26.3 moved most of blaze3d into renderpearl. */
     private static boolean isTargetOwnedClass(String internalName) {
         return internalName != null
                 && (internalName.startsWith("net/minecraft/")
                     || internalName.startsWith("com/mojang/blaze3d/")
                     || internalName.startsWith("com/mojang/math/")
-                    || internalName.startsWith("com/mojang/realmsclient/"));
+                    || internalName.startsWith("com/mojang/realmsclient/")
+                    || internalName.startsWith("com/mojang/renderpearl/"));
+    }
+
+    /** Packages only the client jar ships, so a dedicated server has no way to check them. */
+    private static boolean isClientOnlyClass(String internalName) {
+        return internalName.startsWith("net/minecraft/client/")
+                || internalName.startsWith("com/mojang/blaze3d/")
+                || internalName.startsWith("com/mojang/renderpearl/")
+                || internalName.startsWith("com/mojang/realmsclient/");
+    }
+
+    /** True when an issue names a class from another mod or library rather than Minecraft. */
+    private static boolean namesOtherMod(Issue issue) {
+        return issue.type() != IssueType.VERIFICATION_INCOMPLETE
+                && !isTargetOwnedClass(issue.owner());
+    }
+
+    /** True when a dedicated server reports a client class it could not check. */
+    private static boolean uncheckedOnServer(Issue issue) {
+        return issue.type() == IssueType.MISSING_CLASS
+                && isClientOnlyClass(issue.owner())
+                && EnvironmentDetector.knownDedicatedServer();
+    }
+
+    /** Minecraft gaps first, then client classes a server could not check, then other mods. */
+    private static int reportOrder(Issue issue) {
+        if (namesOtherMod(issue)) return 2;
+        return uncheckedOnServer(issue) ? 1 : 0;
     }
 
     private static void addIssue(List<Issue> issues, Issue issue) {
@@ -471,30 +506,35 @@ public final class TransformVerifier {
     /** Verify and report using the supplied target-Minecraft symbol index when available. */
     public static VerifyResult verifyAndReport(Path transformedJar, String modName,
             String targetVersion, McSymbolIndex targetIndex) {
-        LOGGER.info("Checking transformed bytecode for {}", modName);
+        LOGGER.debug(RetromodLog.DETAIL, "Checking transformed bytecode for {}", modName);
         long start = System.currentTimeMillis();
 
         VerifyResult result = verify(transformedJar, modName, targetVersion, targetIndex);
         long elapsed = System.currentTimeMillis() - start;
+        Path report = writeReport(result);
 
         if (result.passed()) {
-            LOGGER.info("Verification passed for {}: no unresolved references found in {} ms",
+            LOGGER.debug(RetromodLog.DETAIL, "Verification passed for {}: no unresolved references found in {} ms",
                     modName, elapsed);
         } else {
-            LOGGER.warn("Verification found {} issue(s) for {} in {} ms",
-                    result.issueCount(), modName, elapsed);
+            // One warning per mod names the report; the references themselves are detail lines.
+            long otherMods = result.issues().stream()
+                    .filter(TransformVerifier::namesOtherMod).count();
+            String inOtherMods = otherMods == 0 ? ""
+                    : ", " + otherMods + " of them in other mods or libraries";
+            String listedIn = report == null ? "" : ". The list is in " + report;
+            LOGGER.warn("Verification found {} issue(s) for {} in {} ms{}{}",
+                    result.issueCount(), modName, elapsed, inOtherMods, listedIn);
             int logged = 0;
             for (Issue issue : result.issues()) {
                 if (logged++ >= 10) {
-                    LOGGER.warn("... and {} more. See the report file.",
+                    LOGGER.debug(RetromodLog.DETAIL, "... and {} more in the report file.",
                             result.issueCount() - 10);
                     break;
                 }
-                LOGGER.warn("{}", issue.toReadableString(targetVersion));
+                LOGGER.debug(RetromodLog.DETAIL, "{}", issue.toReadableString(targetVersion));
             }
         }
-
-        writeReport(result);
         return result;
     }
 
@@ -732,7 +772,8 @@ public final class TransformVerifier {
         return count;
     }
 
-    private static void writeReport(VerifyResult result) {
+    /** Writes the full list to config/retromod/verify-reports/ and returns the file, or null if it could not. */
+    private static Path writeReport(VerifyResult result) {
         try {
             Path reportDir = Path.of("config/retromod/verify-reports");
             Files.createDirectories(reportDir);
@@ -771,10 +812,12 @@ public final class TransformVerifier {
             }
 
             Files.writeString(reportFile, sb.toString());
-            LOGGER.info("Wrote the transformation report to {}", reportFile);
+            LOGGER.debug(RetromodLog.DETAIL, "Wrote the transformation report to {}", reportFile);
+            return reportFile;
 
         } catch (Exception e) {
             LOGGER.debug("Could not write the transformation report: {}", e.getMessage());
+            return null;
         }
     }
 
@@ -791,17 +834,37 @@ public final class TransformVerifier {
 
     public record Issue(IssueType type, String owner, String name, String descriptor) {
         public String toReadableString(String targetVersion) {
+            if (type == IssueType.VERIFICATION_INCOMPLETE) {
+                return "Verification did not finish. Check that the mod jar is readable and within archive limits";
+            }
             String ownerDot = owner.replace('/', '.');
+            // A dedicated server has no client jar, so it cannot tell whether a client class exists.
+            if (uncheckedOnServer(this)) {
+                return ownerDot + " was not checked: it is a client class, and a dedicated server"
+                        + " does not have it.";
+            }
+            // Classes outside Minecraft belong to another mod, whose members are checked only
+            // when that mod is installed.
+            if (namesOtherMod(this)) {
+                return type == IssueType.MISSING_CLASS
+                        ? ownerDot + " not found: it belongs to another mod or library that is not"
+                                + " installed. That is expected when the integration is optional."
+                        : member(ownerDot) + " not found in the installed mod or library that"
+                                + " provides " + ownerDot + ".";
+            }
+            return member(ownerDot) + " not found in MC " + targetVersion;
+        }
+
+        /** The class, or the member on it, as the report names it. */
+        private String member(String ownerDot) {
             return switch (type) {
-                case VERIFICATION_INCOMPLETE ->
-                        "Verification did not finish. Check that the mod jar is readable and within archive limits";
-                case MISSING_CLASS -> ownerDot + " not found in MC " + targetVersion;
-                case MISSING_METHOD -> ownerDot + "." + name + "() not found in MC " + targetVersion;
-                case MISSING_FIELD -> ownerDot + "." + name + " not found in MC " + targetVersion;
+                case MISSING_METHOD -> ownerDot + "." + name + "()";
+                case MISSING_FIELD -> ownerDot + "." + name;
                 case MISSING_CONSTRUCTOR -> {
                     int params = descriptor != null ? countParameters(descriptor) : 0;
-                    yield ownerDot + ".<init> with " + params + " params not found in MC " + targetVersion;
+                    yield ownerDot + ".<init> with " + params + " params";
                 }
+                default -> ownerDot;
             };
         }
     }

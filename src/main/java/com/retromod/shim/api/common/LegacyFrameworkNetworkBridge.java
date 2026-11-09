@@ -12,6 +12,7 @@ import com.retromod.shim.api.common.embedded.LegacyFrameworkMessage;
 import com.retromod.shim.api.common.embedded.LegacyFrameworkSupport;
 import com.retromod.shim.api.common.embedded.LegacyMessageDirection;
 import com.retromod.shim.api.common.embedded.LegacyPlayMessage;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -100,7 +101,7 @@ public final class LegacyFrameworkNetworkBridge {
             return false;
         }
         registerRedirects(transformer);
-        LOGGER.info("Bridged the Framework 0.8 message API onto this host's Framework");
+        LOGGER.debug(RetromodLog.DETAIL, "Bridged the Framework 0.8 message API onto this host's Framework");
         return true;
     }
 

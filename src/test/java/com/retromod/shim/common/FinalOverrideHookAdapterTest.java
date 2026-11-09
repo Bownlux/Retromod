@@ -71,6 +71,87 @@ class FinalOverrideHookAdapterTest {
                 "a class that already declares the hook cannot take a second one");
     }
 
+    @Test
+    void movesIsAlliedToOntoConsidersEntityAsAlly() {
+        String entity = "net/minecraft/world/entity/Entity";
+        String desc = "(Lnet/minecraft/world/entity/Entity;)Z";
+        BiPredicate<String, String> hierarchy = (child, ancestor) -> entity.equals(ancestor) && child.equals(MONSTER);
+        byte[] tamed = overriding(MONSTER, "isAlliedTo", desc, true);
+
+        ClassNode result = read(FinalOverrideHookAdapter.apply(tamed, "26.2", hierarchy));
+        MethodNode hook = named(result, "considersEntityAsAlly");
+        assertNotNull(hook, "the ally rule of an old tamed mob runs from the hook the final isAlliedTo asks");
+        assertEquals("considersEntityAsAlly", firstCall(hook).name, "its super call follows, or it recurses");
+        assertSame(tamed, FinalOverrideHookAdapter.apply(tamed, "1.21.1", hierarchy),
+                "1.21.1 still lets a mob override isAlliedTo");
+        assertNotNull(named(read(FinalOverrideHookAdapter.apply(tamed, "1.21.2", hierarchy)), "considersEntityAsAlly"),
+                "1.21.2 made isAlliedTo final over considersEntityAsAlly");
+    }
+
+    @Test
+    void movesA12111ButtonsRenderWidgetOntoRenderContentsInBothNamings() {
+        String[][] namings = {
+            {"net/minecraft/client/gui/components/AbstractButton", "renderWidget",
+                "(Lnet/minecraft/client/gui/GuiGraphics;IIF)V", "renderContents"},
+            {"net/minecraft/class_4264", "method_48579", "(Lnet/minecraft/class_332;IIF)V", "method_75752"}};
+        for (String[] naming : namings) {
+            BiPredicate<String, String> hierarchy = (child, ancestor) -> naming[0].equals(ancestor) && child.equals(naming[0]);
+            byte[] button = overriding(naming[0], naming[1], naming[2], false);
+            assertNotNull(named(read(FinalOverrideHookAdapter.apply(button, "1.21.11", hierarchy)), naming[3]), naming[3]);
+            assertSame(button, FinalOverrideHookAdapter.apply(button, "1.21.10", hierarchy),
+                    "1.21.10 still lets a button override renderWidget");
+        }
+    }
+
+    @Test
+    void movesAnIntermediaryListsUpdateNarrationOntoUpdateWidgetNarration() {
+        String widget = "net/minecraft/class_339";
+        BiPredicate<String, String> hierarchy = (child, ancestor) -> widget.equals(ancestor) && child.equals(MONSTER);
+        byte[] list = overriding(MONSTER, "method_37020", "(Lnet/minecraft/class_6382;)V", false);
+
+        assertNotNull(named(read(FinalOverrideHookAdapter.apply(list, "1.21.1", hierarchy)), "method_47399"));
+    }
+
+    @Test
+    void movesAButtonsRenderOntoExtractContentsUnlessItCallsTheAbstractSuper() {
+        String button = "net/minecraft/client/gui/components/AbstractButton";
+        String desc = "(Lnet/minecraft/client/gui/GuiGraphicsExtractor;IIF)V";
+        BiPredicate<String, String> hierarchy = (child, ancestor) -> button.equals(ancestor) && child.equals(button);
+
+        byte[] ownDrawing = overriding(button, "extractWidgetRenderState", desc, false);
+        assertNotNull(named(read(FinalOverrideHookAdapter.apply(ownDrawing, "26.2", hierarchy)), "extractContents"),
+                "an old button's drawing runs where the final extractWidgetRenderState draws");
+
+        byte[] superDrawing = overriding(button, "extractWidgetRenderState", desc, true);
+        assertSame(superDrawing, FinalOverrideHookAdapter.apply(superDrawing, "26.2", hierarchy),
+                "AbstractButton.extractContents is abstract, so a super call there would fail");
+    }
+
+    /** A class that overrides {@code name desc}, optionally calling the super method first. */
+    private static byte[] overriding(String superName, String name, String desc, boolean callsSuper) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, MOB, null, superName, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, name, desc, null, null);
+        mv.visitCode();
+        org.objectweb.asm.Type[] args = org.objectweb.asm.Type.getArgumentTypes(desc);
+        if (callsSuper) {
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            int slot = 1;
+            for (org.objectweb.asm.Type arg : args) {
+                mv.visitVarInsn(arg.getOpcode(Opcodes.ILOAD), slot);
+                slot += arg.getSize();
+            }
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, superName, name, desc, false);
+        } else if (org.objectweb.asm.Type.getReturnType(desc).getSort() != org.objectweb.asm.Type.VOID) {
+            mv.visitInsn(Opcodes.ICONST_1);
+        }
+        mv.visitInsn(org.objectweb.asm.Type.getReturnType(desc).getOpcode(Opcodes.IRETURN));
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
     private static byte[] mob(String superName, boolean overridesDimensions, boolean declaresHook) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, MOB, null, superName, null);
@@ -101,6 +182,10 @@ class FinalOverrideHookAdapterTest {
     private static MethodNode method(ClassNode node, String name) {
         return node.methods.stream().filter(m -> m.name.equals(name) && m.desc.equals(DESC))
                 .findFirst().orElse(null);
+    }
+
+    private static MethodNode named(ClassNode node, String name) {
+        return node.methods.stream().filter(m -> m.name.equals(name)).findFirst().orElse(null);
     }
 
     private static MethodInsnNode firstCall(MethodNode method) {

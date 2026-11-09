@@ -121,7 +121,7 @@ public class ArchitecturyApiShim implements AuxiliaryVersionShim {
             "(Lme/shedaniel/architectury/networking/NetworkManager$Side;Lnet/minecraft/resources/ResourceLocation;Lme/shedaniel/architectury/networking/NetworkManager$NetworkReceiver;)V",
             "com/retromod/shim/api/common/embedded/ArchitecturyShim",
             "registerReceiver",
-            "(Ljava/lang/Object;Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V"
+            "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V"
         );
 
         transformer.registerClassRedirect(
@@ -135,7 +135,7 @@ public class ArchitecturyApiShim implements AuxiliaryVersionShim {
             "(Lnet/minecraft/resources/ResourceLocation;Lme/shedaniel/architectury/registry/MenuRegistry$SimpleMenuTypeFactory;)Lnet/minecraft/world/inventory/MenuType;",
             "com/retromod/shim/api/common/embedded/ArchitecturyShim",
             "registerMenu",
-            "(Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)Lnet/minecraft/world/inventory/MenuType;"
+            "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"
         );
 
         transformer.registerClassRedirect(

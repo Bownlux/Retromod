@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import com.retromod.util.RetromodLog;
 import com.google.gson.JsonObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -81,7 +82,7 @@ public final class LegacyModelParentMigrator implements ModResourceConverter {
             if (passOnRenamedSlots(tree, name, models, context)) changed.add(name);
         }
         if (!changed.isEmpty()) {
-            LOGGER.info("Updated {} model(s) for the vanilla templates and texture slots Minecraft {} uses",
+            LOGGER.debug(RetromodLog.DETAIL, "Updated {} model(s) for the vanilla templates and texture slots Minecraft {} uses",
                     changed.size(), context.targetMcVersion());
         }
         return changed.size();

@@ -2,6 +2,8 @@ package com.retromod.shim.common;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
@@ -33,6 +35,22 @@ class LegacyAbstractButtonBridgeTest {
                 .orElseThrow();
         assertEquals("renderContents", invokedMethod(bridge));
         assertArrayEquals(repaired, LegacyAbstractButtonBridge.apply(repaired));
+    }
+
+    @Test
+    void addsTheShapeOfTheHostVersion() {
+        byte[] mojang = legacyButton("example/OldButton", "net/minecraft/client/gui/components/AbstractButton");
+        byte[] intermediary = legacyButton("example/OldButton", "net/minecraft/class_4264");
+
+        assertTrue(read(LegacyAbstractButtonBridge.apply(mojang, "1.21.11")).methods.stream().anyMatch(method ->
+                method.name.equals("renderContents") && method.desc.equals("(Lnet/minecraft/client/gui/GuiGraphics;IIF)V")),
+                "1.21.11 draws a button through an abstract renderContents");
+        assertTrue(read(LegacyAbstractButtonBridge.apply(intermediary, "1.21.11")).methods.stream().anyMatch(method ->
+                method.name.equals("method_75752") && method.desc.equals("(Lnet/minecraft/class_332;IIF)V")),
+                "Fabric runs 1.21.11 under intermediary names");
+        assertSame(mojang, LegacyAbstractButtonBridge.apply(mojang, "1.21.10"));
+        assertTrue(read(LegacyAbstractButtonBridge.apply(mojang, "26.2")).methods.stream()
+                .anyMatch(method -> method.name.equals("extractContents")));
     }
 
     @Test

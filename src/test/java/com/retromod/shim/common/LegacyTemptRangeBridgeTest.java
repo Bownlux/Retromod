@@ -4,12 +4,14 @@
  */
 package com.retromod.shim.common;
 
+import com.retromod.core.ForgeModTransformer;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.objectweb.asm.ClassReader;
@@ -20,10 +22,17 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
+import java.util.zip.ZipFile;
 
 import static com.retromod.shim.common.LegacyTemptRangeBridge.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -188,6 +197,52 @@ class LegacyTemptRangeBridgeTest {
         assertEquals(rewritten, fabric.contains(FABRIC_HELPER + ".register" + FABRIC_REGISTER), fabric.toString());
         assertEquals(rewritten, architectury.contains(ARCHITECTURY_HELPER + ".register" + ARCHITECTURY_REGISTER),
                 architectury.toString());
+    }
+
+    @Test
+    @DisplayName("a NeoForge jar that names only its neoforge range is still an older mod on 26.3")
+    void neoForgeRangeIsNotReadAsTheMinecraftVersion(@TempDir Path directory) throws Exception {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        register(transformer);
+        // Quark 4.1 for NeoForge 1.21.1 declares neoforge [21.1.252,) and no minecraft dependency.
+        String toml = """
+                modLoader="javafml"
+                loaderVersion="[1,)"
+                license="CC-BY-NC-SA 3.0"
+                [[mods]]
+                modId="quark"
+                version="4.1-488"
+                [[dependencies.quark]]
+                modId="neoforge"
+                type="required"
+                versionRange="[21.1.252,)"
+                ordering="NONE"
+                side="BOTH"
+                """;
+        Path input = directory.resolve("Quark-4.1-488.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(input))) {
+            jar.putNextEntry(new JarEntry(MOD + ".class"));
+            jar.write(modEntities());
+            jar.closeEntry();
+            jar.putNextEntry(new JarEntry("META-INF/neoforge.mods.toml"));
+            jar.write(toml.getBytes(StandardCharsets.UTF_8));
+            jar.closeEntry();
+        }
+
+        Path output = new ForgeModTransformer("26.3")
+                .transformMod(input, Files.createDirectory(directory.resolve("out")));
+
+        assertNotNull(output, "the fixture should be transformed");
+        List<String> built;
+        try (ZipFile jar = new ZipFile(output.toFile());
+             InputStream classFile = jar.getInputStream(jar.getEntry(MOD + ".class"))) {
+            built = calls(classFile.readAllBytes(), "createAll");
+        }
+        assertFalse(built.contains(BUILDER + ".build" + BUILD),
+                "neoforge [21.1.252,) read as Minecraft 21.1.252 skipped the check: " + built);
+        assertEquals(3, built.stream()
+                .filter(call -> call.endsWith("LegacyTemptRange.build" + BUILD_HELPER)).count(),
+                "each build goes through the embedded helper: " + built);
     }
 
     @Test

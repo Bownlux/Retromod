@@ -40,7 +40,7 @@ final class SpawnerDataMigrator {
     /** Structures, biomes, and the loaders' biome and structure modifiers. */
     static boolean holdsSpawns(String entryName) {
         // NeoForge 26.3's add_spawns biome modifier reads the same entries as vanilla.
-        if (!entryName.startsWith("data/") || !entryName.endsWith(".json")) return false;
+        if (!ModDataMigrator.dataPath(entryName).startsWith("data/") || !entryName.endsWith(".json")) return false;
         return entryName.contains("/worldgen/structure/") || entryName.contains("/worldgen/biome/")
                 || entryName.contains("/biome_modifier/") || entryName.contains("/structure_modifier/");
     }

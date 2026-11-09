@@ -11,6 +11,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,7 +70,7 @@ public final class LegacySmithingRecipeMigrator {
             written++;
         }
         if (written > 0) {
-            LOGGER.info("Converted {} pre-1.20 smithing recipe(s) to smithing_transform", written);
+            LOGGER.debug(RetromodLog.DETAIL, "Converted {} pre-1.20 smithing recipe(s) to smithing_transform", written);
         }
         return written;
     }

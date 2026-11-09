@@ -7,6 +7,8 @@ import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
 
 public class Inventory implements Container {
+    public final Player player = null;
+    public Inventory(Player player, net.minecraft.world.entity.EntityEquipment equipment) { throw new UnsupportedOperationException(); }
     public NonNullList<ItemStack> getNonEquipmentItems() { throw new UnsupportedOperationException(); }
     public void placeItemBackInInventory(ItemStack stack, Prediction prediction) { throw new UnsupportedOperationException(); }
     @Override public int getContainerSize() { throw new UnsupportedOperationException(); }

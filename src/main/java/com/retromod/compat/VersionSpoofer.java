@@ -4,6 +4,8 @@
  */
 package com.retromod.compat;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
+import com.retromod.util.RetromodLog;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -24,7 +26,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Reports a faked dependency version to mods that do their own in-code version check.
+ * Reports a faked dependency version, and Fabric API under its old fabric id, to mods that check in code.
  */
 public final class VersionSpoofer {
 
@@ -42,7 +44,44 @@ public final class VersionSpoofer {
     private static final java.util.concurrent.atomic.AtomicInteger spoofsApplied =
             new java.util.concurrent.atomic.AtomicInteger();
 
+    // Fabric API for 26.x no longer provides the fabric id that older builds provided for it.
+    private static final String FABRIC_ID = "fabric";
+    private static final String FABRIC_API_ID = "fabric-api";
+
+    // Some mods ask isModLoaded every frame, so the method is looked up once per loader class.
+    private static final ClassValue<Optional<Method>> IS_MOD_LOADED = new ClassValue<>() {
+        @Override
+        protected Optional<Method> computeValue(Class<?> loaderClass) {
+            try {
+                return Optional.of(loaderClass.getMethod("isModLoaded", String.class));
+            } catch (NoSuchMethodException | SecurityException e) {
+                return Optional.empty();
+            }
+        }
+    };
+
     private VersionSpoofer() {}
+
+    /**
+     * Replacement for {@code FabricLoader.isModLoaded(String)}, called from transformed mod bytecode.
+     * It answers {@code fabric} for Fabric API when the host no longer provides that id.
+     */
+    public static boolean isModLoaded(Object fabricLoader, String modId) {
+        if (askIsModLoaded(fabricLoader, modId)) return true;
+        // only a "no" for the fabric id falls back, so a host that still provides it answers itself
+        return FABRIC_ID.equals(modId) && askIsModLoaded(fabricLoader, FABRIC_API_ID);
+    }
+
+    /** The receiver's own answer, or false when it cannot be asked, as Fabric answers for a missing mod. */
+    private static boolean askIsModLoaded(Object fabricLoader, String modId) {
+        try {
+            Optional<Method> method = IS_MOD_LOADED.get(fabricLoader.getClass());
+            return method.isPresent() && Boolean.TRUE.equals(method.get().invoke(fabricLoader, modId));
+        } catch (Throwable t) {
+            LOGGER.debug("isModLoaded passthrough failed for {}: {}", modId, t.getMessage());
+            return false;
+        }
+    }
 
     /**
      * Replacement for {@code FabricLoader.getModContainer(String)}, called from
@@ -55,9 +94,9 @@ public final class VersionSpoofer {
         // empty on reflection failure matches Fabric's behaviour for a missing mod
         Optional<?> real;
         try {
-            Method m = fabricLoader.getClass().getMethod("getModContainer", String.class);
-            Object result = m.invoke(fabricLoader, modId);
-            real = (result instanceof Optional<?>) ? (Optional<?>) result : Optional.empty();
+            real = lookUpContainer(fabricLoader, modId);
+            // on older hosts the fabric id named the Fabric API container, so the spoof rule below applies to it
+            if (real.isEmpty() && FABRIC_ID.equals(modId)) real = lookUpContainer(fabricLoader, FABRIC_API_ID);
         } catch (Throwable t) {
             LOGGER.debug("Spoofer passthrough failed for {}: {}", modId, t.getMessage());
             return Optional.empty();
@@ -79,6 +118,13 @@ public final class VersionSpoofer {
                     modId, spoofedVersion, t.getMessage());
             return real;
         }
+    }
+
+    /** The receiver's own {@code getModContainer(modId)} answer. */
+    private static Optional<?> lookUpContainer(Object fabricLoader, String modId) throws ReflectiveOperationException {
+        Method m = LegacyPublicMethods.method(fabricLoader.getClass(), "getModContainer", String.class);
+        Object result = m.invoke(fabricLoader, modId);
+        return (result instanceof Optional<?>) ? (Optional<?>) result : Optional.empty();
     }
 
     /** Wrap a {@code ModContainer} so {@code getMetadata()} returns a spoofing proxy. */
@@ -182,7 +228,7 @@ public final class VersionSpoofer {
         synchronized (VersionSpoofer.class) {
             if (spoofTable != null) return spoofTable;
             spoofTable = Collections.unmodifiableMap(loadTable());
-            LOGGER.info("VersionSpoofer loaded {} spoof rule(s) from {}",
+            LOGGER.debug(RetromodLog.DETAIL, "VersionSpoofer loaded {} spoof rule(s) from {}",
                     spoofTable.size(), SPOOF_RESOURCE);
             return spoofTable;
         }

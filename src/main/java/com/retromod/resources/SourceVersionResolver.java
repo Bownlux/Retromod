@@ -6,6 +6,7 @@ package com.retromod.resources;
 
 import com.retromod.core.ModVersionDetector;
 import com.retromod.embedder.ModVersionInfo;
+import com.retromod.inplace.WorkFolder;
 import com.retromod.util.ZipSecurity;
 
 import java.io.IOException;
@@ -95,7 +96,7 @@ public final class SourceVersionResolver {
         // The checks read a jar file on disk, so the bytes go to a temporary file.
         Path file = null;
         try {
-            file = Files.createTempFile("retromod-source-", ".jar");
+            file = WorkFolder.createTempFile("retromod-source-", ".jar");
             Files.write(file, jar);
             return inspect(file);
         } catch (IOException unwritable) {

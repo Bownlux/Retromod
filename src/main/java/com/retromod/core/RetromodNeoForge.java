@@ -4,11 +4,13 @@
  */
 package com.retromod.core;
 
-import com.retromod.gui.RetromodGui;
 import com.retromod.gui.TitleScreenButtonInjector;
 import com.retromod.inplace.InPlaceLaunch;
+import com.retromod.inplace.WorkFolder;
+import com.retromod.shim.ShimRegistration;
 import com.retromod.shim.ShimRegistry;
 import com.retromod.util.ArchivePublication;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,15 +44,21 @@ public class RetromodNeoForge {
                     RetromodVersion.TARGET_MC_VERSION);
         }
 
-        LOGGER.info("Starting Retromod on NeoForge for Minecraft {}",
-                RetromodVersion.TARGET_MC_VERSION);
+        LOGGER.info("Starting Retromod {} on NeoForge for Minecraft {}",
+                RetromodVersion.RETROMOD_VERSION, RetromodVersion.TARGET_MC_VERSION);
+        // A jar built for several loaders is read through the metadata NeoForge reads.
+        ModVersionDetector.setDefaultPreferredLoader("neoforge");
 
         // First-time users need a real file they can edit.
         RetromodConfig.ensureDefaultConfig();
+        // Stage transforms in the game folder, not a temp folder a launcher sandbox may limit.
+        WorkFolder.useGameFolder(Paths.get(".").toAbsolutePath().normalize());
 
         publishNeoForgeEnvironment();
         boolean isServer = EnvironmentDetector.isDedicatedServer();
-        LOGGER.info("Environment: {}", isServer ? "Dedicated Server" : "Client");
+        LOGGER.debug(RetromodLog.DETAIL, "Environment: {}", isServer ? "Dedicated Server" : "Client");
+        // Old mods' item properties reach their item definitions through a property type added before the first reload.
+        if (!isServer) com.retromod.shim.common.LegacyItemPropertiesBridge.addPropertyType();
 
         try {
             com.retromod.resources.ResourceManager.processStagedPacks(
@@ -61,61 +69,18 @@ public class RetromodNeoForge {
         }
 
         RetromodTransformer transformer = RetromodTransformer.getInstance();
-
-        // NeoForge shims, including Forge migration shims.
-        loadNeoForgeShims(transformer);
+        registerTransformRedirects(transformer);
 
         // Forge SimpleChannel messages from transformed mods are registered as NeoForge payloads
         // when NeoForge locks its network registry, after every mod has created its channels.
         com.retromod.shim.forge.embedded.NetworkShim.listenForPayloadRegistration();
         // Forge items hand out renderers through initializeClient, which NeoForge no longer calls.
         com.retromod.shim.forge.ClientExtensionsBridge.listen();
-
-        // Forge SRG -> Mojang member names. NeoForge 1.20.2 and newer run Mojang names, but a
-        // Forge SRG-baked mod (Jade, JEI Forge) migrated onto NeoForge carries SRG names with it
-        // and crashes without this mapping.
-        try {
-            int srgEntries = com.retromod.mapping.SrgToMojangMapper.getInstance()
-                    .applyTo(transformer);
-            if (srgEntries > 0) {
-                LOGGER.info("Registered {} SRG → Mojang mapping(s)", srgEntries);
-            }
-        } catch (Exception e) {
-            LOGGER.warn("Could not register SRG mappings", e);
-        }
-
-        // Vanilla net/minecraft/* class moves and renames. NeoForge mods skip the
-        // intermediary->Mojang remap but still need vanilla renames (ResourceLocation
-        // ->Identifier, repackaged entities) or they crash with NoClassDefFoundError.
-        // applyClassMovesOnly is host-version-aware: each rename applies only where the
-        // host has the new class and not the old one, so it works on both a 1.21.11 and
-        // a 26.1 host without the #9 hazard.
-        try {
-            int moves = com.retromod.mapping.IntermediaryToMojangMapper
-                    .applyClassMovesOnly(transformer);
-            if (moves > 0) {
-                LOGGER.info("Registered {} vanilla class move(s) for NeoForge", moves);
-            }
-        } catch (Exception e) {
-            LOGGER.warn("Could not register vanilla class moves", e);
-        }
-
-        // Bridges for classes NeoForge deleted (FMLJavaModLoadingContext, DeferredSpawnEggItem
-        // #85), gated on the original being absent; SyntheticEmbedder embeds each per-mod.
-        try {
-            com.retromod.shim.forge.ForgeNeoForgeSynthetics.register(transformer);
-        } catch (Exception e) {
-            LOGGER.warn("Could not register Forge/NeoForge synthetics", e);
-        }
-
-        // Polyfills (re-implemented removed APIs). The Fabric entry loaded these; without
-        // this a NeoForge user on the in-place transform missed the Forge -> NeoForge
-        // Dist/@OnlyIn redirects and the removed-class bridges.
-        try {
-            registerPolyfills(transformer, readPolyfillsEnabled());
-        } catch (Exception e) {
-            LOGGER.warn("Could not register polyfills", e);
-        }
+        // NeoForge 26.3 dropped the fuel and compost data maps for item components, so translated
+        // mods' old map files are applied as components.
+        com.retromod.shim.neoforge.LegacyDataMapComponentBridge.listen();
+        // Old mods that read the enchantment registry during a data pack load find that load's registries.
+        com.retromod.shim.common.ReloadRegistryRecorder.listen();
 
         // AutoFix is opt-in on every loader. logs/latest.log is writable by any mod via
         // SLF4J, so a crafted log line matching AutoFixEngine's regex could register
@@ -131,7 +96,7 @@ public class RetromodNeoForge {
                 AutoFixEngine autoFixEngine = new AutoFixEngine();
                 int savedFixes = autoFixEngine.loadAndApplySavedFixes(transformer);
                 if (savedFixes > 0) {
-                    LOGGER.info("AutoFix: loaded {} saved fix(es) from previous launch", savedFixes);
+                    LOGGER.debug(RetromodLog.DETAIL, "AutoFix: loaded {} saved fix(es) from previous launch", savedFixes);
                 }
             } catch (Exception e) {
                 LOGGER.debug("Could not load auto-fix saved fixes: {}", e.getMessage());
@@ -179,10 +144,11 @@ public class RetromodNeoForge {
                 recommendAotFlow(inPlace);
             }
         } else {
-            // The same transformer and call the rewrite flow uses, so cached jars match it.
+            // The same transform the rewrite flow uses, so cached jars match it. A failure is
+            // thrown, so the cache keeps its reason and retries a disk error.
             transformed = launch.translatePending(RetromodVersion.TARGET_MC_VERSION, () ->
                     (InPlaceLaunch.LinkingTranslator)
-                            new ForgeModTransformer(RetromodVersion.TARGET_MC_VERSION)::transformMod);
+                            new ForgeModTransformer(RetromodVersion.TARGET_MC_VERSION)::translateOrThrow);
         }
 
         if (launch.rewrite()) {
@@ -191,27 +157,13 @@ public class RetromodNeoForge {
             com.retromod.gui.RestartPrompt.markTranslatedIntoCache(transformed);
         }
 
-        // A client gets the Swing setup and the title-screen button. A dedicated server runs
-        // headless and reports on the console only.
-        if (!isServer && EnvironmentDetector.canShowGui()) {
-            if (transformed > 0) {
-                showRestartPopup(transformed, !launch.rewrite());
-            } else {
-                initializeClientGui();
-            }
-        } else {
-            LOGGER.info("Running without the in-game interface on this server");
-            if (transformed > 0 && launch.rewrite()) {
-                LOGGER.info("Updated {} {}. Restart the server to load {}.",
-                        transformed, transformed == 1 ? "mod" : "mods",
-                        transformed == 1 ? "it" : "them");
-            } else if (transformed > 0) {
-                LOGGER.info("Translated {} {} into retromod-cache/. Restart the server to "
-                        + "load {}. The files in mods/ were not changed.",
-                        transformed, transformed == 1 ? "mod" : "mods",
-                        transformed == 1 ? "it" : "them");
-            }
-        }
+        // A client gets the title-screen button, which also shows the restart prompt armed above.
+        // A dedicated server reports on the console only.
+        if (!isServer) registerTitleScreenButton();
+        if (isServer) LOGGER.debug(RetromodLog.DETAIL, "Running without the in-game interface on this server");
+        String restart = com.retromod.gui.RestartPrompt.consoleText(
+                isServer, transformed, !launch.rewrite());
+        if (restart != null) LOGGER.info(restart);
 
         scanForRuntimeTransformableMods(launch);
 
@@ -244,12 +196,12 @@ public class RetromodNeoForge {
                     + "(see security notes in Retromod.java).");
         }
 
-        LOGGER.info("Retromod initialized.");
+        LOGGER.debug(RetromodLog.DETAIL, "Retromod initialized.");
         
         if (isServer) {
-            LOGGER.info("Retromod is running in NeoForge server mode.");
-            LOGGER.info("Bytecode transforms, ahead-of-time compilation, and Forge migration are enabled.");
-            LOGGER.info("GUI features are unavailable on a headless server.");
+            LOGGER.debug(RetromodLog.DETAIL, "Retromod is running in NeoForge server mode.");
+            LOGGER.debug(RetromodLog.DETAIL, "Bytecode transforms, ahead-of-time compilation, and Forge migration are enabled.");
+            LOGGER.debug(RetromodLog.DETAIL, "GUI features are unavailable on a headless server.");
         }
     }
 
@@ -318,47 +270,89 @@ public class RetromodNeoForge {
             hybrid.initialize(modsFolder, RetromodVersion.TARGET_MC_VERSION,
                     launch::isHiddenOriginal);
             
-            LOGGER.info("Hybrid AOT/JIT engine initialized");
+            LOGGER.debug(RetromodLog.DETAIL, "Hybrid AOT/JIT engine initialized");
         } catch (Exception e) {
             LOGGER.warn("Could not initialize hybrid engine: {}", e.getMessage());
         }
     }
     
-    /**
-     * Client-only GUI: in-game title screen button plus the Swing first-run
-     * setup / floating "Add Mods" button as a fallback.
-     */
-    private void initializeClientGui() {
-        Path gameDir = Paths.get(".").toAbsolutePath().normalize();
-
+    /** Registers the in-game title screen button, the way into the Retromod screen. */
+    private void registerTitleScreenButton() {
+        // The injector logs whether a supported event bus took the button.
         try {
             TitleScreenButtonInjector.register();
-            LOGGER.info("Title screen button registered");
         } catch (Exception e) {
             LOGGER.debug("Title screen button not available: {}", e.getMessage());
         }
+    }
 
+    /** Registers what this entry point transforms mods with: shims, SRG names, class moves, bridges, polyfills. */
+    static void registerTransformRedirects(RetromodTransformer transformer) {
+        // NeoForge shims, including Forge migration shims.
+        loadNeoForgeShims(transformer);
+
+        // Forge SRG -> Mojang member names. NeoForge 1.20.2 and newer run Mojang names, but a
+        // Forge SRG-baked mod (Jade, JEI Forge) migrated onto NeoForge carries SRG names with it
+        // and crashes without this mapping.
         try {
-            RetromodGui gui = new RetromodGui(gameDir);
-
-            if (gui.isFirstRun()) {
-                LOGGER.info("Opening the Retromod setup dialog for the first run");
-                gui.showFirstRunDialog();
-            } else {
-                gui.showAddModsButton();
+            int srgEntries = com.retromod.mapping.SrgToMojangMapper.getInstance()
+                    .applyTo(transformer);
+            if (srgEntries > 0) {
+                LOGGER.debug(RetromodLog.DETAIL, "Registered {} SRG → Mojang mapping(s)", srgEntries);
             }
         } catch (Exception e) {
-            LOGGER.warn("Could not initialize GUI: {}", e.getMessage());
-            LOGGER.info("Use CLI instead: retromod aot <mod.jar>");
+            LOGGER.warn("Could not register SRG mappings", e);
+        }
+
+        // Vanilla net/minecraft/* class moves and renames. NeoForge mods skip the
+        // intermediary->Mojang remap but still need vanilla renames (ResourceLocation
+        // ->Identifier, repackaged entities) or they crash with NoClassDefFoundError.
+        // applyClassMovesOnly is host-version-aware: each rename applies only where the
+        // host has the new class and not the old one, so it works on both a 1.21.11 and
+        // a 26.1 host without the #9 hazard.
+        try {
+            int moves = com.retromod.mapping.IntermediaryToMojangMapper
+                    .applyClassMovesOnly(transformer);
+            if (moves > 0) {
+                LOGGER.debug(RetromodLog.DETAIL, "Registered {} vanilla class move(s) for NeoForge", moves);
+            }
+        } catch (Exception e) {
+            LOGGER.warn("Could not register vanilla class moves", e);
+        }
+
+        // Bridges for classes NeoForge deleted (FMLJavaModLoadingContext, DeferredSpawnEggItem
+        // #85), gated on the original being absent; SyntheticEmbedder embeds each per-mod.
+        try {
+            com.retromod.shim.forge.ForgeNeoForgeSynthetics.register(transformer);
+        } catch (Exception e) {
+            LOGGER.warn("Could not register Forge/NeoForge synthetics", e);
+        }
+
+        // Polyfills (re-implemented removed APIs). The Fabric entry loaded these; without
+        // this a NeoForge user on the in-place transform missed the Forge -> NeoForge
+        // Dist/@OnlyIn redirects and the removed-class bridges.
+        try {
+            registerPolyfills(transformer, readPolyfillsEnabled());
+        } catch (Exception e) {
+            LOGGER.warn("Could not register polyfills", e);
+        }
+
+        // Minecraft renames between the version a mod was built for and this host. Registered
+        // last, because a shim or polyfill for the old name keeps it.
+        try {
+            com.retromod.mapping.MojangRenameTable.register(transformer, RetromodVersion.TARGET_MC_VERSION);
+        } catch (Exception e) {
+            LOGGER.warn("Could not register Minecraft renames", e);
         }
     }
-    
-    private void loadNeoForgeShims(RetromodTransformer transformer) {
+
+    private static void loadNeoForgeShims(RetromodTransformer transformer) {
         try {
             java.util.ServiceLoader<VersionShim> loader = 
                 java.util.ServiceLoader.load(VersionShim.class);
             
             int count = 0;
+            int failed = 0;
             java.util.Iterator<VersionShim> it = loader.iterator();
             while (it.hasNext()) {
                 VersionShim shim;
@@ -378,12 +372,20 @@ public class RetromodNeoForge {
                             shim, RetromodVersion.TARGET_MC_VERSION)) {
                         continue;
                     }
-                    shim.registerRedirects(transformer);
-                    count++;
+                    // One shim that throws is skipped alone, so the shims after it still apply.
+                    if (ShimRegistration.register(shim, transformer)) {
+                        count++;
+                    } else {
+                        failed++;
+                    }
                 }
             }
             
-            LOGGER.info("Loaded {} NeoForge/Forge version shims", count);
+            LOGGER.debug(RetromodLog.DETAIL, "Loaded {} NeoForge/Forge version shims", count);
+            if (failed > 0) {
+                LOGGER.warn("{} NeoForge/Forge version shim(s) could not be registered; see the "
+                        + "warnings above", failed);
+            }
         } catch (Exception e) {
             LOGGER.error("Failed to load NeoForge shims", e);
         }
@@ -478,43 +480,49 @@ public class RetromodNeoForge {
                 try {
                     var info = detector.detectVersion(modJar);
                     if (info != null && info.needsTransformation(RetromodVersion.TARGET_MC_VERSION)) {
-                        LOGGER.info("Found incompatible mod in mods/: {} ({})",
+                        LOGGER.debug(RetromodLog.DETAIL, "Found {} in mods/, made for Minecraft {}",
                                 modJar.getFileName(), info.targetMcVersion());
                         incompatible.add(modJar);
                     }
                 } catch (Exception e) {
-                    LOGGER.debug("Could not check: {}", modJar.getFileName());
+                    LOGGER.debug("Could not check {}: {}", modJar.getFileName(), e.toString());
                 }
             }
             SyntheticLibraries libraries = incompatible.isEmpty()
                     ? SyntheticLibraries.NONE : SyntheticLibraries.ofFolder(modsDir);
 
             for (Path modJar : SyntheticLibraries.librariesFirst(incompatible, jar -> jar)) {
-                try {
-                    String fileName = modJar.getFileName().toString();
-                    Files.createDirectories(backupDir);
-                    ArchivePublication.copyReplacing(
-                            modJar, backupDir.resolve(fileName));
-
-                    boolean replaced = withInPlaceTransformDirectory(tempDir -> {
-                        Path transformed = transformer.transformMod(modJar, tempDir, libraries);
-                        if (transformed == null) return false;
-                        ArchivePublication.moveReplacing(transformed, modJar);
-                        return true;
-                    });
-                    if (replaced) {
-                        libraries.add(modJar);
-                        LOGGER.info("Transformed in place: {}", fileName);
-                        count++;
-                    }
-                } catch (Exception e) {
-                    LOGGER.debug("Could not transform: {}", modJar.getFileName());
+                if (rewriteJarInMods(modJar, backupDir, transformer::transformMod, libraries)) {
+                    libraries.add(modJar);
+                    LOGGER.info("Transformed in place: {}", modJar.getFileName());
+                    count++;
                 }
             }
         } catch (Exception e) {
             LOGGER.error("Error scanning mods/ for transformation: {}", e.getMessage());
         }
         return count;
+    }
+
+    /** Backs up one old jar in mods/ and replaces it with its translation; false when it did not. */
+    static boolean rewriteJarInMods(Path modJar, Path backupDir,
+            InPlaceLaunch.LinkingTranslator translator, SyntheticLibraries libraries) {
+        String fileName = modJar.getFileName().toString();
+        try {
+            Files.createDirectories(backupDir);
+            ArchivePublication.copyReplacing(modJar, backupDir.resolve(fileName));
+            return withInPlaceTransformDirectory(tempDir -> {
+                Path transformed = translator.translate(modJar, tempDir, libraries);
+                if (transformed == null) return false;
+                ArchivePublication.moveReplacing(transformed, modJar);
+                return true;
+            });
+        } catch (Exception e) {
+            // The old jar stays in mods/, so latest.log has to say why it was not updated.
+            LOGGER.warn("Could not translate {} in mods/: {}. Retromod tries again on the next "
+                    + "launch.", fileName, e.toString());
+            return false;
+        }
     }
 
     @FunctionalInterface
@@ -525,7 +533,7 @@ public class RetromodNeoForge {
     /** Runs one in-place transform with cleanup that cannot hide the transform failure. */
     static <T> T withInPlaceTransformDirectory(TemporaryTransformOperation<T> operation)
             throws Exception {
-        Path tempDir = Files.createTempDirectory("retromod-inplace-");
+        Path tempDir = WorkFolder.createTempDirectory("retromod-inplace-");
         try {
             return operation.run(tempDir);
         } finally {
@@ -544,35 +552,12 @@ public class RetromodNeoForge {
         }
     }
 
-    /** Asks the player to restart after jars changed on disk, or after translations went into the cache. */
-    private void showRestartPopup(int transformedCount, boolean translatedIntoCache) {
-        if (!EnvironmentDetector.canShowGui()) return;
-
-        Thread popupThread = new Thread(() -> {
-            try {
-                javax.swing.UIManager.setLookAndFeel(
-                    javax.swing.UIManager.getSystemLookAndFeelClassName());
-            } catch (Exception ignored) {}
-
-            // In in-place mode no file in mods/ changed, so the text names the cache instead.
-            javax.swing.JOptionPane.showMessageDialog(null,
-                translatedIntoCache
-                    ? com.retromod.gui.RestartPrompt.cacheRestartPopupText(transformedCount)
-                    : "Retromod updated " + transformedCount + " mod(s).\n\n" +
-                      "Restart Minecraft to load the new jars. You should only need\n" +
-                      "this restart after Retromod changes a mod.",
-                "Restart Minecraft",
-                javax.swing.JOptionPane.INFORMATION_MESSAGE);
-        }, "Retromod-RestartPopup");
-        popupThread.setDaemon(true);
-        popupThread.start();
-    }
-
     /** Recommends the earlier offline path when startup had to update jars in place. */
     private void recommendAotFlow(int inPlaceCount) {
         LOGGER.info("Retromod updated {} mod(s) during NeoForge startup.", inPlaceCount);
-        LOGGER.info("For future setup, `retromod prepare <minecraft-dir>` is more reliable because "
-            + "it updates jars before NeoForge builds its module layer.");
+        LOGGER.debug(RetromodLog.DETAIL, "For future setup, `retromod prepare <minecraft-dir> --target {} --target-loader "
+            + "neoforge` is more reliable because it updates jars before NeoForge builds its module "
+            + "layer.", RetromodVersion.TARGET_MC_VERSION);
     }
 
     private void scanForRuntimeTransformableMods(InPlaceLaunch launch) {
@@ -597,7 +582,7 @@ public class RetromodNeoForge {
 
                         if (sourceVersion != null &&
                             "neoforge".equals(info.modLoaderType())) {
-                            LOGGER.info("Runtime transforming: {} ({} -> {})",
+                            LOGGER.debug(RetromodLog.DETAIL, "Runtime transforming: {} ({} -> {})",
                                 modFile.getName(), sourceVersion, RetromodVersion.TARGET_MC_VERSION);
                             
                             for (String pkg : info.modPackages()) {

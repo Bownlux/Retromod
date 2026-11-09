@@ -4,6 +4,8 @@
  */
 package com.retromod.core;
 
+import com.retromod.loaderapi.LoaderApiTestSupport;
+import com.retromod.util.RetromodLog;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -13,11 +15,13 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * The fuzzy report turns the resolver's WARN band (50-84 "possible match") into a TSV that
+ * The fuzzy report turns the resolver's near-miss band (50-84 "possible match") into a TSV that
  * pre-26.1 bridge authoring can consume offline. One row per distinct unresolved reference,
  * fresh file per run, and reporting failures must never break a transform.
  */
@@ -30,6 +34,7 @@ class FuzzyMatchReportTest {
     void reset() {
         // park the report somewhere harmless so later tests (and the suite's cwd) stay clean
         FuzzyMatchReport.setOutputFile(tmp.resolve("parked.tsv"));
+        RetromodLog.setDetailInGameLogForTesting(null);
     }
 
     @Test
@@ -147,30 +152,106 @@ class FuzzyMatchReportTest {
         Path out = tmp.resolve("wired.tsv");
         FuzzyMatchReport.setOutputFile(out);
 
-        Path jar = tmp.resolve("mc.jar");
-        try (var zos = new java.util.zip.ZipOutputStream(Files.newOutputStream(jar))) {
-            org.objectweb.asm.ClassWriter cw =
-                    new org.objectweb.asm.ClassWriter(org.objectweb.asm.ClassWriter.COMPUTE_FRAMES);
-            cw.visit(org.objectweb.asm.Opcodes.V17, org.objectweb.asm.Opcodes.ACC_PUBLIC,
-                    "net/minecraft/core/Widget", null, "java/lang/Object", null);
-            // candidate differs enough from the query to score in the warn band, not auto-apply
-            cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC, "recalculateBounds", "(I)V",
-                    null, null).visitEnd();
-            cw.visitEnd();
-            zos.putNextEntry(new java.util.zip.ZipEntry("net/minecraft/core/Widget.class"));
-            zos.write(cw.toByteArray());
-            zos.closeEntry();
-        }
         FuzzyMethodResolver r = new FuzzyMethodResolver();
-        r.indexJar(jar);
+        r.indexJar(writeWidgetJar(tmp.resolve("mc.jar")));
         // exact class (40) + name miss with common prefix >= 4 (5) + param count exact (15)
         // + params match (15) = 75: inside the 50-84 NEAR band
-        assertNull(r.resolveMethod("net/minecraft/core/Widget", "recalcSize", "(I)V"));
+        assertNull(r.resolveMethod(WIDGET, "recalcSize", "(I)V"));
 
         assertTrue(Files.exists(out), "NEAR match must be captured");
         String tsv = Files.readString(out);
         assertTrue(tsv.contains("METHOD\tNEAR\t"), "band column must be NEAR:\n" + tsv);
         assertTrue(tsv.contains("recalcSize"), "query name recorded");
         assertTrue(tsv.contains("recalculateBounds"), "candidate name recorded");
+    }
+
+    @Test
+    @DisplayName("near misses stay out of the WARN log, and the log names the report once")
+    void nearMissesStayOutOfTheWarnLog() throws Exception {
+        Path out = tmp.resolve("quiet.tsv");
+        FuzzyMatchReport.setOutputFile(out);
+        FuzzyMethodResolver r = new FuzzyMethodResolver();
+        r.indexJar(writeWidgetJar(tmp.resolve("mc.jar")));
+
+        AtomicReferenceArray<Object> results = new AtomicReferenceArray<>(3);
+        // The line naming the report is a detail line; this writes it where captureErr reads.
+        RetromodLog.setDetailInGameLogForTesting(true);
+        String log = LoaderApiTestSupport.captureErr(() -> {
+            // Two workers reach the same method reference at once, as transform workers do.
+            CountDownLatch go = new CountDownLatch(1);
+            Thread[] workers = new Thread[2];
+            for (int i = 0; i < workers.length; i++) {
+                int slot = i;
+                workers[i] = new Thread(() -> {
+                    try {
+                        go.await();
+                        results.set(slot, r.resolveMethod(WIDGET, "recalcSize", "(I)V"));
+                    } catch (InterruptedException e) {
+                        results.set(slot, e);
+                    }
+                });
+                workers[i].start();
+            }
+            go.countDown();
+            for (Thread worker : workers) worker.join();
+            // exact class (40) + shared prefix (5) + same type (30) = 75, a field near miss
+            results.set(2, r.resolveField(WIDGET, "recalcWidth", "I"));
+        });
+
+        for (int i = 0; i < results.length(); i++) {
+            assertNull(results.get(i), "a near miss is never applied (call " + i + ")");
+        }
+        long nearRows = Files.readAllLines(out).stream()
+                .filter(l -> !l.startsWith("#") && l.contains("\tNEAR\t")).count();
+        assertEquals(2, nearRows, "one NEAR row for the method and one for the field");
+        assertFalse(log.contains("Possible"), "near misses must not reach the default log:\n" + log);
+        assertFalse(log.contains("WARN Retromod-Fuzzy"), "no fuzzy WARN lines expected:\n" + log);
+        assertEquals(1, log.split(java.util.regex.Pattern.quote(out.toString()), -1).length - 1,
+                "the log must name the report exactly once:\n" + log);
+    }
+
+    @Test
+    @DisplayName("record reports only the first sighting of an outcome, even when unwritable")
+    void recordReportsFirstSightingOnly() throws IOException {
+        FuzzyMatchReport.setOutputFile(tmp.resolve("first.tsv"));
+        assertTrue(FuzzyMatchReport.record("METHOD", FuzzyMatchReport.BAND_NEAR, 70,
+                "a/B", "m", "()V", "a/B", "n", "()V"), "first sighting");
+        assertFalse(FuzzyMatchReport.record("METHOD", FuzzyMatchReport.BAND_NEAR, 70,
+                "a/B", "m", "()V", "a/B", "n", "()V"), "same reference and band again");
+        assertTrue(FuzzyMatchReport.record("METHOD", FuzzyMatchReport.BAND_AUTO, 90,
+                "a/B", "m", "()V", "a/B", "n", "()V"), "same reference in a new band");
+
+        // A report that cannot be written still answers first sightings, so DEBUG lines survive.
+        Path blocker = tmp.resolve("blocker");
+        Files.writeString(blocker, "x");
+        FuzzyMatchReport.setOutputFile(blocker.resolve("sub").resolve("report.tsv"));
+        assertTrue(FuzzyMatchReport.record("FIELD", FuzzyMatchReport.BAND_NEAR, 60,
+                "c/D", "f", "I", "c/D", "g", "I"), "first sighting while the write fails");
+        assertTrue(FuzzyMatchReport.record("FIELD", FuzzyMatchReport.BAND_NEAR, 60,
+                "c/D", "f2", "I", "c/D", "g2", "I"), "first sighting once the report is disabled");
+        assertFalse(FuzzyMatchReport.record("FIELD", FuzzyMatchReport.BAND_NEAR, 60,
+                "c/D", "f2", "I", "c/D", "g2", "I"), "a repeat stays quiet while disabled");
+    }
+
+    private static final String WIDGET = "net/minecraft/core/Widget";
+
+    /** A one-class host jar whose members only half match the queries above. */
+    private static Path writeWidgetJar(Path jar) throws IOException {
+        try (var zos = new java.util.zip.ZipOutputStream(Files.newOutputStream(jar))) {
+            org.objectweb.asm.ClassWriter cw =
+                    new org.objectweb.asm.ClassWriter(org.objectweb.asm.ClassWriter.COMPUTE_FRAMES);
+            cw.visit(org.objectweb.asm.Opcodes.V17, org.objectweb.asm.Opcodes.ACC_PUBLIC,
+                    WIDGET, null, "java/lang/Object", null);
+            // candidates differ enough from the queries to score in the NEAR band, not auto-apply
+            cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC, "recalculateBounds", "(I)V",
+                    null, null).visitEnd();
+            cw.visitField(org.objectweb.asm.Opcodes.ACC_PUBLIC, "recalculatedHeight", "I",
+                    null, null).visitEnd();
+            cw.visitEnd();
+            zos.putNextEntry(new java.util.zip.ZipEntry(WIDGET + ".class"));
+            zos.write(cw.toByteArray());
+            zos.closeEntry();
+        }
+        return jar;
     }
 }

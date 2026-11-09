@@ -4,6 +4,8 @@
  */
 package com.retromod.polyfill.minecraft;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
+
 /**
  * 1.3.0: bridge for {@code ItemBlockRenderTypes}, deleted in the 26.1 render rewrite (12 corpus
  * mods). The old static block-to-RenderType table is gone: the layer decision became per-quad data
@@ -75,11 +77,59 @@ public final class RetroItemBlockRenderTypes {
 
     /**
      * Old {@code setRenderLayer(Block or Fluid, RenderType or Predicate)}, which Forge and NeoForge
-     * mods call from client setup. From 26.1 the layer comes from the model's own material, so there
-     * is no table left to write. Ignoring the call keeps client setup running; a model that never
-     * declared its layer draws solid.
+     * mods call from client setup. From 26.1 each quad takes its layer from its texture, so the
+     * host has no table to write. The choice is only recorded, for old code that reads it back.
      */
     public static void setRenderLayer(Object blockOrFluid, Object layer) {
+        try {
+            int bits = layerBits(layer);
+            if (blockOrFluid != null && bits != 0) recordLayers(blockOrFluid, bits);
+        } catch (Throwable t) {
+            // Recording is a convenience; client setup goes on without it.
+        }
+    }
+
+    // Each mod carries its own copy of this class, so the table lives in the JDK's system properties and
+    // holds only JDK and host types: the block or fluid, and its layers as bits SOLID 1, CUTOUT 2, TRANSLUCENT 4.
+    private static final String RECORDED_LAYERS = "retromod.shared.renderLayers.v1";
+
+    /** Records the layers an old call chose for a block or fluid, as bits SOLID 1, CUTOUT 2 and TRANSLUCENT 4. */
+    public static void recordLayers(Object blockOrFluid, int bits) {
+        if (blockOrFluid != null) recordedTable().put(blockOrFluid, bits);
+    }
+
+    /** The layer bits an old call chose for a block or fluid, or 0 when none did. */
+    public static int recordedLayers(Object blockOrFluid) {
+        Object bits = blockOrFluid == null ? null : recordedTable().get(blockOrFluid);
+        return bits instanceof Integer value ? value : 0;
+    }
+
+    // Read for every block on every chunk rebuild, so the shared table is looked up once per copy.
+    private static volatile java.util.Map<Object, Object> recorded;
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<Object, Object> recordedTable() {
+        java.util.Map<Object, Object> known = recorded;
+        if (known != null) return known;
+        Object shared = System.getProperties().computeIfAbsent(RECORDED_LAYERS,
+                key -> java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>()));
+        if (!(shared instanceof java.util.Map<?, ?> map)) return new java.util.HashMap<>();
+        recorded = (java.util.Map<Object, Object>) map;
+        return recorded;
+    }
+
+    // A layer's render type gives its bit; a predicate gives the bits of the layers whose type it accepts.
+    @SuppressWarnings("unchecked")
+    private static int layerBits(Object layer) throws Exception {
+        Object[] tokens = {solidToken().invoke(null), cutoutToken().invoke(null), translucentToken().invoke(null)};
+        int bits = 0;
+        for (int i = 0; i < tokens.length; i++) {
+            boolean chosen = layer instanceof java.util.function.Predicate<?> test
+                    ? ((java.util.function.Predicate<Object>) test).test(tokens[i])
+                    : tokens[i] == layer;
+            if (chosen) bits |= 1 << i;
+        }
+        return bits;
     }
 
     // Layer selection
@@ -110,7 +160,7 @@ public final class RetroItemBlockRenderTypes {
         Object random = randomCls.getMethod("create").invoke(null);
         java.util.List<Object> parts = new java.util.ArrayList<>();
         java.lang.reflect.Method collect = null;
-        for (java.lang.reflect.Method m : model.getClass().getMethods()) {
+        for (java.lang.reflect.Method m : LegacyPublicMethods.methods(model.getClass())) {
             if (m.getName().equals("collectParts") && m.getParameterCount() == 2) { collect = m; break; }
         }
         if (collect == null) return "SOLID";
@@ -118,7 +168,7 @@ public final class RetroItemBlockRenderTypes {
         Class<?> dirCls = Class.forName("net.minecraft.core.Direction");
         Object[] dirs = (Object[]) dirCls.getMethod("values").invoke(null);
         for (Object part : parts) {
-            java.lang.reflect.Method getQuads = part.getClass().getMethod("getQuads", dirCls);
+            java.lang.reflect.Method getQuads = LegacyPublicMethods.method(part.getClass(), "getQuads", dirCls);
             getQuads.setAccessible(true); // impl classes may be package-private; the METHOD is public
             for (int i = -1; i < dirs.length; i++) {
                 Object dir = i < 0 ? null : dirs[i]; // null = the unculled quad bucket
@@ -234,7 +284,7 @@ public final class RetroItemBlockRenderTypes {
 
     private static Object tryCall(Object target, String name) {
         try {
-            return target.getClass().getMethod(name).invoke(target);
+            return LegacyPublicMethods.method(target.getClass(), name).invoke(target);
         } catch (Throwable t) {
             return null;
         }
@@ -242,7 +292,7 @@ public final class RetroItemBlockRenderTypes {
 
     private static Object tryCall1(Object target, String name, Object arg) {
         try {
-            for (java.lang.reflect.Method m : target.getClass().getMethods()) {
+            for (java.lang.reflect.Method m : LegacyPublicMethods.methods(target.getClass())) {
                 if (m.getName().equals(name) && m.getParameterCount() == 1
                         && m.getParameterTypes()[0].isInstance(arg)) {
                     return m.invoke(target, arg);
@@ -254,7 +304,7 @@ public final class RetroItemBlockRenderTypes {
     }
 
     private static Object call1(Object target, String name, Object arg) throws Exception {
-        for (java.lang.reflect.Method m : target.getClass().getMethods()) {
+        for (java.lang.reflect.Method m : LegacyPublicMethods.methods(target.getClass())) {
             if (m.getName().equals(name) && m.getParameterCount() == 1
                     && m.getParameterTypes()[0].isInstance(arg)) {
                 return m.invoke(target, arg);

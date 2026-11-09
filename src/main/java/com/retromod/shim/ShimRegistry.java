@@ -8,9 +8,10 @@ import com.retromod.core.AuxiliaryVersionShim;
 import com.retromod.core.MinecraftVersionedApiShim;
 import com.retromod.core.VersionShim;
 import com.retromod.core.RetromodVersion;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.*;
-import java.util.logging.Logger;
 
 /**
  * Holds the loaded version shims and finds chains between versions. Mods targeting an
@@ -19,13 +20,19 @@ import java.util.logging.Logger;
  */
 public class ShimRegistry {
 
-    private static final Logger LOGGER = Logger.getLogger(ShimRegistry.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Shim");
 
     /** Maps intermediate MC versions to the milestone shim that covers their release line. */
     private static final Map<String, String> VERSION_ALIASES;
 
     static {
         Map<String, String> aliases = new HashMap<>();
+
+        // 1.12.2 is the only 1.12 shim. A 1.12 mod can still name the release it was built on,
+        // as mcmod.info "1.12.1" or the lower bound of acceptedMinecraftVersions "[1.12,1.13)".
+        aliases.put("1.12",   "1.12.2");
+        aliases.put("1.12.0", "1.12.2");
+        aliases.put("1.12.1", "1.12.2");
 
         aliases.put("1.13",   "1.13.2");
         aliases.put("1.13.0", "1.13.2");
@@ -174,12 +181,10 @@ public class ShimRegistry {
         String resolvedTarget = resolveVersionForLoader(modLoader, targetVersion);
 
         if (!resolvedSource.equals(sourceVersion)) {
-            LOGGER.info("Resolved source version " + sourceVersion + " → " + resolvedSource
-                    + " (fuzzy version matching)");
+            LOGGER.debug("Treating source version {} as {}", sourceVersion, resolvedSource);
         }
         if (!resolvedTarget.equals(targetVersion)) {
-            LOGGER.info("Resolved target version " + targetVersion + " → " + resolvedTarget
-                    + " (fuzzy version matching)");
+            LOGGER.debug("Treating target version {} as {}", targetVersion, resolvedTarget);
         }
 
         // BFS so the first path found uses the fewest shims.
@@ -281,6 +286,36 @@ public class ShimRegistry {
             applicable.add(shim);
         }
         return List.copyOf(applicable);
+    }
+
+    /**
+     * Returns the shims an offline translation registers for one mod. A Forge mod bound for a
+     * NeoForge host gets what the NeoForge entry point registers for every mod, so the Forge to
+     * NeoForge move and NeoForge's own renames apply whatever Forge version the mod was built for.
+     * Any other mod gets its version chain.
+     */
+    public List<VersionShim> findTranslationShims(String modLoader, String sourceVersion,
+            String targetVersion, boolean neoForgeTarget) {
+        if (neoForgeTarget && "forge".equalsIgnoreCase(modLoader) && runsNeoForgeEntryPoint(targetVersion)) {
+            return findNeoForgeHostShims(targetVersion);
+        }
+        return findShimChain(modLoader, sourceVersion, targetVersion);
+    }
+
+    /** Every Forge, NeoForge and common shim the NeoForge entry point registers on {@code targetVersion}. */
+    public List<VersionShim> findNeoForgeHostShims(String targetVersion) {
+        List<VersionShim> applicable = new ArrayList<>();
+        for (VersionShim shim : allShims) {
+            String type = shim.getModLoaderType();
+            boolean registered = "neoforge".equals(type) || "forge".equals(type) || "common".equals(type);
+            if (registered && isAvailableOnHost(shim, targetVersion)) applicable.add(shim);
+        }
+        return List.copyOf(applicable);
+    }
+
+    /** NeoForge 1.20.1 is a Forge fork that runs the Forge entry point; NeoForge runs its own from 1.20.2. */
+    private static boolean runsNeoForgeEntryPoint(String targetVersion) {
+        return targetVersion != null && !RetromodVersion.mcVersionExceeds("1.20.2", targetVersion);
     }
 
     /** Returns whether a provider can safely register against the requested Minecraft host. */

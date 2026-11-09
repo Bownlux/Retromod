@@ -66,7 +66,7 @@ public final class LegacyFeatureSupport {
     public static Predicate<Object> isReplaceable(Object tag) {
         return state -> {
             try {
-                for (Method method : state.getClass().getMethods()) {
+                for (Method method : LegacyPublicMethods.methods(state.getClass())) {
                     if (method.getName().equals("is") && method.getParameterCount() == 1
                             && method.getParameterTypes()[0].isInstance(tag)) {
                         return !(Boolean) method.invoke(state, tag);
@@ -84,7 +84,7 @@ public final class LegacyFeatureSupport {
     public static boolean checkNeighbors(Function<Object, Object> lookup, Object pos, Predicate<Object> predicate) {
         try {
             Class<?> direction = Class.forName("net.minecraft.core.Direction", true, pos.getClass().getClassLoader());
-            Method relative = pos.getClass().getMethod("relative", direction);
+            Method relative = LegacyPublicMethods.method(pos.getClass(), "relative", direction);
             for (Object side : direction.getEnumConstants()) {
                 if (predicate.test(lookup.apply(relative.invoke(pos, side)))) return true;
             }
@@ -98,7 +98,7 @@ public final class LegacyFeatureSupport {
     public static boolean isAdjacentToAir(Function<Object, Object> lookup, Object pos) {
         return checkNeighbors(lookup, pos, state -> {
             try {
-                return (Boolean) state.getClass().getMethod("isAir").invoke(state);
+                return (Boolean) LegacyPublicMethods.method(state.getClass(), "isAir").invoke(state);
             } catch (ReflectiveOperationException e) {
                 return false;
             }

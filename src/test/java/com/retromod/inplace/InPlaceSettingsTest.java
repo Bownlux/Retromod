@@ -93,13 +93,6 @@ class InPlaceSettingsTest {
     }
 
     @Test
-    @DisplayName("the default config written for new players states the switch explicitly")
-    void defaultConfigCarriesTheSwitch() throws IOException {
-        Path example = Path.of("src/main/resources/config.json.example");
-        assertTrue(Files.readString(example).contains("\"write_translated_jars\": false"));
-    }
-
-    @Test
     @DisplayName("Retromod outputs are recognized by either the runtime or the AOT stamp")
     void retromodOutputsAreRecognized() {
         Manifest runtime = new Manifest();
@@ -153,5 +146,17 @@ class InPlaceSettingsTest {
 
         assertTrue(InPlaceSettings.writesTranslatedJarsThisLaunch(new Properties()).isEmpty(),
                 "no pass ran, so nothing is known");
+    }
+
+    @Test
+    @DisplayName("without a discovery pass, the switch stays and no mode is known this launch")
+    void switchStaysWhereNoDiscoveryPassRuns() {
+        Properties properties = new Properties();
+        properties.setProperty(InPlaceSettings.BOOT_OWNER_PROPERTY, "retromod-1.jar");
+        com.retromod.boot.InPlaceBoot.markNoDiscoveryPass(properties);
+        assertTrue(InPlaceSettings.switchApplies(properties),
+                "write_translated_jars is the only way to translate on FML 3.0.18 builds");
+        assertTrue(InPlaceSettings.writesTranslatedJarsThisLaunch(properties).isEmpty(),
+                "no pass ran, so the picker keeps its own install path");
     }
 }

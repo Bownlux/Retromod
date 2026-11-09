@@ -3,4 +3,5 @@ package net.minecraft.nbt;
 
 public final class IntTag implements Tag {
     public static IntTag valueOf(int value) { throw new UnsupportedOperationException(); }
+    @Override public IntTag copy() { throw new UnsupportedOperationException(); }
 }

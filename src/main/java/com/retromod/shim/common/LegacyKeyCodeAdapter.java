@@ -5,6 +5,7 @@
 package com.retromod.shim.common;
 
 import com.retromod.core.RetromodVersion;
+import com.retromod.core.SyntheticEmbedder;
 import com.retromod.util.SafeClassWriter;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
@@ -50,7 +51,7 @@ public final class LegacyKeyCodeAdapter {
         } catch (Throwable unreadable) {
             return classBytes;
         }
-        if (cn.name.startsWith("com/retromod/")) return classBytes;
+        if (SyntheticEmbedder.isRetromodClass(cn.name)) return classBytes;
 
         // A literal such as GLFW_KEY_R is a GLFW number and needs translating. A value the mod read
         // at runtime, such as a mouse event's button or a key mapping's bound key, already comes

@@ -39,6 +39,36 @@ class GraphicsBackendCompatTest {
     }
 
     @Test
+    void createdFileCarriesTheGamesDataVersion(@TempDir Path dir) throws IOException {
+        // Without a version line Minecraft runs every options fix, and 26.4-snapshot-7's
+        // OptionsForceDefaultGraphicsApiFix (data version 5117) then resets the setting to default.
+        Path opts = dir.resolve("options.txt");
+        assertEquals(GraphicsBackendCompat.Result.SET_OPENGL,
+                GraphicsBackendCompat.apply(opts, java.util.OptionalInt.of(5127)));
+        assertEquals(List.of("version:5127", "preferredGraphicsBackend:\"opengl\""), Files.readAllLines(opts));
+    }
+
+    @Test
+    void readsTheDataVersionFromTheGamesVersionJson() {
+        // The shape of 26.4-snapshot-7's version.json.
+        String json = "{\n    \"id\": \"26.4-snapshot-7\",\n    \"name\": \"26.4 Snapshot 7\",\n"
+                + "    \"world_version\": 5127,\n    \"series_id\": \"main\",\n    \"stable\": false\n}";
+        assertEquals(java.util.OptionalInt.of(5127), GraphicsBackendCompat.worldVersion(json));
+        assertEquals(java.util.OptionalInt.empty(), GraphicsBackendCompat.worldVersion("{\"id\": \"x\"}"));
+    }
+
+    @Test
+    void snapshotOptionsWithDefaultSwitchToOpenGl(@TempDir Path dir) throws IOException {
+        // A 26.4-snapshot-7 options.txt after the game reset the setting: its own version, "default".
+        Path opts = dir.resolve("options.txt");
+        Files.write(opts, List.of("version:5127", "preferredGraphicsBackend:\"default\"", "renderDistance:12"));
+        assertEquals(GraphicsBackendCompat.Result.SET_OPENGL,
+                GraphicsBackendCompat.apply(opts, java.util.OptionalInt.of(5127)));
+        assertEquals(List.of("version:5127", "preferredGraphicsBackend:\"opengl\"", "renderDistance:12"),
+                Files.readAllLines(opts), "an existing file keeps its own version line");
+    }
+
+    @Test
     void switchesDefaultToOpenGlPreservingOtherLines(@TempDir Path dir) throws IOException {
         Path opts = dir.resolve("options.txt");
         Files.write(opts, List.of("fov:0.5", "preferredGraphicsBackend:\"default\"", "renderDistance:12"));

@@ -7,6 +7,7 @@ package com.retromod.shim.common;
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -52,6 +53,8 @@ public final class Legacy1205MemberBridge {
     static final String SERVER_PLAYER = "net/minecraft/server/level/ServerPlayer";
     static final String SERVER_LEVEL = "net/minecraft/server/level/ServerLevel";
     static final String LEVEL = "net/minecraft/world/level/Level";
+    static final String RANDOMIZABLE_CONTAINER = "net/minecraft/world/level/block/entity/RandomizableContainerBlockEntity";
+    static final String LOOT_TABLES = RebuiltApiClasses.ROOT + "minecraft/world/level/block/entity/LegacyLootTables";
     /** {@code ItemStack.hurt(amount, random, player)}, removed in 1.20.5. */
     static final String ITEM_HURT = "(IL" + RANDOM_SOURCE + ";L" + SERVER_PLAYER + ";)Z";
     /** 1.20.5 and 1.20.6: the random form, which runs a callback when the stack breaks. */
@@ -184,7 +187,73 @@ public final class Legacy1205MemberBridge {
         if (propertiesLostStackSize()) registerPropertiesStackSize(transformer);
         registerItemNames(transformer);
         enableLevelTooltips(transformer);
-        LOGGER.info("Bridged {} removed 1.20.5 members and {} renamed classes", members.size(), renames.size());
+        // ItemParser.parseForItem and its result went with the component parser; Carry On reads its model overrides with it.
+        LegacyItemParserBridge.register(transformer);
+        // CommandBuildContext became a registry provider; Sophisticated Backpacks wraps one for its item argument.
+        LegacyRegistryProviderAdapter.registerCommandContext(transformer);
+        // The animal food fields became item tags; Farmer's Delight reads and extends them in common setup.
+        LegacyAnimalFoodBridge.register(transformer);
+        if (lootTableIsKeyed()) registerLootTableKeys(transformer);
+        // Arrows, mob effects and death loot, which 1.20.5 to 1.21.2 reshaped rather than removed.
+        Legacy1205GameplayBridge.register(transformer);
+        // NeoForge's chain and the Forge chain both register this, so the notice prints once.
+        if (transformer.firstRegistrationNotice(Legacy1205MemberBridge.class.getName())) {
+            LOGGER.debug(RetromodLog.DETAIL, "Bridged {} removed 1.20.5 members and {} renamed classes",
+                    members.size(), renames.size());
+        }
+    }
+
+    /** The loot table members of containers, which 1.20.5 keyed by registry key where they held the table's id. */
+    static void registerLootTableKeys(RetromodTransformer transformer) {
+        // Lootr reads the field from its tile ticker for every loot chest in a loaded or generated chunk,
+        // and calls setLootTable(id, seed) when it swaps a vanilla chest for its own.
+        RebuiltApiClasses.registerTree(transformer, LOOT_TABLES);
+        // The calls run a mod's own override, so that override's super call takes the host form only.
+        transformer.registerSuperCallHelper(LOOT_TABLES, "setLootTable", "(Ljava/lang/Object;Ljava/lang/Object;J)V",
+                "hostSetLootTable");
+        transformer.registerSuperCallHelper(LOOT_TABLES, "setLootTable", "(Ljava/lang/Object;Ljava/lang/Object;)V",
+                "setLootTableId");
+        transformer.registerSuperCallHelper(LOOT_TABLES, "getLootTable", "(Ljava/lang/Object;)Ljava/lang/Object;",
+                "lootTableId");
+        // An earlier pass may already have renamed the id class, so both spellings are matched.
+        for (String id : new String[] {"Lnet/minecraft/resources/ResourceLocation;", "Lnet/minecraft/resources/Identifier;"}) {
+            transformer.registerTypedFieldStaticBridge(RANDOMIZABLE_CONTAINER, "lootTable", id, LOOT_TABLES,
+                    "lootTableId", "(Ljava/lang/Object;)Ljava/lang/Object;",
+                    "setLootTableId", "(Ljava/lang/Object;Ljava/lang/Object;)V");
+            transformer.registerInheritedMethodRedirect(RANDOMIZABLE_CONTAINER, "setLootTable", "(" + id + "J)V",
+                    LOOT_TABLES, "setLootTable", "(Ljava/lang/Object;Ljava/lang/Object;J)V");
+            transformer.registerInheritedMethodRedirect(RANDOMIZABLE_CONTAINER, "setLootTable", "(" + id + ")V",
+                    LOOT_TABLES, "setLootTable", "(Ljava/lang/Object;Ljava/lang/Object;)V");
+            transformer.registerInheritedMethodRedirect(RANDOMIZABLE_CONTAINER, "getLootTable", "()" + id,
+                    LOOT_TABLES, "getLootTable", "(Ljava/lang/Object;)Ljava/lang/Object;");
+            // The static form that structure pieces call while they place a chest.
+            transformer.registerMethodRedirect(RANDOMIZABLE_CONTAINER, "setLootTable",
+                    "(Lnet/minecraft/world/level/BlockGetter;L" + RANDOM_SOURCE + ";L" + BLOCK_POS + ";" + id + ")V",
+                    LOOT_TABLES, "setBlockEntityLootTable",
+                    "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V");
+        }
+    }
+
+    /** {@code ChunkAccess.getStatus()} as 1.20.6 and older named it, before 1.21 renamed it {@code getPersistedStatus()}. */
+    public static void registerChunkStatusRename(RetromodTransformer transformer) {
+        String chunk = "net/minecraft/world/level/chunk/ChunkAccess";
+        // 1.20.5 moved ChunkStatus into a status package, so a 1.20.4 call names the old class.
+        for (String status : new String[] {"net/minecraft/world/level/chunk/status/ChunkStatus",
+                "net/minecraft/world/level/chunk/ChunkStatus"}) {
+            String desc = "()L" + status + ";";
+            transformer.registerInheritedMethodRedirect(chunk, "getStatus", desc, chunk, "getPersistedStatus",
+                    "()Lnet/minecraft/world/level/chunk/status/ChunkStatus;");
+        }
+    }
+
+    /** Whether the host's container keeps its loot table as a key; offline, past 1.20.5 decides. */
+    static boolean lootTableIsKeyed() {
+        ClassNode container = ClassResourceInspector.read(RANDOMIZABLE_CONTAINER);
+        if (container == null) return true;
+        for (FieldNode field : container.fields) {
+            if (field.name.equals("lootTable")) return field.desc.equals("Lnet/minecraft/resources/ResourceKey;");
+        }
+        return false;
     }
 
     /**

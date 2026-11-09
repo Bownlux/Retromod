@@ -60,6 +60,35 @@ class LegacyForgeModAttributesTest {
         }
     }
 
+    @Test
+    void attributeIdsFollowTheHost() {
+        // #398: Bloodbathen's mob effect read STEP_HEIGHT_ADDITION, which NeoForge 1.21.1 names generic.step_height.
+        String saved = com.retromod.core.RetromodVersion.TARGET_MC_VERSION;
+        try {
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = "1.21.1";
+            assertEquals(List.of("player.entity_interaction_range", "player.block_interaction_range", "generic.gravity",
+                    "generic.step_height", "swim_speed", "nametag_distance"), paths());
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = "26.3";
+            assertEquals(List.of("entity_interaction_range", "block_interaction_range", "gravity", "step_height",
+                    "swim_speed", "nametag_distance"), paths());
+        } finally {
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = saved;
+        }
+    }
+
+    /** The attribute paths the NeoForge helper builds its holders from, in field order. */
+    private static List<String> paths() {
+        List<String> paths = new ArrayList<>();
+        for (MethodNode method : node(LegacyForgeModAttributes.generateHelper("net/minecraft/resources/ResourceLocation")).methods) {
+            List<String> constants = new ArrayList<>();
+            for (AbstractInsnNode insn : method.instructions.toArray()) {
+                if (insn instanceof org.objectweb.asm.tree.LdcInsnNode ldc) constants.add((String) ldc.cst);
+            }
+            paths.add(constants.get(1));
+        }
+        return paths;
+    }
+
     private static List<String> calls(byte[] bytes, String methodName) {
         List<String> calls = new ArrayList<>();
         MethodNode method = node(bytes).methods.stream().filter(m -> m.name.equals(methodName))

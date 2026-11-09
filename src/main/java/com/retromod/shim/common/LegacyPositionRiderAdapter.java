@@ -5,6 +5,7 @@
 package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.SyntheticEmbedder;
 import com.retromod.util.SafeClassWriter;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
@@ -64,7 +65,7 @@ public final class LegacyPositionRiderAdapter {
             return classBytes;
         }
         if ((node.access & Opcodes.ACC_INTERFACE) != 0 || node.name.startsWith("net/minecraft/")
-                || node.name.startsWith("com/retromod/")) {
+                || SyntheticEmbedder.isRetromodClass(node.name)) {
             return classBytes;
         }
         MethodNode stale = find(node, oneArgName, ONE_ARG);

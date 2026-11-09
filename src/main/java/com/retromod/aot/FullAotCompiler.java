@@ -8,6 +8,7 @@ import com.retromod.core.EnvironmentDetector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.shim.ShimRegistry;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -162,11 +163,11 @@ public class FullAotCompiler {
                 LOGGER.info("Full AOT pre-compilation starting, {} mods (may take several minutes)",
                     validatedMods.size());
 
-                LOGGER.info("Counting classes...");
+                LOGGER.debug(RetromodLog.DETAIL, "Counting classes...");
                 for (Path modJar : validatedMods) {
                     totalClasses += countClasses(modJar);
                 }
-                LOGGER.info("Total classes to compile: {}", totalClasses);
+                LOGGER.debug(RetromodLog.DETAIL, "Total classes to compile: {}", totalClasses);
 
                 com.retromod.core.RetromodTransformer transformer =
                     com.retromod.core.RetromodTransformer.getInstance();
@@ -184,7 +185,7 @@ public class FullAotCompiler {
                     }
                     
                     currentMod = modJar.getFileName().toString();
-                    LOGGER.info("Compiling: {}", currentMod);
+                    LOGGER.debug(RetromodLog.DETAIL, "Compiling: {}", currentMod);
                     
                     compileAllClassesInMod(modJar, transformer, expandedInputBudget,
                             cacheOutputBudget);
@@ -385,18 +386,24 @@ public class FullAotCompiler {
                 }
             }
 
+            // Decided before the hierarchy is served, as the runtime renames before its class pass.
+            var typeRenames = com.retromod.core.LegacyJarTypeRenames.forJar(
+                    transformer, classEntries.values());
+            // The hierarchy also reads the jars it bundles, as the runtime class pass does.
             final java.util.function.Function<String, byte[]> classBytesProvider =
-                    name -> classEntries.get(name + ".class");
+                    com.retromod.core.BundledJarClasses.attach(typeRenames.over(name -> classEntries.get(name + ".class")),
+                            com.retromod.core.BundledJarClasses.fromJar(jar));
             
             int batchSize = Math.max(10, classEntries.size() / threads);
             List<Future<?>> futures = new ArrayList<>();
             final Path finalStagingDir = stagingDir;
             List<Map.Entry<String, byte[]>> classEntryList = new ArrayList<>(classEntries.entrySet());
-            Map<String, String> equipmentRenames = com.retromod.shim.common.LegacyEquipmentBridge
-                    .legacyRenames(transformer, classEntries.values());
             // A block filled into a static field of one class can be registered by another.
             final com.retromod.shim.common.StaticFieldRegistryIds jarRegistryIds =
                     transformer.indexJarRegistryIds(classEntries.values());
+            // A final host method the jar's own access transformer or widener opens can still be overridden.
+            final java.util.Set<String> jarOpenedFinals =
+                    com.retromod.shim.common.OpenedFinalMethods.read(jar, targetVersion);
             java.util.concurrent.atomic.AtomicReference<IOException> fatalFailure =
                     new java.util.concurrent.atomic.AtomicReference<>();
             
@@ -410,7 +417,8 @@ public class FullAotCompiler {
                 futures.add(executor.submit(() -> {
                     try (var hierarchyScope = transformer
                             .pushJarClassBytesProvider(classBytesProvider);
-                         var registryIdScope = transformer.pushJarRegistryIds(jarRegistryIds)) {
+                         var registryIdScope = transformer.pushJarRegistryIds(jarRegistryIds);
+                         var openedFinalsScope = transformer.pushJarOpenedFinals(jarOpenedFinals)) {
                     for (Map.Entry<String, byte[]> entry : batch) {
                         if (wasCancelled || fatalFailure.get() != null) return;
                         
@@ -424,8 +432,7 @@ public class FullAotCompiler {
                             byte[] original = entry.getValue();
 
                             byte[] preparedMixin = AotMixinRepair.applyPreRemap(mixinTransformer,
-                                    com.retromod.shim.common.LegacyEquipmentBridge.rename(original, equipmentRenames),
-                                    className);
+                                    typeRenames.apply(original), className);
                             byte[] transformed = transformer.transformClass(
                                     preparedMixin, className);
                             transformed = AotMixinRepair.apply(
@@ -474,7 +481,7 @@ public class FullAotCompiler {
 
             if (fatalFailure.get() != null) throw fatalFailure.get();
             if (wasCancelled) {
-                LOGGER.info("Discarding incomplete full AOT cache for {}", currentMod);
+                LOGGER.debug(RetromodLog.DETAIL, "Discarding incomplete full AOT cache for {}", currentMod);
                 return;
             }
 
@@ -482,7 +489,7 @@ public class FullAotCompiler {
             requireDirectCacheChild(stagingDir, marker, "staged completion marker");
             Files.writeString(marker, String.valueOf(System.currentTimeMillis()));
             if (wasCancelled) {
-                LOGGER.info("Discarding cancelled full AOT cache for {}", currentMod);
+                LOGGER.debug(RetromodLog.DETAIL, "Discarding cancelled full AOT cache for {}", currentMod);
                 return;
             }
             replaceCompletedCache(normalizedCacheDir, stagingDir, modCacheDir);
@@ -776,10 +783,9 @@ public class FullAotCompiler {
                         + MAX_ARCHIVE_ENTRIES + " entries: " + jarPath.getFileName());
             }
             String canonicalName = ZipSecurity.canonicalEntryName(entryName);
-            if (!canonicalNames.add(canonicalName)) {
-                throw new IOException("duplicate normalized entry in Full AOT mod archive "
-                        + jarPath.getFileName() + ": " + entryName);
-            }
+            // A merged fat jar repeats folder entries, which carry no content; every caller passes over folders.
+            ZipSecurity.firstSighting(canonicalNames, canonicalName, entry.isDirectory(),
+                    () -> "duplicate normalized entry in Full AOT mod archive " + jarPath.getFileName() + ": " + entryName);
             return entryName;
         }
     }
@@ -950,7 +956,7 @@ public class FullAotCompiler {
             if (!cacheReady) {
                 throw new IOException("Full AOT cache could not be cleared and restamped");
             }
-            LOGGER.info("AOT cache cleared");
+            LOGGER.debug(RetromodLog.DETAIL, "AOT cache cleared");
         } catch (Exception e) {
             LOGGER.error("Could not clear cache", e);
         }

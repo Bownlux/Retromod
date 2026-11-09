@@ -9,6 +9,7 @@ import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import com.retromod.util.McReflect;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.ClassNode;
@@ -32,7 +33,7 @@ public final class LegacyModListBridge {
     }
 
     // Forge 1.20.1's instance methods, each with the descriptor of the static method that replaced
-    // it, and the static accessors that returned the instance, which now have nothing to return.
+    // it, and the static accessors that returned the instance, which now hand out the host's own object.
     static final StaticApi MODS = new StaticApi(MOD_LIST, "com/retromod/generated/LegacyModList",
             new String[][]{{MOD_LIST, "get"}},
             new String[][]{
@@ -93,7 +94,7 @@ public final class LegacyModListBridge {
 
     static void registerBridge(RetromodTransformer t, StaticApi api) {
         t.registerSyntheticClass(api.helper(), generate(api));
-        // The accessors have nothing to return; the instance calls made on the result ignore it.
+        // The accessors return the host's object so null checks pass; the instance calls ignore the receiver.
         for (String[] accessor : api.accessors()) {
             t.registerMethodRedirect(accessor[0], accessor[1], "()" + api.receiver(), api.helper(), "get", "()" + api.receiver());
         }
@@ -107,16 +108,36 @@ public final class LegacyModListBridge {
         return "(" + api.receiver() + desc.substring(1);
     }
 
-    /** {@code get()} returning null, and each instance method calling its static replacement. */
+    /** {@code get()} handing out the host's mod list object, and each instance method calling its static replacement. */
     static byte[] generate(StaticApi api) {
-        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        return generate(api, api == LOADING_MODS || hostListsLoadedMods());
+    }
+
+    /** Read from the host when it can be; offline, the Forge 26.2 shape this bridge is registered for. */
+    static boolean hostListsLoadedMods() {
+        ClassNode host = ClassResourceInspector.read(MOD_LIST);
+        if (host == null) return true;
+        return host.methods.stream().anyMatch(m -> m.name.equals("getLoadedMods")
+                && m.desc.equals("()Ljava/util/List;")
+                && (m.access & ACC_STATIC) != 0 && (m.access & ACC_PUBLIC) != 0);
+    }
+
+    /** Without {@code handsOutHostList}, {@code get()} keeps returning null, for a host that cannot say when its mods loaded. */
+    static byte[] generate(StaticApi api, boolean handsOutHostList) {
+        ClassWriter cw = newWriter();
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, api.helper(), null, "java/lang/Object", null);
-        MethodVisitor get = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "get", "()" + api.receiver(), null, null);
-        get.visitCode();
-        get.visitInsn(ACONST_NULL);
-        get.visitInsn(ARETURN);
-        get.visitMaxs(0, 0);
-        get.visitEnd();
+        if (handsOutHostList) {
+            cw.visitField(ACC_PRIVATE | ACC_STATIC, "instance", api.receiver(), null, null).visitEnd();
+            writeGet(cw, api);
+            writeFind(cw, api);
+        } else {
+            MethodVisitor get = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "get", "()" + api.receiver(), null, null);
+            get.visitCode();
+            get.visitInsn(ACONST_NULL);
+            get.visitInsn(ARETURN);
+            get.visitMaxs(0, 0);
+            get.visitEnd();
+        }
         boolean isInterface = api == LOADING_MODS;
         for (String[] method : api.methods()) {
             MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, method[0], withReceiver(api, method[1]), null, null);
@@ -134,5 +155,90 @@ public final class LegacyModListBridge {
         }
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    /** {@code get()}: the cached host object, found on first use, and for the mod list only once mods have loaded. */
+    private static void writeGet(ClassWriter cw, StaticApi api) {
+        MethodVisitor get = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "get", "()" + api.receiver(), null, null);
+        get.visitCode();
+        // Forge 1.20.1 returned null before its mod list was built, and the host's isLoaded fails until then.
+        if (api == MODS) {
+            Label loaded = new Label();
+            get.visitMethodInsn(INVOKESTATIC, MOD_LIST, "getLoadedMods", "()Ljava/util/List;", false);
+            get.visitJumpInsn(IFNONNULL, loaded);
+            get.visitInsn(ACONST_NULL);
+            get.visitInsn(ARETURN);
+            get.visitLabel(loaded);
+        }
+        // A failed lookup leaves the cache empty, so the next call tries again.
+        Label cached = new Label();
+        get.visitFieldInsn(GETSTATIC, api.helper(), "instance", api.receiver());
+        get.visitJumpInsn(IFNONNULL, cached);
+        get.visitMethodInsn(INVOKESTATIC, api.helper(), "find", "()" + api.receiver(), false);
+        get.visitFieldInsn(PUTSTATIC, api.helper(), "instance", api.receiver());
+        get.visitLabel(cached);
+        get.visitFieldInsn(GETSTATIC, api.helper(), "instance", api.receiver());
+        get.visitInsn(ARETURN);
+        get.visitMaxs(0, 0);
+        get.visitEnd();
+    }
+
+    /** {@code find()}: the host's object through reflection, or null when the host does not allow it. */
+    private static void writeFind(ClassWriter cw, StaticApi api) {
+        MethodVisitor find = cw.visitMethod(ACC_PRIVATE | ACC_STATIC, "find", "()" + api.receiver(), null, null);
+        find.visitCode();
+        Label start = new Label(), end = new Label(), failed = new Label();
+        find.visitTryCatchBlock(start, end, failed, "java/lang/ReflectiveOperationException");
+        find.visitTryCatchBlock(start, end, failed, "java/lang/RuntimeException");
+        find.visitLabel(start);
+        find.visitLdcInsn(Type.getObjectType(api.owner()));
+        if (api == MODS) {
+            // ModList's private constructor does nothing; every instance call ignores the object anyway.
+            find.visitInsn(ICONST_0);
+            find.visitTypeInsn(ANEWARRAY, "java/lang/Class");
+            find.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Class", "getDeclaredConstructor",
+                    "([Ljava/lang/Class;)Ljava/lang/reflect/Constructor;", false);
+            find.visitInsn(DUP);
+            find.visitInsn(ICONST_1);
+            find.visitMethodInsn(INVOKEVIRTUAL, "java/lang/reflect/Constructor", "setAccessible", "(Z)V", false);
+            find.visitInsn(ICONST_0);
+            find.visitTypeInsn(ANEWARRAY, "java/lang/Object");
+            find.visitMethodInsn(INVOKEVIRTUAL, "java/lang/reflect/Constructor", "newInstance",
+                    "([Ljava/lang/Object;)Ljava/lang/Object;", false);
+        } else {
+            // LoadingModList is sealed, so only the host's own object passes a cast; its private get() returns it.
+            find.visitLdcInsn("get");
+            find.visitInsn(ICONST_0);
+            find.visitTypeInsn(ANEWARRAY, "java/lang/Class");
+            find.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Class", "getDeclaredMethod",
+                    "(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;", false);
+            find.visitInsn(DUP);
+            find.visitInsn(ICONST_1);
+            find.visitMethodInsn(INVOKEVIRTUAL, "java/lang/reflect/Method", "setAccessible", "(Z)V", false);
+            find.visitInsn(ACONST_NULL);
+            find.visitInsn(ICONST_0);
+            find.visitTypeInsn(ANEWARRAY, "java/lang/Object");
+            find.visitMethodInsn(INVOKEVIRTUAL, "java/lang/reflect/Method", "invoke",
+                    "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", false);
+        }
+        find.visitTypeInsn(CHECKCAST, api.owner());
+        find.visitLabel(end);
+        find.visitInsn(ARETURN);
+        // A host that closes its package or drops the member gets null instead of a crash.
+        find.visitLabel(failed);
+        find.visitInsn(POP);
+        find.visitInsn(ACONST_NULL);
+        find.visitInsn(ARETURN);
+        find.visitMaxs(0, 0);
+        find.visitEnd();
+    }
+
+    /** Frames for the branches above; the only merge is the two caught exception types, which the handler pops. */
+    private static ClassWriter newWriter() {
+        return new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
+            @Override protected String getCommonSuperClass(String a, String b) {
+                return "java/lang/Object";
+            }
+        };
     }
 }

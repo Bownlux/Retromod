@@ -157,6 +157,46 @@ class LegacyAttributeApiBridgeTest {
     }
 
     @Test
+    void theOldBaseAttackUuidsBecomeTheHostsBaseAttackIds() throws Exception {
+        // Farmer's Delight's skillet builds its damage and speed modifiers from Item's old UUIDs.
+        Class<?> helper = loadHelper();
+        Method idOf = helper.getMethod("idOf", UUID.class);
+        Method uuidOf = helper.getMethod("uuidOf", StubId.class);
+        UUID damage = UUID.fromString("CB3F55D3-645C-4F38-A497-9C13A33DB5CF");
+        UUID speed = UUID.fromString("FA233E1C-4180-4865-B01B-BCCE9785ACA3");
+
+        assertEquals("minecraft:base_attack_damage", idOf.invoke(null, damage).toString());
+        assertEquals("minecraft:base_attack_speed", idOf.invoke(null, speed).toString());
+        assertEquals(damage, uuidOf.invoke(null, idOf.invoke(null, damage)), "the base id must read back as the old UUID");
+        assertEquals(damage, helper.getMethod("BASE_ATTACK_DAMAGE_UUID").invoke(null));
+        assertEquals(speed, helper.getMethod("BASE_ATTACK_SPEED_UUID").invoke(null));
+    }
+
+    @Test
+    void aWeaponReadsTheRemovedItemUuidThroughItsOwnClass() {
+        RetromodTransformer transformer = register();
+        String weapon = "test/SkilletItem";
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, weapon, null, "net/minecraft/world/item/Item", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "uuid", "()Ljava/util/UUID;", null, null);
+        mv.visitCode();
+        mv.visitFieldInsn(Opcodes.GETSTATIC, weapon, "BASE_ATTACK_DAMAGE_UUID", "Ljava/util/UUID;");
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(1, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        byte[] bytes = cw.toByteArray();
+        transformer.setJarClassBytesProvider(name -> name.equals(weapon) ? bytes : null);
+        try {
+            List<String> calls = calls(transformer.transformClass(bytes, weapon + ".class"), "uuid");
+            assertEquals(List.of(HELPER + ".BASE_ATTACK_DAMAGE_UUID"), calls,
+                    "the inherited read must go to the helper's constant");
+        } finally {
+            transformer.clearJarClassBytesProvider();
+        }
+    }
+
+    @Test
     void anIdFromANewerModGivesAStableNameBasedUuid() throws Exception {
         Method uuidOf = loadHelper().getMethod("uuidOf", StubId.class);
         StubId foreign = StubId.fromNamespaceAndPath("examplemod", "speed_boost");

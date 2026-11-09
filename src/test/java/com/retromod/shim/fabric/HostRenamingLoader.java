@@ -12,7 +12,9 @@ import org.objectweb.asm.commons.SimpleRemapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Runs an embedded runtime helper against test stand-ins that carry the host's class names.
@@ -27,18 +29,19 @@ final class HostRenamingLoader extends ClassLoader {
     private final String stubPackage;
     private final Map<String, String> hostNames;
     private final Map<String, String> stubByHostName = new HashMap<>();
-    private final String helper;
+    private final Set<String> helpers = new HashSet<>();
 
     /**
      * @param stubPackage internal package prefix of the stand-ins, ending in a slash
      * @param hostNames   stand-in internal name to the host internal name it plays
-     * @param helper      the embedded runtime class under test
+     * @param helpers     the embedded runtime class under test, then any Retromod class it must
+     *                    share this loader with, such as one that keeps a static cache
      */
-    HostRenamingLoader(String stubPackage, Map<String, String> hostNames, Class<?> helper) {
+    HostRenamingLoader(String stubPackage, Map<String, String> hostNames, Class<?>... helpers) {
         super(HostRenamingLoader.class.getClassLoader());
         this.stubPackage = stubPackage;
         this.hostNames = hostNames;
-        this.helper = helper.getName();
+        for (Class<?> helper : helpers) this.helpers.add(helper.getName());
         hostNames.forEach((stub, host) -> stubByHostName.put(host.replace('/', '.'), stub));
     }
 
@@ -49,7 +52,7 @@ final class HostRenamingLoader extends ClassLoader {
             if (loaded != null) return loaded;
             String source = stubByHostName.getOrDefault(name, name.replace('.', '/'));
             boolean ours = stubByHostName.containsKey(name) || source.startsWith(stubPackage)
-                    || name.equals(helper);
+                    || helpers.contains(name);
             if (!ours) return super.loadClass(name, resolve);
             byte[] bytes = renamed(source);
             return defineClass(name, bytes, 0, bytes.length);

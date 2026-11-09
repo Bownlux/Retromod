@@ -37,6 +37,11 @@ public final class EntityTypeKeys {
         return ENTITY_TYPES.register(name, () -> builder.build(name));
     }
 
+    /** The registered type, which the old cube renderer case draws for. */
+    static EntityType<Marker> keyEntity() {
+        return KEY_ENTITY.get();
+    }
+
     public static void register(IEventBus modBus) {
         ENTITY_TYPES.register(modBus);
         modBus.addListener(EntityTypeKeys::check);

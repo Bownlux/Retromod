@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -12,8 +13,13 @@ import com.retromod.core.RetromodVersion;
 import com.retromod.shim.api.forge.ForgeRegistryApiShim;
 import com.retromod.util.McReflect;
 
+import com.retromod.core.VersionShim;
+import com.retromod.shim.ShimRegistry;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
@@ -278,6 +284,150 @@ class RegistryIdBridgeTest {
         String text = new String(out, java.nio.charset.StandardCharsets.ISO_8859_1);
         assertFalse(text.contains(RegistryIdBridgeSynthetic.INTERNAL),
                 "on a pre-26 host the registry-id bridge must be gated off");
+    }
+
+    @Test
+    void registrationAndPropsAreRoutedThroughTheBridgeOn1_21_11() {
+        // 1.21.11 requires the id like 26.x and has Identifier, so it takes the full bridge.
+        McReflect.setForceNeoForge(true);
+        RetromodVersion.TARGET_MC_VERSION = "1.21.11";
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        new ForgeRegistryApiShim().registerRedirects(t);
+
+        byte[] out = t.transformClass(registrarFixture(), "com/example/Reg.class");
+
+        assertTrue(containsCall(out, RegistryIdBridgeSynthetic.INTERNAL, "register",
+                        RegistryIdBridgeSynthetic.REGISTER_DESC),
+                "on NeoForge 1.21.11 registration must go through the id bridge");
+        assertTrue(containsCall(out, RegistryIdBridgeSynthetic.INTERNAL, "blockOf",
+                        RegistryIdBridgeSynthetic.BLOCK_OF_DESC),
+                "on NeoForge 1.21.11 Properties.of() must stamp the id");
+        assertTrue(containsCall(out, RegistryIdBridgeSynthetic.INTERNAL, "itemProps",
+                        RegistryIdBridgeSynthetic.ITEM_PROPS_DESC),
+                "on NeoForge 1.21.11 new Item.Properties() must stamp the id");
+        assertFalse(containsCall(out, "net/neoforged/neoforge/registries/DeferredRegister", "register",
+                        "(Ljava/lang/String;Ljava/util/function/Supplier;)Lnet/neoforged/neoforge/registries/DeferredHolder;"),
+                "no raw DeferredRegister.register(String,Supplier) call may survive on 1.21.11");
+    }
+
+    @Test
+    void recorderStaysBefore1_21_11() {
+        // 1.21.10 has no Identifier, so registration keeps the biome recorder and Properties stay raw.
+        McReflect.setForceNeoForge(true);
+        RetromodVersion.TARGET_MC_VERSION = "1.21.10";
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        new ForgeRegistryApiShim().registerRedirects(t);
+
+        byte[] out = t.transformClass(registrarFixture(), "com/example/Reg.class");
+
+        assertTrue(containsCall(out, RegistryIdBridgeSynthetic.BIOME_RECORDER, "register",
+                        RegistryIdBridgeSynthetic.REGISTER_DESC),
+                "on NeoForge 1.21.10 registration must go through the biome recorder");
+        assertTrue(containsCall(out, "net/minecraft/world/level/block/state/BlockBehaviour$Properties", "of",
+                        "()Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;"),
+                "on NeoForge 1.21.10 Properties.of() must stay as the mod wrote it");
+        assertFalse(new String(out, java.nio.charset.StandardCharsets.ISO_8859_1)
+                        .contains(RegistryIdBridgeSynthetic.INTERNAL),
+                "the id bridge names Identifier, which 1.21.10 lacks");
+    }
+
+    /** A Forge class that calls {@code dr.register("thing", supplier)}, Properties.of() and new Item.Properties(). */
+    private static byte[] forgeRegistrarFixture() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "com/example/ForgeReg", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "build",
+                "(Lnet/minecraftforge/registries/DeferredRegister;Ljava/util/function/Supplier;)V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitLdcInsn("thing");
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "net/minecraftforge/registries/DeferredRegister", "register",
+                "(Ljava/lang/String;Ljava/util/function/Supplier;)Lnet/minecraftforge/registries/RegistryObject;", false);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "net/minecraft/world/level/block/state/BlockBehaviour$Properties",
+                "of", "()Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;", false);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitTypeInsn(Opcodes.NEW, "net/minecraft/world/item/Item$Properties");
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "net/minecraft/world/item/Item$Properties", "<init>", "()V", false);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** The Forge shims at the seams where the id became mandatory and Identifier exists. */
+    private static VersionShim[] forgeIdSeamShims() {
+        return new VersionShim[]{new Forge_1_21_10_to_1_21_11(), new Forge_1_21_11_to_26_1(), new Forge_26_1_to_26_2()};
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"1.21.10", "1.21.11", "26.1", "26.1.2", "26.2", "26.3"})
+    void forgeBridgeFollowsTheHostGate(String host) {
+        // Forge 26.1 to 26.1.2 used to miss the bridge: it was registered only by the 26.2 shim.
+        RetromodVersion.TARGET_MC_VERSION = host;
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        for (VersionShim shim : forgeIdSeamShims()) {
+            if (ShimRegistry.isAvailableOnHost(shim, host)) {
+                shim.registerRedirects(t);
+            }
+        }
+
+        byte[] out = t.transformClass(forgeRegistrarFixture(), "com/example/ForgeReg.class");
+
+        boolean expected = RetromodVersion.compareMcVersions(host, "1.21.11") >= 0;
+        String bridge = RegistryIdBridgeSynthetic.FORGE_INTERNAL;
+        String blockProps = "()Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;";
+        String itemProps = "()Lnet/minecraft/world/item/Item$Properties;";
+        assertEquals(expected, containsCall(out, bridge, "registerForge", RegistryIdBridgeSynthetic.FORGE_REGISTER_DESC),
+                "Forge " + host + ": DeferredRegister.register(String, Supplier) through the id bridge");
+        assertEquals(expected, containsCall(out, bridge, "blockOf", blockProps),
+                "Forge " + host + ": Properties.of() through the id bridge");
+        assertEquals(expected, containsCall(out, bridge, "itemProps", itemProps),
+                "Forge " + host + ": new Item.Properties() through the id bridge");
+    }
+
+    @Test
+    void forgeBridgeStaysOffOnNeoForge() {
+        // NeoForge also registers Forge shims, and it has its own RegistryIdBridge.
+        McReflect.setForceNeoForge(true);
+        RetromodVersion.TARGET_MC_VERSION = "26.1";
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        new Forge_1_21_10_to_1_21_11().registerRedirects(t);
+        new Forge_1_21_11_to_26_1().registerRedirects(t);
+
+        assertFalse(t.getSyntheticClasses().containsKey(RegistryIdBridgeSynthetic.FORGE_INTERNAL),
+                "the Forge id bridge must not be registered on NeoForge");
+        assertFalse(t.getMethodRedirects().values().stream()
+                        .anyMatch(target -> target.owner().equals(RegistryIdBridgeSynthetic.FORGE_INTERNAL)),
+                "no redirect may point at the Forge id bridge on NeoForge");
+    }
+
+    @Test
+    void offlineChainsKeepTheForgeBridge() {
+        // The CLI and AOT register only the mod's own chain, so each chain into 26.x needs the bridge.
+        ShimRegistry registry = new ShimRegistry();
+        for (VersionShim shim : java.util.ServiceLoader.load(VersionShim.class)) {
+            registry.register(shim);
+        }
+        String[][] chains = {{"1.21.11", "26.2"}, {"1.20.1", "26.1"}};
+        for (String[] chain : chains) {
+            RetromodVersion.TARGET_MC_VERSION = chain[1];
+            RetromodTransformer t = RetromodTransformer.getInstance();
+            t.clearRedirectsForTesting();
+            java.util.List<VersionShim> shims = registry.findShimChain("forge", chain[0], chain[1]);
+            assertFalse(shims.isEmpty(), "no Forge chain from " + chain[0] + " to " + chain[1]);
+            shims.forEach(shim -> shim.registerRedirects(t));
+
+            assertTrue(t.getSyntheticClasses().containsKey(RegistryIdBridgeSynthetic.FORGE_INTERNAL),
+                    "the Forge chain from " + chain[0] + " to " + chain[1] + " must register the id bridge");
+        }
     }
 
     /** True if the class bytes contain an INVOKEVIRTUAL/STATIC to owner.name with the given descriptor. */

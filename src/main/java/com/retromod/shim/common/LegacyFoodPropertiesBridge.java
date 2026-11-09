@@ -7,6 +7,7 @@ package com.retromod.shim.common;
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -49,6 +50,7 @@ public final class LegacyFoodPropertiesBridge {
     static final String BUILDER = FOOD + "$Builder";
     static final String POSSIBLE_EFFECT = FOOD + "$PossibleEffect";
     static final String ITEM = "net/minecraft/world/item/Item";
+    static final String STACK = "net/minecraft/world/item/ItemStack";
     static final String COMPONENT_MAP = "net/minecraft/core/component/DataComponentMap";
     static final String COMPONENT_TYPE = "net/minecraft/core/component/DataComponentType";
     static final String COMPONENTS = "net/minecraft/core/component/DataComponents";
@@ -81,7 +83,9 @@ public final class LegacyFoodPropertiesBridge {
             new Rewrite(FOOD, "isFastFood", "()Z", "isFastFood", null, true),
             new Rewrite(FOOD, "getEffects", "()Ljava/util/List;", "getEffects", null, true),
             new Rewrite(ITEM, "getFoodProperties", "()" + L_FOOD, "getFoodProperties", null, true),
-            new Rewrite(ITEM, "isEdible", "()Z", "isEdible", null, true));
+            new Rewrite(ITEM, "isEdible", "()Z", "isEdible", null, true),
+            // The stack's own form, which Farmer's Delight's soup mixin asks when a bowl is finished.
+            new Rewrite(STACK, "isEdible", "()Z", "isEdible", null, true));
     }
 
     private LegacyFoodPropertiesBridge() {}
@@ -97,7 +101,10 @@ public final class LegacyFoodPropertiesBridge {
             if (replacedOnHost(rewrite)) rewrites.add(rewrite);
         }
         registerRedirects(transformer, rewrites, hostFoodHasEffects());
-        LOGGER.info("Bridged {} removed food members", rewrites.size());
+        // NeoForge's chain and the Forge chain both register this, so the notice prints once.
+        if (transformer.firstRegistrationNotice(LegacyFoodPropertiesBridge.class.getName())) {
+            LOGGER.debug(RetromodLog.DETAIL, "Bridged {} removed food members", rewrites.size());
+        }
     }
 
     /** Unconditional registration for transform-shape tests. */
@@ -206,7 +213,10 @@ public final class LegacyFoodPropertiesBridge {
                     }
                 }
                 case "getFoodProperties" -> emitItemFood(mv, false);
-                case "isEdible" -> emitItemFood(mv, true);
+                case "isEdible" -> {
+                    if (rewrite.owner().equals(STACK)) emitStackFood(mv);
+                    else emitItemFood(mv, true);
+                }
                 default -> throw new IllegalArgumentException("No helper for " + rewrite.oldName());
             }
             mv.visitMaxs(0, 0);
@@ -285,6 +295,15 @@ public final class LegacyFoodPropertiesBridge {
         mv.visitLabel(done);
         mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitInsn(Opcodes.ARETURN);
+    }
+
+    /** Whether the stack holds food now, which includes a food component a mod added to that stack. */
+    private static void emitStackFood(MethodVisitor mv) {
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.GETSTATIC, COMPONENTS, "FOOD", "L" + COMPONENT_TYPE + ";");
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "net/minecraft/core/component/DataComponentHolder", "has",
+                "(L" + COMPONENT_TYPE + ";)Z", true);
+        mv.visitInsn(Opcodes.IRETURN);
     }
 
     /** Food is the item's {@code minecraft:food} component since 1.20.5. */

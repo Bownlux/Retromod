@@ -214,6 +214,55 @@ class RetromodCliAuxRedirectsTest {
         }
     }
 
+    @Test
+    void preReleaseSourceGets263MovesButNative263ModDoesNot() throws Exception {
+        // batch and AOT reach the 26.3 moves only through this fallback when the source is no graph node.
+        String pipeline = "com/mojang/blaze3d/pipeline/RenderPipeline";
+        assertEquals("com/mojang/renderpearl/api/pipeline/RenderPipeline",
+                auxClassRedirectsAt("26.3", "1.21.5-rc.1").get(pipeline));
+        assertFalse(auxClassRedirectsAt("26.3", "26.3").containsKey(pipeline),
+                "a native 26.3 mod takes none of the 26.3 moves, whose keybind redirects expect GLFW codes");
+        assertFalse(auxClassRedirectsAt("26.2", "1.21.5-rc.1").containsKey(pipeline),
+                "a 26.2 target still has the blaze3d package");
+    }
+
+    @Test
+    void fabricApiClassMoveReachesOnlyFabricMods() throws Exception {
+        // Its stand-in is registered only by the Fabric bridge, so on Forge-family mods it was a dead redirect.
+        String blockRenderLayerMap = "net/fabricmc/fabric/api/blockrenderlayer/v1/BlockRenderLayerMap";
+        for (String loader : List.of("neoforge", "forge")) {
+            assertFalse(auxClassRedirectsAt("26.3", "1.21.1", loader).containsKey(blockRenderLayerMap),
+                    "a " + loader + " mod has no Fabric API, so the BlockRenderLayerMap move must not apply");
+        }
+        assertTrue(auxClassRedirectsAt("26.3", "1.21.1", "fabric").containsKey(blockRenderLayerMap),
+                "a Fabric mod still takes the BlockRenderLayerMap stand-in");
+    }
+
+    /** The class redirects registerAuxiliaryRedirects adds for a NeoForge mod built for {@code source}. */
+    private static java.util.Map<String, String> auxClassRedirectsAt(String target, String source)
+            throws Exception {
+        return auxClassRedirectsAt(target, source, "neoforge");
+    }
+
+    /** The class redirects registerAuxiliaryRedirects adds for a {@code loader} mod built for {@code source}. */
+    private static java.util.Map<String, String> auxClassRedirectsAt(String target, String source, String loader)
+            throws Exception {
+        Field cliTarget = RetromodCli.class.getDeclaredField("TARGET_MC_VERSION");
+        cliTarget.setAccessible(true);
+        String saved = (String) cliTarget.get(null);
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        try {
+            cliTarget.set(null, target);
+            t.clearRedirectsForTesting();
+            RetromodCli.registerAuxiliaryRedirects(t, new ModVersionInfo("testmod", "1.0.0", source,
+                    loader, "1.0.0", Set.of(), Set.of(), false), List.of());
+            return new java.util.HashMap<>(t.getClassRedirects());
+        } finally {
+            cliTarget.set(null, saved);
+            t.clearRedirectsForTesting();
+        }
+    }
+
     /** A class that does {@code new Identifier("x")} and {@code new Identifier("a","b")}. */
     private static byte[] identifierCtorClass() {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);

@@ -67,7 +67,7 @@ public final class NeoForgeBootLocator implements IModFileCandidateLocator {
             // A bootstrap failure must never stop the loader. The game starts without Retromod.
             log.error("Retromod could not start: " + LoaderHooks.unwrap(failure)
                     + ". Retromod is inactive for this launch. Please report this with "
-                    + "logs/latest.log.");
+                    + "logs/latest.log." + System.lineSeparator() + LoaderHooks.describe(failure));
         }
     }
 
@@ -76,7 +76,8 @@ public final class NeoForgeBootLocator implements IModFileCandidateLocator {
             BootCore.Prepared prepared, Path gameDir, Path modsDir, String hostMinecraft,
             String loaderBuild) {
         Optional<InPlaceBoot.Decision> decision = InPlaceBoot.run(prepared, gameDir, modsDir,
-                hostMinecraft, loaderBuild, InPlaceBoot.NEOFORGE_TOML, "files", log);
+                hostMinecraft, loaderBuild, InPlaceBoot.NEOFORGE_TOML, "files",
+                requiredDistribution(context), log);
         if (decision.isEmpty()) return;
         // Mark each original as located so the mods folder scan skips it and the file in mods/
         // is never changed. addLocated is public API on every FML from 3 to 12.
@@ -124,6 +125,28 @@ public final class NeoForgeBootLocator implements IModFileCandidateLocator {
             log.warn("Could not keep extra Retromod files out of the mod list: "
                     + LoaderHooks.unwrap(failure) + ". Delete the older Retromod files from "
                     + "mods/.");
+        }
+    }
+
+    /** The side FML launches, {@code CLIENT} or {@code DEDICATED_SERVER}, or null when it does not say. */
+    static String requiredDistribution(ILaunchContext context) {
+        // Looked up by name, as versionInfo is. FML 10 and newer: ILaunchContext.getRequiredDistribution().
+        if (context != null) {
+            try {
+                Object dist = ILaunchContext.class.getMethod("getRequiredDistribution").invoke(context);
+                if (dist != null) return dist.toString();
+            } catch (Throwable unavailable) {
+                // FML 3 to 9
+            }
+        }
+        // FML 3 to 9: the static FMLLoader.getDist().
+        try {
+            Class<?> loader = Class.forName("net.neoforged.fml.loading.FMLLoader", false,
+                    NeoForgeBootLocator.class.getClassLoader());
+            Object dist = loader.getMethod("getDist").invoke(null);
+            return dist == null ? null : dist.toString();
+        } catch (Throwable unavailable) {
+            return null;
         }
     }
 

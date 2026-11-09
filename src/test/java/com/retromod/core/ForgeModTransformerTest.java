@@ -59,6 +59,23 @@ class ForgeModTransformerTest {
     }
 
     @Test
+    @DisplayName("an AT entry on a class Minecraft moved names the class where the host has it")
+    void movesAccessTransformerClasses() {
+        String in = "public-f net.minecraft.world.entity.npc.Villager FOOD_POINTS # FOOD_POINTS\n"
+                + "  public net.minecraft.world.entity.Mob goalSelector\n"
+                + "public net.minecraft.world.item.ItemStack\n";
+        java.util.Map<String, String> moves = java.util.Map.of(
+                "net/minecraft/world/entity/npc/Villager", "net/minecraft/world/entity/npc/villager/Villager",
+                "net/minecraft/world/item/ItemStack", "com/retromod/legacyapi/StandIn");
+
+        String out = ForgeModTransformer.moveAccessTransformerClasses(in, name -> moves.getOrDefault(name, name));
+
+        assertTrue(out.contains("public-f net.minecraft.world.entity.npc.villager.Villager FOOD_POINTS # FOOD_POINTS\n"), out);
+        assertTrue(out.contains("  public net.minecraft.world.entity.Mob goalSelector\n"), "an unmoved class stays: " + out);
+        assertTrue(out.contains("public net.minecraft.world.item.ItemStack\n"), "a Retromod stand-in is not the host's to open: " + out);
+    }
+
+    @Test
     @DisplayName("#221: runtime transform sanitizes an author-provided AccessTransformer")
     void transformModSanitizesAuthorAccessTransformer(@TempDir Path tmp) throws Exception {
         Path src = tmp.resolve("mna-at-fixture.jar");
@@ -210,6 +227,107 @@ class ForgeModTransformerTest {
     }
 
     @Test
+    @DisplayName("ranges and requirements written before a dependency's modId are relaxed too")
+    void transformModRelaxesKeysWrittenBeforeModId(@TempDir Path tmp) throws Exception {
+        // Controlify's neoforge.mods.toml names each modId last; The Midnight does the same with mandatory.
+        String toml = "modLoader = \"javafml\"\nloaderVersion = \"[1,)\"\nlicense = \"LGPL\"\n"
+                + "\t[[dependencies.keyorder]]\n"
+                + "\t\tversionRange = \"[1.21,1.21.1]\"\n\t\tside = \"BOTH\"\n\t\tordering = \"NONE\"\n"
+                + "\t\ttype = \"required\"\n\t\tmodId = \"minecraft\"\n"
+                + "\t[[dependencies.keyorder]]\n"
+                + "\t\tversionRange = \"[3.8,4)\"\n\t\tside = \"BOTH\"\n\t\tordering = \"NONE\"\n"
+                + "\t\ttype = \"required\"\n\t\tmodId = \"yet_another_config_lib_v3\"\n"
+                + "[[dependencies.keyorder]]\n"
+                + "\tversionRange = \"[1.0,)\"\n\tmandatory = false\n\tmodId = \"configured\"\n"
+                + "[[dependencies.keyorder]]\n"
+                + "\tversionRange = \"[,2.0)\"\n\ttype = \"incompatible\"\n\tmodId = \"sodium\"\n"
+                + "[[mods]]\n\tmodId = \"keyorder\"\n";
+
+        String out = transformedToml(tmp, "META-INF/neoforge.mods.toml", toml, "26.3");
+
+        String minecraft = block(out, "\"minecraft\"");
+        assertTrue(minecraft.contains("versionRange = \"[26.3,)\""), minecraft);
+        assertTrue(minecraft.contains("type = \"required\""), "Minecraft stays required: " + minecraft);
+        String yacl = block(out, "\"yet_another_config_lib_v3\"");
+        assertTrue(yacl.contains("versionRange = \"[0,)\""), yacl);
+        assertTrue(yacl.contains("type = \"optional\""), yacl);
+        String configured = block(out, "\"configured\"");
+        assertEquals(1, configured.split("type = \"optional\"", -1).length - 1,
+                "an untyped optional dependency gets exactly one type: " + configured);
+        assertTrue(block(out, "\"sodium\"").contains("versionRange = \"[,2.0)\""),
+                "an incompatible range lists versions to avoid and stays: " + out);
+    }
+
+    @Test
+    @DisplayName("a requirement written after the range is relaxed, as the CLI does")
+    void transformModRelaxesRequirementWrittenAfterRange(@TempDir Path tmp) throws Exception {
+        // YUNG's Forge mods write modId, then versionRange, then mandatory.
+        String toml = "modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\nlicense=\"MIT\"\n"
+                + "[[mods]]\nmodId=\"yungsextras\"\n"
+                + "[[dependencies.yungsextras]]\nmodId=\"minecraft\"\nmandatory=true\n"
+                + "versionRange=\"[1.20.1,1.21)\"\n"
+                + "[[dependencies.yungsextras]]\nmodId=\"yungsapi\"\n"
+                + "versionRange=\"[1.20-Forge-4.0.4,)\"\nmandatory=true\n";
+
+        String out = transformedToml(tmp, "META-INF/mods.toml", toml, "26.3");
+
+        String yungsapi = block(out, "\"yungsapi\"");
+        assertTrue(yungsapi.contains("mandatory = false"), yungsapi);
+        assertEquals(1, yungsapi.split("type = \"optional\"", -1).length - 1, yungsapi);
+        assertTrue(block(out, "\"minecraft\"").contains("mandatory=true"),
+                "Minecraft stays mandatory: " + out);
+    }
+
+    @Test
+    @DisplayName("a commented-out modId never names a dependency block, before or after the real one")
+    void transformModIgnoresCommentedOutDependencyBlock(@TempDir Path tmp) throws Exception {
+        // InvMove leaves a whole #[[dependencies]] block inside the real minecraft block.
+        String commented = "#[[dependencies.invmove]]\n#modId = \"cloth_config\"\n#mandatory = true\n"
+                + "#versionRange = \"[11,)\"\n#ordering = \"NONE\"\n#side = \"CLIENT\"\n";
+        // A commented modId written before the real one must not name the block either.
+        String toml = "modLoader=\"javafml\"\nloaderVersion=\"[46,)\"\nlicense=\"MIT\"\n"
+                + "[[mods]]\nmodId=\"invmove\"\n"
+                + "[[dependencies.invmove]]\nversionRange = \"[1.20,)\"\n"
+                + "#modId = \"cloth_config\"\nmodId = \"minecraft\"\nmandatory = true\n"
+                + "ordering = \"NONE\"\nside = \"CLIENT\"\n\n"
+                + commented;
+
+        String out = transformedToml(tmp, "META-INF/mods.toml", toml, "26.3");
+
+        String minecraft = block(out, "\"minecraft\"");
+        assertTrue(minecraft.contains("versionRange = \"[26.3,)\""),
+                "the minecraft range is widened to the host: " + minecraft);
+        assertFalse(out.contains("versionRange = \"[0,)\""),
+                "the commented cloth_config modId never claims the minecraft block: " + out);
+        assertTrue(out.contains(commented), "commented lines come out as written: " + out);
+    }
+
+    /** Transforms a one-entry Forge-family jar and returns its translated toml. */
+    private static String transformedToml(Path tmp, String entry, String toml, String target)
+            throws Exception {
+        Path src = tmp.resolve("keyorder-fixture.jar");
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(src))) {
+            writeEntry(jos, entry, toml);
+        }
+        Path out = new ForgeModTransformer(target)
+                .transformMod(src, Files.createDirectory(tmp.resolve("out")));
+        assertNotNull(out, "transformMod should produce an output jar");
+        String translated = readEntry(out, entry);
+        assertNotNull(translated, entry + " should stay in the output");
+        return translated;
+    }
+
+    /** The dependency block that names {@code modId}, from its header to the next header. */
+    private static String block(String toml, String modId) {
+        int named = toml.indexOf("modId = " + modId);
+        if (named < 0) named = toml.indexOf("modId=" + modId);
+        assertTrue(named >= 0, modId + " should be in " + toml);
+        int start = toml.lastIndexOf("[[", named);
+        int end = toml.indexOf("[[", named);
+        return toml.substring(start, end < 0 ? toml.length() : end);
+    }
+
+    @Test
     @DisplayName("#221: runtime transform sanitizes an AccessTransformer inside Jar-in-Jar")
     void transformModSanitizesNestedAccessTransformer(@TempDir Path tmp) throws Exception {
         byte[] nested = jarBytes("META-INF/accesstransformer.cfg",
@@ -293,6 +411,92 @@ class ForgeModTransformerTest {
             transformer.clearRedirectsForTesting();
         }
     }
+
+    @Test
+    @DisplayName("a jar whose stand-in cannot be relocated is refused, not published")
+    void transformModRefusesJarWhenStandInCannotBeRelocated(@TempDir Path tmp) throws Exception {
+        String oldHelper = "legacy/api/Helper";
+        String synthetic = "com/retromod/generated/forge/Helper";
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        try {
+            transformer.registerClassRedirect(oldHelper, synthetic);
+            transformer.registerSyntheticClass(synthetic, emptyClass(synthetic));
+            // A class already sits where the embedder would put its copy, so the embed fails.
+            String taken = SyntheticEmbedder.embeddedBase("collision.jar") + synthetic;
+            Path src = tmp.resolve("collision.jar");
+            try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(src))) {
+                writeEntry(output, "META-INF/mods.toml", OUTER_FIXTURE_TOML);
+                output.putNextEntry(new JarEntry("fixture/UsesHelper.class"));
+                output.write(classWithFieldOf("fixture/UsesHelper", oldHelper));
+                output.closeEntry();
+                output.putNextEntry(new JarEntry(taken + ".class"));
+                output.write(emptyClass(taken));
+                output.closeEntry();
+            }
+            Path out = Files.createDirectory(tmp.resolve("out"));
+
+            Path transformed = new ForgeModTransformer("26.1").transformMod(src, out);
+
+            assertNull(transformed, "its classes would still name " + synthetic
+                    + ", which no jar holds");
+            assertFalse(Files.exists(out.resolve("collision-retromod.jar")));
+        } finally {
+            transformer.clearRedirectsForTesting();
+        }
+    }
+
+    @Test
+    @DisplayName("a bundled library whose stand-in cannot be relocated keeps its original bytes")
+    void transformModKeepsOriginalJarInJarWhenStandInCannotBeRelocated(@TempDir Path tmp)
+            throws Exception {
+        String oldHelper = "legacy/api/Helper";
+        String synthetic = "com/retromod/generated/forge/Helper";
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        try {
+            transformer.registerClassRedirect(oldHelper, synthetic);
+            transformer.registerSyntheticClass(synthetic, emptyClass(synthetic));
+            // The library already holds a class where its own copy of the stand-in would go.
+            String taken = SyntheticEmbedder.embeddedBase(
+                    "outer-keeps-library.jar!/META-INF/jarjar/library.jar") + synthetic;
+            java.io.ByteArrayOutputStream nested = new java.io.ByteArrayOutputStream();
+            try (JarOutputStream output = new JarOutputStream(nested)) {
+                output.putNextEntry(new JarEntry("lib/UsesHelper.class"));
+                output.write(classWithFieldOf("lib/UsesHelper", oldHelper));
+                output.closeEntry();
+                output.putNextEntry(new JarEntry(taken + ".class"));
+                output.write(emptyClass(taken));
+                output.closeEntry();
+            }
+            byte[] original = nested.toByteArray();
+            Path src = tmp.resolve("outer-keeps-library.jar");
+            try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(src))) {
+                writeEntry(output, "META-INF/mods.toml", OUTER_FIXTURE_TOML);
+                output.putNextEntry(new JarEntry("META-INF/jarjar/library.jar"));
+                output.write(original);
+                output.closeEntry();
+            }
+
+            Path transformed = new ForgeModTransformer("26.1")
+                    .transformMod(src, Files.createDirectory(tmp.resolve("out")));
+
+            assertNotNull(transformed, "one bundled library must not fail the whole mod");
+            try (JarFile outer = new JarFile(transformed.toFile());
+                 var input = outer.getInputStream(outer.getJarEntry("META-INF/jarjar/library.jar"))) {
+                assertArrayEquals(original, input.readAllBytes(),
+                        "a library that would name a missing stand-in is left as it was");
+            }
+        } finally {
+            transformer.clearRedirectsForTesting();
+        }
+    }
+
+    private static final String OUTER_FIXTURE_TOML =
+            "modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\nlicense=\"MIT\"\n"
+                    + "[[mods]]\nmodId=\"outer_fixture\"\n"
+                    + "[[dependencies.outer_fixture]]\nmodId=\"minecraft\"\n"
+                    + "versionRange=\"[1.20.1,1.21)\"\n";
 
     private static byte[] classWithFieldOf(String name, String fieldType) {
         org.objectweb.asm.ClassWriter writer = new org.objectweb.asm.ClassWriter(0);

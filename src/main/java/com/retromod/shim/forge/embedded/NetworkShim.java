@@ -6,6 +6,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -103,6 +104,183 @@ public final class NetworkShim {
         public SimpleChannelWrapper simpleChannel() {
             return (SimpleChannelWrapper) newSimpleChannel(channelId, version, clientAccepted, serverAccepted);
         }
+
+        // Forge 1.20.2 and newer: an int version and version tests. NeoForge negotiates channels
+        // itself and registers every bridged channel as optional, so the tests are kept, not run.
+
+        public ChannelBuilder networkProtocolVersion(int version) {
+            this.version = () -> Integer.toString(version);
+            return this;
+        }
+
+        public ChannelBuilder acceptedVersions(VersionTest test) {
+            return this;
+        }
+
+        public ChannelBuilder clientAcceptedVersions(VersionTest test) {
+            return this;
+        }
+
+        public ChannelBuilder serverAcceptedVersions(VersionTest test) {
+            return this;
+        }
+
+        public ChannelBuilder optional() {
+            return this;
+        }
+
+        public ChannelBuilder optionalClient() {
+            return this;
+        }
+
+        public ChannelBuilder optionalServer() {
+            return this;
+        }
+
+        /** Forge 1.21's payload channel, whose payloads register with NeoForge as they are. */
+        public PayloadChannel payloadChannel() {
+            return new PayloadChannel(channelId, version.get());
+        }
+    }
+
+    /**
+     * Forge 1.21's {@code PayloadConnection}, {@code PayloadProtocol} and {@code PayloadFlow} in one
+     * builder: {@code payloadChannel().play().bidirectional().add(type, codec, handler).build()}.
+     * Forge's payloads are Minecraft's own custom payloads, so NeoForge takes each type and codec as
+     * it is, and the mod's handler gets the context.
+     */
+    public static final class PayloadChannel {
+        private final Object channelId;
+        private final String version;
+        private final List<DirectPayload> payloads = new ArrayList<>();
+        private boolean configuration;
+        private String flow = "Bidirectional";
+
+        PayloadChannel(Object channelId, String version) {
+            this.channelId = channelId;
+            this.version = version;
+        }
+
+        public PayloadChannel play() {
+            configuration = false;
+            return this;
+        }
+
+        /** Payloads for every phase; NeoForge registers them for play, where mods send them. */
+        public PayloadChannel any() {
+            return play();
+        }
+
+        public PayloadChannel configuration() {
+            configuration = true;
+            return this;
+        }
+
+        public Object bidirectional() {
+            flow = "Bidirectional";
+            return this;
+        }
+
+        public Object clientbound() {
+            flow = "ToClient";
+            return this;
+        }
+
+        public Object serverbound() {
+            flow = "ToServer";
+            return this;
+        }
+
+        /** A payload handled on the network thread, as Forge's {@code add} is. */
+        public PayloadChannel add(Object type, Object codec, BiConsumer<Object, Object> handler) {
+            payloads.add(new DirectPayload(type, codec, handler, configuration, flow, false));
+            return this;
+        }
+
+        /** A payload handled on the main thread. */
+        public PayloadChannel addMain(Object type, Object codec, BiConsumer<Object, Object> handler) {
+            payloads.add(new DirectPayload(type, codec, handler, configuration, flow, true));
+            return this;
+        }
+
+        public SimpleChannelWrapper build() {
+            PayloadChannelWrapper channel = new PayloadChannelWrapper(channelId, version, List.copyOf(payloads));
+            CHANNELS.put(String.valueOf(channelId), channel);
+            if (bridge != null) {
+                LOGGER.warn("Forge payload channel {} was built after NeoForge registered its network payloads, "
+                        + "so its payloads cannot be sent.", channelId);
+            }
+            return channel;
+        }
+    }
+
+    /** One payload type of a Forge 1.21 payload channel. */
+    record DirectPayload(Object type, Object codec, BiConsumer<Object, Object> handler, boolean configuration,
+            String flow, boolean mainThread) {}
+
+    /** A built payload channel: it sends a mod's payloads as they are, with no message id around them. */
+    static final class PayloadChannelWrapper extends SimpleChannelWrapper {
+        private final List<DirectPayload> payloads;
+        private final Map<Object, Object> clientHandlers = new ConcurrentHashMap<>();
+
+        PayloadChannelWrapper(Object channelId, String version, List<DirectPayload> payloads) {
+            super(channelId, version);
+            this.payloads = payloads;
+        }
+
+        List<DirectPayload> payloads() {
+            return payloads;
+        }
+
+        void rememberClientHandler(Object type, Object handler) {
+            clientHandlers.put(type, handler);
+        }
+
+        void registerClientHandlers(Object event) {
+            clientHandlers.forEach((type, handler) -> {
+                try {
+                    PayloadBridge.method(event.getClass(), "register", 2, false).invoke(event, type, handler);
+                } catch (ReflectiveOperationException | RuntimeException e) {
+                    LOGGER.warn("Retromod could not register the client side of Forge payload {}: {}", type, e.toString());
+                }
+            });
+        }
+
+        @Override
+        Object payload(Object message) {
+            return message;
+        }
+    }
+
+    /** Forge 1.20.2's {@code Channel.VersionTest}. */
+    public interface VersionTest {
+        VersionTest ACCEPT_MISSING = (status, version) -> status == Status.MISSING;
+        VersionTest ACCEPT_VANILLA = (status, version) -> status == Status.VANILLA;
+
+        static VersionTest exact(int version) {
+            return (status, remote) -> status == Status.PRESENT && remote == version;
+        }
+
+        boolean accepts(Status status, int version);
+
+        default VersionTest negate() {
+            return (status, version) -> !accepts(status, version);
+        }
+
+        default VersionTest and(VersionTest other) {
+            return (status, version) -> accepts(status, version) && other.accepts(status, version);
+        }
+
+        default VersionTest or(VersionTest other) {
+            return (status, version) -> accepts(status, version) || other.accepts(status, version);
+        }
+
+        /** Whether the remote side has the channel, lacks it, or is vanilla. */
+        enum Status {
+            PRESENT,
+            MISSING,
+            VANILLA
+        }
     }
 
     /**
@@ -117,7 +295,7 @@ public final class NetworkShim {
             Class<?> loadingContext = Class.forName("net.neoforged.fml.ModLoadingContext", false, loader);
             Object context = loadingContext.getMethod("get").invoke(null);
             Object container = loadingContext.getMethod("getActiveContainer").invoke(context);
-            Object bus = container.getClass().getMethod("getEventBus").invoke(container);
+            Object bus = LegacyPublicMethods.method(container.getClass(), "getEventBus").invoke(container);
             Method addListener = Class.forName("net.neoforged.bus.api.IEventBus", false, loader)
                     .getMethod("addListener", Class.class, Consumer.class);
             Consumer<Object> listener = NetworkShim::registerPayloads;
@@ -156,8 +334,12 @@ public final class NetworkShim {
         bridge = payloads;
         for (SimpleChannelWrapper channel : CHANNELS.values()) {
             try {
+                if (channel instanceof PayloadChannelWrapper direct) {
+                    payloads.registerDirect(event, direct);
+                    continue;
+                }
                 payloads.register(event, channel);
-                LOGGER.info("Registered Forge network channel {} with {} message type(s)",
+                LOGGER.debug("Registered Forge network channel {} with {} message type(s)",
                         channel.channelId, channel.registrations.size());
             } catch (ReflectiveOperationException | RuntimeException e) {
                 LOGGER.warn("Retromod could not register Forge network channel {}: {}",
@@ -169,6 +351,10 @@ public final class NetworkShim {
     /** {@code RegisterClientPayloadHandlersEvent} listener: the client side of every channel. */
     public static void registerClientHandlers(Object event) {
         for (SimpleChannelWrapper channel : CHANNELS.values()) {
+            if (channel instanceof PayloadChannelWrapper direct) {
+                direct.registerClientHandlers(event);
+                continue;
+            }
             if (channel.payloadType() == null || channel.payloadHandler == null) continue;
             try {
                 PayloadBridge.method(event.getClass(), "register", 2, false)
@@ -259,6 +445,27 @@ public final class NetworkShim {
             return new MessageBuilder<>(this, type, id);
         }
 
+        /** Forge 1.20.2's form, which numbers messages in the order they are added. */
+        public <T> MessageBuilder<T> messageBuilder(Class<T> type) {
+            return new MessageBuilder<>(this, type, nextId());
+        }
+
+        public <T> MessageBuilder<T> messageBuilder(Class<T> type, NetworkDirection direction) {
+            return messageBuilder(type);
+        }
+
+        /** Forge 1.20.2's {@code build()}, which ends registration; NeoForge registers the channel later. */
+        public SimpleChannelWrapper build() {
+            return this;
+        }
+
+        /** The lowest id no message has, as Forge numbers a message added without one. */
+        private synchronized int nextId() {
+            int id = 0;
+            while (registrations.containsKey(id)) id++;
+            return id;
+        }
+
         /** The direction-qualified overload (MCreator's addNetworkMessage). */
         public <T> MessageBuilder<T> messageBuilder(Class<T> type, int id, Object direction) {
             return new MessageBuilder<>(this, type, id);
@@ -287,6 +494,30 @@ public final class NetworkShim {
                 return;
             }
             requireBridge().send(packetTarget, payload(message));
+        }
+
+        /** Forge 1.20.2's {@code send(message, PacketDistributor.PLAYER.with(player))}: the message comes first. */
+        public void send(Object message, PacketDistributor.PacketTarget target) {
+            send((Object) target, message);
+        }
+
+        /**
+         * Forge 1.20.2's {@code send(message, connection)}. A client connection sends to the server;
+         * the shim passes Minecraft's connection as Object and the mod's call is retyped to it.
+         */
+        public void sendToConnection(Object message, Object connection) {
+            boolean serverbound = isClientConnection(connection);
+            sendTo(message, connection, serverbound ? NetworkDirection.PLAY_TO_SERVER : NetworkDirection.PLAY_TO_CLIENT);
+        }
+
+        /** Whether a connection is the client's own, whose packets go to the server. */
+        private static boolean isClientConnection(Object connection) {
+            try {
+                Object side = PayloadBridge.method(connection.getClass(), "getReceiving", 0, false).invoke(connection);
+                return side instanceof Enum<?> flow && flow.name().equals("CLIENTBOUND");
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                return false;
+            }
         }
 
         /** {@code sendTo(message, connection, direction)}: writes the packet to one connection. */
@@ -331,7 +562,7 @@ public final class NetworkShim {
             return registration;
         }
 
-        private Object payload(Object message) {
+        Object payload(Object message) {
             PacketRegistration<?> registration = registrationFor(message.getClass());
             return requireBridge().payload(this, registration, message);
         }
@@ -407,6 +638,19 @@ public final class NetworkShim {
         public Object getNetworkManager() {
             return forge != null ? forge.contextCall(payloadContext, "getConnection")
                     : requireBridge().connection(payloadContext);
+        }
+
+        /** Forge 1.20.2's {@code getConnection()}; the mod's call is retyped to Minecraft's connection. */
+        public Object getConnection() {
+            return getNetworkManager();
+        }
+
+        public boolean isServerSide() {
+            return getDirection() == NetworkDirection.PLAY_TO_SERVER;
+        }
+
+        public boolean isClientSide() {
+            return !isServerSide();
         }
 
         public NetworkDirection getDirection() {
@@ -487,6 +731,35 @@ public final class NetworkShim {
         public void add() {
             channel.registerMessage(id, type, encoder, decoder, consumer);
         }
+
+        // Forge 1.20.2 hands the handler its context directly, not through a supplier. The mod's
+        // calls to consumer, consumerMainThread and consumerNetworkThread are sent here.
+
+        public MessageBuilder<T> contextConsumer(BiConsumer<T, Object> handler) {
+            return consumer((BiConsumer<T, Object>) (message, source) -> handler.accept(message, contextOf(source)));
+        }
+
+        public MessageBuilder<T> contextConsumer(ToBooleanBiFunction<T, Object> handler) {
+            return contextConsumer((BiConsumer<T, Object>) handler::applyAsBool);
+        }
+
+        private static Object contextOf(Object source) {
+            return source instanceof Supplier<?> supplier ? supplier.get() : source;
+        }
+
+        /** Forge 1.20.2's {@code codec(StreamCodec)}: its encode and decode take the buffer first. */
+        @SuppressWarnings("unchecked")
+        public MessageBuilder<T> codec(Object streamCodec) {
+            encoder((message, buffer) -> PayloadBridge.call(streamCodec, "encode", buffer, message));
+            decoder(buffer -> (T) PayloadBridge.call(streamCodec, "decode", buffer));
+            return this;
+        }
+
+        /** Forge 1.20.2's {@code add()}, which returns the channel for the next message. */
+        public SimpleChannelWrapper added() {
+            add();
+            return channel;
+        }
     }
 
     public record PacketRegistration<T>(
@@ -533,6 +806,11 @@ public final class NetworkShim {
 
         public PacketTarget with(Supplier<?> argument) {
             return new PacketTarget(kind, argument.get());
+        }
+
+        /** Forge 1.20.2's form, which takes the player, entity, chunk, or point itself. */
+        public PacketTarget with(Object argument) {
+            return new PacketTarget(kind, argument);
         }
 
         public PacketTarget noArg() {
@@ -618,10 +896,10 @@ public final class NetworkShim {
             Object type = payloadType.getConstructors()[0].newInstance(channel.channelId());
             channel.bindPayloadType(type);
 
-            Object registrar = event.getClass().getMethod("registrar", String.class)
+            Object registrar = LegacyPublicMethods.method(event.getClass(), "registrar", String.class)
                     .invoke(event, channel.protocolVersion());
-            registrar = registrar.getClass().getMethod("optional").invoke(registrar);
-            registrar = registrar.getClass().getMethod("executesOn", handlerThread)
+            registrar = LegacyPublicMethods.method(registrar.getClass(), "optional").invoke(registrar);
+            registrar = LegacyPublicMethods.method(registrar.getClass(), "executesOn", handlerThread)
                     .invoke(registrar, Enum.valueOf((Class) handlerThread, "MAIN"));
 
             Object codec = proxy(streamCodec, new CodecHandler(this, channel));
@@ -629,6 +907,23 @@ public final class NetworkShim {
             channel.payloadHandler = handler;
             method(registrar.getClass(), "playBidirectional", 3, false)
                     .invoke(registrar, type, codec, handler);
+        }
+
+        /** Registers each payload of a Forge 1.21 payload channel with its own type and codec. */
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        void registerDirect(Object event, PayloadChannelWrapper channel) throws ReflectiveOperationException {
+            for (DirectPayload payload : channel.payloads()) {
+                Object registrar = LegacyPublicMethods.method(event.getClass(), "registrar", String.class)
+                        .invoke(event, channel.protocolVersion());
+                registrar = LegacyPublicMethods.method(registrar.getClass(), "optional").invoke(registrar);
+                registrar = LegacyPublicMethods.method(registrar.getClass(), "executesOn", handlerThread)
+                        .invoke(registrar, Enum.valueOf((Class) handlerThread, payload.mainThread() ? "MAIN" : "NETWORK"));
+                Object handler = proxy(payloadHandler, new DirectHandler(payload.handler()));
+                String register = (payload.configuration() ? "configuration" : "play") + payload.flow();
+                method(registrar.getClass(), register, 3, false).invoke(registrar, payload.type(), payload.codec(), handler);
+                // NeoForge from 1.21.11 also wants the client side of what the server sends.
+                if (!payload.flow().equals("ToServer")) channel.rememberClientHandler(payload.type(), handler);
+            }
         }
 
         Object payload(SimpleChannelWrapper channel, PacketRegistration<?> registration, Object message) {
@@ -774,12 +1069,20 @@ public final class NetworkShim {
             }
         }
 
+        // Each lookup found so far, by class, so a message or payload read does not scan the class again.
+        private static final Map<Class<?>, Map<String, Method>> FOUND = new ConcurrentHashMap<>();
+
         /** The public method with this name and arity, found on the class or an interface it implements. */
         static Method method(Class<?> owner, String name, int arity, boolean isStatic)
                 throws NoSuchMethodException {
+            Map<String, Method> known = FOUND.computeIfAbsent(owner, type -> new ConcurrentHashMap<>());
+            String key = name + "/" + arity + (isStatic ? "/static" : "");
+            Method cached = known.get(key);
+            if (cached != null) return cached;
             for (Method candidate : owner.getMethods()) {
                 if (candidate.getName().equals(name) && candidate.getParameterCount() == arity
                         && Modifier.isStatic(candidate.getModifiers()) == isStatic) {
+                    known.put(key, candidate);
                     return candidate;
                 }
             }
@@ -837,6 +1140,15 @@ public final class NetworkShim {
 
         /** A Forge channel under the old channel's id, optional on both sides as an old one was to a missing peer. */
         Object open(Object channelId, String protocolVersion) {
+            return build(channelId, protocolVersion, "simpleChannel");
+        }
+
+        /** The same for an old event channel, whose listeners read the raw payload. */
+        Object openEvents(Object channelId, String protocolVersion) {
+            return build(channelId, protocolVersion, "eventNetworkChannel");
+        }
+
+        private Object build(Object channelId, String protocolVersion, String kind) {
             try {
                 Method named = null;
                 for (Method candidate : builder.getMethods()) {
@@ -849,7 +1161,7 @@ public final class NetworkShim {
                 Object channel = named.invoke(null, channelId);
                 channel = builder.getMethod("networkProtocolVersion", int.class).invoke(channel, numericVersion(protocolVersion));
                 channel = builder.getMethod("optional").invoke(channel);
-                return builder.getMethod("simpleChannel").invoke(channel);
+                return builder.getMethod(kind).invoke(channel);
             } catch (ReflectiveOperationException e) {
                 throw failure("open Forge network channel " + channelId, e);
             }
@@ -858,15 +1170,15 @@ public final class NetworkShim {
         /** Adds one old message, with its own id, encoder, decoder, and network-thread handler. */
         void add(Object channel, PacketRegistration<?> registration) {
             try {
-                Object message = channel.getClass().getMethod("messageBuilder", Class.class, int.class)
+                Object message = LegacyPublicMethods.method(channel.getClass(), "messageBuilder", Class.class, int.class)
                         .invoke(channel, registration.messageType(), registration.id());
                 Class<?> messageBuilder = message.getClass();
-                message = messageBuilder.getMethod("encoder", BiConsumer.class).invoke(message, registration.encoder());
-                message = messageBuilder.getMethod("decoder", Function.class).invoke(message, registration.decoder());
+                message = LegacyPublicMethods.method(messageBuilder, "encoder", BiConsumer.class).invoke(message, registration.encoder());
+                message = LegacyPublicMethods.method(messageBuilder, "decoder", Function.class).invoke(message, registration.decoder());
                 BiConsumer<Object, Object> handler = (received, context) ->
                         registration.handle(received, new Context(context, this));
-                message = messageBuilder.getMethod("consumerNetworkThread", BiConsumer.class).invoke(message, handler);
-                messageBuilder.getMethod("add").invoke(message);
+                message = LegacyPublicMethods.method(messageBuilder, "consumerNetworkThread", BiConsumer.class).invoke(message, handler);
+                LegacyPublicMethods.method(messageBuilder, "add").invoke(message);
             } catch (ReflectiveOperationException e) {
                 throw failure("add " + registration.messageType().getName() + " to a Forge network channel", e);
             }
@@ -906,7 +1218,7 @@ public final class NetworkShim {
 
         private void send(Object channel, Object message, Object target) {
             try {
-                channel.getClass().getMethod("send", Object.class, packetTarget).invoke(channel, message, target);
+                LegacyPublicMethods.method(channel.getClass(), "send", Object.class, packetTarget).invoke(channel, message, target);
             } catch (InvocationTargetException e) {
                 throw rethrown(e);
             } catch (ReflectiveOperationException e) {
@@ -945,7 +1257,7 @@ public final class NetworkShim {
         /** Calls the two-argument method whose second parameter takes {@code second}. */
         private static void invokeTwo(Object target, String name, Object first, Object second) {
             try {
-                for (Method method : target.getClass().getMethods()) {
+                for (Method method : LegacyPublicMethods.methods(target.getClass())) {
                     if (method.getName().equals(name) && method.getParameterCount() == 2
                             && method.getParameterTypes()[1].isInstance(second)) {
                         method.invoke(target, first, second);
@@ -1015,6 +1327,18 @@ public final class NetworkShim {
                 return null;
             }
             return PayloadBridge.objectMethod(proxy, method, args, "Forge codec " + channel.channelId());
+        }
+    }
+
+    /** {@code IPayloadHandler} for a Forge 1.21 payload: the mod's handler gets the payload and its context. */
+    private record DirectHandler(BiConsumer<Object, Object> handler) implements InvocationHandler {
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            if (method.getName().equals("handle") && method.getParameterCount() == 2) {
+                handler.accept(args[0], new Context(args[1]));
+                return null;
+            }
+            return PayloadBridge.objectMethod(proxy, method, args, "Forge payload handler");
         }
     }
 

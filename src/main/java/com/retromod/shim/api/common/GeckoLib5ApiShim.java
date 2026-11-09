@@ -4,8 +4,11 @@
  */
 package com.retromod.shim.api.common;
 
+import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.MinecraftVersionedApiShim;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,30 +19,31 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
-/**
- * Follows GeckoLib's move from {@code software.bernie.geckolib} to {@code com.geckolib}.
- *
- * <p>GeckoLib 5 renamed the package and reorganised the library in the same release, so a mod built
- * against 4.x fails on its first animated item or entity with
- * {@code NoClassDefFoundError: software/bernie/geckolib/animatable/GeoItem} even though the host
- * has GeckoLib installed and working (#223). The name is simply gone.
- *
- * <p>This is gated on the Minecraft host rather than on a GeckoLib version because the two track
- * each other: GeckoLib 4.x stops at Minecraft 1.21.4 and 5.x begins at 1.21.5. Applying it below
- * that boundary would rewrite a mod onto packages the host's own GeckoLib does not ship.
- *
- * <p>It covers the classes whose destination is proven. GeckoLib 5 also dropped a number of 4.x
- * internals outright, mostly around the texture cache, and a mod reaching those needs a real port.
- * The earlier 3.x to 4.x rewrite is handled separately by {@link GeckoLibApiShim}.
- */
+/** Moves GeckoLib 4 class names to {@code com.geckolib} where the installed GeckoLib uses that package. */
 public class GeckoLib5ApiShim implements MinecraftVersionedApiShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Shim");
     private static final String RESOURCE = "/retromod/geckolib-4-to-5-classes.tsv";
     private static final Pattern INTERNAL_NAME = Pattern.compile("[A-Za-z0-9_$/]+");
 
+    /** GeckoLib's main class under the package every release through 5.4 uses. */
+    static final String OLD_MAIN_CLASS = "software/bernie/geckolib/GeckoLib";
+    /** GeckoLib's main class under the package 5.5 moved to. */
+    static final String NEW_MAIN_CLASS = "com/geckolib/GeckoLib";
+
+    /** GeckoLib 5 starts at Minecraft 1.21.5, so a mod built for it or later names GeckoLib 5 classes. */
+    static final String FIRST_GECKOLIB_5_HOST = "1.21.5";
+    // Modrinth, 2026-11-06: every GeckoLib through 5.4.5 (Minecraft 1.21.11) uses software.bernie.geckolib, and
+    // every build from 5.5 (Minecraft 26.1) through 5.5.7 (Minecraft 26.3) uses com.geckolib, on all three loaders.
+    static final String FIRST_HOST_WITH_NEW_PACKAGE = "26.1";
+    // A newer host has no GeckoLib checked yet, so it keeps the old names unless its GeckoLib can be read.
+    static final String FIRST_HOST_NOT_CHECKED = "26.4";
+
+    // Only proven destinations (#223). The 4.x internals GeckoLib 5 dropped, mostly the texture cache, have no row.
+    // GeckoLib 3 names are left to GeckoLibApiShim.
     private static final Map<String, String> CLASS_MOVES = load();
 
     @Override
@@ -52,13 +56,10 @@ public class GeckoLib5ApiShim implements MinecraftVersionedApiShim {
         return "4.0.0";
     }
 
-    /**
-     * The first Minecraft version that carries GeckoLib 5. The shim registry treats this as the
-     * host floor, so nothing is rewritten on a host whose GeckoLib is still 4.x.
-     */
+    /** No host older than GeckoLib 5's first Minecraft version is offered the moves at all. */
     @Override
     public String getTargetVersion() {
-        return "1.21.5";
+        return FIRST_GECKOLIB_5_HOST;
     }
 
     @Override
@@ -68,12 +69,49 @@ public class GeckoLib5ApiShim implements MinecraftVersionedApiShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
-        for (Map.Entry<String, String> move : CLASS_MOVES.entrySet()) {
-            transformer.registerClassRedirect(move.getKey(), move.getValue());
-        }
+        registerIfInstalledMoved(transformer, GeckoLib5ApiShim::installedHasClass,
+                RetromodVersion.TARGET_MC_VERSION);
     }
 
-    /** The moves this shim registers, for tests and reporting. */
+    /** Registers the moves when the GeckoLib mods will run with uses {@code com.geckolib}, and returns how many. */
+    static int registerIfInstalledMoved(RetromodTransformer transformer, Predicate<String> installedHasClass,
+            String host) {
+        // GeckoLib 5.4.5 for 1.21.11 is GeckoLib 5 and still ships software.bernie.geckolib, so its names stay.
+        boolean installedKeepsOldPackage = installedHasClass.test(OLD_MAIN_CLASS);
+        boolean installedMoved = !installedKeepsOldPackage && installedHasClass.test(NEW_MAIN_CLASS);
+        if (installedKeepsOldPackage || (!installedMoved && !hostShipsNewPackage(host))) {
+            LOGGER.debug(RetromodLog.DETAIL, "GeckoLib for host {} keeps software.bernie.geckolib, so GeckoLib 4 "
+                    + "names stay as they are", host);
+            return 0;
+        }
+        for (Map.Entry<String, String> move : CLASS_MOVES.entrySet()) {
+            transformer.registerClassRedirect(move.getKey(), move.getValue());
+            // A mod built for 1.21.5 or newer names GeckoLib 5 classes, whose layout this 4.x table does not describe.
+            transformer.limitClassRedirectToModsBefore(move.getKey(), FIRST_GECKOLIB_5_HOST);
+            // Only the version table decided, so a GeckoLib 4 the mod ships or is translated with counts as the
+            // installed one. The in-place pass holds GeckoLib 4 back from the loader, so no class loader shows it.
+            if (!installedMoved) transformer.yieldClassRedirectToLibrary(move.getKey(), OLD_MAIN_CLASS);
+        }
+        LOGGER.debug(RetromodLog.DETAIL, "Registered {} GeckoLib 4 to com.geckolib class move(s) for host {}",
+                CLASS_MOVES.size(), host);
+        return CLASS_MOVES.size();
+    }
+
+    /** Whether the GeckoLib published for {@code host} uses {@code com.geckolib}; false when that is unknown. */
+    static boolean hostShipsNewPackage(String host) {
+        if (host == null || host.isBlank()) return false;
+        return RetromodVersion.compareMcVersions(host, FIRST_HOST_WITH_NEW_PACKAGE) >= 0
+                && RetromodVersion.compareMcVersions(host, FIRST_HOST_NOT_CHECKED) < 0;
+    }
+
+    /** Reads, never loads, a class from the game's class loader or from a library linked to an offline transform. */
+    private static boolean installedHasClass(String internalName) {
+        // In a game the loader has put the jars in mods/ on this class loader before the shims register.
+        return ClassResourceInspector.exists(internalName)
+                || RetromodTransformer.readLinkedLibraryClassForAdapter(internalName) != null;
+    }
+
+    /** The moves this shim can register, for tests and reporting. */
     public static Map<String, String> classMoves() {
         return CLASS_MOVES;
     }

@@ -196,20 +196,6 @@ public class Forge_1_12_2_to_1_13_2 implements VersionShim {
             "net/minecraft/network/play/server/SChatPacket"
         );
 
-        // GameRegistry.register split into typed register calls
-        transformer.registerMethodRedirect(
-            "net/minecraftforge/fml/common/registry/GameRegistry", "register",
-            "(Lnet/minecraft/item/Item;)V",
-            "com/retromod/shim/forge/embedded/FlatteningShim", "registerItem",
-            "(Ljava/lang/Object;)V"
-        );
-        transformer.registerMethodRedirect(
-            "net/minecraftforge/fml/common/registry/GameRegistry", "register",
-            "(Lnet/minecraft/block/Block;)V",
-            "com/retromod/shim/forge/embedded/FlatteningShim", "registerBlock",
-            "(Ljava/lang/Object;)V"
-        );
-
         transformer.registerClassRedirect(
             "net/minecraftforge/fml/common/Mod",
             "net/minecraftforge/fml/common/Mod"

@@ -7,6 +7,7 @@ package com.retromod.cli;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.embedder.ModVersionInfo;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
@@ -27,13 +28,22 @@ import static org.objectweb.asm.Opcodes.*;
  * fallback (source MC version unreadable). The fallback used to skip the Fabric intermediary->Mojang
  * member map, so a Fabric mod that fell through kept its intermediary names and crashed on a 26.1+
  * host (found in-game: AppleSkin, whose version detection fell through). Both paths now run
- * {@link RetromodCli#register26xTargetMappings}. This proves that registration actually installs the
+ * {@link RetromodCli#registerForTarget}. This proves that registration actually installs the
  * Fabric member map (a class_XXXX call remaps to its Mojang name) for a fabric mod on the 26.1 target.
  */
 class TransformFallbackParityTest {
 
+    private String savedCliTarget;
+
+    // The CLI default follows the newest release, so pin the 26.1 target these cases were written for.
+    @BeforeEach
+    void pinTarget() throws Exception {
+        savedCliTarget = setCliTarget("26.1");
+    }
+
     @AfterEach
-    void tearDown() {
+    void tearDown() throws Exception {
+        setCliTarget(savedCliTarget);
         RetromodTransformer.getInstance().clearRedirectsForTesting();
     }
 
@@ -43,12 +53,13 @@ class TransformFallbackParityTest {
     }
 
     @Test
-    @DisplayName("register26xTargetMappings installs the Fabric intermediary->Mojang member map (fallback parity)")
+    @DisplayName("registerForTarget installs the Fabric intermediary->Mojang member map (fallback parity)")
     void fallbackRegistersIntermediaryMemberMap() {
         RetromodTransformer t = RetromodTransformer.getInstance();
         t.clearRedirectsForTesting();
-        // TARGET_MC_VERSION defaults to 26.1 (unobfuscated) in tests, so the 26.1+ branch runs.
-        int moves = RetromodCli.register26xTargetMappings(t, fabricInfo(null)); // null target = the fallback shape
+        // The target is pinned to 26.1 (unobfuscated), so the 26.1+ branch runs.
+        int moves = RetromodCli.registerForTarget(t, fabricInfo(null), java.util.List.of())
+                .classMoves(); // null target = the fallback shape
         assertTrue(moves > 0, "the 26.1 class-move table should have registered");
 
         // A distributed Fabric mod calling Minecraft.getInstance() by intermediary id (class_310 /
@@ -79,15 +90,15 @@ class TransformFallbackParityTest {
     }
 
     @Test
-    @DisplayName("register26xTargetMappings no-ops on a pre-26.1 (obfuscated) target")
+    @DisplayName("registerForTarget no-ops on a pre-26.1 (obfuscated) target")
     void noOpBelow26() {
         RetromodTransformer t = RetromodTransformer.getInstance();
         t.clearRedirectsForTesting();
         // A pre-26.1 target is still obfuscated (intermediary runtime); the remap must not run there.
-        // register26xTargetMappings gates on TARGET_MC_VERSION (26.1 in tests), so we assert the
+        // registerForTarget gates on TARGET_MC_VERSION (pinned to 26.1 here), so we assert the
         // Fabric-loader gate at least: a non-fabric info doesn't install the member map.
-        RetromodCli.register26xTargetMappings(t, new ModVersionInfo("m", "1", null, "neoforge", "1",
-                Set.of(), Set.of(), false));
+        RetromodCli.registerForTarget(t, new ModVersionInfo("m", "1", null, "neoforge", "1",
+                Set.of(), Set.of(), false), java.util.List.of());
         // NeoForge mods are Mojang-named; the member map must not be applied (would clobber fields).
         byte[] cw;
         ClassWriter w = new ClassWriter(0);
@@ -109,20 +120,20 @@ class TransformFallbackParityTest {
     }
 
     @Test
-    @DisplayName("register26xTargetMappings installs the 26.2 core moves for a 26.2 target (empty-chain parity)")
+    @DisplayName("registerForTarget installs the 26.2 core moves for a 26.2 target (empty-chain parity)")
     void coreMoves262RegisteredFor262Target() throws Exception {
         RetromodTransformer t = RetromodTransformer.getInstance();
         t.clearRedirectsForTesting();
         // The version-graph BFS finds no path from a 1.21.x source, so Fabric_26_1_to_26_2 never
-        // applies offline; register26xTargetMappings must therefore pull Mc26_1To26_2CoreMoves in
-        // unconditionally for a 26.2+ target. TARGET_MC_VERSION defaults to 26.1 in tests, so flip
-        // it to 26.2 for this test (and restore after: other tests depend on the default).
+        // applies offline; registerForTarget must therefore pull Mc26_1To26_2CoreMoves in
+        // unconditionally for a 26.2+ target. TARGET_MC_VERSION is pinned to 26.1 here, so flip
+        // it to 26.2 for this test (and restore after).
         java.lang.reflect.Field target = RetromodCli.class.getDeclaredField("TARGET_MC_VERSION");
         target.setAccessible(true);
         String saved = (String) target.get(null);
         try {
             target.set(null, "26.2");
-            RetromodCli.register26xTargetMappings(t, fabricInfo(null));
+            RetromodCli.registerForTarget(t, fabricInfo(null), java.util.List.of());
 
             // Probe with the 26.2-epoch screen hop: GETFIELD Minecraft.screen must rewrite to
             // GETFIELD Minecraft.gui + INVOKEVIRTUAL Gui.screen(), which only Mc26_1To26_2CoreMoves
@@ -157,6 +168,93 @@ class TransformFallbackParityTest {
     }
 
     @Test
+    @DisplayName("A pre-release source with no graph path still gets the 26.3 moves on a 26.3 target")
+    void coreMoves263RegisteredForPreReleaseSource() throws Exception {
+        // 1.21.5-rc.1 is not a graph node, so the chain is empty and only this fallback applies.
+        assertEquals(RENDERPEARL_PIPELINE, classRedirectsAt("26.3", "1.21.5-rc.1").get(BLAZE3D_PIPELINE));
+        assertNull(classRedirectsAt("26.2", "1.21.5-rc.1").get(BLAZE3D_PIPELINE),
+                "a 26.2 target still has the blaze3d package");
+    }
+
+    @Test
+    @DisplayName("A native 26.3 mod keeps its keybind constructor, which already passes SDL key numbers")
+    void native263ModKeepsItsKeybinds() throws Exception {
+        assertEquals(RETRO_KEY_MAPPING, keyMappingOwnerAt("1.21.5-rc.1"),
+                "an older mod's GLFW key number is translated");
+        assertEquals(KEY_MAPPING, keyMappingOwnerAt("26.3"),
+                "a 26.3 mod's KEY_R is an SDL number that the GLFW translation would unbind");
+    }
+
+    private static final String BLAZE3D_PIPELINE = "com/mojang/blaze3d/pipeline/RenderPipeline";
+    private static final String RENDERPEARL_PIPELINE = "com/mojang/renderpearl/api/pipeline/RenderPipeline";
+    private static final String KEY_MAPPING = "net/minecraft/client/KeyMapping";
+    private static final String RETRO_KEY_MAPPING = "com/retromod/polyfill/minecraft/RetroKeyMapping";
+
+    /** The class redirects the fallback registers for a mod built for {@code source}. */
+    private static java.util.Map<String, String> classRedirectsAt(String target, String source)
+            throws Exception {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        String saved = setCliTarget(target);
+        try {
+            t.clearRedirectsForTesting();
+            RetromodCli.registerForTarget(t, fabricInfo(source), java.util.List.of());
+            return new java.util.HashMap<>(t.getClassRedirects());
+        } finally {
+            setCliTarget(saved);
+            t.clearRedirectsForTesting();
+        }
+    }
+
+    /** The owner a 26.2-shaped {@code new KeyMapping(name, key, category)} calls after a 26.3 transform. */
+    private static String keyMappingOwnerAt(String source) throws Exception {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        String saved = setCliTarget("26.3");
+        try {
+            t.clearRedirectsForTesting();
+            RetromodCli.registerForTarget(t, fabricInfo(source), java.util.List.of());
+            ClassNode node = new ClassNode();
+            new ClassReader(t.transformClass(keyMappingProbe(), "test/K")).accept(node, 0);
+            for (MethodNode m : node.methods)
+                for (var i : m.instructions.toArray())
+                    if (i instanceof MethodInsnNode mi && (mi.owner.equals(KEY_MAPPING)
+                            || mi.owner.equals(RETRO_KEY_MAPPING))) return mi.owner;
+            return null;
+        } finally {
+            setCliTarget(saved);
+            t.clearRedirectsForTesting();
+        }
+    }
+
+    private static byte[] keyMappingProbe() {
+        String desc = "(Ljava/lang/String;ILnet/minecraft/client/KeyMapping$Category;)V";
+        ClassWriter w = new ClassWriter(0);
+        w.visit(Opcodes.V17, ACC_PUBLIC, "test/K", null, "java/lang/Object", null);
+        MethodVisitor mv = w.visitMethod(ACC_PUBLIC | ACC_STATIC, "c",
+                "(Lnet/minecraft/client/KeyMapping$Category;)Ljava/lang/Object;", null, null);
+        mv.visitCode();
+        mv.visitTypeInsn(NEW, KEY_MAPPING);
+        mv.visitInsn(DUP);
+        mv.visitLdcInsn("key.test");
+        mv.visitIntInsn(BIPUSH, 21);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKESPECIAL, KEY_MAPPING, "<init>", desc, false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(5, 1);
+        mv.visitEnd();
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** Sets the CLI's target and returns the previous one. */
+    private static String setCliTarget(String target) throws Exception {
+        java.lang.reflect.Field field = RetromodCli.class.getDeclaredField("TARGET_MC_VERSION");
+        field.setAccessible(true);
+        String previous = (String) field.get(null);
+        field.set(null, target);
+        return previous;
+    }
+
+    @Test
     @DisplayName("all-shims fallback gates by target: 26.2-epoch shims must NOT fire on a 26.1 target")
     void fallbackAllShimsGatedByTarget() throws Exception {
         RetromodTransformer t = RetromodTransformer.getInstance();
@@ -164,7 +262,7 @@ class TransformFallbackParityTest {
         target.setAccessible(true);
         String saved = (String) target.get(null);
         try {
-            // 26.1 target (the default): Minecraft.screen is a real public field there, so the
+            // 26.1 target: Minecraft.screen is a real public field there, so the
             // ungated fallback registering Mc26_1To26_2CoreMoves' screen hop would rewrite a
             // WORKING read into 26.2-only Gui.screen() -> NoSuchMethodError (review finding).
             target.set(null, "26.1");

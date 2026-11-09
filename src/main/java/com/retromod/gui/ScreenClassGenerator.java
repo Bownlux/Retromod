@@ -6,6 +6,7 @@ package com.retromod.gui;
 
 import com.retromod.util.McReflect;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
@@ -13,8 +14,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.WeakHashMap;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -31,7 +38,10 @@ import java.util.function.Consumer;
  *   <li>Extends {@code Screen} (resolved at runtime via {@link McReflect})</li>
  *   <li>Constructor takes a single {@code Component}/{@code Text} title</li>
  *   <li>Overrides {@code init()} to invoke {@link #onScreenInit(Object)}</li>
- *   <li>Overrides {@code onClose()} to invoke {@link #onScreenClose(Object)}</li>
+ *   <li>Overrides {@code onClose()} to invoke {@link #onScreenClose(Object)}, and
+ *       {@code super.onClose()} when that runs no callback</li>
+ *   <li>Overrides {@code onFilesDrop(List)} the same way, through
+ *       {@link #onScreenFilesDropped(Object, List)}</li>
  * </ul>
  *
  * <p>Callers register an init callback (to add widgets) and a close callback
@@ -45,10 +55,17 @@ public final class ScreenClassGenerator {
 
     private static volatile Class<?> generatedClass;
 
+    // Callbacks live as long as their screen, which Minecraft may init again after Escape or a
+    // resize. A callback must not capture its own screen, or the weak key never clears.
     /** Init callbacks keyed by screen instance. */
-    private static final Map<Object, Consumer<Object>> INIT_CALLBACKS = new ConcurrentHashMap<>();
+    private static final Map<Object, Consumer<Object>> INIT_CALLBACKS =
+            Collections.synchronizedMap(new WeakHashMap<>());
     /** Close callbacks keyed by screen instance. */
-    private static final Map<Object, Runnable> CLOSE_CALLBACKS = new ConcurrentHashMap<>();
+    private static final Map<Object, Runnable> CLOSE_CALLBACKS =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    /** Drop callbacks keyed by screen instance; like init, they get the screen as an argument. */
+    private static final Map<Object, BiConsumer<Object, List<Path>>> DROP_CALLBACKS =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     private ScreenClassGenerator() {}
 
@@ -65,26 +82,44 @@ public final class ScreenClassGenerator {
     public static Object createScreen(Object title,
                                        Consumer<Object> initCallback,
                                        Runnable closeCallback) {
+        return createScreen(title, initCallback, closeCallback, null);
+    }
+
+    /** {@link #createScreen(Object, Consumer, Runnable)}, plus a callback for files dropped on it. */
+    public static Object createScreen(Object title, Consumer<Object> initCallback,
+            Runnable closeCallback, BiConsumer<Object, List<Path>> dropCallback) {
         Class<?> cls = getOrGenerate();
         if (cls == null) return null;
 
         try {
             Class<?> textClass = McReflect.findClass(
                 "net.minecraft.text.Text",
-                "net.minecraft.network.chat.Component"
+                "net.minecraft.network.chat.Component",
+                "net.minecraft.class_2561"  // intermediary, pre-26.1 Fabric
             );
             if (textClass == null) return null;
 
             Constructor<?> ctor = cls.getConstructor(textClass);
             Object screen = ctor.newInstance(title);
-
-            if (initCallback != null) INIT_CALLBACKS.put(screen, initCallback);
-            if (closeCallback != null) CLOSE_CALLBACKS.put(screen, closeCallback);
+            register(screen, initCallback, closeCallback, dropCallback);
             return screen;
         } catch (Exception e) {
             LOGGER.warn("Could not instantiate generated screen: {}", e.getMessage());
             return null;
         }
+    }
+
+    /** Attaches the init and close callbacks to a generated screen. */
+    static void register(Object screen, Consumer<Object> initCallback, Runnable closeCallback) {
+        register(screen, initCallback, closeCallback, null);
+    }
+
+    /** Attaches the init, close, and drop callbacks to a generated screen. */
+    static void register(Object screen, Consumer<Object> initCallback, Runnable closeCallback,
+            BiConsumer<Object, List<Path>> dropCallback) {
+        if (initCallback != null) INIT_CALLBACKS.put(screen, initCallback);
+        if (closeCallback != null) CLOSE_CALLBACKS.put(screen, closeCallback);
+        if (dropCallback != null) DROP_CALLBACKS.put(screen, dropCallback);
     }
 
     // BYTECODE ENTRY POINTS (called from generated class)
@@ -100,15 +135,34 @@ public final class ScreenClassGenerator {
         }
     }
 
-    /** Invoked by the generated screen's onClose() override. */
-    public static void onScreenClose(Object screen) {
-        INIT_CALLBACKS.remove(screen);
-        Runnable callback = CLOSE_CALLBACKS.remove(screen);
-        if (callback == null) return;
+    /** Invoked by the generated screen's onClose(); false means Minecraft's own close runs. */
+    public static boolean onScreenClose(Object screen) {
+        // The callbacks stay: a screen shown again, such as after settings' Done, inits again.
+        Runnable callback = CLOSE_CALLBACKS.get(screen);
+        if (callback == null) return false;
         try {
             callback.run();
+            return true;
         } catch (Throwable t) {
             LOGGER.warn("Screen close callback failed: {}", t.getMessage());
+            return false;
+        }
+    }
+
+    /** Invoked by the generated screen's onFilesDrop(); false means Minecraft's own handling runs. */
+    public static boolean onScreenFilesDropped(Object screen, List<?> dropped) {
+        BiConsumer<Object, List<Path>> callback = DROP_CALLBACKS.get(screen);
+        if (callback == null || dropped == null) return false;
+        List<Path> paths = new ArrayList<>();
+        for (Object entry : dropped) {
+            if (entry instanceof Path path) paths.add(path);
+        }
+        try {
+            callback.accept(screen, paths);
+            return true;
+        } catch (Throwable t) {
+            LOGGER.warn("Retromod could not take the dropped files: {}", t.getMessage());
+            return false;
         }
     }
 
@@ -121,11 +175,13 @@ public final class ScreenClassGenerator {
 
             Class<?> screenBase = McReflect.findClass(
                 "net.minecraft.client.gui.screen.Screen",
-                "net.minecraft.client.gui.screens.Screen"
+                "net.minecraft.client.gui.screens.Screen",
+                "net.minecraft.class_437"  // intermediary
             );
             Class<?> textClass = McReflect.findClass(
                 "net.minecraft.text.Text",
-                "net.minecraft.network.chat.Component"
+                "net.minecraft.network.chat.Component",
+                "net.minecraft.class_2561"
             );
             if (screenBase == null || textClass == null) {
                 LOGGER.warn("Retromod cannot open its screen because Minecraft's Screen or "
@@ -134,6 +190,7 @@ public final class ScreenClassGenerator {
             }
 
             byte[] bytecode = generateBytecode(screenBase, textClass);
+            if (bytecode == null) return null;
 
             // The generated class must share Screen's class loader parent so both sides resolve
             // the same Minecraft types.
@@ -151,8 +208,18 @@ public final class ScreenClassGenerator {
         }
     }
 
-    /** Emits a Screen subclass that delegates its lifecycle callbacks to this class. */
-    private static byte[] generateBytecode(Class<?> screenBase, Class<?> textClass) {
+    /** Emits a Screen subclass that delegates its lifecycle callbacks; null without init or onClose. */
+    static byte[] generateBytecode(Class<?> screenBase, Class<?> textClass) {
+        // Override the names the running game uses: Mojang's, or intermediary on Fabric before 26.1.
+        String init = noArgMethodName(screenBase, "init", "method_25426");
+        String onClose = noArgMethodName(screenBase, "onClose", "method_25419");
+        if (init == null || onClose == null) {
+            LOGGER.warn("Retromod cannot open its screen because {} has no init() or onClose() "
+                    + "it can override. Put old mods in retromod-input/ instead.",
+                    screenBase.getName());
+            return null;
+        }
+
         String superName = Type.getInternalName(screenBase);
         String textInternal = Type.getInternalName(textClass);
         String textDesc = "L" + textInternal + ";";
@@ -186,7 +253,7 @@ public final class ScreenClassGenerator {
 
         // protected void init() { ScreenClassGenerator.onScreenInit(this); }
         {
-            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PROTECTED, "init",
+            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PROTECTED, init,
                     "()V", null, null);
             mv.visitCode();
             mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -198,15 +265,44 @@ public final class ScreenClassGenerator {
             mv.visitEnd();
         }
 
-        // public void onClose() { ScreenClassGenerator.onScreenClose(this); }
+        // public void onClose() { if (!ScreenClassGenerator.onScreenClose(this)) super.onClose(); }
         {
-            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "onClose",
+            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, onClose,
                     "()V", null, null);
             mv.visitCode();
+            Label done = new Label();
             mv.visitVarInsn(Opcodes.ALOAD, 0);
             mv.visitMethodInsn(Opcodes.INVOKESTATIC,
                     "com/retromod/gui/ScreenClassGenerator", "onScreenClose",
-                    "(Ljava/lang/Object;)V", false);
+                    "(Ljava/lang/Object;)Z", false);
+            mv.visitJumpInsn(Opcodes.IFNE, done);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, superName, onClose, "()V", false);
+            mv.visitLabel(done);
+            mv.visitInsn(Opcodes.RETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+        }
+
+        // public void onFilesDrop(List files): Minecraft hands files dropped on the window to the
+        // open screen here. super.onFilesDrop runs only when no callback took them.
+        String onFilesDrop = listMethodName(screenBase, "onFilesDrop", "method_29638");
+        if (onFilesDrop != null) {
+            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, onFilesDrop,
+                    "(Ljava/util/List;)V", null, null);
+            mv.visitCode();
+            Label done = new Label();
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC,
+                    "com/retromod/gui/ScreenClassGenerator", "onScreenFilesDropped",
+                    "(Ljava/lang/Object;Ljava/util/List;)Z", false);
+            mv.visitJumpInsn(Opcodes.IFNE, done);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, superName, onFilesDrop,
+                    "(Ljava/util/List;)V", false);
+            mv.visitLabel(done);
             mv.visitInsn(Opcodes.RETURN);
             mv.visitMaxs(0, 0);
             mv.visitEnd();
@@ -214,6 +310,27 @@ public final class ScreenClassGenerator {
 
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    /** The first of {@code names} that the class has as a public void method taking one List. */
+    private static String listMethodName(Class<?> owner, String... names) {
+        // A screen without it still opens; it only ignores dropped files.
+        for (String name : names) {
+            try {
+                Method method = owner.getMethod(name, List.class);
+                if (method.getReturnType() == void.class) return name;
+            } catch (NoSuchMethodException absent) {
+                // Try the next name.
+            }
+        }
+        return null;
+    }
+
+    /** The first of {@code names} that the class declares or inherits as a no-argument method. */
+    private static String noArgMethodName(Class<?> owner, String... names) {
+        Method method = McReflect.findMethod(owner, new Class[0], names);
+        // findMethod falls back to any method with the name, which may take arguments.
+        return method != null && method.getParameterCount() == 0 ? method.getName() : null;
     }
 
     // BYTECODE CLASSLOADER

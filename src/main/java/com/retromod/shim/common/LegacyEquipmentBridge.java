@@ -53,6 +53,7 @@ public final class LegacyEquipmentBridge {
     static final String TIER_VIEW = "com/retromod/generated/LegacyEquipmentTierView";
     static final String SUPPORT = "com/retromod/shim/common/embedded/LegacyEquipmentSupport";
     private static final String HANDLE = "retromod$handle";
+    private static final String ENUM_NAME = "retromod$name";
 
     private static final String ARMOR_TYPE = "net/minecraft/world/item/equipment/ArmorType";
     private static final String SOUND = "net/minecraft/sounds/SoundEvent";
@@ -128,8 +129,9 @@ public final class LegacyEquipmentBridge {
         if (!hostUsesComponents()) return;
         if (!transformer.getSyntheticClasses().containsKey(ARMOR_MATERIAL)) {
             SyntheticEmbedder.registerClassResource(transformer, SUPPORT, LegacyEquipmentSupport.class);
-            transformer.registerSyntheticClass(ARMOR_MATERIAL, generateInterface(ARMOR_MATERIAL, ARMOR_METHODS));
-            transformer.registerSyntheticClass(TIER, generateInterface(TIER, TIER_METHODS));
+            transformer.registerSyntheticClass(ARMOR_MATERIAL, generateInterface(ARMOR_MATERIAL, ARMOR_METHODS,
+                    ARMOR_VIEW, ARMOR_ENUM_ORDER));
+            transformer.registerSyntheticClass(TIER, generateInterface(TIER, TIER_METHODS, TIER_VIEW, TIER_ENUM_ORDER));
             transformer.registerSyntheticClass(ARMOR_VIEW,
                     generateView(ARMOR_VIEW, ARMOR_MATERIAL, ARMOR_METHODS, RECORD_ARMORS, RECORD_ARMOR, ARMOR_CONSTANTS));
             transformer.registerSyntheticClass(TIER_VIEW,
@@ -366,6 +368,11 @@ public final class LegacyEquipmentBridge {
         Map<String, String> renames = new HashMap<>();
         if (armor) OLD_ARMOR.forEach(name -> renames.put(name, ARMOR_MATERIAL));
         if (tier) OLD_TIER.forEach(name -> renames.put(name, TIER));
+        // The old enums take the same name, so a field, local or call typed as the enum holds the
+        // view that replaces its constants, and the enum's calls reach the view's methods. The
+        // class moves would give them the record types, which a view is not.
+        if (armor) OLD_ARMOR_ENUM.forEach(name -> renames.put(name, ARMOR_MATERIAL));
+        if (tier) OLD_TIER_ENUM.forEach(name -> renames.put(name, TIER));
         for (byte[] classBytes : classes) LEGACY_CLASSES.add(new ClassReader(classBytes).getClassName());
         return Map.copyOf(renames);
     }
@@ -424,10 +431,6 @@ public final class LegacyEquipmentBridge {
         return new Usage(found[0], found[1]);
     }
 
-    /**
-     * In a legacy jar's class, after the remap, turns a read of a vanilla material that the old
-     * enums named into the matching view, so it fits where the old interface is expected.
-     */
     /** Sends a 1.20.5 to 1.21.1 tool's {@code createAttributes(tier, damage, speed)}, removed in 1.21.5, to the helper. */
     public static byte[] retargetToolAttributes(byte[] classBytes) {
         // Tools called it on their own class. The descriptor names the generated tier, so no
@@ -460,8 +463,17 @@ public final class LegacyEquipmentBridge {
         return writer.toByteArray();
     }
 
-    public static byte[] apply(byte[] classBytes, String className) {
-        if (classBytes == null || !LEGACY_CLASSES.contains(className)) return classBytes;
+    /**
+     * In a legacy jar's class, after the remap, turns a read of a vanilla material that the old
+     * enums named into the matching view, so it fits where the old interface is expected.
+     */
+    public static byte[] apply(byte[] classBytes) {
+        // The name comes from the bytes, as the marking read it: callers spell class names
+        // differently, and full AOT passes dotted ones.
+        if (classBytes == null || LEGACY_CLASSES.isEmpty()
+                || !LEGACY_CLASSES.contains(new ClassReader(classBytes).getClassName())) {
+            return classBytes;
+        }
         ClassNode node = new ClassNode();
         new ClassReader(classBytes).accept(node, 0);
         boolean changed = false;
@@ -470,12 +482,11 @@ public final class LegacyEquipmentBridge {
                 if (!(insn instanceof FieldInsnNode field) || field.getOpcode() != Opcodes.GETSTATIC) continue;
                 String view = null;
                 String type = null;
-                if (field.owner.equals(RECORD_ARMORS) && field.desc.equals("L" + RECORD_ARMORS + ";")
-                        && ARMOR_CONSTANTS.containsKey(field.name)) {
+                // The constant is read through the record class, or through the old enum renamed onto the interface.
+                if (isConstant(field, RECORD_ARMORS, ARMOR_CONSTANTS) || isConstant(field, ARMOR_MATERIAL, ARMOR_CONSTANTS)) {
                     view = ARMOR_VIEW;
                     type = ARMOR_MATERIAL;
-                } else if (field.owner.equals(RECORD_TOOL) && field.desc.equals("L" + RECORD_TOOL + ";")
-                        && TIER_CONSTANTS.containsKey(field.name)) {
+                } else if (isConstant(field, RECORD_TOOL, TIER_CONSTANTS) || isConstant(field, TIER, TIER_CONSTANTS)) {
                     view = TIER_VIEW;
                     type = TIER;
                 }
@@ -491,14 +502,83 @@ public final class LegacyEquipmentBridge {
         return writer.toByteArray();
     }
 
+    private static boolean isConstant(FieldInsnNode field, String owner, Map<String, String> constants) {
+        return field.owner.equals(owner) && field.desc.equals("L" + owner + ";") && constants.containsKey(field.name);
+    }
+
+    /** The old enums' constants in declaration order, which values() returned (1.20.1 and, for Tiers, 1.21.1). */
+    static final List<String> TIER_ENUM_ORDER = List.of("WOOD", "STONE", "IRON", "DIAMOND", "GOLD", "NETHERITE");
+    static final List<String> ARMOR_ENUM_ORDER = List.of("LEATHER", "CHAIN", "IRON", "GOLD", "DIAMOND", "TURTLE", "NETHERITE");
+
     static byte[] generateInterface(String name, Map<String, String> methods) {
-        ClassWriter cw = new ClassWriter(0);
+        return generateInterface(name, methods, null, List.of());
+    }
+
+    /**
+     * The old interface, plus the old enum's static values() and valueOf(String) answered with the
+     * views, since the enum is renamed onto this interface. A null {@code view} leaves them out.
+     */
+    static byte[] generateInterface(String name, Map<String, String> methods, String view, List<String> enumOrder) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT | Opcodes.ACC_INTERFACE,
                 name, null, "java/lang/Object", null);
         methods.forEach((method, desc) ->
                 cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, method, desc, null, null).visitEnd());
+        if (view != null) {
+            addEnumStatics(cw, name, view, enumOrder);
+            // An old Tiers.name() call now names this interface; a view answers it, a mod's own
+            // enum tier answers it as an enum, and anything else falls back to toString().
+            MethodVisitor enumName = cw.visitMethod(Opcodes.ACC_PUBLIC, "name", "()Ljava/lang/String;", null, null);
+            enumName.visitCode();
+            enumName.visitVarInsn(Opcodes.ALOAD, 0);
+            enumName.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Object", "toString", "()Ljava/lang/String;", false);
+            enumName.visitInsn(Opcodes.ARETURN);
+            enumName.visitMaxs(0, 0);
+            enumName.visitEnd();
+        }
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    private static void addEnumStatics(ClassWriter cw, String name, String view, List<String> enumOrder) {
+        String type = "L" + name + ";";
+        MethodVisitor values = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "values", "()[" + type, null, null);
+        values.visitCode();
+        values.visitLdcInsn(enumOrder.size());
+        values.visitTypeInsn(Opcodes.ANEWARRAY, name);
+        for (int i = 0; i < enumOrder.size(); i++) {
+            values.visitInsn(Opcodes.DUP);
+            values.visitLdcInsn(i);
+            values.visitMethodInsn(Opcodes.INVOKESTATIC, view, enumOrder.get(i), "()" + type, false);
+            values.visitInsn(Opcodes.AASTORE);
+        }
+        values.visitInsn(Opcodes.ARETURN);
+        values.visitMaxs(0, 0);
+        values.visitEnd();
+
+        // valueOf compares the name with each old constant, its later spellings included, as the enum did.
+        Map<String, String> constants = name.equals(TIER) ? TIER_CONSTANTS : ARMOR_CONSTANTS;
+        MethodVisitor valueOf = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "valueOf",
+                "(Ljava/lang/String;)" + type, null, null);
+        valueOf.visitCode();
+        for (String constant : constants.keySet()) {
+            org.objectweb.asm.Label next = new org.objectweb.asm.Label();
+            valueOf.visitLdcInsn(constant);
+            valueOf.visitVarInsn(Opcodes.ALOAD, 0);
+            valueOf.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "equals", "(Ljava/lang/Object;)Z", false);
+            valueOf.visitJumpInsn(Opcodes.IFEQ, next);
+            valueOf.visitMethodInsn(Opcodes.INVOKESTATIC, view, constant, "()" + type, false);
+            valueOf.visitInsn(Opcodes.ARETURN);
+            valueOf.visitLabel(next);
+        }
+        valueOf.visitTypeInsn(Opcodes.NEW, "java/lang/IllegalArgumentException");
+        valueOf.visitInsn(Opcodes.DUP);
+        valueOf.visitVarInsn(Opcodes.ALOAD, 0);
+        valueOf.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/IllegalArgumentException", "<init>",
+                "(Ljava/lang/String;)V", false);
+        valueOf.visitInsn(Opcodes.ATHROW);
+        valueOf.visitMaxs(0, 0);
+        valueOf.visitEnd();
     }
 
     /**
@@ -512,19 +592,27 @@ public final class LegacyEquipmentBridge {
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, name, null,
                 "java/lang/Object", new String[]{iface});
         cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, HANDLE, "Ljava/lang/Object;", null, null).visitEnd();
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, ENUM_NAME, "Ljava/lang/String;", null, null).visitEnd();
         Set<String> targets = new java.util.LinkedHashSet<>(constants.values());
+        // Each view answers toString() and name() with the enum constant's old name, the first one
+        // naming its target (CHAIN for CHAINMAIL), as code keyed by tier.toString() expects.
+        Map<String, String> oldNames = new LinkedHashMap<>();
+        constants.forEach((old, target) -> oldNames.putIfAbsent(target, old));
         for (String target : targets) {
             cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "view$" + target,
                     "L" + name + ";", null, null).visitEnd();
         }
 
-        MethodVisitor init = cw.visitMethod(Opcodes.ACC_PRIVATE, "<init>", "(Ljava/lang/Object;)V", null, null);
+        MethodVisitor init = cw.visitMethod(Opcodes.ACC_PRIVATE, "<init>", "(Ljava/lang/Object;Ljava/lang/String;)V", null, null);
         init.visitCode();
         init.visitVarInsn(Opcodes.ALOAD, 0);
         init.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
         init.visitVarInsn(Opcodes.ALOAD, 0);
         init.visitVarInsn(Opcodes.ALOAD, 1);
         init.visitFieldInsn(Opcodes.PUTFIELD, name, HANDLE, "Ljava/lang/Object;");
+        init.visitVarInsn(Opcodes.ALOAD, 0);
+        init.visitVarInsn(Opcodes.ALOAD, 2);
+        init.visitFieldInsn(Opcodes.PUTFIELD, name, ENUM_NAME, "Ljava/lang/String;");
         init.visitInsn(Opcodes.RETURN);
         init.visitMaxs(0, 0);
         init.visitEnd();
@@ -535,12 +623,23 @@ public final class LegacyEquipmentBridge {
             clinit.visitTypeInsn(Opcodes.NEW, name);
             clinit.visitInsn(Opcodes.DUP);
             clinit.visitFieldInsn(Opcodes.GETSTATIC, constantOwner, target, "L" + recordType + ";");
-            clinit.visitMethodInsn(Opcodes.INVOKESPECIAL, name, "<init>", "(Ljava/lang/Object;)V", false);
+            clinit.visitLdcInsn(oldNames.get(target));
+            clinit.visitMethodInsn(Opcodes.INVOKESPECIAL, name, "<init>", "(Ljava/lang/Object;Ljava/lang/String;)V", false);
             clinit.visitFieldInsn(Opcodes.PUTSTATIC, name, "view$" + target, "L" + name + ";");
         }
         clinit.visitInsn(Opcodes.RETURN);
         clinit.visitMaxs(0, 0);
         clinit.visitEnd();
+
+        for (String nameMethod : new String[]{"toString", "name"}) {
+            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, nameMethod, "()Ljava/lang/String;", null, null);
+            mv.visitCode();
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitFieldInsn(Opcodes.GETFIELD, name, ENUM_NAME, "Ljava/lang/String;");
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+        }
 
         constants.forEach((old, target) -> {
             MethodVisitor get = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, old, "()L" + iface + ";",

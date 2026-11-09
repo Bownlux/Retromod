@@ -25,10 +25,22 @@ public final class Mc26_1To26_2CoreMoves {
         RenderBufferSynthetics.register(t);
         LegacyRenderBuffersBridge.register(t);
         LegacyChatFormattingBridge.register(t);
+        // ColorArgument became TeamColorArgument.
+        LegacyColorArgumentBridge.register(t);
+        // I18n.exists(key) is gone; the language still answers it.
+        Legacy262MemberBridge.register(t);
+        // Surface rule sources and conditions return a map codec from codec(), which old ones lack.
+        LegacyKeyDispatchCodecBridge.registerAccessorBridges(t);
 
         // 26.2 builds a spawn egg from Item.Properties.spawnEgg(type) alone, so a mod's old
         // new SpawnEggItem(type, base, spots, properties) failed in its item class initializer.
         LegacySpawnEggBridge.register(t);
+
+        // A mod's own fake player connection still calls the packet listener constructor 1.20.2
+        // removed. Mods on every loader build one, so it is bridged here rather than per loader.
+        LegacyGamePacketListenerBridge.register(t);
+        // 26.2 removed IntrinsicHolderTagsProvider, which Registrate's provider types load at startup.
+        LegacyDatagenStandIns.registerVanilla(t);
 
         // RenderPipeline.Builder replaced named samplers, the blend shortcut, and its combined
         // vertex-format call in 26.2. Adapt the whole builder chain so a custom pipeline does not
@@ -39,11 +51,12 @@ public final class Mc26_1To26_2CoreMoves {
         // StructureProcessor itself became an INTERFACE on 26.2 (26.1: abstract class), so a
         // 1.21.x processor's `extends StructureProcessor` dies at class definition with
         // IncompatibleClassChangeError "has interface ... as super class" (YUNG's Better
-        // Dungeons processors on the 26.2 server). Rebase to Object + implement the interface.
-        t.registerSuperclassRebase(
-            "net/minecraft/world/level/levelgen/structure/templatesystem/StructureProcessor",
-            "java/lang/Object",
-            "net/minecraft/world/level/levelgen/structure/templatesystem/StructureProcessor");
+        // Dungeons processors on the 26.2 server). The processor moves onto a rebuilt base that keeps
+        // the old processBlock and getType and answers the interface's processBlock and codec from them.
+        LegacyStructureProcessorBridge.register(t);
+        // The chunk's moved flag, the spawn entry codec and the villager type constants changed shape between
+        // 1.21.5 and 26.2, so a mod built before them meets all three here.
+        LegacyWorldgenMembersBridge.registerOlder(t);
 
         t.registerClassRedirect("com/mojang/blaze3d/pipeline/RenderPipeline$UniformDescription",
                 "com/mojang/blaze3d/pipeline/BindGroupLayout$UniformDescription");
@@ -71,6 +84,8 @@ public final class Mc26_1To26_2CoreMoves {
                 "net/minecraft/advancements/triggers/Criterion");
         t.registerClassRedirect("net/minecraft/advancements/CriterionTrigger",
                 "net/minecraft/advancements/triggers/CriterionTrigger");
+        // Its Listener went with no successor: a trigger that keeps its own listeners gets them rebuilt.
+        LegacyCriterionTriggerBridge.registerRemovedListener(t);
 
         t.registerClassRedirect("net/minecraft/advancements/criterion/AnyBlockInteractionTrigger",
                 "net/minecraft/advancements/triggers/AnyBlockInteractionTrigger");
@@ -600,7 +615,8 @@ public final class Mc26_1To26_2CoreMoves {
         // 26.1-snapshot-10) moved to Gui in 26.2: `private Screen screen` on net/minecraft/client/
         // gui/Gui with public accessors screen()/setScreen(Screen), reached through the public final
         // Minecraft.gui field (Minecraft.setScreenAndShow is itself just gui.setScreen +
-        // renderFrame). Null-during-gameplay semantics match the old field. Pure-bytecode hop, no
+        // renderFrame). Null-during-gameplay semantics match the old field, and so does a read
+        // while mods construct, before gui exists, which gives null. Pure-bytecode hop, no
         // reflection: this is the TOP client-structure residual (corpus: 31 mods read, 408 sites,
         // many per-frame). Write caveat: the 6 mods that PUTFIELD directly (screen-suppress/restore
         // idioms, e.g. fastquit) now go through the real setScreen, i.e. modern semantics (screen

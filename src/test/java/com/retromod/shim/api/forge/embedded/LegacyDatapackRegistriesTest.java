@@ -18,7 +18,7 @@ import static org.objectweb.asm.Opcodes.*;
 
 /**
  * {@code DeferredRegister.create(ForgeRegistries.ENCHANTMENTS, modid)}, as Scorched Guns builds
- * its enchantment register, on a host where enchantments come from datapacks.
+ * its enchantment register, and the other registries that moved to datapacks, on a host where they come from datapacks.
  */
 class LegacyDatapackRegistriesTest {
 
@@ -27,17 +27,29 @@ class LegacyDatapackRegistriesTest {
     void standInAnswersKeyOnly() throws Exception {
         FakeHost host = new FakeHost(getClass().getClassLoader());
         Class<?> helper = host.loadClass(LegacyDatapackRegistries.class.getName());
-        Object registry = helper.getMethod("enchantments").invoke(null);
+        Object registry = helper.getMethod("paintingVariants").invoke(null);
         Class<?> registryType = host.loadClass("net.minecraft.core.Registry");
         assertTrue(registryType.isInstance(registry), "DeferredRegister.create takes a Registry");
 
         Object key = registryType.getMethod("key").invoke(registry);
-        assertEquals("minecraft:enchantment", key, "the register is built for the datapack registry's key");
-        assertSame(registry, helper.getMethod("enchantments").invoke(null), "one stand-in per registry");
+        assertEquals("minecraft:painting_variant", key, "the register is built for the datapack registry's key");
+        assertSame(registry, helper.getMethod("paintingVariants").invoke(null), "one stand-in per registry");
 
         InvocationTargetException failure = assertThrows(InvocationTargetException.class,
                 () -> registryType.getMethod("size").invoke(registry));
         assertTrue(failure.getCause().getMessage().contains("datapacks"), failure.getCause().getMessage());
+    }
+
+    @Test
+    @DisplayName("ForgeRegistries.ENCHANTMENTS is the view of the loaded world's enchantments that BuiltInRegistries.ENCHANTMENT reads")
+    void enchantmentsAreTheWorldView() throws Exception {
+        FakeHost host = new FakeHost(getClass().getClassLoader());
+        Object registry = host.loadClass(LegacyDatapackRegistries.class.getName()).getMethod("enchantments").invoke(null);
+        Object view = host.loadClass(com.retromod.shim.common.embedded.LegacyEnchantmentRegistry.class.getName())
+                .getMethod("enchantments").invoke(null);
+        assertSame(view, registry, "lookups answer from the world, during a data pack load too");
+        assertEquals("minecraft:enchantment", host.loadClass("net.minecraft.core.Registry").getMethod("key").invoke(registry),
+                "DeferredRegister.create still reads the enchantment registry's key");
     }
 
     /** Defines a two-method Registry and a Registries holder, with the helper beside them. */
@@ -49,7 +61,9 @@ class LegacyDatapackRegistriesTest {
             classes = Map.of(
                     "net.minecraft.core.Registry", registry(),
                     "net.minecraft.core.registries.Registries", registries(),
-                    LegacyDatapackRegistries.class.getName(), resource(LegacyDatapackRegistries.class));
+                    LegacyDatapackRegistries.class.getName(), resource(LegacyDatapackRegistries.class),
+                    com.retromod.shim.common.embedded.LegacyEnchantmentRegistry.class.getName(),
+                    resource(com.retromod.shim.common.embedded.LegacyEnchantmentRegistry.class));
         }
 
         @Override
@@ -75,10 +89,13 @@ class LegacyDatapackRegistriesTest {
             ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
             cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "net/minecraft/core/registries/Registries", null, "java/lang/Object", null);
             cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "ENCHANTMENT", "Ljava/lang/Object;", null, null).visitEnd();
+            cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "PAINTING_VARIANT", "Ljava/lang/Object;", null, null).visitEnd();
             MethodVisitor clinit = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null);
             clinit.visitCode();
             clinit.visitLdcInsn("minecraft:enchantment");
             clinit.visitFieldInsn(PUTSTATIC, "net/minecraft/core/registries/Registries", "ENCHANTMENT", "Ljava/lang/Object;");
+            clinit.visitLdcInsn("minecraft:painting_variant");
+            clinit.visitFieldInsn(PUTSTATIC, "net/minecraft/core/registries/Registries", "PAINTING_VARIANT", "Ljava/lang/Object;");
             clinit.visitInsn(RETURN);
             clinit.visitMaxs(0, 0);
             clinit.visitEnd();

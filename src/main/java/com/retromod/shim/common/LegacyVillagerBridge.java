@@ -4,7 +4,10 @@
  */
 package com.retromod.shim.common;
 
+import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
+import com.retromod.core.SyntheticEmbedder;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
@@ -18,7 +21,8 @@ import org.objectweb.asm.tree.TypeInsnNode;
 import static org.objectweb.asm.Opcodes.*;
 
 /**
- * Keeps villager professions and workstations from mods built before 1.19 constructible.
+ * Keeps villager professions and workstations from mods built before 1.19 constructible, and old
+ * profession reads working where 1.21.5 holds the profession in a holder.
  *
  * <p>1.19 turned {@code PoiType} into a record without a name, removed
  * {@code PoiType.getBlockStates(Block)}, and made {@code VillagerProfession} match its workstation
@@ -36,6 +40,7 @@ public final class LegacyVillagerBridge {
 
     static final String SYNTH = "com/retromod/generated/LegacyVillagers";
     static final String MATCH = "com/retromod/generated/LegacyPoiMatch";
+    static final String DATA_HELPER = "com/retromod/generated/LegacyVillagerData";
     private static final String POI = "net/minecraft/world/entity/ai/village/poi/PoiType";
     private static final String PROFESSION = "net/minecraft/world/entity/npc/VillagerProfession";
     private static final String BLOCK = "net/minecraft/world/level/block/Block";
@@ -64,6 +69,63 @@ public final class LegacyVillagerBridge {
                 SYNTH, "blockStates", "(L" + BLOCK + ";)Ljava/util/Set;");
     }
 
+    /** {@code VillagerData.getProfession()}, which 1.21.5 replaced with {@code profession()} and its holder. */
+    public static void registerProfessionGetter(RetromodTransformer transformer) {
+        // 1.21.11 moved both classes into npc/villager, so the helper names the host's own package.
+        String hostPackage = villagerPackage(hostMovedVillagerClasses());
+        String data = hostPackage + "VillagerData";
+        String profession = hostPackage + "VillagerProfession";
+        transformer.registerSyntheticClass(DATA_HELPER,
+                generateProfessionGetter(data, "profession", profession, HOLDER, "value"));
+        // Farmer's Delight compares it with FARMER to let farmers till its soil. A call may still name either
+        // package, depending on whether the move already applied, so both are matched.
+        for (boolean moved : new boolean[] {false, true}) {
+            String callPackage = villagerPackage(moved);
+            transformer.registerMethodRedirect(callPackage + "VillagerData", "getProfession",
+                    "()L" + callPackage + "VillagerProfession;", DATA_HELPER, "profession",
+                    "(L" + data + ";)L" + profession + ";", true);
+        }
+    }
+
+    /** The same call in the intermediary names a Fabric 1.21.5 to 1.21.11 host runs, which stayed the same in each. */
+    public static void registerProfessionGetterIntermediary(RetromodTransformer transformer) {
+        String data = "net/minecraft/class_3850";
+        String profession = "net/minecraft/class_3852";
+        transformer.registerSyntheticClass(DATA_HELPER,
+                generateProfessionGetter(data, "comp_3521", profession, "net/minecraft/class_6880", "comp_349"));
+        transformer.registerMethodRedirect(data, "method_16924", "()L" + profession + ";",
+                DATA_HELPER, "profession", "(L" + data + ";)L" + profession + ";", true);
+    }
+
+    private static String villagerPackage(boolean moved) {
+        return moved ? "net/minecraft/world/entity/npc/villager/" : "net/minecraft/world/entity/npc/";
+    }
+
+    /** Whether the host keeps villager data in npc/villager; offline, a host from 1.21.11. */
+    static boolean hostMovedVillagerClasses() {
+        if (ClassResourceInspector.exists(villagerPackage(true) + "VillagerData")) return true;
+        if (ClassResourceInspector.exists(villagerPackage(false) + "VillagerData")) return false;
+        return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21.11") >= 0;
+    }
+
+    /** {@code static profession(data)}: the profession the data's holder holds. */
+    static byte[] generateProfessionGetter(String data, String accessor, String profession, String holder, String value) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, DATA_HELPER, null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "profession", "(L" + data + ";)L" + profession + ";",
+                null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEVIRTUAL, data, accessor, "()L" + holder + ";", false);
+        mv.visitMethodInsn(INVOKEINTERFACE, holder, value, "()Ljava/lang/Object;", true);
+        mv.visitTypeInsn(CHECKCAST, profession);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
     /** True once the bridge is registered, so the call-site pass runs only where it can link. */
     public static boolean isRegistered(RetromodTransformer transformer) {
         return transformer.getSyntheticClasses().containsKey(SYNTH);
@@ -83,7 +145,7 @@ public final class LegacyVillagerBridge {
         } catch (Throwable unreadable) {
             return classBytes;
         }
-        if (node.name.startsWith("com/retromod/") || node.name.startsWith("net/minecraft/")) {
+        if (SyntheticEmbedder.isRetromodClass(node.name) || node.name.startsWith("net/minecraft/")) {
             return classBytes;
         }
         int changes = 0;

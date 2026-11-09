@@ -21,9 +21,14 @@ import java.util.List;
  * @param targetDesc the descriptor it calls
  * @param sources    for each target parameter, the index of the bridge parameter passed to it, or
  *                   null to pass every parameter in order
+ * @param unwrap     an instance method called on what the target returns, whose result the bridge
+ *                   returns instead, or null
  */
 public record ImplementedMethodBridge(String iface, String name, String desc, String targetName,
-        String targetDesc, List<Integer> sources) {
+        String targetDesc, List<Integer> sources, Unwrap unwrap) {
+
+    /** A no-argument instance method of {@code owner} that turns the target's result into the bridge's. */
+    public record Unwrap(String owner, String name, String desc) {}
 
     public ImplementedMethodBridge {
         int bridgeCount = Type.getArgumentTypes(desc).length;
@@ -42,10 +47,16 @@ public record ImplementedMethodBridge(String iface, String name, String desc, St
         }
     }
 
+    /** A bridge that returns what the target returns. */
+    public ImplementedMethodBridge(String iface, String name, String desc, String targetName,
+            String targetDesc, List<Integer> sources) {
+        this(iface, name, desc, targetName, targetDesc, sources, null);
+    }
+
     /** A bridge that passes every parameter in order. */
     public ImplementedMethodBridge(String iface, String name, String desc, String targetName,
             String targetDesc) {
-        this(iface, name, desc, targetName, targetDesc, null);
+        this(iface, name, desc, targetName, targetDesc, null, null);
     }
 
     /** Writes the method into the class {@code out} is building. */
@@ -72,10 +83,15 @@ public record ImplementedMethodBridge(String iface, String name, String desc, St
             }
         }
         mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, iface, targetName, targetDesc, true);
+        Type targetResult = Type.getReturnType(targetDesc);
+        // An unwrap call turns what the target returns into the part the bridge returns.
+        if (unwrap != null) {
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, unwrap.owner(), unwrap.name(), unwrap.desc(), false);
+            targetResult = Type.getReturnType(unwrap.desc());
+        }
 
         // A void bridge drops what the target returns; any other return passes through.
         Type result = Type.getReturnType(desc);
-        Type targetResult = Type.getReturnType(targetDesc);
         if (result.getSort() == Type.VOID && targetResult.getSort() != Type.VOID) {
             mv.visitInsn(targetResult.getSize() == 2 ? Opcodes.POP2 : Opcodes.POP);
         } else if (needsCast(targetResult, result)) {

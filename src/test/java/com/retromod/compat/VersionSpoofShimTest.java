@@ -9,6 +9,10 @@ import com.retromod.shim.api.common.VersionSpoofShim;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -80,5 +84,53 @@ class VersionSpoofShimTest {
                 VersionSpoofer.getModContainer(notAFabricLoader, "not-in-table"));
 
         VersionSpoofer.resetForTesting();
+    }
+
+    @Test
+    @DisplayName("isModLoaded answers the fabric id for Fabric API when the host no longer provides it")
+    void isModLoadedAnswersFabricForFabricApi() {
+        StandInLoader host26 = new StandInLoader("fabric-api");
+        assertTrue(VersionSpoofer.isModLoaded(host26, "fabric"), "26.x Fabric API is the old fabric mod");
+        assertTrue(VersionSpoofer.isModLoaded(host26, "fabric-api"));
+        assertFalse(VersionSpoofer.isModLoaded(host26, "sodium"), "only the fabric id falls back");
+        assertTrue(VersionSpoofer.isModLoaded(new StandInLoader("fabric"), "fabric"),
+                "a host that still provides fabric answers for itself");
+        assertFalse(VersionSpoofer.isModLoaded(new StandInLoader(), "fabric"),
+                "without Fabric API there is no fabric mod either");
+        assertFalse(VersionSpoofer.isModLoaded(new Object(), "fabric"),
+                "a receiver without isModLoaded answers false, as Fabric does for a missing mod");
+    }
+
+    @Test
+    @DisplayName("getModContainer finds Fabric API under the fabric id, and a host's own fabric container wins")
+    void getModContainerFindsFabricApiUnderFabric() {
+        VersionSpoofer.setSpoofTableForTesting(Map.of());
+        try {
+            assertEquals(Optional.of("container of fabric-api"),
+                    VersionSpoofer.getModContainer(new StandInLoader("fabric-api"), "fabric"));
+            assertEquals(Optional.empty(), VersionSpoofer.getModContainer(new StandInLoader("fabric-api"), "sodium"),
+                    "only the fabric id falls back");
+            assertEquals(Optional.of("container of fabric"),
+                    VersionSpoofer.getModContainer(new StandInLoader("fabric", "fabric-api"), "fabric"));
+        } finally {
+            VersionSpoofer.resetForTesting();
+        }
+    }
+
+    /** A loader that knows only the given mod ids, each with its own container. */
+    static final class StandInLoader {
+        private final Map<String, Object> containers = new HashMap<>();
+
+        StandInLoader(String... modIds) {
+            for (String modId : modIds) containers.put(modId, "container of " + modId);
+        }
+
+        public boolean isModLoaded(String modId) {
+            return containers.containsKey(modId);
+        }
+
+        public Optional<Object> getModContainer(String modId) {
+            return Optional.ofNullable(containers.get(modId));
+        }
     }
 }

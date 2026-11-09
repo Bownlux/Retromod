@@ -4,6 +4,7 @@
  */
 package com.retromod.inplace;
 
+import com.retromod.core.RetromodVersion;
 import com.retromod.core.SyntheticLibraries;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,7 +30,8 @@ import java.util.function.Supplier;
  *   <li>{@link Action#TRANSLATE_INTO_CACHE}: the bootstrap ran in-place loading during
  *       discovery. The entry point translates what it left pending into the cache, and
  *       writes nothing into {@code mods/} or {@code retromod-input/}.</li>
- *   <li>{@link Action#LEAVE_ALONE}: in-place mode is on but the discovery pass could not run.
+ *   <li>{@link Action#LEAVE_ALONE}: in-place mode is on but the discovery pass could not run,
+ *       or the host has none (NeoForge 1.20.2 to 1.20.4 and builds with FML 3.0.18).
  *       Rewriting {@code mods/} would go against the setting, so nothing is changed.</li>
  * </ul>
  */
@@ -99,12 +101,19 @@ public final class InPlaceLaunch {
     private final Action action;
     private final InPlaceStatus status;
     private final String reason;
+    private final boolean knownLimit;
     private final java.util.Set<String> hiddenPaths;
 
     private InPlaceLaunch(Action action, InPlaceStatus status, String reason) {
+        this(action, status, reason, false);
+    }
+
+    private InPlaceLaunch(Action action, InPlaceStatus status, String reason,
+            boolean knownLimit) {
         this.action = action;
         this.status = status;
         this.reason = reason;
+        this.knownLimit = knownLimit;
         this.hiddenPaths = status == null ? java.util.Set.of() : status.hiddenPaths();
     }
 
@@ -140,6 +149,13 @@ public final class InPlaceLaunch {
         if (configured.writeTranslatedJars()) {
             return new InPlaceLaunch(Action.REWRITE, null, "write_translated_jars is true");
         }
+        // The bootstrap on NeoForge 1.20.2 to 1.20.4 and FML 3.0.18 builds has no discovery
+        // pass, so an unchanged mods/ is a known limit there, not a failure to report.
+        if (InPlaceStatus.DISCOVERY_NONE.equals(
+                properties.getProperty(InPlaceStatus.DISCOVERY_PROPERTY))) {
+            return new InPlaceLaunch(Action.LEAVE_ALONE, null,
+                    "this NeoForge version runs no discovery pass", true);
+        }
         if (properties.getProperty(BOOT_OWNER_PROPERTY) == null) {
             return new InPlaceLaunch(Action.REWRITE, null,
                     "Retromod was loaded without its bootstrap, which in-place loading needs");
@@ -160,6 +176,11 @@ public final class InPlaceLaunch {
     /** Why this action was chosen, or null for in-place translation. */
     public String reason() {
         return reason;
+    }
+
+    /** True when mods/ is left alone because the host cannot run in-place loading at all. */
+    public boolean knownLimit() {
+        return knownLimit;
     }
 
     public Optional<InPlaceStatus> status() {
@@ -183,11 +204,30 @@ public final class InPlaceLaunch {
                     + "({})", reason);
             case TRANSLATE_INTO_CACHE -> LOGGER.info("In-place loading is on. Translated mods "
                     + "live in retromod-cache/, and mods/ is not changed.");
-            case LEAVE_ALONE -> LOGGER.warn("In-place loading is on, but {}. Retromod leaves "
-                    + "mods/ unchanged this launch. Set write_translated_jars to true in "
-                    + "config/retromod/config.json to use the rewrite mode instead, and "
-                    + "please report this with logs/latest.log.", reason);
+            case LEAVE_ALONE -> {
+                if (knownLimit) {
+                    LOGGER.info(knownLimitMessage(RetromodVersion.TARGET_MC_VERSION));
+                } else {
+                    LOGGER.warn("In-place loading is on, but {}. Retromod leaves mods/ "
+                            + "unchanged this launch. Set write_translated_jars to true in "
+                            + "config/retromod/config.json to use the rewrite mode instead, "
+                            + "and please report this with logs/latest.log.", reason);
+                }
+            }
         }
+    }
+
+    /** What the log says on a host with no discovery pass, for a game on {@code minecraft}. */
+    static String knownLimitMessage(String minecraft) {
+        String message = "In-place loading is not available on this NeoForge version, so "
+                + "Retromod leaves mods/ unchanged.";
+        // NeoForge 1.20.2 to 1.20.4 cannot see a jar the rewrite mode writes, so the advice
+        // starts at 1.20.5, whose FML 3.0.18 builds read the renamed toml.
+        if (minecraft != null && !RetromodVersion.mcVersionExceeds("1.20.5", minecraft)) {
+            message += " Set write_translated_jars to true in config/retromod/config.json to "
+                    + "translate old mods into mods/.";
+        }
+        return message;
     }
 
     /**

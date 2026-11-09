@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.common;
 
+import com.retromod.core.SyntheticEmbedder;
 import com.retromod.util.SafeClassWriter;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
@@ -62,7 +63,7 @@ public final class LegacyRecipeSerializerFlowAdapter {
         } catch (RuntimeException unreadable) {
             return classBytes;
         }
-        if (node.name.startsWith("net/minecraft/") || node.name.startsWith("com/retromod/")) {
+        if (node.name.startsWith("net/minecraft/") || SyntheticEmbedder.isRetromodClass(node.name)) {
             return classBytes;
         }
         boolean changed = false;

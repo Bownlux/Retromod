@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import com.retromod.util.RetromodLog;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.slf4j.Logger;
@@ -76,7 +77,7 @@ public final class LegacyBuiltinEntityBlockModels implements ModResourceConverte
             }
         }
         if (changed > 0) {
-            LOGGER.info("Gave block entity blocks particle-only models in {} file(s)", changed);
+            LOGGER.debug(RetromodLog.DETAIL, "Gave block entity blocks particle-only models in {} file(s)", changed);
         }
         return changed;
     }

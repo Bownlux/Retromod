@@ -7,6 +7,7 @@
 package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.GeneratedLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -215,17 +216,16 @@ public final class RenderBufferSynthetics {
     private static void emitEndBatch(ClassWriter cw, String name, String desc) {
         MethodVisitor m = cw.visitMethod(ACC_PUBLIC, name, desc, null, null);
         m.visitCode();
-        // if (!warned) { warned = true; System.err.println(...); }
+        // if (!warned) { warned = true; warn once in the game log; }
         m.visitFieldInsn(GETSTATIC, BS, "warned", "Z");
         Label skip = new Label();
         m.visitJumpInsn(IFNE, skip);
         m.visitInsn(ICONST_1);
         m.visitFieldInsn(PUTSTATIC, BS, "warned", "Z");
-        m.visitFieldInsn(GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;");
-        m.visitLdcInsn("[Retromod] MultiBufferSource batch submission is not yet bridged onto "
-                + "the 26.2 render pipeline; geometry was built but not drawn (staged)");
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println",
-                "(Ljava/lang/String;)V", false);
+        GeneratedLog.pushLogger(m);
+        m.visitLdcInsn("[Retromod] An old mod drew through MultiBufferSource, which Retromod cannot draw on "
+                + "this Minecraft version yet, so that mod's custom geometry does not show.");
+        GeneratedLog.warn(m);
         m.visitLabel(skip);
         // buffers.clear(); - drop the batch so memory doesn't accumulate across frames
         m.visitVarInsn(ALOAD, 0);

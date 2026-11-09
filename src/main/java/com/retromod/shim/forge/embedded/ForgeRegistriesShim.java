@@ -6,6 +6,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.*;
 import java.util.*;
 
@@ -155,11 +156,11 @@ public final class ForgeRegistriesShim {
         if (registry == null || location == null) return null;
 
         try {
-            Method getMethod = registry.getClass().getMethod("get", location.getClass());
+            Method getMethod = LegacyPublicMethods.method(registry.getClass(), "get", location.getClass());
             return getMethod.invoke(registry, location);
         } catch (NoSuchMethodException e) {
             try {
-                Method getValueMethod = registry.getClass().getMethod("getValue", location.getClass());
+                Method getValueMethod = LegacyPublicMethods.method(registry.getClass(), "getValue", location.getClass());
                 return getValueMethod.invoke(registry, location);
             } catch (Exception e2) {
                 System.err.println("Retromod: Could not get registry value: " + e2);
@@ -176,7 +177,7 @@ public final class ForgeRegistriesShim {
         if (registry == null || value == null) return null;
 
         try {
-            Method getKeyMethod = registry.getClass().getMethod("getKey", Object.class);
+            Method getKeyMethod = LegacyPublicMethods.method(registry.getClass(), "getKey", Object.class);
             return getKeyMethod.invoke(registry, value);
         } catch (Exception e) {
             System.err.println("Retromod: Could not get registry key: " + e);
@@ -189,7 +190,7 @@ public final class ForgeRegistriesShim {
         if (registry == null || location == null) return false;
 
         try {
-            Method containsKeyMethod = registry.getClass().getMethod("containsKey", location.getClass());
+            Method containsKeyMethod = LegacyPublicMethods.method(registry.getClass(), "containsKey", location.getClass());
             return (boolean) containsKeyMethod.invoke(registry, location);
         } catch (Exception e) {
             return getValue(registry, location) != null;
@@ -201,7 +202,7 @@ public final class ForgeRegistriesShim {
         if (registry == null) return Collections.emptySet();
         
         try {
-            Method keySetMethod = registry.getClass().getMethod("keySet");
+            Method keySetMethod = LegacyPublicMethods.method(registry.getClass(), "keySet");
             return (Set<Object>) keySetMethod.invoke(registry);
         } catch (Exception e) {
             System.err.println("Retromod: Could not get registry keys: " + e);
@@ -214,7 +215,7 @@ public final class ForgeRegistriesShim {
         if (registry == null) return Collections.emptyList();
 
         try {
-            Method iteratorMethod = registry.getClass().getMethod("iterator");
+            Method iteratorMethod = LegacyPublicMethods.method(registry.getClass(), "iterator");
             Iterator<Object> iter = (Iterator<Object>) iteratorMethod.invoke(registry);
 
             List<Object> values = new ArrayList<>();

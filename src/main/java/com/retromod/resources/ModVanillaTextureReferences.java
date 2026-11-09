@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import com.retromod.util.RetromodLog;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.slf4j.Logger;
@@ -48,11 +49,11 @@ public final class ModVanillaTextureReferences implements ModResourceConverter {
             if (rewriteMaterial(tree, name, renames)) changed++;
         }
         if (changed > 0) {
-            LOGGER.info("Pointed {} model file(s) at the vanilla textures Minecraft {} ships", changed,
+            LOGGER.debug(RetromodLog.DETAIL, "Pointed {} model file(s) at the vanilla textures Minecraft {} ships", changed,
                     context.targetMcVersion());
         }
         if (renames.keptOnNewLayout > 0) {
-            LOGGER.info("Kept {} vanilla texture reference(s) as written: Minecraft {} only has that art "
+            LOGGER.debug(RetromodLog.DETAIL, "Kept {} vanilla texture reference(s) as written: Minecraft {} only has that art "
                     + "redrawn in another layout, so those faces show the missing texture",
                     renames.keptOnNewLayout, context.targetMcVersion());
         }

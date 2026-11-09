@@ -19,11 +19,14 @@ import java.util.stream.Collectors;
 import static org.objectweb.asm.Opcodes.*;
 
 /**
- * Keeps mods that name tool abilities linking on 26.3, on NeoForge and on Forge.
+ * Keeps mods that name tool abilities linking on 26.3, on NeoForge and on Forge, and the shield
+ * ability on Forge 26.2.
  *
  * <p>26.3 made tools data-driven, and both loaders removed the axe, hoe, pickaxe, shovel, sword,
  * and shield constants, together with the default sets built from them: NeoForge from
- * {@code ItemAbilities}, Forge 66 from {@code ToolActions}. A mod that read one failed with
+ * {@code ItemAbilities}, Forge 66 from {@code ToolActions}. Forge 26.2 had already dropped
+ * {@code SHIELD_BLOCK} and {@code DEFAULT_SHIELD_ACTIONS}, because shields block through a vanilla
+ * data component there. A mod that read one failed with
  * {@code NoSuchFieldError}. Both APIs still intern an ability by name ({@code ItemAbility.get},
  * {@code ToolAction.get}), so each read now returns the same ability the constant held. Whether a
  * vanilla tool still reports that ability is decided by the host's tool data.
@@ -72,7 +75,7 @@ public final class LegacyItemAbilitiesBridge {
         register(transformer, NEOFORGE, hostFields(NEOFORGE));
     }
 
-    /** Forge hosts. */
+    /** Forge hosts: the shield ability and its set from 26.2, the rest from 26.3. */
     public static void registerForge(RetromodTransformer transformer) {
         register(transformer, FORGE, hostFields(FORGE));
     }
@@ -85,11 +88,11 @@ public final class LegacyItemAbilitiesBridge {
     static void register(RetromodTransformer transformer, Flavor flavor, Set<String> hostFields) {
         List<String[]> abilities = new ArrayList<>();
         for (String[] ability : ABILITY_NAMES) {
-            if (removedFromHost(hostFields, ability[0])) abilities.add(ability);
+            if (removedFromHost(flavor, hostFields, ability[0])) abilities.add(ability);
         }
         List<String[]> sets = new ArrayList<>();
         for (String[] set : DEFAULT_SETS) {
-            if (removedFromHost(hostFields, set[0])) sets.add(set);
+            if (removedFromHost(flavor, hostFields, set[0])) sets.add(set);
         }
         if (abilities.isEmpty() && sets.isEmpty()) return;
 
@@ -117,9 +120,11 @@ public final class LegacyItemAbilitiesBridge {
     }
 
     /** The host's own constants class decides; offline, the target version does. */
-    private static boolean removedFromHost(Set<String> hostFields, String constant) {
+    private static boolean removedFromHost(Flavor flavor, Set<String> hostFields, String constant) {
         if (hostFields != null) return !hostFields.contains(constant);
-        return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.3") >= 0;
+        // Forge 26.2 already dropped the shield ability, as shields block through a vanilla component there.
+        String removedIn = flavor == FORGE && constant.contains("SHIELD") ? "26.2" : "26.3";
+        return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, removedIn) >= 0;
     }
 
     static byte[] generateHelper(List<String[]> abilities, List<String[]> sets) {

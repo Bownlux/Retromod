@@ -11,8 +11,10 @@ import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.PrintStream;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -38,6 +40,17 @@ class BootEngineTest {
 
     private static BootEngine.EngineClassLoader engine(URL... classPath) {
         return new BootEngine.EngineClassLoader(classPath, BootEngineTest.class.getClassLoader());
+    }
+
+    @Test
+    @DisplayName("the bootstrap and the entry point use the same in-place system properties")
+    void inPlacePropertiesMatchTheEntryPoint() {
+        assertEquals(com.retromod.inplace.InPlaceStatus.MODE_PROPERTY, InPlaceBoot.MODE_PROPERTY);
+        assertEquals(com.retromod.inplace.InPlaceStatus.STATUS_PROPERTY,
+                InPlaceBoot.STATUS_PROPERTY);
+        assertEquals(com.retromod.inplace.InPlaceStatus.DISCOVERY_PROPERTY,
+                InPlaceBoot.DISCOVERY_PROPERTY);
+        assertEquals(com.retromod.inplace.InPlaceStatus.DISCOVERY_NONE, InPlaceBoot.DISCOVERY_NONE);
     }
 
     @Test
@@ -126,7 +139,21 @@ class BootEngineTest {
             zip.closeEntry();
         }
 
-        assertTrue(BootEngine.run(empty, Map.of(), BootLog.standardOutput()).isEmpty());
+        // The standard output logger prints when called, so swapping System.out captures it.
+        PrintStream console = System.out;
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(captured, true, StandardCharsets.UTF_8));
+            assertTrue(BootEngine.run(empty, Map.of(), BootLog.standardOutput()).isEmpty());
+        } finally {
+            System.setOut(console);
+        }
+
+        String output = captured.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("ClassNotFoundException: com.retromod.inplace.DiscoveryEngine"),
+                output);
+        assertTrue(output.contains("at com.retromod.boot.BootEngine"),
+                "the report must name the class and line that failed: " + output);
     }
 
     private static URL codeSource(Class<?> type) {

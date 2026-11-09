@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.api.common.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 
 /** Architectury API compatibility shim. */
@@ -27,7 +28,7 @@ public class ArchitecturyShim {
     
     public static Object getDeferredRegister(Object registries, Object registry) {
         try {
-            for (Method m : registries.getClass().getMethods()) {
+            for (Method m : LegacyPublicMethods.methods(registries.getClass())) {
                 if (m.getName().equals("get") && m.getParameterCount() == 1) {
                     return m.invoke(registries, registry);
                 }
@@ -40,6 +41,7 @@ public class ArchitecturyShim {
             Method create = deferredClass.getMethod("create", String.class, Class.forName("net.minecraft.core.Registry"));
             return create.invoke(null, "unknown", registry);
         } catch (Exception e) {
+            ApiShimWarnings.warnOnce("Architectury", "getDeferredRegister", registries, "it returned null", e);
             return null;
         }
     }
@@ -62,7 +64,9 @@ public class ArchitecturyShim {
                     Class.forName("me.shedaniel.architectury.networking.NetworkManager$NetworkReceiver"));
                 method.invoke(null, side, resourceLocation, receiver);
             } catch (Exception e2) {
-                System.err.println("[Retromod] Architectury network registration failed: " + e2.getMessage());
+                // Name both failures: the current API's is usually the real one, the old fallback's is a missing class.
+                ApiShimWarnings.warnOnce("Architectury", "registerReceiver", receiver, "the receiver was not "
+                        + "registered (the older me.shedaniel API failed too: " + ApiShimWarnings.describe(e2) + ")", e);
             }
         }
     }

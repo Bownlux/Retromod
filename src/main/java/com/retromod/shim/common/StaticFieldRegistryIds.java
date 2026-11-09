@@ -32,7 +32,7 @@ import java.util.Set;
 public final class StaticFieldRegistryIds {
 
     /** No field has a known id. */
-    public static final StaticFieldRegistryIds NONE = new StaticFieldRegistryIds(Map.of(), Map.of(), null);
+    public static final StaticFieldRegistryIds NONE = new StaticFieldRegistryIds(Map.of(), Map.of(), null, Map.of());
 
     // 26.x refuses to build a block or item whose Properties carry no registry id. A multiloader mod
     // fills ModBlocks.FOO in one class and registers it from another, loader-specific one, and FOO can
@@ -46,12 +46,16 @@ public final class StaticFieldRegistryIds {
     private final String namespace;
     /** Each owner's name as it appears in a class file that refers to it. */
     private final List<byte[]> ownerNames;
+    // The namespace each of the jar's static id(String path) methods adds, by owner.name+desc.
+    private final Map<String, String> idHelperNamespaces;
 
     private StaticFieldRegistryIds(Map<String, Map<String, String[]>> idsByOwner,
-                                   Map<String, Map<String, String[]>> entityTypeIdsByOwner, String namespace) {
+                                   Map<String, Map<String, String[]>> entityTypeIdsByOwner, String namespace,
+                                   Map<String, String> idHelperNamespaces) {
         this.idsByOwner = idsByOwner;
         this.entityTypeIdsByOwner = entityTypeIdsByOwner;
         this.namespace = namespace;
+        this.idHelperNamespaces = idHelperNamespaces;
         this.ownerNames = idsByOwner.keySet().stream().map(StaticFieldIdStamper::utf8).toList();
     }
 
@@ -85,6 +89,29 @@ public final class StaticFieldRegistryIds {
         return false;
     }
 
+    /** The {@code {namespace, path}} of the id {@code producer} builds from literals alone, or null. */
+    public String[] provenId(MethodNode m, Frame<SourceValue>[] frames, AbstractInsnNode producer) {
+        AbstractInsnNode value = throughLocal(m, frames, producer);
+        // A key wraps the id it is made from: ResourceKey.create(registry, id).
+        if (value instanceof MethodInsnNode create && isKeyFromId(create)) {
+            Frame<SourceValue> f = frames[m.instructions.indexOf(create)];
+            if (f == null) return null;
+            value = throughLocal(m, frames, single(f.getStack(f.getStackSize() - 1)));
+        }
+        // A literal namespace, or the one the jar's own id(path) helper adds, and a literal path.
+        IdShape id = idShape(m, frames, value);
+        if (id == null || id.path() == null) return null;
+        String resolved = id.namespace().resolve(idHelperNamespaces);
+        return resolved == null ? null : new String[]{resolved, id.path()};
+    }
+
+    /** Whether this is {@code ResourceKey.create(registry, id)}. */
+    private static boolean isKeyFromId(MethodInsnNode call) {
+        Type[] args = Type.getArgumentTypes(call.desc);
+        return call.getOpcode() == Opcodes.INVOKESTATIC && RESOURCE_KEY.equals(call.owner) && "create".equals(call.name)
+                && args.length == 2 && args[1].getSort() == Type.OBJECT && isIdClass(args[1].getInternalName());
+    }
+
     /** The number of fields with a known id, for logging. */
     public int fieldCount() {
         return idsByOwner.values().stream().mapToInt(Map::size).sum()
@@ -101,6 +128,7 @@ public final class StaticFieldRegistryIds {
     private static final String REGISTRY = "net/minecraft/core/Registry";
     private static final String IDENTIFIER = "net/minecraft/resources/Identifier";
     private static final String RESOURCE_LOCATION = "net/minecraft/resources/ResourceLocation";
+    private static final String RESOURCE_KEY = "net/minecraft/resources/ResourceKey";
     /** {@code Registry}, its 3-argument {@code register}, and {@code Identifier}, in intermediary. */
     private static final String INTERMEDIARY_REGISTRY = "net/minecraft/class_2378";
     private static final String INTERMEDIARY_REGISTER = "method_10230";
@@ -178,6 +206,12 @@ public final class StaticFieldRegistryIds {
     /** {@code register("name", () -> Owner.FIELD)} on the deferred register held in {@code register}. */
     private record DeferredCall(String register, String name, String supplier) {}
 
+    /** A consumer's call {@code callee(helper::register)}: the helper reaches the callee's argument {@code arg}. */
+    private record ForwardedHelper(String consumer, String callee, int arg) {}
+
+    /** {@code accept(id, Owner.FIELD)} on the method's BiConsumer parameter {@code param}; the id is literal or a static id field. */
+    private record ForwarderAccept(String method, int param, String field, IdShape id, String idField) {}
+
     /** A deferred register's namespace and registry, read from where its field is filled. */
     private record DeferredRegister(String namespace, Kind kind) {}
 
@@ -198,6 +232,10 @@ public final class StaticFieldRegistryIds {
         private final Map<String, DeferredRegister> deferredRegisters = new HashMap<>();
         private final Set<String> ambiguousDeferredRegisters = new HashSet<>();
         private final List<DeferredCall> deferredCalls = new ArrayList<>();
+        private final List<ForwardedHelper> forwardedHelpers = new ArrayList<>();
+        private final List<ForwarderAccept> forwarderAccepts = new ArrayList<>();
+        /** {@code owner.field} of each static id field a class initializer fills with a known id. */
+        private final Map<String, IdShape> idFields = new HashMap<>();
         private final Map<String, String> fieldSuppliers = new HashMap<>();
         /** {@code owner.name+desc} of each static {@code id(String path)} to the namespace it adds. */
         private final Map<String, String> idHelpers = new HashMap<>();
@@ -216,7 +254,8 @@ public final class StaticFieldRegistryIds {
                 if (m.instructions == null || m.instructions.size() == 0) continue;
                 noteFieldSupplier(cn.name, m);
                 boolean mayBeIdHelper = mayBeIdHelper(m);
-                if (!mayBeIdHelper && !mayMatter(m)) continue;
+                boolean storesIds = storesIdFields(m);
+                if (!mayBeIdHelper && !storesIds && !mayMatter(m)) continue;
                 Frame<SourceValue>[] frames;
                 try {
                     frames = new Analyzer<>(new SourceInterpreter()).analyze(cn.name, m);
@@ -224,6 +263,7 @@ public final class StaticFieldRegistryIds {
                     continue;
                 }
                 if (mayBeIdHelper) noteIdHelper(cn.name, m, frames);
+                if (storesIds) noteIdFields(m, frames);
                 readMethod(cn.name, m, frames);
             }
             return this;
@@ -259,6 +299,19 @@ public final class StaticFieldRegistryIds {
                     found.add(new Found(register.kind(), field, Namespace.of(register.namespace()), call.name()));
                 }
             }
+            // A consumer that hands its helper on, as Patchouli's submitItemRegistrations(helper::register)
+            // does, counts for each accept(id, field) the receiving method makes on that argument.
+            for (ForwardedHelper call : forwardedHelpers) {
+                Kind kind = consumerKinds.get(call.consumer());
+                if (kind == null || ambiguousConsumers.contains(call.consumer())) continue;
+                for (ForwarderAccept accept : forwarderAccepts) {
+                    if (!accept.method().equals(call.callee()) || accept.param() != call.arg()) continue;
+                    IdShape id = accept.id() != null ? accept.id() : idFields.get(accept.idField());
+                    if (id != null && id.path() != null) {
+                        found.add(new Found(kind, accept.field(), id.namespace(), id.path()));
+                    }
+                }
+            }
             // Resolve each namespace now that every id helper is known.
             for (Found registration : found) {
                 String namespace = registration.namespace().resolve(idHelpers);
@@ -275,8 +328,10 @@ public final class StaticFieldRegistryIds {
             Map<String, Map<String, String[]>> byOwner = byOwner(ids);
             Map<String, Map<String, String[]>> entityTypesByOwner = byOwner(entityTypeIds);
             String namespace = namespaces.namespace();
-            if (byOwner.isEmpty() && entityTypesByOwner.isEmpty() && namespace == null) return NONE;
-            return new StaticFieldRegistryIds(byOwner, entityTypesByOwner, namespace);
+            if (byOwner.isEmpty() && entityTypesByOwner.isEmpty() && namespace == null && idHelpers.isEmpty()) {
+                return NONE;
+            }
+            return new StaticFieldRegistryIds(byOwner, entityTypesByOwner, namespace, Map.copyOf(idHelpers));
         }
 
         /** Groups {@code owner.field} keys by owner. */
@@ -304,6 +359,7 @@ public final class StaticFieldRegistryIds {
             for (AbstractInsnNode insn : m.instructions) {
                 if (insn instanceof MethodInsnNode call && (isRegistration(call) || isRegisterHelper(call)
                         || isRegisterEvent(call) || isDeferredRegistration(call) || isDeferredCreate(call)
+                        || isBiConsumerAccept(call)
                         || (call.getOpcode() == Opcodes.INVOKESTATIC && jarClasses.contains(call.owner)))) {
                     return true;
                 }
@@ -327,7 +383,10 @@ public final class StaticFieldRegistryIds {
                     readDeferredRegistration(m, frames, f);
                 } else if (isDeferredCreate(call)) {
                     readDeferredCreate(m, frames, call);
+                } else if (isBiConsumerAccept(call)) {
+                    readForwarderAccept(owner, m, frames, f);
                 } else if (call.getOpcode() == Opcodes.INVOKESTATIC && jarClasses.contains(call.owner)) {
+                    readForwardedHelper(owner, m, call, f);
                     readHelperCall(call, f);
                 }
             }
@@ -404,11 +463,71 @@ public final class StaticFieldRegistryIds {
         private void readRegisterEvent(String owner, MethodNode m, Frame<SourceValue>[] frames, Frame<SourceValue> f) {
             int top = f.getStackSize();
             Kind kind = registryKind(single(f.getStack(top - 2)));
+            // BuiltInRegistries.ITEM.key() names the same registry, as Nature's Compass writes it.
+            if (kind == null && single(f.getStack(top - 2)) instanceof MethodInsnNode key && "key".equals(key.name)
+                    && key.desc.equals("()L" + RESOURCE_KEY + ";")) {
+                Frame<SourceValue> atKey = frames[m.instructions.indexOf(key)];
+                if (atKey != null) kind = registryKind(single(atKey.getStack(atKey.getStackSize() - 1)));
+            }
             String consumer = lambdaImplementation(single(f.getStack(top - 1)));
             if (consumer == null) return;
             // A consumer handed an unknown registry, or two different ones, counts for none.
             Kind previous = consumerKinds.putIfAbsent(consumer, kind);
             if (kind == null || (previous != null && previous != kind)) ambiguousConsumers.add(consumer);
+        }
+
+        /** {@code callee(helper::register)} inside a method that may be a registration consumer. */
+        private void readForwardedHelper(String owner, MethodNode m, MethodInsnNode call, Frame<SourceValue> f) {
+            int argCount = Type.getArgumentTypes(call.desc).length;
+            int base = f.getStackSize() - argCount;
+            for (int arg = 0; arg < argCount; arg++) {
+                if (boundHelperRegister(single(f.getStack(base + arg)))) {
+                    forwardedHelpers.add(new ForwardedHelper(owner + "." + m.name + m.desc,
+                            call.owner + "." + call.name + call.desc, arg));
+                }
+            }
+        }
+
+        /** {@code consumer.accept(id, Owner.FIELD)} where the consumer is one of the method's parameters. */
+        private void readForwarderAccept(String owner, MethodNode m, Frame<SourceValue>[] frames, Frame<SourceValue> f) {
+            if ((m.access & Opcodes.ACC_STATIC) == 0) return;
+            int top = f.getStackSize();
+            int param = parameterRead(m, frames, single(f.getStack(top - 3)), "Ljava/util/function/BiConsumer;");
+            String field = jarStaticField(throughCast(m, frames, single(f.getStack(top - 1))));
+            if (param < 0 || field == null) return;
+            AbstractInsnNode idProducer = throughLocal(m, frames, single(f.getStack(top - 2)));
+            IdShape id = idShape(m, frames, idProducer);
+            String idField = id == null ? jarStaticField(idProducer) : null;
+            if ((id != null && id.path() != null) || idField != null) {
+                forwarderAccepts.add(new ForwarderAccept(owner + "." + m.name + m.desc, param, field,
+                        id != null && id.path() != null ? id : null, idField));
+            }
+        }
+
+        /** Whether a class initializer stores into a static field of the id type. */
+        private boolean storesIdFields(MethodNode m) {
+            if (!"<clinit>".equals(m.name)) return false;
+            for (AbstractInsnNode insn : m.instructions) {
+                if (insn instanceof FieldInsnNode put && put.getOpcode() == Opcodes.PUTSTATIC
+                        && put.desc.length() > 2 && isIdClass(put.desc.substring(1, put.desc.length() - 1))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** Notes each static id field the initializer fills from a literal id, as in {@code BOOK_ID = new ResourceLocation(...)}. */
+        private void noteIdFields(MethodNode m, Frame<SourceValue>[] frames) {
+            for (AbstractInsnNode insn : m.instructions) {
+                if (!(insn instanceof FieldInsnNode put) || put.getOpcode() != Opcodes.PUTSTATIC
+                        || put.desc.length() <= 2 || !isIdClass(put.desc.substring(1, put.desc.length() - 1))) {
+                    continue;
+                }
+                Frame<SourceValue> f = frames[m.instructions.indexOf(put)];
+                if (f == null) continue;
+                IdShape id = idShape(m, frames, throughLocal(m, frames, single(f.getStack(f.getStackSize() - 1))));
+                if (id != null && id.path() != null) idFields.put(put.owner + "." + put.name, id);
+            }
         }
 
         /** {@code DEFERRED.register("name", () -> Owner.FIELD)}. */
@@ -610,6 +729,27 @@ public final class StaticFieldRegistryIds {
         if (!REGISTER_HELPERS.contains(call.owner) || !"register".equals(call.name)) return false;
         Type[] args = Type.getArgumentTypes(call.desc);
         return args.length == 2 && args[0].getSort() == Type.OBJECT && isIdClass(args[0].getInternalName());
+    }
+
+    /** Whether this is a RegisterEvent helper's {@code register(id, value)} or {@code register(key, value)}. */
+    public static boolean isHelperRegistration(MethodInsnNode call) {
+        if (!REGISTER_HELPERS.contains(call.owner) || !"register".equals(call.name)) return false;
+        Type[] args = Type.getArgumentTypes(call.desc);
+        return args.length == 2 && args[0].getSort() == Type.OBJECT
+                && (isIdClass(args[0].getInternalName()) || RESOURCE_KEY.equals(args[0].getInternalName()));
+    }
+
+    private static boolean isBiConsumerAccept(MethodInsnNode call) {
+        return call.getOpcode() == Opcodes.INVOKEINTERFACE && "java/util/function/BiConsumer".equals(call.owner)
+                && "accept".equals(call.name) && "(Ljava/lang/Object;Ljava/lang/Object;)V".equals(call.desc);
+    }
+
+    /** Whether {@code insn} makes a BiConsumer out of a bound {@code helper::register}. */
+    private static boolean boundHelperRegister(AbstractInsnNode insn) {
+        return insn instanceof InvokeDynamicInsnNode indy && LAMBDA_METAFACTORY.equals(indy.bsm.getOwner())
+                && indy.desc.endsWith(")Ljava/util/function/BiConsumer;") && indy.bsmArgs.length >= 2
+                && indy.bsmArgs[1] instanceof Handle impl && REGISTER_HELPERS.contains(impl.getOwner())
+                && "register".equals(impl.getName());
     }
 
     private static boolean isRegisterEvent(MethodInsnNode call) {

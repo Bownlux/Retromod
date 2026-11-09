@@ -27,10 +27,11 @@ public final class LegacyBiomeModifierBridge {
         if (hostTakesRegistryAccess()) registerReplacement(t);
     }
 
-    // Read from the host; offline, where it cannot be, nothing is registered.
+    // Read from the host; offline, where it cannot be, the target decides (26.3 beta 43 added the parameter).
     static boolean hostTakesRegistryAccess() {
         ClassNode host = ClassResourceInspector.read(MODIFIER);
-        return host != null && host.methods.stream().anyMatch(m -> m.name.equals("modify") && m.desc.equals(NEW_MODIFY))
+        if (host == null) return OfflineHostVersion.neoForgeFrom("26.3");
+        return host.methods.stream().anyMatch(m -> m.name.equals("modify") && m.desc.equals(NEW_MODIFY))
                 && host.methods.stream().noneMatch(m -> m.name.equals("modify") && m.desc.equals(OLD_MODIFY));
     }
 

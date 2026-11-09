@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Collections;
@@ -53,7 +54,7 @@ public final class LegacyAttributeKeys {
         try {
             Method getAttributes = GET_ATTRIBUTES_BY_CLASS.get(livingEntity.getClass());
             if (getAttributes == null) {
-                getAttributes = livingEntity.getClass().getMethod(GET_ATTRIBUTES);
+                getAttributes = LegacyPublicMethods.method(livingEntity.getClass(), GET_ATTRIBUTES);
                 GET_ATTRIBUTES_BY_CLASS.put(livingEntity.getClass(), getAttributes);
             }
             repairMap(getAttributes.invoke(livingEntity), holder);

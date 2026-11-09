@@ -123,6 +123,36 @@ public class Mc26_1ModOn26_2LinkageTest {
     }
 
     @Test
+    @DisplayName("ChatFormatting.getByName, getById and getId answer as 26.1 did, and old calls reach them")
+    void chatFormattingLookupsMatch26_1Answers() throws Exception {
+        Class<?> bridge = loadBridgeAgainstStubs();
+        Method byName = bridge.getMethod("getByName", String.class);
+        Method byId = bridge.getMethod("getById", int.class);
+        assertEquals(StubFormatting.LIGHT_PURPLE, byName.invoke(null, "light_purple"));
+        assertEquals(StubFormatting.DARK_AQUA, byName.invoke(null, "Dark Aqua"), "case and separators are ignored");
+        assertNull(byName.invoke(null, "teal"));
+        assertNull(byName.invoke(null, (Object) null));
+        assertEquals(StubFormatting.GOLD, byId.invoke(null, 6), "a color's id is its place among the colors");
+        assertEquals(StubFormatting.RESET, byId.invoke(null, -1));
+        assertNull(byId.invoke(null, 16), "formats have no id");
+        Method getId = bridge.getMethod("getId", StubFormatting.class);
+        assertEquals(6, getId.invoke(null, StubFormatting.GOLD));
+        assertEquals(-1, getId.invoke(null, StubFormatting.BOLD), "a format has no id");
+        assertEquals(-1, getId.invoke(null, StubFormatting.RESET));
+
+        Mc26_1To26_2CoreMoves.register(transformer);
+        List<AbstractInsnNode> insns = transformBody(mv -> {
+            mv.visitLdcInsn("gold");
+            mv.visitMethodInsn(INVOKESTATIC, CHAT_FORMATTING, "getByName",
+                    "(Ljava/lang/String;)L" + CHAT_FORMATTING + ";", false);
+            mv.visitInsn(POP);
+            mv.visitInsn(RETURN);
+        });
+        assertNotNull(firstCall(insns, LegacyChatFormattingBridge.INTERNAL, "getByName"),
+                "26.2 removed ChatFormatting.getByName, which JEI's config reads");
+    }
+
+    @Test
     @DisplayName("renderBuffers().bufferSource() is routed to the real buffers and the stand-in")
     void renderBufferChainIsRouted() {
         Mc26_1To26_2CoreMoves.register(transformer);

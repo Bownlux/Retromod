@@ -24,6 +24,7 @@ import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 
+import java.lang.reflect.Method;
 import java.util.Map;
 
 /**
@@ -35,14 +36,30 @@ final class LegacyRegistrationShapes {
 
     private LegacyRegistrationShapes() {}
 
-    /** Built with Forge's {@code Rarity.create}, which NeoForge 1.21 adds as an enum extension. */
+    /**
+     * Built with Forge's {@code Rarity.create}, which NeoForge 1.21 adds as an enum extension. On
+     * Forge 26.x {@code Rarity} is a plain enum, so the call gets the vanilla rarity of its color.
+     */
     static final class Rarities {
         static final Rarity TEST = Rarity.create("retromod_test_mod_forge.test", ChatFormatting.BLUE);
     }
 
-    /** A vanilla rarity comes back only when the rarity was not added. */
+    /** A vanilla rarity comes back only when the rarity was not added, or where none can be added. */
     static boolean rarityWasAdded() {
+        // No vanilla rarity is blue, so a host that cannot add one hands back COMMON.
+        if (!hostCanAddRarities()) return Rarities.TEST == Rarity.COMMON;
         return Rarities.TEST != null && Rarities.TEST != Rarity.COMMON;
+    }
+
+    /** Forge's {@code create}, or NeoForge's enum extensions from 1.21, as Retromod's bridge checks. */
+    private static boolean hostCanAddRarities() {
+        for (Method method : Rarity.class.getMethods()) {
+            if (method.getName().equals("create")) return true;
+        }
+        for (Class<?> type : Rarity.class.getInterfaces()) {
+            if (type.getSimpleName().equals("IExtensibleEnum")) return true;
+        }
+        return false;
     }
 
     /** Declares its modifier with the UUID as text, as 1.20.1 effects did in their constructor. */

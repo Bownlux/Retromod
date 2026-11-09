@@ -202,6 +202,13 @@ public final class CacheTools {
                 skipped.add(new Skipped(name, notExportedReason(entry)));
                 continue;
             }
+            // A dedicated server's copy lacks the mod's client-only code, so players could not use it.
+            if (isServerOnly(paths.jarsDir().resolve(entry.file()))) {
+                skipped.add(new Skipped(name, "it was translated on a dedicated server, which leaves "
+                        + "out client-only code, so it would fail for players. Export from a client's "
+                        + "cache, or translate the original jar on a client"));
+                continue;
+            }
             if (!Files.isDirectory(output)) Files.createDirectories(output);
             Optional<String> problem = copyVerified(paths.jarsDir().resolve(entry.file()),
                     output.resolve(entry.file()), entry.fileSha256());
@@ -219,7 +226,7 @@ public final class CacheTools {
     }
 
     /**
-     * Jars directly in {@code mods/} that rewrite mode or the older file picker wrote. Their
+     * Jars directly in {@code mods/} that rewrite mode, the older file picker, or the CLI wrote. Their
      * originals are looked up by the bare file name the transformer recorded, and only in
      * Retromod's own backup folders, because a shared jar's manifest is not trusted to name a
      * path.
@@ -290,6 +297,16 @@ public final class CacheTools {
             case "quilt" -> "Quilt";
             default -> loader;
         };
+    }
+
+    /** Whether a cached jar carries the dedicated-server marker; an unreadable one is left to the copy check. */
+    private static boolean isServerOnly(Path jar) {
+        if (!Files.isRegularFile(jar, LinkOption.NOFOLLOW_LINKS)) return false;
+        try (JarFile file = new JarFile(jar.toFile(), false)) {
+            return TranslatedJarMarkers.isServerOnly(file.getManifest());
+        } catch (IOException | RuntimeException e) {
+            return false;
+        }
     }
 
     private static Optional<String> matchingSelector(CacheEntry entry, Set<String> wanted) {

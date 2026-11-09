@@ -7,10 +7,10 @@ nav_order: 5
 
 The CLI transforms mods without launching Minecraft. It is useful for servers, modpacks, CI, and compatibility checks.
 
-Download `retromod-1.4.0-snapshot.3.1-cli.jar` from the GitHub release. It bundles its dependencies and has an executable manifest:
+Download `retromod-1.4.0-snapshot.4-cli.jar` from the GitHub release. It bundles its dependencies and has an executable manifest:
 
 ```bash
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar <command> <args>
+java -jar retromod-1.4.0-snapshot.4-cli.jar <command> <args>
 ```
 
 From a repository checkout, Maven is a useful fallback:
@@ -25,45 +25,57 @@ mvn exec:java \
 
 ```bash
 # Inspect a mod
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar analyze path/to/mod.jar
+java -jar retromod-1.4.0-snapshot.4-cli.jar analyze path/to/mod.jar
 
 # Transform one mod and use the exact target jar for safe Mixin repairs
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar transform path/to/mod.jar \
+java -jar retromod-1.4.0-snapshot.4-cli.jar transform path/to/mod.jar \
   --target 26.2 --mc-jar path/to/minecraft-26.2-client.jar --verify
 
 # Transform a folder
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar batch path/to/mods \
+java -jar retromod-1.4.0-snapshot.4-cli.jar batch path/to/mods \
   --aot --mc-jar path/to/minecraft-26.2-client.jar --verify
 
-# Prepare a Minecraft instance
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar prepare path/to/.minecraft --aot
+# Translate the old mods in a game's mods folder
+java -jar retromod-1.4.0-snapshot.4-cli.jar prepare path/to/.minecraft \
+  --target 26.3 --target-loader neoforge
 
 # Update one resource pack without launching Minecraft
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar resourcepack path/to/old-pack.zip \
+java -jar retromod-1.4.0-snapshot.4-cli.jar resourcepack path/to/old-pack.zip \
   --target 26.2 --output path/to/updated-packs
 
 # List registered shims
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar shims
+java -jar retromod-1.4.0-snapshot.4-cli.jar shims
 
 # Compare two version points
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar diff fabric 1.21.1 26.2
+java -jar retromod-1.4.0-snapshot.4-cli.jar diff fabric 1.21.1 26.2
 ```
 
 Run `--help` for the full command and option list:
 
 ```bash
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar --help
+java -jar retromod-1.4.0-snapshot.4-cli.jar --help
 ```
 
 ## Useful Flags
 
 - `--target <version>` selects the output Minecraft version.
 - `--target-loader neoforge` enables the selected offline Forge-to-NeoForge migration paths.
+- `--target-loader forge` translates for a Forge host. Classes that Forge still ships stay in place, and Retromod adds a Forge-shaped replacement only for a class the target removed. Without it, a Forge mod can get replacements that shadow live Forge classes.
 - `--output <path>` chooses the output jar for supported commands.
-- `--mc-jar <target.jar>` indexes the exact target Minecraft jar for conservative automatic Mixin translation, for checking whether a class can be extended on that version, and for the stack map frames of a branch where a mod class meets a Minecraft class. `transform`, `aot`, and `batch` accept it. Without it, those commands look for an installed copy of the target version under PrismLauncher or `.minecraft/versions` and say which jar they used. Pass `--mc-jar` to decide that yourself. For a Forge 1.20 to 1.20.4 target, pass the SRG-named jar the Forge installer writes, such as `libraries/net/minecraft/client/1.20.4-20231207.112700/client-1.20.4-20231207.112700-srg.jar`. The vanilla jar for those versions is obfuscated, so Retromod cannot follow an inherited method to the class that declares it, and the call keeps a name the host lacks.
+- `--mc-jar <target.jar>` indexes the exact target Minecraft jar for conservative automatic Mixin translation, for checking whether a class can be extended on that version, and for the stack map frames of a branch where a mod class meets a Minecraft class. `transform`, `aot`, and `batch` accept it. Without it, those commands look for an installed copy of the target version under PrismLauncher or `.minecraft/versions` and say which jar they used. Pass `--mc-jar` to decide that yourself. For a Forge 1.20 to 1.20.4 target, pass the SRG-named jar the Forge installer writes, such as `libraries/net/minecraft/client/1.20.4-20231207.112700/client-1.20.4-20231207.112700-srg.jar`. The vanilla jar for those versions is obfuscated, so Retromod cannot follow an inherited method to the class that declares it, and the call keeps a name the host lacks. For a NeoForge target, pass the loader's patched client, such as `libraries/net/neoforged/minecraft-client-patched/<version>/minecraft-client-patched-<version>.jar`, so Mixin checks see the parameters NeoForge adds to Minecraft methods. The running game always indexes the patched jar.
+- `--host-jar <jar>` reads a loader jar as the target's own classes. For a NeoForge target, pass NeoForge's `libraries/net/neoforged/neoforge/<version>/neoforge-<version>-universal.jar` and FancyModLoader's `libraries/net/neoforged/fancymodloader/loader/<version>/loader-<version>.jar`, and repeat the option for each jar. `transform`, `aot`, and `batch` accept it. The running game reads its loader directly. Without these jars, a check that asks whether the loader has a class answers no offline, so a Forge mod translated for NeoForge can keep Forge names the game would have moved.
 - `--verify` checks generated output jars and writes unresolved-reference reports. With `--mc-jar`, it checks game-owned classes and members against that exact jar instead of the standalone CLI classpath, including those links inside recursively bundled libraries. Minecraft runtime libraries that live beside the client jar, plus optional third-party links used only by nested libraries, are intentionally ignored. In a batch, each generated jar is checked separately.
 - `--aot` prepares cached transforms during batch work.
-- `--force` allows a transform despite complexity warnings.
+- `--skip-risky` makes `aot` skip a mod whose scan scores 60 or more out of 100, and print what the scan found. Without it, `aot` translates every mod. `transform` and `batch` never skip on the score.
+- `--force` is still accepted so older scripts keep working. It changes nothing.
+
+`analyze` prints the same scan: a score and the parts of the jar that translation often has to rebuild, such as coremods, access transformers, bytecode generation, and heavy reflection. The score describes the jar. It does not predict whether the mod runs, and Retromod translates the mod whatever the score.
+
+## Prepare a Game
+
+`prepare <game-dir>` translates the old mods in a game's `mods/` folder and puts them in place. Unlike `batch`, it changes the game. Each mod built for an older Minecraft becomes `mods/<name>-retromod.jar`, and its original moves to `retromod-input/processed/`. Current mods, Retromod itself, and jars that fail to translate stay in `mods/` unchanged. The command lists each group when it finishes.
+
+`prepare` needs the game's Minecraft version from `--target <version>` or `--mc-jar`. A Forge or NeoForge mod also needs `--target-loader forge` or `--target-loader neoforge`. Without them, `prepare` says what to add and changes nothing. It never overwrites a file: when `mods/<name>-retromod.jar` or the original's place in `retromod-input/processed/` is taken, that mod stays where it is. It writes no Fabric dependency overrides, because the translated jars already carry relaxed metadata.
 
 ## Resource Packs
 
@@ -71,7 +83,7 @@ java -jar retromod-1.4.0-snapshot.3.1-cli.jar --help
 
 The command updates supported pack metadata and applies verified texture migrations in resource-pack format order through the selected target. This includes the 1.13 Flattening, later equipment and GUI moves, the 26.1 entity reorganization, and 26.2 texture names. It does not port arbitrary models, shaders, overlays, OptiFine formats, or custom rendering code. Removed or redesigned textures without one verified successor stay unchanged.
 
-If `--target` is omitted, `--mc-jar` also tries to infer the target from the jar's `version.json`. A standard filename such as `minecraft-26.2-client.jar` is the fallback. An explicit `--target` always wins. With no jar found either way, registered shims and mapping tables still run, but the exact target-method analysis is unavailable and the class-shape checks fall back to Retromod's own tables.
+If `--target` is omitted, `--mc-jar` also tries to infer the target from the jar's `version.json`. A standard filename such as `minecraft-26.2-client.jar` is the fallback. With neither, the CLI targets the newest version this release supports, which `--help` prints. An explicit `--target` must match the version the jar reports. `--target 26.3` accepts a `26.3-rc-1` jar, but a 26.2 jar stops the command with an error that names both versions. If the jar's version cannot be read, Retromod warns and uses `--target`. With no jar found either way, registered shims and mapping tables still run, but the exact target-method analysis is unavailable and the class-shape checks fall back to Retromod's own tables.
 
 An explicitly selected `transform`, `aot`, or `batch` input can still be prepared when its metadata omits the source Minecraft version. Retromod applies matching-loader shims whose targets are available on the selected host. It does not use this fallback during automatic scans because an unknown-version jar may already be native. Add an exact Minecraft dependency to the mod metadata when possible.
 
@@ -89,22 +101,22 @@ On Forge and NeoForge, Retromod keeps translated mods in the game's `retromod-ca
 
 ```bash
 # Copy every translated mod to <game-dir>/retromod-output/mods/
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar export path/to/.minecraft
+java -jar retromod-1.4.0-snapshot.4-cli.jar export path/to/.minecraft
 
 # Copy one mod, chosen by mod id or original file name, to another folder
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar export path/to/.minecraft \
+java -jar retromod-1.4.0-snapshot.4-cli.jar export path/to/.minecraft \
   --mod examplemod --output path/to/shared
 
-# List translated, waiting, and failed mods, and rewrite-mode jars in mods/
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar cache status path/to/.minecraft
+# List translated, waiting, and failed mods, and other translated jars in mods/
+java -jar retromod-1.4.0-snapshot.4-cli.jar cache status path/to/.minecraft
 
 # Delete the translations so the next launch makes them again
-java -jar retromod-1.4.0-snapshot.3.1-cli.jar cache clear path/to/.minecraft
+java -jar retromod-1.4.0-snapshot.4-cli.jar cache clear path/to/.minecraft
 ```
 
 `export` copies only finished translations whose files still match the cache's record, and it never changes the cache. It lists the mods it left out and why. An exported jar keeps its cache name, such as `Example_Mod-1.0-retromod.jar`. It is translated for one loader and Minecraft version. The game you share it with needs the same loader and version, with Retromod installed for them, because a translated jar can call Retromod's code. If a game has caches for more than one setup, choose one with `--target <version>` and `--target-loader <forge|neoforge>`.
 
-`cache status` also lists jars in `mods/` that rewrite mode or the older file picker wrote, with the original's location when Retromod's backup folders still have it. Use it before [moving to in-place loading]({{ '/installation' | relative_url }}).
+`cache status` also lists jars in `mods/` that rewrite mode, the older file picker, or the CLI wrote, with the original's location when Retromod's backup folders still have it. Use it before [moving to in-place loading]({{ '/installation' | relative_url }}).
 
 `cache clear` removes `retromod-cache/translated/` and `retromod-cache/serve/`. It leaves `mods/`, `retromod-cache/runtime/`, and the older AOT caches alone. Close the game first. `cache clear` refuses while a game is starting or translating mods, but it cannot tell that a running game still uses those files.
 

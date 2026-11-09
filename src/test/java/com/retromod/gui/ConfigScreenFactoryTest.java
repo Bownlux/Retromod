@@ -4,12 +4,21 @@
  */
 package com.retromod.gui;
 
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.retromod.core.RetromodConfig;
+import com.retromod.inplace.InPlaceSettings;
+import com.retromod.security.SignatureVerifier;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -69,7 +78,61 @@ class ConfigScreenFactoryTest {
                         props("retromod.boot.owner", "retromod.jar"))
                 .contains("write_translated_jars"));
         assertEquals("write_translated_jars", ConfigScreenFactory.visibleToggleKeys(
-                props("retromod.inplace.mode", "in-place")).get(4));
+                props("retromod.inplace.mode", "in-place")).get(2));
+    }
+
+    @Test
+    void cacheToggleShowsOnlyWhereItsReaderRuns() {
+        // Only the Fabric and Quilt entry point reads use_aot.
+        assertTrue(ConfigScreenFactory.visibleToggleKeys(props()).contains("use_aot"));
+        assertFalse(ConfigScreenFactory.visibleToggleKeys(
+                        props("retromod.boot.owner", "retromod.jar")).contains("use_aot"),
+                "Forge and NeoForge never read use_aot, so the row would change nothing there");
+    }
+
+    private static Path writeConfig(Path game, String json) throws Exception {
+        Path config = RetromodConfig.configPath(game);
+        Files.createDirectories(config.getParent());
+        Files.writeString(config, json);
+        return config;
+    }
+
+    @Test
+    void spacedValuesReadLikeTheRuntime(@TempDir Path game) throws Exception {
+        Path config = writeConfig(game,
+                "{\"write_translated_jars\" : true, \"polyfills_enabled\":\tfalse}");
+
+        Map<String, Boolean> shown = ConfigScreenFactory.loadConfig(config);
+
+        assertTrue(shown.get("write_translated_jars"), "valid JSON spacing must not hide a value");
+        assertFalse(shown.get("polyfills_enabled"));
+        assertEquals(InPlaceSettings.resolve(game, new Properties()).writeTranslatedJars(),
+                shown.get("write_translated_jars"), "the screen must agree with the discovery pass");
+    }
+
+    @Test
+    void missingVerifySettingShowsOff(@TempDir Path game) throws Exception {
+        Path config = writeConfig(game, "{}");
+        assertFalse(ConfigScreenFactory.loadConfig(config).get("verify_transforms"),
+                "the runtime leaves verification off when the key is absent");
+
+        writeConfig(game, "{\"verify_transforms\": true}");
+        assertTrue(ConfigScreenFactory.loadConfig(config).get("verify_transforms"));
+    }
+
+    @Test
+    void savingOneToggleLeavesOtherKeysAlone(@TempDir Path game) throws Exception {
+        Path config = writeConfig(game,
+                "{\"write_translated_jars\" : true, \"verify_transforms\": \"yes\"}");
+
+        ConfigScreenFactory.saveSetting(config, "polyfills_enabled", false);
+
+        JsonObject saved = JsonParser.parseString(Files.readString(config)).getAsJsonObject();
+        assertTrue(saved.get("write_translated_jars").getAsBoolean());
+        assertEquals("yes", saved.get("verify_transforms").getAsString(),
+                "a value the screen could not read must survive another toggle");
+        assertFalse(saved.get("polyfills_enabled").getAsBoolean());
+        assertFalse(saved.has("use_aot"), "only the pressed toggle may be written");
     }
 
     @Test
@@ -88,7 +151,23 @@ class ConfigScreenFactoryTest {
     }
 
     @Test
-    void settingsDefaultToInPlaceMode() {
-        assertFalse(ConfigScreenFactory.loadConfig().get("write_translated_jars"));
+    void everyBuildStatusHasItsOwnTranslatedLine() throws Exception {
+        JsonObject english = JsonParser.parseString(Files.readString(
+                LangKeysTest.LANG.resolve("en_us.json"))).getAsJsonObject();
+        Set<String> keys = new HashSet<>();
+
+        for (SignatureVerifier.Status status : SignatureVerifier.Status.values()) {
+            String key = ConfigScreenFactory.statusKey(status);
+            assertTrue(keys.add(key), status + " shares its status line " + key);
+            assertTrue(english.has(key), "en_us.json has no " + key + " for " + status);
+        }
+    }
+
+    @Test
+    void settingsDefaultToInPlaceMode(@TempDir Path game) {
+        Path missing = RetromodConfig.configPath(game);
+
+        assertFalse(ConfigScreenFactory.loadConfig(missing).get("write_translated_jars"));
+        assertFalse(Files.exists(missing), "reading the settings must not create the file");
     }
 }

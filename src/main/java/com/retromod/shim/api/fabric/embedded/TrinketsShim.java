@@ -1,4 +1,5 @@
 package com.retromod.shim.api.fabric.embedded;
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,7 +21,7 @@ public class TrinketsShim {
     }
     public static Object getModifiers(Object trinket, Object stack, Object slot, Object entity, UUID uuid) {
         try {
-            for (Method m : trinket.getClass().getMethods()) {
+            for (Method m : LegacyPublicMethods.methods(trinket.getClass())) {
                 if (m.getName().equals("getModifiers") || m.getName().equals("getAttributeModifiers")) {
                     return m.invoke(trinket, stack, slot, entity, uuid);
                 }

@@ -31,8 +31,8 @@ import org.objectweb.asm.tree.VarInsnNode;
  * {@code setQuality}. A builder's {@code apply} and {@code when} still accept the old builders on
  * 26.3 through interface defaults, so those calls only change their return type. A nested table
  * key is looked up in the registries of the method that builds the entry, which is how the Fabric
- * loot table event hands them over. A method with no registries in its parameters keeps its call
- * unchanged, because no other registry lookup is known to hold the loot tables being loaded.
+ * loot table event hands them over. A method with no registries in its parameters gets an entry
+ * that finds the table by key when it rolls, through the loot context's own registries.
  */
 public final class LegacyLootBuilderBridge {
 
@@ -62,6 +62,7 @@ public final class LegacyLootBuilderBridge {
     static final String NEW_REFERENCE = "(L" + HOLDER + ";)L" + UNIFORM_BUILDER + ";";
     static final String HELPER_REFERENCE =
             "(L" + RESOURCE_KEY + ";L" + GETTER_PROVIDER + ";)L" + UNIFORM_BUILDER + ";";
+    static final String NAMED_TABLE = RebuiltApiClasses.ROOT + "minecraft/world/level/storage/loot/entries/LegacyNamedLootTable";
 
     private LegacyLootBuilderBridge() {}
 
@@ -72,6 +73,7 @@ public final class LegacyLootBuilderBridge {
         t.registerClassRedirect(SINGLETON_BUILDER, UNIFORM_BUILDER);
         registerBuilderReturns(t);
         t.registerSyntheticClass(HELPER, generateHelper());
+        RebuiltApiClasses.registerTree(t, NAMED_TABLE);
     }
 
     /**
@@ -106,7 +108,8 @@ public final class LegacyLootBuilderBridge {
     }
 
     /**
-     * Passes the enclosing method's registries to each {@code lootTableReference(key)} call.
+     * Passes the enclosing method's registries to each {@code lootTableReference(key)} call, or, when
+     * it has none to pass, builds an entry that looks the table up when it rolls.
      *
      * @param classBytes a class after the remap and redirects
      * @return the repaired class, or the same array when nothing matched
@@ -127,17 +130,23 @@ public final class LegacyLootBuilderBridge {
             for (AbstractInsnNode insn : method.instructions.toArray()) {
                 if (!isOldReference(insn)) continue;
                 if (registries == -1) registries = registriesParameter(method);
-                if (registries < 0) break;
                 MethodInsnNode call = (MethodInsnNode) insn;
+                call.itf = false;
+                changes++;
+                // No one set of registries is in reach, so the loot context that rolls the entry finds the table.
+                if (registries < 0) {
+                    call.owner = NAMED_TABLE;
+                    call.name = "reference";
+                    continue;
+                }
                 method.instructions.insertBefore(call, new VarInsnNode(Opcodes.ALOAD, registries));
                 call.owner = HELPER;
                 call.desc = HELPER_REFERENCE;
-                call.itf = false;
-                changes++;
             }
         }
         if (changes == 0) return classBytes;
-        // The registries are pushed just before the call that takes them, so no frame changes.
+        // The registries are pushed just before the call that takes them, and a call to the named
+        // table entry keeps its stack, so no frame changes.
         try {
             ClassWriter writer = new SafeClassWriter(ClassWriter.COMPUTE_MAXS);
             cn.accept(writer);

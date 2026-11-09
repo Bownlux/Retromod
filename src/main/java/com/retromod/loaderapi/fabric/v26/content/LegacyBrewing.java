@@ -11,6 +11,7 @@ import com.retromod.loaderapi.fabric.v26.HostLink.Member;
 import com.retromod.loaderapi.fabric.v26.content.shared.LegacyBrewingBuildCallback;
 import com.retromod.loaderapi.fabric.v26.content.shared.LegacyPotionBrewingBuilder;
 import com.retromod.shim.forge.embedded.LegacyDataPackSource;
+import com.retromod.util.RetromodLog;
 import net.fabricmc.fabric.api.event.Event;
 import net.fabricmc.fabric.api.event.EventFactory;
 import org.slf4j.Logger;
@@ -268,7 +269,7 @@ public final class LegacyBrewing {
         for (Mix mix : mixes) {
             Object reagent = reagent(mix.reagent());
             if (reagent == null) {
-                LOGGER.info("Skipped an old brewing recipe whose reagent matches no item");
+                LOGGER.debug(RetromodLog.DETAIL, "Skipped an old brewing recipe whose reagent matches no item");
                 continue;
             }
             if (mix.container()) {
@@ -281,7 +282,7 @@ public final class LegacyBrewing {
                 String from = potionId(mix.input());
                 String to = potionId(mix.output());
                 if (from == null || to == null) {
-                    LOGGER.info("Skipped an old brewing recipe with an unregistered potion");
+                    LOGGER.debug(RetromodLog.DETAIL, "Skipped an old brewing recipe with an unregistered potion");
                     continue;
                 }
                 for (String bottle : bottles) recipes.add(recipe(bottle, from, reagent, bottle, to));

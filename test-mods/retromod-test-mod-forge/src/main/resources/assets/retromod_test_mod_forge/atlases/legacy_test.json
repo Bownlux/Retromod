@@ -1,0 +1,8 @@
+{
+  "sources": [
+    {
+      "type": "single",
+      "resource": "minecraft:item/apple"
+    }
+  ]
+}

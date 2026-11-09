@@ -99,6 +99,8 @@ class LegacyEntityRendererAdapterTest {
         definitions.put(POSE_STACK.replace('/', '.'), plainClass(POSE_STACK, "java/lang/Object"));
         definitions.put(BUFFER.replace('/', '.'), markerInterface(BUFFER));
         definitions.put(STATE.replace('/', '.'), plainClass(STATE, "java/lang/Object"));
+        // The adapter declares the old base getRenderOffset, which names Vec3.
+        definitions.put("net.minecraft.world.phys.Vec3", plainClass("net/minecraft/world/phys/Vec3", "java/lang/Object"));
         definitions.put(RENDERER.replace('/', '.'), modernEntityRenderer());
         definitions.put(OTHER_RENDERER.replace('/', '.'), otherRenderer());
         definitions.put(MOD_RENDERER.replace('/', '.'), transformed);

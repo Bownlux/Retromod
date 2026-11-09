@@ -8,7 +8,9 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.retromod.loaderapi.fabric.v26.HostLink;
 import com.retromod.loaderapi.fabric.v26.HostLink.Member;
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import com.retromod.shim.forge.embedded.LegacyDataPackSource;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -112,7 +114,7 @@ public final class LegacyTrades {
             String tag = registration.profession() == null ? WANDERER_TAGS.get(registration.level())
                     : tradeSet(registration.profession(), registration.level());
             if (tag == null) {
-                LOGGER.info("No 26.x trade list matches the old {} level {}, so its trades are not added",
+                LOGGER.debug(RetromodLog.DETAIL, "No 26.x trade list matches the old {} level {}, so its trades are not added",
                         registration.profession() == null ? "wandering trader" : registration.profession(),
                         registration.level());
                 continue;
@@ -152,21 +154,21 @@ public final class LegacyTrades {
             if (getOffer == null) return null;
             Object offer = getOffer.invoke(listing, null, call(HostLink.require(NEW_RANDOM)));
             if (offer == null) return null;
-            Map<String, Object> wants = stack(offer.getClass().getMethod("getCostA").invoke(offer));
-            Map<String, Object> gives = stack(offer.getClass().getMethod("getResult").invoke(offer));
+            Map<String, Object> wants = stack(LegacyPublicMethods.method(offer.getClass(), "getCostA").invoke(offer));
+            Map<String, Object> gives = stack(LegacyPublicMethods.method(offer.getClass(), "getResult").invoke(offer));
             if (wants == null || gives == null) return null;
             Map<String, Object> trade = new LinkedHashMap<>();
             trade.put("wants", wants);
-            Map<String, Object> additional = stack(offer.getClass().getMethod("getCostB").invoke(offer));
+            Map<String, Object> additional = stack(LegacyPublicMethods.method(offer.getClass(), "getCostB").invoke(offer));
             if (additional != null) trade.put("additional_wants", additional);
             trade.put("gives", gives);
-            trade.put("max_uses", offer.getClass().getMethod("getMaxUses").invoke(offer));
-            trade.put("xp", offer.getClass().getMethod("getXp").invoke(offer));
-            trade.put("reputation_discount", offer.getClass().getMethod("getPriceMultiplier").invoke(offer));
+            trade.put("max_uses", LegacyPublicMethods.method(offer.getClass(), "getMaxUses").invoke(offer));
+            trade.put("xp", LegacyPublicMethods.method(offer.getClass(), "getXp").invoke(offer));
+            trade.put("reputation_discount", LegacyPublicMethods.method(offer.getClass(), "getPriceMultiplier").invoke(offer));
             return trade;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            LOGGER.info("Skipped an old trade that could not be built without a villager: {}", cause.toString());
+            LOGGER.debug(RetromodLog.DETAIL, "Skipped an old trade that could not be built without a villager: {}", cause.toString());
             return null;
         }
     }
@@ -185,11 +187,11 @@ public final class LegacyTrades {
 
     /** {@code {"id", "count"}} for a non-empty stack, or null. */
     private static Map<String, Object> stack(Object stack) throws ReflectiveOperationException {
-        if (stack == null || (Boolean) stack.getClass().getMethod("isEmpty").invoke(stack)) return null;
-        Object item = stack.getClass().getMethod("getItem").invoke(stack);
+        if (stack == null || (Boolean) LegacyPublicMethods.method(stack.getClass(), "isEmpty").invoke(stack)) return null;
+        Object item = LegacyPublicMethods.method(stack.getClass(), "getItem").invoke(stack);
         Map<String, Object> json = new LinkedHashMap<>();
         json.put("id", String.valueOf(call(HostLink.require(ITEM_KEY), call(HostLink.require(ITEMS)), item)));
-        json.put("count", stack.getClass().getMethod("getCount").invoke(stack));
+        json.put("count", LegacyPublicMethods.method(stack.getClass(), "getCount").invoke(stack));
         return json;
     }
 

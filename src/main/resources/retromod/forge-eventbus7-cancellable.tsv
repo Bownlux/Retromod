@@ -1,0 +1,379 @@
+# Forge events by how they take a cancel, written by scripts/ForgeEventTable.java from the Forge jars named below.
+# cancellable: the event posts on a cancellable bus. EventBus 7 builds one for every event that implements
+#   Cancellable, whatever type its BUS field names (PlayLevelSoundEvent$AtEntity names a plain EventBus).
+# parent: a plain-bus parent and its cancellable children, which take the parent's listeners.
+# busless: a parent with no BUS, a class or an interface, and the events below it, at any depth, that have a bus
+#   of their own and do not already take the listeners of another one listed. Nothing posts the parent, so a
+#   listener on it reaches no event unless it is added to these; the rest below it take it through them.
+#   An event that sat on the other bus in Forge 1.20.1 is left out, since an old listener never heard it.
+# heirs: a cancellable event and the cancellable events below it whose buses take its listeners. EventBus 7
+#   copies a monitor only into a child bus that already exists, so a monitor goes onto each of these too.
+# plain: implements Cancellable, but Forge fires it without reading a cancel (RenderNameTagEvent).
+# denies: also a cancellable row, but Forge fires it without reading a cancel and refuses the action when its
+#   result is DENY (BreakEvent). A cancel only stops later listeners, so Retromod carries an old cancel onto DENY.
+# Columns: the Minecraft version a section was read for, the kind, the event, and the children where listed.
+# Each section is complete; an offline run reads the newest section at or below its target.
+# Forge 1.20.1: forge-1.20.1-47.4.10-universal.jar, fmlcore-1.20.1-47.4.10.jar.
+# 26.2: forge-26.2-65.0.0-universal.jar, fmlcore-26.2-65.0.0.jar, eventbus-7.0.1.jar, forge-26.2-65.0.0-client.jar.
+# 26.3: forge-26.3-66.1.2-universal.jar, fmlcore-26.3-66.1.2.jar, eventbus-7.0.6.jar, minecraft-26.3-client.jar.
+26.2	cancellable	net/minecraftforge/client/event/ClientChatEvent
+26.2	cancellable	net/minecraftforge/client/event/ClientChatReceivedEvent
+26.2	cancellable	net/minecraftforge/client/event/ClientChatReceivedEvent$Player
+26.2	cancellable	net/minecraftforge/client/event/ClientPauseChangeEvent$Pre
+26.2	cancellable	net/minecraftforge/client/event/CustomizeGuiOverlayEvent$BossEventProgress
+26.2	cancellable	net/minecraftforge/client/event/InputEvent$InteractionKeyMappingTriggered
+26.2	cancellable	net/minecraftforge/client/event/InputEvent$MouseButton$Pre
+26.2	cancellable	net/minecraftforge/client/event/InputEvent$MouseScrollingEvent
+26.2	cancellable	net/minecraftforge/client/event/RenderArmEvent
+26.2	cancellable	net/minecraftforge/client/event/RenderAvatarEvent$Pre
+26.2	cancellable	net/minecraftforge/client/event/RenderBlockScreenEffectEvent
+26.2	cancellable	net/minecraftforge/client/event/RenderHandEvent
+26.2	cancellable	net/minecraftforge/client/event/RenderHighlightEvent$Block
+26.2	cancellable	net/minecraftforge/client/event/RenderHighlightEvent$Entity
+26.2	cancellable	net/minecraftforge/client/event/RenderItemInFrameEvent
+26.2	cancellable	net/minecraftforge/client/event/RenderLivingEvent$Pre
+26.2	cancellable	net/minecraftforge/client/event/RenderTooltipEvent$GatherComponents
+26.2	cancellable	net/minecraftforge/client/event/RenderTooltipEvent$Pre
+26.2	cancellable	net/minecraftforge/client/event/ScreenEvent$CharacterTyped$Pre
+26.2	cancellable	net/minecraftforge/client/event/ScreenEvent$Init$Pre
+26.2	cancellable	net/minecraftforge/client/event/ScreenEvent$KeyPressed$Post
+26.2	cancellable	net/minecraftforge/client/event/ScreenEvent$KeyPressed$Pre
+26.2	cancellable	net/minecraftforge/client/event/ScreenEvent$KeyReleased$Post
+26.2	cancellable	net/minecraftforge/client/event/ScreenEvent$KeyReleased$Pre
+26.2	cancellable	net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Pre
+26.2	cancellable	net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Pre
+26.2	cancellable	net/minecraftforge/client/event/ScreenEvent$MouseDragged$Pre
+26.2	cancellable	net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Pre
+26.2	cancellable	net/minecraftforge/client/event/ScreenEvent$Opening
+26.2	cancellable	net/minecraftforge/client/event/ScreenEvent$Render$Pre
+26.2	cancellable	net/minecraftforge/client/event/ScreenEvent$RenderInventoryMobEffects
+26.2	cancellable	net/minecraftforge/client/event/ScreenshotEvent
+26.2	cancellable	net/minecraftforge/client/event/SystemMessageReceivedEvent
+26.2	cancellable	net/minecraftforge/client/event/ToastAddEvent
+26.2	cancellable	net/minecraftforge/client/event/ViewportEvent$RenderFog
+26.2	cancellable	net/minecraftforge/event/AnvilUpdateEvent
+26.2	cancellable	net/minecraftforge/event/CommandEvent
+26.2	cancellable	net/minecraftforge/event/GrindstoneEvent$OnPlaceItem
+26.2	cancellable	net/minecraftforge/event/GrindstoneEvent$OnTakeItem
+26.2	cancellable	net/minecraftforge/event/ItemStackedOnOtherEvent
+26.2	cancellable	net/minecraftforge/event/LootTableLoadEvent
+26.2	cancellable	net/minecraftforge/event/PlayLevelSoundEvent
+26.2	cancellable	net/minecraftforge/event/PlayLevelSoundEvent$AtEntity
+26.2	cancellable	net/minecraftforge/event/PlayLevelSoundEvent$AtPosition
+26.2	cancellable	net/minecraftforge/event/ServerChatEvent
+26.2	cancellable	net/minecraftforge/event/VanillaGameEvent
+26.2	cancellable	net/minecraftforge/event/brewing/PotionBrewEvent$Pre
+26.2	cancellable	net/minecraftforge/event/entity/EntityJoinLevelEvent
+26.2	cancellable	net/minecraftforge/event/entity/EntityMountEvent
+26.2	cancellable	net/minecraftforge/event/entity/EntityStruckByLightningEvent
+26.2	cancellable	net/minecraftforge/event/entity/EntityTeleportEvent
+26.2	cancellable	net/minecraftforge/event/entity/EntityTeleportEvent$ChorusFruit
+26.2	cancellable	net/minecraftforge/event/entity/EntityTeleportEvent$EnderEntity
+26.2	cancellable	net/minecraftforge/event/entity/EntityTeleportEvent$EnderPearl
+26.2	cancellable	net/minecraftforge/event/entity/EntityTeleportEvent$SpreadPlayersCommand
+26.2	cancellable	net/minecraftforge/event/entity/EntityTeleportEvent$TeleportCommand
+26.2	cancellable	net/minecraftforge/event/entity/EntityTravelToDimensionEvent
+26.2	cancellable	net/minecraftforge/event/entity/item/ItemExpireEvent
+26.2	cancellable	net/minecraftforge/event/entity/item/ItemTossEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/AnimalTameEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/BabyEntitySpawnEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingAttackEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingChangeTargetEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingConversionEvent$Pre
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingDamageEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingDeathEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingDestroyBlockEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingDropsEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingDrownEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingEntityUseItemEvent$Start
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingEntityUseItemEvent$Stop
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingEntityUseItemEvent$Tick
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingEvent$LivingTickEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingExperienceDropEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingFallEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingHealEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingHurtEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingKnockBackEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingSwapItemsEvent$Hands
+26.2	cancellable	net/minecraftforge/event/entity/living/LivingUseTotemEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/MobEffectEvent$Remove
+26.2	cancellable	net/minecraftforge/event/entity/living/MobSpawnEvent$FinalizeSpawn
+26.2	cancellable	net/minecraftforge/event/entity/living/MonsterDisguiseEvent
+26.2	cancellable	net/minecraftforge/event/entity/living/ShieldBlockEvent
+26.2	cancellable	net/minecraftforge/event/entity/player/ArrowLooseEvent
+26.2	cancellable	net/minecraftforge/event/entity/player/AttackEntityEvent
+26.2	cancellable	net/minecraftforge/event/entity/player/BonemealEvent
+26.2	cancellable	net/minecraftforge/event/entity/player/EntityItemPickupEvent
+26.2	cancellable	net/minecraftforge/event/entity/player/FillBucketEvent
+26.2	cancellable	net/minecraftforge/event/entity/player/ItemFishedEvent
+26.2	cancellable	net/minecraftforge/event/entity/player/PermissionsChangedEvent
+26.2	cancellable	net/minecraftforge/event/entity/player/PlayerEvent$BreakSpeed
+26.2	cancellable	net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangeGameModeEvent
+26.2	cancellable	net/minecraftforge/event/entity/player/PlayerInteractEvent$EntityInteractSpecific
+26.2	cancellable	net/minecraftforge/event/entity/player/PlayerInteractEvent$LeftClickBlock
+26.2	cancellable	net/minecraftforge/event/entity/player/PlayerInteractEvent$RightClickBlock
+26.2	cancellable	net/minecraftforge/event/entity/player/PlayerInteractEvent$RightClickItem
+26.2	cancellable	net/minecraftforge/event/entity/player/PlayerSetSpawnEvent
+26.2	cancellable	net/minecraftforge/event/entity/player/PlayerXpEvent$LevelChange
+26.2	cancellable	net/minecraftforge/event/entity/player/PlayerXpEvent$PickupXp
+26.2	cancellable	net/minecraftforge/event/entity/player/PlayerXpEvent$XpChange
+26.2	cancellable	net/minecraftforge/event/furnace/FurnaceFuelBurnTimeEvent
+26.2	cancellable	net/minecraftforge/event/level/BlockEvent$BlockToolModificationEvent
+26.2	cancellable	net/minecraftforge/event/level/BlockEvent$BreakEvent
+26.2	cancellable	net/minecraftforge/event/level/BlockEvent$EntityMultiPlaceEvent
+26.2	cancellable	net/minecraftforge/event/level/BlockEvent$EntityPlaceEvent
+26.2	cancellable	net/minecraftforge/event/level/BlockEvent$FarmlandTrampleEvent
+26.2	cancellable	net/minecraftforge/event/level/BlockEvent$FluidPlaceBlockEvent
+26.2	cancellable	net/minecraftforge/event/level/BlockEvent$NeighborNotifyEvent
+26.2	cancellable	net/minecraftforge/event/level/BlockEvent$PortalSpawnEvent
+26.2	cancellable	net/minecraftforge/event/level/ExplosionEvent$Start
+26.2	cancellable	net/minecraftforge/event/level/LevelEvent$CreateSpawnPosition
+26.2	cancellable	net/minecraftforge/event/level/LevelEvent$PotentialSpawns
+26.2	cancellable	net/minecraftforge/event/level/NoteBlockEvent$Change
+26.2	cancellable	net/minecraftforge/event/level/NoteBlockEvent$Play
+26.2	cancellable	net/minecraftforge/event/level/PistonEvent$Pre
+26.2	cancellable	net/minecraftforge/event/village/VillageSiegeEvent
+26.2	parent	net/minecraftforge/client/event/ClientPauseChangeEvent	net/minecraftforge/client/event/ClientPauseChangeEvent$Pre
+26.2	parent	net/minecraftforge/client/event/RenderTooltipEvent	net/minecraftforge/client/event/RenderTooltipEvent$Pre
+26.2	parent	net/minecraftforge/event/GrindstoneEvent	net/minecraftforge/event/GrindstoneEvent$OnPlaceItem,net/minecraftforge/event/GrindstoneEvent$OnTakeItem
+26.2	parent	net/minecraftforge/event/brewing/PotionBrewEvent	net/minecraftforge/event/brewing/PotionBrewEvent$Pre
+26.2	parent	net/minecraftforge/event/entity/living/LivingConversionEvent	net/minecraftforge/event/entity/living/LivingConversionEvent$Pre
+26.2	parent	net/minecraftforge/event/entity/living/LivingEntityUseItemEvent	net/minecraftforge/event/entity/living/LivingEntityUseItemEvent$Start,net/minecraftforge/event/entity/living/LivingEntityUseItemEvent$Stop,net/minecraftforge/event/entity/living/LivingEntityUseItemEvent$Tick
+26.2	parent	net/minecraftforge/event/entity/living/MobEffectEvent	net/minecraftforge/event/entity/living/MobEffectEvent$Remove
+26.2	parent	net/minecraftforge/event/entity/player/PlayerInteractEvent	net/minecraftforge/event/entity/player/PlayerInteractEvent$EntityInteractSpecific,net/minecraftforge/event/entity/player/PlayerInteractEvent$LeftClickBlock,net/minecraftforge/event/entity/player/PlayerInteractEvent$RightClickBlock,net/minecraftforge/event/entity/player/PlayerInteractEvent$RightClickItem
+26.2	parent	net/minecraftforge/event/level/ExplosionEvent	net/minecraftforge/event/level/ExplosionEvent$Start
+26.2	parent	net/minecraftforge/event/level/LevelEvent	net/minecraftforge/event/level/LevelEvent$CreateSpawnPosition,net/minecraftforge/event/level/LevelEvent$PotentialSpawns
+26.2	parent	net/minecraftforge/event/level/NoteBlockEvent	net/minecraftforge/event/level/NoteBlockEvent$Change,net/minecraftforge/event/level/NoteBlockEvent$Play
+26.2	busless	net/minecraftforge/client/event/ContainerScreenEvent	net/minecraftforge/client/event/ContainerScreenEvent$Render$Background,net/minecraftforge/client/event/ContainerScreenEvent$Render$Foreground
+26.2	busless	net/minecraftforge/client/event/ContainerScreenEvent$Render	net/minecraftforge/client/event/ContainerScreenEvent$Render$Background,net/minecraftforge/client/event/ContainerScreenEvent$Render$Foreground
+26.2	busless	net/minecraftforge/client/event/CustomizeGuiOverlayEvent	net/minecraftforge/client/event/CustomizeGuiOverlayEvent$BossEventProgress,net/minecraftforge/client/event/CustomizeGuiOverlayEvent$Chat,net/minecraftforge/client/event/CustomizeGuiOverlayEvent$DebugText
+26.2	busless	net/minecraftforge/client/event/EntityRenderersEvent	net/minecraftforge/client/event/EntityRenderersEvent$AddLayers,net/minecraftforge/client/event/EntityRenderersEvent$CreateSkullModels,net/minecraftforge/client/event/EntityRenderersEvent$RegisterLayerDefinitions,net/minecraftforge/client/event/EntityRenderersEvent$RegisterRenderers
+26.2	busless	net/minecraftforge/client/event/InputEvent	net/minecraftforge/client/event/InputEvent$InteractionKeyMappingTriggered,net/minecraftforge/client/event/InputEvent$Key,net/minecraftforge/client/event/InputEvent$MouseButton$Post,net/minecraftforge/client/event/InputEvent$MouseButton$Pre,net/minecraftforge/client/event/InputEvent$MouseScrollingEvent
+26.2	busless	net/minecraftforge/client/event/InputEvent$MouseButton	net/minecraftforge/client/event/InputEvent$MouseButton$Post,net/minecraftforge/client/event/InputEvent$MouseButton$Pre
+26.2	busless	net/minecraftforge/client/event/RegisterColorHandlersEvent	net/minecraftforge/client/event/RegisterColorHandlersEvent$Block,net/minecraftforge/client/event/RegisterColorHandlersEvent$ColorResolvers
+26.2	busless	net/minecraftforge/client/event/RenderAvatarEvent	net/minecraftforge/client/event/RenderAvatarEvent$Post,net/minecraftforge/client/event/RenderAvatarEvent$Pre
+26.2	busless	net/minecraftforge/client/event/RenderHighlightEvent	net/minecraftforge/client/event/RenderHighlightEvent$Block,net/minecraftforge/client/event/RenderHighlightEvent$Entity
+26.2	busless	net/minecraftforge/client/event/RenderLivingEvent	net/minecraftforge/client/event/RenderLivingEvent$Post,net/minecraftforge/client/event/RenderLivingEvent$Pre
+26.2	busless	net/minecraftforge/client/event/ScreenEvent	net/minecraftforge/client/event/ScreenEvent$BackgroundRendered,net/minecraftforge/client/event/ScreenEvent$CharacterTyped$Post,net/minecraftforge/client/event/ScreenEvent$CharacterTyped$Pre,net/minecraftforge/client/event/ScreenEvent$Closing,net/minecraftforge/client/event/ScreenEvent$Init$Post,net/minecraftforge/client/event/ScreenEvent$Init$Pre,net/minecraftforge/client/event/ScreenEvent$KeyPressed$Post,net/minecraftforge/client/event/ScreenEvent$KeyPressed$Pre,net/minecraftforge/client/event/ScreenEvent$KeyReleased$Post,net/minecraftforge/client/event/ScreenEvent$KeyReleased$Pre,net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Post,net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Pre,net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Post,net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Pre,net/minecraftforge/client/event/ScreenEvent$MouseDragged$Post,net/minecraftforge/client/event/ScreenEvent$MouseDragged$Pre,net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Post,net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Pre,net/minecraftforge/client/event/ScreenEvent$Opening,net/minecraftforge/client/event/ScreenEvent$Render$Post,net/minecraftforge/client/event/ScreenEvent$Render$Pre,net/minecraftforge/client/event/ScreenEvent$RenderInventoryMobEffects
+26.2	busless	net/minecraftforge/client/event/ScreenEvent$CharacterTyped	net/minecraftforge/client/event/ScreenEvent$CharacterTyped$Post,net/minecraftforge/client/event/ScreenEvent$CharacterTyped$Pre
+26.2	busless	net/minecraftforge/client/event/ScreenEvent$Init	net/minecraftforge/client/event/ScreenEvent$Init$Post,net/minecraftforge/client/event/ScreenEvent$Init$Pre
+26.2	busless	net/minecraftforge/client/event/ScreenEvent$KeyInput	net/minecraftforge/client/event/ScreenEvent$KeyPressed$Post,net/minecraftforge/client/event/ScreenEvent$KeyPressed$Pre,net/minecraftforge/client/event/ScreenEvent$KeyReleased$Post,net/minecraftforge/client/event/ScreenEvent$KeyReleased$Pre
+26.2	busless	net/minecraftforge/client/event/ScreenEvent$KeyPressed	net/minecraftforge/client/event/ScreenEvent$KeyPressed$Post,net/minecraftforge/client/event/ScreenEvent$KeyPressed$Pre
+26.2	busless	net/minecraftforge/client/event/ScreenEvent$KeyReleased	net/minecraftforge/client/event/ScreenEvent$KeyReleased$Post,net/minecraftforge/client/event/ScreenEvent$KeyReleased$Pre
+26.2	busless	net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed	net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Post,net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Pre
+26.2	busless	net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased	net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Post,net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Pre
+26.2	busless	net/minecraftforge/client/event/ScreenEvent$MouseDragged	net/minecraftforge/client/event/ScreenEvent$MouseDragged$Post,net/minecraftforge/client/event/ScreenEvent$MouseDragged$Pre
+26.2	busless	net/minecraftforge/client/event/ScreenEvent$MouseInput	net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Post,net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Pre,net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Post,net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Pre,net/minecraftforge/client/event/ScreenEvent$MouseDragged$Post,net/minecraftforge/client/event/ScreenEvent$MouseDragged$Pre,net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Post,net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Pre
+26.2	busless	net/minecraftforge/client/event/ScreenEvent$MouseScrolled	net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Post,net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Pre
+26.2	busless	net/minecraftforge/client/event/ScreenEvent$Render	net/minecraftforge/client/event/ScreenEvent$Render$Post,net/minecraftforge/client/event/ScreenEvent$Render$Pre
+26.2	busless	net/minecraftforge/client/event/TextureStitchEvent	net/minecraftforge/client/event/TextureStitchEvent$Post
+26.2	busless	net/minecraftforge/client/event/ViewportEvent	net/minecraftforge/client/event/ViewportEvent$ComputeCameraAngles,net/minecraftforge/client/event/ViewportEvent$ComputeFogColor,net/minecraftforge/client/event/ViewportEvent$ComputeFov,net/minecraftforge/client/event/ViewportEvent$RenderFog
+26.2	busless	net/minecraftforge/client/event/sound/SoundEvent	net/minecraftforge/client/event/sound/PlaySoundEvent,net/minecraftforge/client/event/sound/SoundEvent$SoundSourceEvent
+26.2	busless	net/minecraftforge/event/AttachCapabilitiesEvent	net/minecraftforge/event/AttachCapabilitiesEvent$BlockEntities,net/minecraftforge/event/AttachCapabilitiesEvent$Entities,net/minecraftforge/event/AttachCapabilitiesEvent$ItemStacks,net/minecraftforge/event/AttachCapabilitiesEvent$LevelChunks,net/minecraftforge/event/AttachCapabilitiesEvent$Levels
+26.2	busless	net/minecraftforge/event/TickEvent	net/minecraftforge/event/TickEvent$ClientTickEvent$Post,net/minecraftforge/event/TickEvent$ClientTickEvent$Pre,net/minecraftforge/event/TickEvent$LevelTickEvent$Post,net/minecraftforge/event/TickEvent$LevelTickEvent$Pre,net/minecraftforge/event/TickEvent$PlayerTickEvent$Post,net/minecraftforge/event/TickEvent$PlayerTickEvent$Pre,net/minecraftforge/event/TickEvent$RenderTickEvent$Post,net/minecraftforge/event/TickEvent$RenderTickEvent$Pre,net/minecraftforge/event/TickEvent$ServerTickEvent$Post,net/minecraftforge/event/TickEvent$ServerTickEvent$Pre
+26.2	busless	net/minecraftforge/event/TickEvent$ClientTickEvent	net/minecraftforge/event/TickEvent$ClientTickEvent$Post,net/minecraftforge/event/TickEvent$ClientTickEvent$Pre
+26.2	busless	net/minecraftforge/event/TickEvent$LevelTickEvent	net/minecraftforge/event/TickEvent$LevelTickEvent$Post,net/minecraftforge/event/TickEvent$LevelTickEvent$Pre
+26.2	busless	net/minecraftforge/event/TickEvent$PlayerTickEvent	net/minecraftforge/event/TickEvent$PlayerTickEvent$Post,net/minecraftforge/event/TickEvent$PlayerTickEvent$Pre
+26.2	busless	net/minecraftforge/event/TickEvent$RenderTickEvent	net/minecraftforge/event/TickEvent$RenderTickEvent$Post,net/minecraftforge/event/TickEvent$RenderTickEvent$Pre
+26.2	busless	net/minecraftforge/event/TickEvent$ServerTickEvent	net/minecraftforge/event/TickEvent$ServerTickEvent$Post,net/minecraftforge/event/TickEvent$ServerTickEvent$Pre
+26.2	busless	net/minecraftforge/event/entity/EntityEvent	net/minecraftforge/client/event/MovementInputUpdateEvent,net/minecraftforge/event/brewing/PlayerBrewedPotionEvent,net/minecraftforge/event/entity/EntityEvent$EnteringSection,net/minecraftforge/event/entity/EntityEvent$EntityConstructing,net/minecraftforge/event/entity/EntityJoinLevelEvent,net/minecraftforge/event/entity/EntityLeaveLevelEvent,net/minecraftforge/event/entity/EntityMobGriefingEvent,net/minecraftforge/event/entity/EntityMountEvent,net/minecraftforge/event/entity/EntityStruckByLightningEvent,net/minecraftforge/event/entity/EntityTeleportEvent,net/minecraftforge/event/entity/EntityTravelToDimensionEvent,net/minecraftforge/event/entity/ProjectileImpactEvent,net/minecraftforge/event/entity/item/ItemExpireEvent,net/minecraftforge/event/entity/item/ItemTossEvent,net/minecraftforge/event/entity/living/AnimalTameEvent,net/minecraftforge/event/entity/living/LivingAttackEvent,net/minecraftforge/event/entity/living/LivingBreatheEvent,net/minecraftforge/event/entity/living/LivingChangeTargetEvent,net/minecraftforge/event/entity/living/LivingConversionEvent,net/minecraftforge/event/entity/living/LivingDamageEvent,net/minecraftforge/event/entity/living/LivingDeathEvent,net/minecraftforge/event/entity/living/LivingDestroyBlockEvent,net/minecraftforge/event/entity/living/LivingDropsEvent,net/minecraftforge/event/entity/living/LivingDrownEvent,net/minecraftforge/event/entity/living/LivingEntityUseItemEvent,net/minecraftforge/event/entity/living/LivingEquipmentChangeEvent,net/minecraftforge/event/entity/living/LivingEvent$LivingJumpEvent,net/minecraftforge/event/entity/living/LivingEvent$LivingTickEvent,net/minecraftforge/event/entity/living/LivingEvent$LivingVisibilityEvent,net/minecraftforge/event/entity/living/LivingExperienceDropEvent,net/minecraftforge/event/entity/living/LivingFallEvent,net/minecraftforge/event/entity/living/LivingGetProjectileEvent,net/minecraftforge/event/entity/living/LivingHealEvent,net/minecraftforge/event/entity/living/LivingHurtEvent,net/minecraftforge/event/entity/living/LivingKnockBackEvent,net/minecraftforge/event/entity/living/LivingMakeBrainEvent,net/minecraftforge/event/entity/living/LivingPackSizeEvent,net/minecraftforge/event/entity/living/LivingSwapItemsEvent$Hands,net/minecraftforge/event/entity/living/LivingUseTotemEvent,net/minecraftforge/event/entity/living/LootingLevelEvent,net/minecraftforge/event/entity/living/MobEffectEvent,net/minecraftforge/event/entity/living/MobSpawnEvent$AllowDespawn,net/minecraftforge/event/entity/living/MobSpawnEvent$FinalizeSpawn,net/minecraftforge/event/entity/living/MobSpawnEvent$PositionCheck,net/minecraftforge/event/entity/living/MonsterDisguiseEvent,net/minecraftforge/event/entity/living/ShieldBlockEvent,net/minecraftforge/event/entity/living/ZombieEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementEarnEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementProgressEvent,net/minecraftforge/event/entity/player/AnvilRepairEvent,net/minecraftforge/event/entity/player/ArrowLooseEvent,net/minecraftforge/event/entity/player/ArrowNockEvent,net/minecraftforge/event/entity/player/AttackEntityEvent,net/minecraftforge/event/entity/player/BonemealEvent,net/minecraftforge/event/entity/player/CriticalHitEvent,net/minecraftforge/event/entity/player/EntityItemPickupEvent,net/minecraftforge/event/entity/player/FillBucketEvent,net/minecraftforge/event/entity/player/ItemFishedEvent,net/minecraftforge/event/entity/player/ItemTooltipEvent,net/minecraftforge/event/entity/player/PermissionsChangedEvent,net/minecraftforge/event/entity/player/PlayerContainerEvent,net/minecraftforge/event/entity/player/PlayerDestroyItemEvent,net/minecraftforge/event/entity/player/PlayerEvent$BreakSpeed,net/minecraftforge/event/entity/player/PlayerEvent$Clone,net/minecraftforge/event/entity/player/PlayerEvent$HarvestCheck,net/minecraftforge/event/entity/player/PlayerEvent$ItemCraftedEvent,net/minecraftforge/event/entity/player/PlayerEvent$ItemPickupEvent,net/minecraftforge/event/entity/player/PlayerEvent$ItemSmeltedEvent,net/minecraftforge/event/entity/player/PlayerEvent$LoadFromFile,net/minecraftforge/event/entity/player/PlayerEvent$NameFormat,net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangeGameModeEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangedDimensionEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerLoggedInEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerLoggedOutEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerRespawnEvent,net/minecraftforge/event/entity/player/PlayerEvent$SaveToFile,net/minecraftforge/event/entity/player/PlayerEvent$StartTracking,net/minecraftforge/event/entity/player/PlayerEvent$StopTracking,net/minecraftforge/event/entity/player/PlayerEvent$TabListNameFormat,net/minecraftforge/event/entity/player/PlayerFlyableFallEvent,net/minecraftforge/event/entity/player/PlayerInteractEvent,net/minecraftforge/event/entity/player/PlayerSetSpawnEvent,net/minecraftforge/event/entity/player/PlayerSleepInBedEvent,net/minecraftforge/event/entity/player/PlayerSpawnPhantomsEvent,net/minecraftforge/event/entity/player/PlayerWakeUpEvent,net/minecraftforge/event/entity/player/PlayerXpEvent$LevelChange,net/minecraftforge/event/entity/player/PlayerXpEvent$PickupXp,net/minecraftforge/event/entity/player/PlayerXpEvent$XpChange,net/minecraftforge/event/entity/player/SleepingLocationCheckEvent,net/minecraftforge/event/entity/player/SleepingTimeCheckEvent,net/minecraftforge/event/entity/player/TradeWithVillagerEvent
+26.2	busless	net/minecraftforge/event/entity/item/ItemEvent	net/minecraftforge/event/entity/item/ItemExpireEvent,net/minecraftforge/event/entity/item/ItemTossEvent
+26.2	busless	net/minecraftforge/event/entity/living/LivingEvent	net/minecraftforge/client/event/MovementInputUpdateEvent,net/minecraftforge/event/brewing/PlayerBrewedPotionEvent,net/minecraftforge/event/entity/living/AnimalTameEvent,net/minecraftforge/event/entity/living/LivingAttackEvent,net/minecraftforge/event/entity/living/LivingBreatheEvent,net/minecraftforge/event/entity/living/LivingChangeTargetEvent,net/minecraftforge/event/entity/living/LivingConversionEvent,net/minecraftforge/event/entity/living/LivingDamageEvent,net/minecraftforge/event/entity/living/LivingDeathEvent,net/minecraftforge/event/entity/living/LivingDestroyBlockEvent,net/minecraftforge/event/entity/living/LivingDropsEvent,net/minecraftforge/event/entity/living/LivingDrownEvent,net/minecraftforge/event/entity/living/LivingEntityUseItemEvent,net/minecraftforge/event/entity/living/LivingEquipmentChangeEvent,net/minecraftforge/event/entity/living/LivingEvent$LivingJumpEvent,net/minecraftforge/event/entity/living/LivingEvent$LivingTickEvent,net/minecraftforge/event/entity/living/LivingEvent$LivingVisibilityEvent,net/minecraftforge/event/entity/living/LivingExperienceDropEvent,net/minecraftforge/event/entity/living/LivingFallEvent,net/minecraftforge/event/entity/living/LivingGetProjectileEvent,net/minecraftforge/event/entity/living/LivingHealEvent,net/minecraftforge/event/entity/living/LivingHurtEvent,net/minecraftforge/event/entity/living/LivingKnockBackEvent,net/minecraftforge/event/entity/living/LivingMakeBrainEvent,net/minecraftforge/event/entity/living/LivingPackSizeEvent,net/minecraftforge/event/entity/living/LivingSwapItemsEvent$Hands,net/minecraftforge/event/entity/living/LivingUseTotemEvent,net/minecraftforge/event/entity/living/LootingLevelEvent,net/minecraftforge/event/entity/living/MobEffectEvent,net/minecraftforge/event/entity/living/MonsterDisguiseEvent,net/minecraftforge/event/entity/living/ShieldBlockEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementEarnEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementProgressEvent,net/minecraftforge/event/entity/player/AnvilRepairEvent,net/minecraftforge/event/entity/player/ArrowLooseEvent,net/minecraftforge/event/entity/player/ArrowNockEvent,net/minecraftforge/event/entity/player/AttackEntityEvent,net/minecraftforge/event/entity/player/BonemealEvent,net/minecraftforge/event/entity/player/CriticalHitEvent,net/minecraftforge/event/entity/player/EntityItemPickupEvent,net/minecraftforge/event/entity/player/FillBucketEvent,net/minecraftforge/event/entity/player/ItemFishedEvent,net/minecraftforge/event/entity/player/ItemTooltipEvent,net/minecraftforge/event/entity/player/PermissionsChangedEvent,net/minecraftforge/event/entity/player/PlayerContainerEvent,net/minecraftforge/event/entity/player/PlayerDestroyItemEvent,net/minecraftforge/event/entity/player/PlayerEvent$BreakSpeed,net/minecraftforge/event/entity/player/PlayerEvent$Clone,net/minecraftforge/event/entity/player/PlayerEvent$HarvestCheck,net/minecraftforge/event/entity/player/PlayerEvent$ItemCraftedEvent,net/minecraftforge/event/entity/player/PlayerEvent$ItemPickupEvent,net/minecraftforge/event/entity/player/PlayerEvent$ItemSmeltedEvent,net/minecraftforge/event/entity/player/PlayerEvent$LoadFromFile,net/minecraftforge/event/entity/player/PlayerEvent$NameFormat,net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangeGameModeEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangedDimensionEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerLoggedInEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerLoggedOutEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerRespawnEvent,net/minecraftforge/event/entity/player/PlayerEvent$SaveToFile,net/minecraftforge/event/entity/player/PlayerEvent$StartTracking,net/minecraftforge/event/entity/player/PlayerEvent$StopTracking,net/minecraftforge/event/entity/player/PlayerEvent$TabListNameFormat,net/minecraftforge/event/entity/player/PlayerFlyableFallEvent,net/minecraftforge/event/entity/player/PlayerInteractEvent,net/minecraftforge/event/entity/player/PlayerSetSpawnEvent,net/minecraftforge/event/entity/player/PlayerSleepInBedEvent,net/minecraftforge/event/entity/player/PlayerSpawnPhantomsEvent,net/minecraftforge/event/entity/player/PlayerWakeUpEvent,net/minecraftforge/event/entity/player/PlayerXpEvent$LevelChange,net/minecraftforge/event/entity/player/PlayerXpEvent$PickupXp,net/minecraftforge/event/entity/player/PlayerXpEvent$XpChange,net/minecraftforge/event/entity/player/SleepingLocationCheckEvent,net/minecraftforge/event/entity/player/SleepingTimeCheckEvent,net/minecraftforge/event/entity/player/TradeWithVillagerEvent
+26.2	busless	net/minecraftforge/event/entity/living/LivingSwapItemsEvent	net/minecraftforge/event/entity/living/LivingSwapItemsEvent$Hands
+26.2	busless	net/minecraftforge/event/entity/living/MobSpawnEvent	net/minecraftforge/event/entity/living/MobSpawnEvent$AllowDespawn,net/minecraftforge/event/entity/living/MobSpawnEvent$FinalizeSpawn,net/minecraftforge/event/entity/living/MobSpawnEvent$PositionCheck
+26.2	busless	net/minecraftforge/event/entity/player/AdvancementEvent	net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementEarnEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementProgressEvent
+26.2	busless	net/minecraftforge/event/entity/player/PlayerEvent	net/minecraftforge/client/event/MovementInputUpdateEvent,net/minecraftforge/event/brewing/PlayerBrewedPotionEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementEarnEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementProgressEvent,net/minecraftforge/event/entity/player/AnvilRepairEvent,net/minecraftforge/event/entity/player/ArrowLooseEvent,net/minecraftforge/event/entity/player/ArrowNockEvent,net/minecraftforge/event/entity/player/AttackEntityEvent,net/minecraftforge/event/entity/player/BonemealEvent,net/minecraftforge/event/entity/player/CriticalHitEvent,net/minecraftforge/event/entity/player/EntityItemPickupEvent,net/minecraftforge/event/entity/player/FillBucketEvent,net/minecraftforge/event/entity/player/ItemFishedEvent,net/minecraftforge/event/entity/player/ItemTooltipEvent,net/minecraftforge/event/entity/player/PermissionsChangedEvent,net/minecraftforge/event/entity/player/PlayerContainerEvent,net/minecraftforge/event/entity/player/PlayerDestroyItemEvent,net/minecraftforge/event/entity/player/PlayerEvent$BreakSpeed,net/minecraftforge/event/entity/player/PlayerEvent$Clone,net/minecraftforge/event/entity/player/PlayerEvent$HarvestCheck,net/minecraftforge/event/entity/player/PlayerEvent$ItemCraftedEvent,net/minecraftforge/event/entity/player/PlayerEvent$ItemPickupEvent,net/minecraftforge/event/entity/player/PlayerEvent$ItemSmeltedEvent,net/minecraftforge/event/entity/player/PlayerEvent$LoadFromFile,net/minecraftforge/event/entity/player/PlayerEvent$NameFormat,net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangeGameModeEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangedDimensionEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerLoggedInEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerLoggedOutEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerRespawnEvent,net/minecraftforge/event/entity/player/PlayerEvent$SaveToFile,net/minecraftforge/event/entity/player/PlayerEvent$StartTracking,net/minecraftforge/event/entity/player/PlayerEvent$StopTracking,net/minecraftforge/event/entity/player/PlayerEvent$TabListNameFormat,net/minecraftforge/event/entity/player/PlayerFlyableFallEvent,net/minecraftforge/event/entity/player/PlayerInteractEvent,net/minecraftforge/event/entity/player/PlayerSetSpawnEvent,net/minecraftforge/event/entity/player/PlayerSleepInBedEvent,net/minecraftforge/event/entity/player/PlayerSpawnPhantomsEvent,net/minecraftforge/event/entity/player/PlayerWakeUpEvent,net/minecraftforge/event/entity/player/PlayerXpEvent$LevelChange,net/minecraftforge/event/entity/player/PlayerXpEvent$PickupXp,net/minecraftforge/event/entity/player/PlayerXpEvent$XpChange,net/minecraftforge/event/entity/player/SleepingTimeCheckEvent,net/minecraftforge/event/entity/player/TradeWithVillagerEvent
+26.2	busless	net/minecraftforge/event/entity/player/PlayerXpEvent	net/minecraftforge/event/entity/player/PlayerXpEvent$LevelChange,net/minecraftforge/event/entity/player/PlayerXpEvent$PickupXp,net/minecraftforge/event/entity/player/PlayerXpEvent$XpChange
+26.2	busless	net/minecraftforge/event/level/BlockEvent	net/minecraftforge/event/level/BlockEvent$BlockToolModificationEvent,net/minecraftforge/event/level/BlockEvent$BreakEvent,net/minecraftforge/event/level/BlockEvent$CropGrowEvent,net/minecraftforge/event/level/BlockEvent$EntityMultiPlaceEvent,net/minecraftforge/event/level/BlockEvent$EntityPlaceEvent,net/minecraftforge/event/level/BlockEvent$FarmlandTrampleEvent,net/minecraftforge/event/level/BlockEvent$FluidPlaceBlockEvent,net/minecraftforge/event/level/BlockEvent$NeighborNotifyEvent,net/minecraftforge/event/level/BlockEvent$PortalSpawnEvent,net/minecraftforge/event/level/NoteBlockEvent,net/minecraftforge/event/level/PistonEvent$Post,net/minecraftforge/event/level/PistonEvent$Pre
+26.2	busless	net/minecraftforge/event/level/PistonEvent	net/minecraftforge/event/level/PistonEvent$Post,net/minecraftforge/event/level/PistonEvent$Pre
+26.2	busless	net/minecraftforge/registries/DataPackRegistryEvent	net/minecraftforge/registries/DataPackRegistryEvent$NewRegistry
+26.2	heirs	net/minecraftforge/client/event/ClientChatReceivedEvent	net/minecraftforge/client/event/ClientChatReceivedEvent$Player
+26.2	heirs	net/minecraftforge/event/PlayLevelSoundEvent	net/minecraftforge/event/PlayLevelSoundEvent$AtEntity,net/minecraftforge/event/PlayLevelSoundEvent$AtPosition
+26.2	heirs	net/minecraftforge/event/entity/EntityTeleportEvent	net/minecraftforge/event/entity/EntityTeleportEvent$ChorusFruit,net/minecraftforge/event/entity/EntityTeleportEvent$EnderEntity,net/minecraftforge/event/entity/EntityTeleportEvent$EnderPearl,net/minecraftforge/event/entity/EntityTeleportEvent$SpreadPlayersCommand,net/minecraftforge/event/entity/EntityTeleportEvent$TeleportCommand
+26.2	plain	net/minecraftforge/client/event/RenderNameTagEvent
+26.2	denies	net/minecraftforge/event/level/BlockEvent$BreakEvent
+# 26.2 busless rows leave out the row of net/minecraftforge/client/event/ModelEvent, whose events Forge 1.20.1 had all sat on the other bus
+# 26.2 busless rows leave out net/minecraftforge/client/event/sound/SoundEngineLoadEvent under net/minecraftforge/client/event/sound/SoundEvent, on the other bus in Forge 1.20.1
+26.3	cancellable	net/minecraftforge/client/event/ClientChatEvent
+26.3	cancellable	net/minecraftforge/client/event/ClientChatReceivedEvent
+26.3	cancellable	net/minecraftforge/client/event/ClientChatReceivedEvent$Player
+26.3	cancellable	net/minecraftforge/client/event/ClientPauseChangeEvent$Pre
+26.3	cancellable	net/minecraftforge/client/event/CustomizeGuiOverlayEvent$BossEventProgress
+26.3	cancellable	net/minecraftforge/client/event/InputEvent$InteractionKeyMappingTriggered$Attack
+26.3	cancellable	net/minecraftforge/client/event/InputEvent$InteractionKeyMappingTriggered$PickBlock
+26.3	cancellable	net/minecraftforge/client/event/InputEvent$InteractionKeyMappingTriggered$UseItem
+26.3	cancellable	net/minecraftforge/client/event/InputEvent$MouseButton$Pre
+26.3	cancellable	net/minecraftforge/client/event/InputEvent$MouseScrollingEvent
+26.3	cancellable	net/minecraftforge/client/event/RenderArmEvent
+26.3	cancellable	net/minecraftforge/client/event/RenderAvatarEvent$Pre
+26.3	cancellable	net/minecraftforge/client/event/RenderBlockScreenEffectEvent$BlockOverlayEvent
+26.3	cancellable	net/minecraftforge/client/event/RenderBlockScreenEffectEvent$FireOverlayEvent
+26.3	cancellable	net/minecraftforge/client/event/RenderBlockScreenEffectEvent$WaterOverlayEvent
+26.3	cancellable	net/minecraftforge/client/event/RenderHandEvent
+26.3	cancellable	net/minecraftforge/client/event/RenderHighlightEvent$Block
+26.3	cancellable	net/minecraftforge/client/event/RenderHighlightEvent$Entity
+26.3	cancellable	net/minecraftforge/client/event/RenderItemInFrameEvent
+26.3	cancellable	net/minecraftforge/client/event/RenderLivingEvent$Pre
+26.3	cancellable	net/minecraftforge/client/event/RenderTooltipEvent$GatherComponents
+26.3	cancellable	net/minecraftforge/client/event/RenderTooltipEvent$Pre
+26.3	cancellable	net/minecraftforge/client/event/ScreenEvent$CharacterTyped$Pre
+26.3	cancellable	net/minecraftforge/client/event/ScreenEvent$Init$Pre
+26.3	cancellable	net/minecraftforge/client/event/ScreenEvent$KeyPressed$Post
+26.3	cancellable	net/minecraftforge/client/event/ScreenEvent$KeyPressed$Pre
+26.3	cancellable	net/minecraftforge/client/event/ScreenEvent$KeyReleased$Post
+26.3	cancellable	net/minecraftforge/client/event/ScreenEvent$KeyReleased$Pre
+26.3	cancellable	net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Pre
+26.3	cancellable	net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Pre
+26.3	cancellable	net/minecraftforge/client/event/ScreenEvent$MouseDragged$Pre
+26.3	cancellable	net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Pre
+26.3	cancellable	net/minecraftforge/client/event/ScreenEvent$Opening
+26.3	cancellable	net/minecraftforge/client/event/ScreenEvent$Render$Pre
+26.3	cancellable	net/minecraftforge/client/event/ScreenEvent$RenderInventoryMobEffects
+26.3	cancellable	net/minecraftforge/client/event/ScreenshotEvent
+26.3	cancellable	net/minecraftforge/client/event/SystemMessageReceivedEvent
+26.3	cancellable	net/minecraftforge/client/event/ToastAddEvent
+26.3	cancellable	net/minecraftforge/client/event/ViewportEvent$RenderFog
+26.3	cancellable	net/minecraftforge/event/AnvilUpdateEvent
+26.3	cancellable	net/minecraftforge/event/CommandEvent
+26.3	cancellable	net/minecraftforge/event/GrindstoneEvent$OnPlaceItem
+26.3	cancellable	net/minecraftforge/event/GrindstoneEvent$OnTakeItem
+26.3	cancellable	net/minecraftforge/event/ItemStackedOnOtherEvent
+26.3	cancellable	net/minecraftforge/event/LootTableLoadEvent
+26.3	cancellable	net/minecraftforge/event/PlayLevelSoundEvent
+26.3	cancellable	net/minecraftforge/event/PlayLevelSoundEvent$AtEntity
+26.3	cancellable	net/minecraftforge/event/PlayLevelSoundEvent$AtPosition
+26.3	cancellable	net/minecraftforge/event/ServerChatEvent
+26.3	cancellable	net/minecraftforge/event/VanillaGameEvent
+26.3	cancellable	net/minecraftforge/event/brewing/PotionBrewEvent$Pre
+26.3	cancellable	net/minecraftforge/event/entity/EntityJoinLevelEvent
+26.3	cancellable	net/minecraftforge/event/entity/EntityMountEvent
+26.3	cancellable	net/minecraftforge/event/entity/EntityStruckByLightningEvent
+26.3	cancellable	net/minecraftforge/event/entity/EntityTeleportEvent
+26.3	cancellable	net/minecraftforge/event/entity/EntityTeleportEvent$ChorusFruit
+26.3	cancellable	net/minecraftforge/event/entity/EntityTeleportEvent$EnderPearl
+26.3	cancellable	net/minecraftforge/event/entity/EntityTeleportEvent$EntityRandom
+26.3	cancellable	net/minecraftforge/event/entity/EntityTeleportEvent$SpreadPlayersCommand
+26.3	cancellable	net/minecraftforge/event/entity/EntityTeleportEvent$TeleportCommand
+26.3	cancellable	net/minecraftforge/event/entity/EntityTravelToDimensionEvent
+26.3	cancellable	net/minecraftforge/event/entity/item/ItemExpireEvent
+26.3	cancellable	net/minecraftforge/event/entity/item/ItemTossEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/AnimalTameEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/BabyEntitySpawnEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingAttackEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingChangeTargetEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingConversionEvent$Pre
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingDamageEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingDeathEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingDestroyBlockEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingDropsEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingDrownEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingEntityUseItemEvent$Start
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingEntityUseItemEvent$Stop
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingEntityUseItemEvent$Tick
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingEvent$LivingTickEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingExperienceDropEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingFallEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingHealEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingHurtEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingKnockBackEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingSwapItemsEvent$Hands
+26.3	cancellable	net/minecraftforge/event/entity/living/LivingUseTotemEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/MobEffectEvent$Remove
+26.3	cancellable	net/minecraftforge/event/entity/living/MobSpawnEvent$FinalizeSpawn
+26.3	cancellable	net/minecraftforge/event/entity/living/MonsterDisguiseEvent
+26.3	cancellable	net/minecraftforge/event/entity/living/ShieldBlockEvent
+26.3	cancellable	net/minecraftforge/event/entity/player/ArrowLooseEvent
+26.3	cancellable	net/minecraftforge/event/entity/player/AttackEntityEvent
+26.3	cancellable	net/minecraftforge/event/entity/player/BonemealEvent
+26.3	cancellable	net/minecraftforge/event/entity/player/EntityItemPickupEvent
+26.3	cancellable	net/minecraftforge/event/entity/player/FillBucketEvent
+26.3	cancellable	net/minecraftforge/event/entity/player/ItemFishedEvent
+26.3	cancellable	net/minecraftforge/event/entity/player/PermissionsChangedEvent
+26.3	cancellable	net/minecraftforge/event/entity/player/PlayerEvent$BreakSpeed
+26.3	cancellable	net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangeGameModeEvent
+26.3	cancellable	net/minecraftforge/event/entity/player/PlayerInteractEvent$EntityInteractSpecific
+26.3	cancellable	net/minecraftforge/event/entity/player/PlayerInteractEvent$LeftClickBlock
+26.3	cancellable	net/minecraftforge/event/entity/player/PlayerInteractEvent$RightClickBlock
+26.3	cancellable	net/minecraftforge/event/entity/player/PlayerInteractEvent$RightClickItem
+26.3	cancellable	net/minecraftforge/event/entity/player/PlayerSetSpawnEvent
+26.3	cancellable	net/minecraftforge/event/entity/player/PlayerXpEvent$LevelChange
+26.3	cancellable	net/minecraftforge/event/entity/player/PlayerXpEvent$PickupXp
+26.3	cancellable	net/minecraftforge/event/entity/player/PlayerXpEvent$XpChange
+26.3	cancellable	net/minecraftforge/event/furnace/FurnaceFuelBurnTimeEvent
+26.3	cancellable	net/minecraftforge/event/level/BlockEvent$BreakEvent
+26.3	cancellable	net/minecraftforge/event/level/BlockEvent$EntityMultiPlaceEvent
+26.3	cancellable	net/minecraftforge/event/level/BlockEvent$EntityPlaceEvent
+26.3	cancellable	net/minecraftforge/event/level/BlockEvent$FarmlandTrampleEvent
+26.3	cancellable	net/minecraftforge/event/level/BlockEvent$FluidPlaceBlockEvent
+26.3	cancellable	net/minecraftforge/event/level/BlockEvent$NeighborNotifyEvent
+26.3	cancellable	net/minecraftforge/event/level/BlockEvent$PortalSpawnEvent
+26.3	cancellable	net/minecraftforge/event/level/ExplosionEvent$Start
+26.3	cancellable	net/minecraftforge/event/level/LevelEvent$CreateSpawnPosition
+26.3	cancellable	net/minecraftforge/event/level/LevelEvent$PotentialSpawns
+26.3	cancellable	net/minecraftforge/event/level/NoteBlockEvent$Change
+26.3	cancellable	net/minecraftforge/event/level/NoteBlockEvent$Play
+26.3	cancellable	net/minecraftforge/event/level/PistonEvent$Pre
+26.3	cancellable	net/minecraftforge/event/village/VillageSiegeEvent
+26.3	parent	net/minecraftforge/client/event/ClientPauseChangeEvent	net/minecraftforge/client/event/ClientPauseChangeEvent$Pre
+26.3	parent	net/minecraftforge/client/event/RenderTooltipEvent	net/minecraftforge/client/event/RenderTooltipEvent$Pre
+26.3	parent	net/minecraftforge/event/GrindstoneEvent	net/minecraftforge/event/GrindstoneEvent$OnPlaceItem,net/minecraftforge/event/GrindstoneEvent$OnTakeItem
+26.3	parent	net/minecraftforge/event/brewing/PotionBrewEvent	net/minecraftforge/event/brewing/PotionBrewEvent$Pre
+26.3	parent	net/minecraftforge/event/entity/living/LivingConversionEvent	net/minecraftforge/event/entity/living/LivingConversionEvent$Pre
+26.3	parent	net/minecraftforge/event/entity/living/LivingEntityUseItemEvent	net/minecraftforge/event/entity/living/LivingEntityUseItemEvent$Start,net/minecraftforge/event/entity/living/LivingEntityUseItemEvent$Stop,net/minecraftforge/event/entity/living/LivingEntityUseItemEvent$Tick
+26.3	parent	net/minecraftforge/event/entity/living/MobEffectEvent	net/minecraftforge/event/entity/living/MobEffectEvent$Remove
+26.3	parent	net/minecraftforge/event/entity/player/PlayerInteractEvent	net/minecraftforge/event/entity/player/PlayerInteractEvent$EntityInteractSpecific,net/minecraftforge/event/entity/player/PlayerInteractEvent$LeftClickBlock,net/minecraftforge/event/entity/player/PlayerInteractEvent$RightClickBlock,net/minecraftforge/event/entity/player/PlayerInteractEvent$RightClickItem
+26.3	parent	net/minecraftforge/event/level/ExplosionEvent	net/minecraftforge/event/level/ExplosionEvent$Start
+26.3	parent	net/minecraftforge/event/level/LevelEvent	net/minecraftforge/event/level/LevelEvent$CreateSpawnPosition,net/minecraftforge/event/level/LevelEvent$PotentialSpawns
+26.3	parent	net/minecraftforge/event/level/NoteBlockEvent	net/minecraftforge/event/level/NoteBlockEvent$Change,net/minecraftforge/event/level/NoteBlockEvent$Play
+26.3	busless	net/minecraftforge/client/event/ContainerScreenEvent	net/minecraftforge/client/event/ContainerScreenEvent$Render$Background,net/minecraftforge/client/event/ContainerScreenEvent$Render$Foreground
+26.3	busless	net/minecraftforge/client/event/ContainerScreenEvent$Render	net/minecraftforge/client/event/ContainerScreenEvent$Render$Background,net/minecraftforge/client/event/ContainerScreenEvent$Render$Foreground
+26.3	busless	net/minecraftforge/client/event/CustomizeGuiOverlayEvent	net/minecraftforge/client/event/CustomizeGuiOverlayEvent$BossEventProgress,net/minecraftforge/client/event/CustomizeGuiOverlayEvent$Chat,net/minecraftforge/client/event/CustomizeGuiOverlayEvent$DebugText
+26.3	busless	net/minecraftforge/client/event/EntityRenderersEvent	net/minecraftforge/client/event/EntityRenderersEvent$AddLayers,net/minecraftforge/client/event/EntityRenderersEvent$CreateSkullModels,net/minecraftforge/client/event/EntityRenderersEvent$RegisterLayerDefinitions,net/minecraftforge/client/event/EntityRenderersEvent$RegisterRenderers
+26.3	busless	net/minecraftforge/client/event/InputEvent	net/minecraftforge/client/event/InputEvent$InteractionKeyMappingTriggered$Attack,net/minecraftforge/client/event/InputEvent$InteractionKeyMappingTriggered$PickBlock,net/minecraftforge/client/event/InputEvent$InteractionKeyMappingTriggered$UseItem,net/minecraftforge/client/event/InputEvent$Key,net/minecraftforge/client/event/InputEvent$MouseButton$Post,net/minecraftforge/client/event/InputEvent$MouseButton$Pre,net/minecraftforge/client/event/InputEvent$MouseScrollingEvent
+26.3	busless	net/minecraftforge/client/event/InputEvent$InteractionKeyMappingTriggered	net/minecraftforge/client/event/InputEvent$InteractionKeyMappingTriggered$Attack,net/minecraftforge/client/event/InputEvent$InteractionKeyMappingTriggered$PickBlock,net/minecraftforge/client/event/InputEvent$InteractionKeyMappingTriggered$UseItem
+26.3	busless	net/minecraftforge/client/event/InputEvent$MouseButton	net/minecraftforge/client/event/InputEvent$MouseButton$Post,net/minecraftforge/client/event/InputEvent$MouseButton$Pre
+26.3	busless	net/minecraftforge/client/event/RegisterColorHandlersEvent	net/minecraftforge/client/event/RegisterColorHandlersEvent$Block,net/minecraftforge/client/event/RegisterColorHandlersEvent$ColorResolvers
+26.3	busless	net/minecraftforge/client/event/RenderAvatarEvent	net/minecraftforge/client/event/RenderAvatarEvent$Post,net/minecraftforge/client/event/RenderAvatarEvent$Pre
+26.3	busless	net/minecraftforge/client/event/RenderBlockScreenEffectEvent	net/minecraftforge/client/event/RenderBlockScreenEffectEvent$BlockOverlayEvent,net/minecraftforge/client/event/RenderBlockScreenEffectEvent$FireOverlayEvent,net/minecraftforge/client/event/RenderBlockScreenEffectEvent$WaterOverlayEvent
+26.3	busless	net/minecraftforge/client/event/RenderHighlightEvent	net/minecraftforge/client/event/RenderHighlightEvent$Block,net/minecraftforge/client/event/RenderHighlightEvent$Entity
+26.3	busless	net/minecraftforge/client/event/RenderLivingEvent	net/minecraftforge/client/event/RenderLivingEvent$Post,net/minecraftforge/client/event/RenderLivingEvent$Pre
+26.3	busless	net/minecraftforge/client/event/ScreenEvent	net/minecraftforge/client/event/ScreenEvent$BackgroundRendered,net/minecraftforge/client/event/ScreenEvent$CharacterTyped$Post,net/minecraftforge/client/event/ScreenEvent$CharacterTyped$Pre,net/minecraftforge/client/event/ScreenEvent$Closing,net/minecraftforge/client/event/ScreenEvent$Init$Post,net/minecraftforge/client/event/ScreenEvent$Init$Pre,net/minecraftforge/client/event/ScreenEvent$KeyPressed$Post,net/minecraftforge/client/event/ScreenEvent$KeyPressed$Pre,net/minecraftforge/client/event/ScreenEvent$KeyReleased$Post,net/minecraftforge/client/event/ScreenEvent$KeyReleased$Pre,net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Post,net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Pre,net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Post,net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Pre,net/minecraftforge/client/event/ScreenEvent$MouseDragged$Post,net/minecraftforge/client/event/ScreenEvent$MouseDragged$Pre,net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Post,net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Pre,net/minecraftforge/client/event/ScreenEvent$Opening,net/minecraftforge/client/event/ScreenEvent$Render$Post,net/minecraftforge/client/event/ScreenEvent$Render$Pre,net/minecraftforge/client/event/ScreenEvent$RenderInventoryMobEffects
+26.3	busless	net/minecraftforge/client/event/ScreenEvent$CharacterTyped	net/minecraftforge/client/event/ScreenEvent$CharacterTyped$Post,net/minecraftforge/client/event/ScreenEvent$CharacterTyped$Pre
+26.3	busless	net/minecraftforge/client/event/ScreenEvent$Init	net/minecraftforge/client/event/ScreenEvent$Init$Post,net/minecraftforge/client/event/ScreenEvent$Init$Pre
+26.3	busless	net/minecraftforge/client/event/ScreenEvent$KeyInput	net/minecraftforge/client/event/ScreenEvent$KeyPressed$Post,net/minecraftforge/client/event/ScreenEvent$KeyPressed$Pre,net/minecraftforge/client/event/ScreenEvent$KeyReleased$Post,net/minecraftforge/client/event/ScreenEvent$KeyReleased$Pre
+26.3	busless	net/minecraftforge/client/event/ScreenEvent$KeyPressed	net/minecraftforge/client/event/ScreenEvent$KeyPressed$Post,net/minecraftforge/client/event/ScreenEvent$KeyPressed$Pre
+26.3	busless	net/minecraftforge/client/event/ScreenEvent$KeyReleased	net/minecraftforge/client/event/ScreenEvent$KeyReleased$Post,net/minecraftforge/client/event/ScreenEvent$KeyReleased$Pre
+26.3	busless	net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed	net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Post,net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Pre
+26.3	busless	net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased	net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Post,net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Pre
+26.3	busless	net/minecraftforge/client/event/ScreenEvent$MouseDragged	net/minecraftforge/client/event/ScreenEvent$MouseDragged$Post,net/minecraftforge/client/event/ScreenEvent$MouseDragged$Pre
+26.3	busless	net/minecraftforge/client/event/ScreenEvent$MouseInput	net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Post,net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed$Pre,net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Post,net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased$Pre,net/minecraftforge/client/event/ScreenEvent$MouseDragged$Post,net/minecraftforge/client/event/ScreenEvent$MouseDragged$Pre,net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Post,net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Pre
+26.3	busless	net/minecraftforge/client/event/ScreenEvent$MouseScrolled	net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Post,net/minecraftforge/client/event/ScreenEvent$MouseScrolled$Pre
+26.3	busless	net/minecraftforge/client/event/ScreenEvent$Render	net/minecraftforge/client/event/ScreenEvent$Render$Post,net/minecraftforge/client/event/ScreenEvent$Render$Pre
+26.3	busless	net/minecraftforge/client/event/TextureStitchEvent	net/minecraftforge/client/event/TextureStitchEvent$Post
+26.3	busless	net/minecraftforge/client/event/ViewportEvent	net/minecraftforge/client/event/ViewportEvent$ComputeCameraAngles,net/minecraftforge/client/event/ViewportEvent$ComputeFogColor,net/minecraftforge/client/event/ViewportEvent$ComputeFov,net/minecraftforge/client/event/ViewportEvent$RenderFog
+26.3	busless	net/minecraftforge/client/event/sound/SoundEvent	net/minecraftforge/client/event/sound/PlaySoundEvent,net/minecraftforge/client/event/sound/SoundEvent$SoundSourceEvent
+26.3	busless	net/minecraftforge/event/AttachCapabilitiesEvent	net/minecraftforge/event/AttachCapabilitiesEvent$BlockEntities,net/minecraftforge/event/AttachCapabilitiesEvent$Entities,net/minecraftforge/event/AttachCapabilitiesEvent$ItemStacks,net/minecraftforge/event/AttachCapabilitiesEvent$LevelChunks,net/minecraftforge/event/AttachCapabilitiesEvent$Levels
+26.3	busless	net/minecraftforge/event/TickEvent	net/minecraftforge/event/TickEvent$ClientTickEvent$Post,net/minecraftforge/event/TickEvent$ClientTickEvent$Pre,net/minecraftforge/event/TickEvent$LevelTickEvent$Post,net/minecraftforge/event/TickEvent$LevelTickEvent$Pre,net/minecraftforge/event/TickEvent$PlayerTickEvent$Post,net/minecraftforge/event/TickEvent$PlayerTickEvent$Pre,net/minecraftforge/event/TickEvent$RenderTickEvent$Post,net/minecraftforge/event/TickEvent$RenderTickEvent$Pre,net/minecraftforge/event/TickEvent$ServerTickEvent$Post,net/minecraftforge/event/TickEvent$ServerTickEvent$Pre
+26.3	busless	net/minecraftforge/event/TickEvent$ClientTickEvent	net/minecraftforge/event/TickEvent$ClientTickEvent$Post,net/minecraftforge/event/TickEvent$ClientTickEvent$Pre
+26.3	busless	net/minecraftforge/event/TickEvent$LevelTickEvent	net/minecraftforge/event/TickEvent$LevelTickEvent$Post,net/minecraftforge/event/TickEvent$LevelTickEvent$Pre
+26.3	busless	net/minecraftforge/event/TickEvent$PlayerTickEvent	net/minecraftforge/event/TickEvent$PlayerTickEvent$Post,net/minecraftforge/event/TickEvent$PlayerTickEvent$Pre
+26.3	busless	net/minecraftforge/event/TickEvent$RenderTickEvent	net/minecraftforge/event/TickEvent$RenderTickEvent$Post,net/minecraftforge/event/TickEvent$RenderTickEvent$Pre
+26.3	busless	net/minecraftforge/event/TickEvent$ServerTickEvent	net/minecraftforge/event/TickEvent$ServerTickEvent$Post,net/minecraftforge/event/TickEvent$ServerTickEvent$Pre
+26.3	busless	net/minecraftforge/event/entity/EntityEvent	net/minecraftforge/client/event/MovementInputUpdateEvent,net/minecraftforge/event/brewing/PlayerBrewedPotionEvent,net/minecraftforge/event/entity/EntityEvent$EnteringSection,net/minecraftforge/event/entity/EntityEvent$EntityConstructing,net/minecraftforge/event/entity/EntityJoinLevelEvent,net/minecraftforge/event/entity/EntityLeaveLevelEvent,net/minecraftforge/event/entity/EntityMobGriefingEvent,net/minecraftforge/event/entity/EntityMountEvent,net/minecraftforge/event/entity/EntityStruckByLightningEvent,net/minecraftforge/event/entity/EntityTeleportEvent,net/minecraftforge/event/entity/EntityTravelToDimensionEvent,net/minecraftforge/event/entity/ProjectileImpactEvent,net/minecraftforge/event/entity/item/ItemExpireEvent,net/minecraftforge/event/entity/item/ItemTossEvent,net/minecraftforge/event/entity/living/AnimalTameEvent,net/minecraftforge/event/entity/living/LivingAttackEvent,net/minecraftforge/event/entity/living/LivingBreatheEvent,net/minecraftforge/event/entity/living/LivingChangeTargetEvent,net/minecraftforge/event/entity/living/LivingConversionEvent,net/minecraftforge/event/entity/living/LivingDamageEvent,net/minecraftforge/event/entity/living/LivingDeathEvent,net/minecraftforge/event/entity/living/LivingDestroyBlockEvent,net/minecraftforge/event/entity/living/LivingDropsEvent,net/minecraftforge/event/entity/living/LivingDrownEvent,net/minecraftforge/event/entity/living/LivingEntityUseItemEvent,net/minecraftforge/event/entity/living/LivingEquipmentChangeEvent,net/minecraftforge/event/entity/living/LivingEvent$LivingJumpEvent,net/minecraftforge/event/entity/living/LivingEvent$LivingTickEvent,net/minecraftforge/event/entity/living/LivingEvent$LivingVisibilityEvent,net/minecraftforge/event/entity/living/LivingExperienceDropEvent,net/minecraftforge/event/entity/living/LivingFallEvent,net/minecraftforge/event/entity/living/LivingGetProjectileEvent,net/minecraftforge/event/entity/living/LivingHealEvent,net/minecraftforge/event/entity/living/LivingHurtEvent,net/minecraftforge/event/entity/living/LivingKnockBackEvent,net/minecraftforge/event/entity/living/LivingMakeBrainEvent,net/minecraftforge/event/entity/living/LivingPackSizeEvent,net/minecraftforge/event/entity/living/LivingSwapItemsEvent$Hands,net/minecraftforge/event/entity/living/LivingUseTotemEvent,net/minecraftforge/event/entity/living/LootingLevelEvent,net/minecraftforge/event/entity/living/MobEffectEvent,net/minecraftforge/event/entity/living/MobSpawnEvent$AllowDespawn,net/minecraftforge/event/entity/living/MobSpawnEvent$FinalizeSpawn,net/minecraftforge/event/entity/living/MobSpawnEvent$PositionCheck,net/minecraftforge/event/entity/living/MonsterDisguiseEvent,net/minecraftforge/event/entity/living/ShieldBlockEvent,net/minecraftforge/event/entity/living/ZombieEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementEarnEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementProgressEvent,net/minecraftforge/event/entity/player/AnvilRepairEvent,net/minecraftforge/event/entity/player/ArrowLooseEvent,net/minecraftforge/event/entity/player/ArrowNockEvent,net/minecraftforge/event/entity/player/AttackEntityEvent,net/minecraftforge/event/entity/player/BonemealEvent,net/minecraftforge/event/entity/player/CriticalHitEvent,net/minecraftforge/event/entity/player/EntityItemPickupEvent,net/minecraftforge/event/entity/player/FillBucketEvent,net/minecraftforge/event/entity/player/ItemFishedEvent,net/minecraftforge/event/entity/player/ItemTooltipEvent,net/minecraftforge/event/entity/player/PermissionsChangedEvent,net/minecraftforge/event/entity/player/PlayerContainerEvent,net/minecraftforge/event/entity/player/PlayerDestroyItemEvent,net/minecraftforge/event/entity/player/PlayerEvent$BreakSpeed,net/minecraftforge/event/entity/player/PlayerEvent$Clone,net/minecraftforge/event/entity/player/PlayerEvent$HarvestCheck,net/minecraftforge/event/entity/player/PlayerEvent$ItemCraftedEvent,net/minecraftforge/event/entity/player/PlayerEvent$ItemPickupEvent,net/minecraftforge/event/entity/player/PlayerEvent$ItemSmeltedEvent,net/minecraftforge/event/entity/player/PlayerEvent$LoadFromFile,net/minecraftforge/event/entity/player/PlayerEvent$NameFormat,net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangeGameModeEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangedDimensionEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerLoggedInEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerLoggedOutEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerRespawnEvent,net/minecraftforge/event/entity/player/PlayerEvent$SaveToFile,net/minecraftforge/event/entity/player/PlayerEvent$StartTracking,net/minecraftforge/event/entity/player/PlayerEvent$StopTracking,net/minecraftforge/event/entity/player/PlayerEvent$TabListNameFormat,net/minecraftforge/event/entity/player/PlayerFlyableFallEvent,net/minecraftforge/event/entity/player/PlayerInteractEvent,net/minecraftforge/event/entity/player/PlayerSetSpawnEvent,net/minecraftforge/event/entity/player/PlayerSleepInBedEvent,net/minecraftforge/event/entity/player/PlayerSpawnPhantomsEvent,net/minecraftforge/event/entity/player/PlayerWakeUpEvent,net/minecraftforge/event/entity/player/PlayerXpEvent$LevelChange,net/minecraftforge/event/entity/player/PlayerXpEvent$PickupXp,net/minecraftforge/event/entity/player/PlayerXpEvent$XpChange,net/minecraftforge/event/entity/player/SleepingLocationCheckEvent,net/minecraftforge/event/entity/player/SleepingTimeCheckEvent,net/minecraftforge/event/entity/player/TradeWithVillagerEvent
+26.3	busless	net/minecraftforge/event/entity/item/ItemEvent	net/minecraftforge/event/entity/item/ItemExpireEvent,net/minecraftforge/event/entity/item/ItemTossEvent
+26.3	busless	net/minecraftforge/event/entity/living/LivingEvent	net/minecraftforge/client/event/MovementInputUpdateEvent,net/minecraftforge/event/brewing/PlayerBrewedPotionEvent,net/minecraftforge/event/entity/living/AnimalTameEvent,net/minecraftforge/event/entity/living/LivingAttackEvent,net/minecraftforge/event/entity/living/LivingBreatheEvent,net/minecraftforge/event/entity/living/LivingChangeTargetEvent,net/minecraftforge/event/entity/living/LivingConversionEvent,net/minecraftforge/event/entity/living/LivingDamageEvent,net/minecraftforge/event/entity/living/LivingDeathEvent,net/minecraftforge/event/entity/living/LivingDestroyBlockEvent,net/minecraftforge/event/entity/living/LivingDropsEvent,net/minecraftforge/event/entity/living/LivingDrownEvent,net/minecraftforge/event/entity/living/LivingEntityUseItemEvent,net/minecraftforge/event/entity/living/LivingEquipmentChangeEvent,net/minecraftforge/event/entity/living/LivingEvent$LivingJumpEvent,net/minecraftforge/event/entity/living/LivingEvent$LivingTickEvent,net/minecraftforge/event/entity/living/LivingEvent$LivingVisibilityEvent,net/minecraftforge/event/entity/living/LivingExperienceDropEvent,net/minecraftforge/event/entity/living/LivingFallEvent,net/minecraftforge/event/entity/living/LivingGetProjectileEvent,net/minecraftforge/event/entity/living/LivingHealEvent,net/minecraftforge/event/entity/living/LivingHurtEvent,net/minecraftforge/event/entity/living/LivingKnockBackEvent,net/minecraftforge/event/entity/living/LivingMakeBrainEvent,net/minecraftforge/event/entity/living/LivingPackSizeEvent,net/minecraftforge/event/entity/living/LivingSwapItemsEvent$Hands,net/minecraftforge/event/entity/living/LivingUseTotemEvent,net/minecraftforge/event/entity/living/LootingLevelEvent,net/minecraftforge/event/entity/living/MobEffectEvent,net/minecraftforge/event/entity/living/MonsterDisguiseEvent,net/minecraftforge/event/entity/living/ShieldBlockEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementEarnEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementProgressEvent,net/minecraftforge/event/entity/player/AnvilRepairEvent,net/minecraftforge/event/entity/player/ArrowLooseEvent,net/minecraftforge/event/entity/player/ArrowNockEvent,net/minecraftforge/event/entity/player/AttackEntityEvent,net/minecraftforge/event/entity/player/BonemealEvent,net/minecraftforge/event/entity/player/CriticalHitEvent,net/minecraftforge/event/entity/player/EntityItemPickupEvent,net/minecraftforge/event/entity/player/FillBucketEvent,net/minecraftforge/event/entity/player/ItemFishedEvent,net/minecraftforge/event/entity/player/ItemTooltipEvent,net/minecraftforge/event/entity/player/PermissionsChangedEvent,net/minecraftforge/event/entity/player/PlayerContainerEvent,net/minecraftforge/event/entity/player/PlayerDestroyItemEvent,net/minecraftforge/event/entity/player/PlayerEvent$BreakSpeed,net/minecraftforge/event/entity/player/PlayerEvent$Clone,net/minecraftforge/event/entity/player/PlayerEvent$HarvestCheck,net/minecraftforge/event/entity/player/PlayerEvent$ItemCraftedEvent,net/minecraftforge/event/entity/player/PlayerEvent$ItemPickupEvent,net/minecraftforge/event/entity/player/PlayerEvent$ItemSmeltedEvent,net/minecraftforge/event/entity/player/PlayerEvent$LoadFromFile,net/minecraftforge/event/entity/player/PlayerEvent$NameFormat,net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangeGameModeEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangedDimensionEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerLoggedInEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerLoggedOutEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerRespawnEvent,net/minecraftforge/event/entity/player/PlayerEvent$SaveToFile,net/minecraftforge/event/entity/player/PlayerEvent$StartTracking,net/minecraftforge/event/entity/player/PlayerEvent$StopTracking,net/minecraftforge/event/entity/player/PlayerEvent$TabListNameFormat,net/minecraftforge/event/entity/player/PlayerFlyableFallEvent,net/minecraftforge/event/entity/player/PlayerInteractEvent,net/minecraftforge/event/entity/player/PlayerSetSpawnEvent,net/minecraftforge/event/entity/player/PlayerSleepInBedEvent,net/minecraftforge/event/entity/player/PlayerSpawnPhantomsEvent,net/minecraftforge/event/entity/player/PlayerWakeUpEvent,net/minecraftforge/event/entity/player/PlayerXpEvent$LevelChange,net/minecraftforge/event/entity/player/PlayerXpEvent$PickupXp,net/minecraftforge/event/entity/player/PlayerXpEvent$XpChange,net/minecraftforge/event/entity/player/SleepingLocationCheckEvent,net/minecraftforge/event/entity/player/SleepingTimeCheckEvent,net/minecraftforge/event/entity/player/TradeWithVillagerEvent
+26.3	busless	net/minecraftforge/event/entity/living/LivingSwapItemsEvent	net/minecraftforge/event/entity/living/LivingSwapItemsEvent$Hands
+26.3	busless	net/minecraftforge/event/entity/living/MobSpawnEvent	net/minecraftforge/event/entity/living/MobSpawnEvent$AllowDespawn,net/minecraftforge/event/entity/living/MobSpawnEvent$FinalizeSpawn,net/minecraftforge/event/entity/living/MobSpawnEvent$PositionCheck
+26.3	busless	net/minecraftforge/event/entity/player/AdvancementEvent	net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementEarnEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementProgressEvent
+26.3	busless	net/minecraftforge/event/entity/player/PlayerEvent	net/minecraftforge/client/event/MovementInputUpdateEvent,net/minecraftforge/event/brewing/PlayerBrewedPotionEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementEarnEvent,net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementProgressEvent,net/minecraftforge/event/entity/player/AnvilRepairEvent,net/minecraftforge/event/entity/player/ArrowLooseEvent,net/minecraftforge/event/entity/player/ArrowNockEvent,net/minecraftforge/event/entity/player/AttackEntityEvent,net/minecraftforge/event/entity/player/BonemealEvent,net/minecraftforge/event/entity/player/CriticalHitEvent,net/minecraftforge/event/entity/player/EntityItemPickupEvent,net/minecraftforge/event/entity/player/FillBucketEvent,net/minecraftforge/event/entity/player/ItemFishedEvent,net/minecraftforge/event/entity/player/ItemTooltipEvent,net/minecraftforge/event/entity/player/PermissionsChangedEvent,net/minecraftforge/event/entity/player/PlayerContainerEvent,net/minecraftforge/event/entity/player/PlayerDestroyItemEvent,net/minecraftforge/event/entity/player/PlayerEvent$BreakSpeed,net/minecraftforge/event/entity/player/PlayerEvent$Clone,net/minecraftforge/event/entity/player/PlayerEvent$HarvestCheck,net/minecraftforge/event/entity/player/PlayerEvent$ItemCraftedEvent,net/minecraftforge/event/entity/player/PlayerEvent$ItemPickupEvent,net/minecraftforge/event/entity/player/PlayerEvent$ItemSmeltedEvent,net/minecraftforge/event/entity/player/PlayerEvent$LoadFromFile,net/minecraftforge/event/entity/player/PlayerEvent$NameFormat,net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangeGameModeEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerChangedDimensionEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerLoggedInEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerLoggedOutEvent,net/minecraftforge/event/entity/player/PlayerEvent$PlayerRespawnEvent,net/minecraftforge/event/entity/player/PlayerEvent$SaveToFile,net/minecraftforge/event/entity/player/PlayerEvent$StartTracking,net/minecraftforge/event/entity/player/PlayerEvent$StopTracking,net/minecraftforge/event/entity/player/PlayerEvent$TabListNameFormat,net/minecraftforge/event/entity/player/PlayerFlyableFallEvent,net/minecraftforge/event/entity/player/PlayerInteractEvent,net/minecraftforge/event/entity/player/PlayerSetSpawnEvent,net/minecraftforge/event/entity/player/PlayerSleepInBedEvent,net/minecraftforge/event/entity/player/PlayerSpawnPhantomsEvent,net/minecraftforge/event/entity/player/PlayerWakeUpEvent,net/minecraftforge/event/entity/player/PlayerXpEvent$LevelChange,net/minecraftforge/event/entity/player/PlayerXpEvent$PickupXp,net/minecraftforge/event/entity/player/PlayerXpEvent$XpChange,net/minecraftforge/event/entity/player/SleepingTimeCheckEvent,net/minecraftforge/event/entity/player/TradeWithVillagerEvent
+26.3	busless	net/minecraftforge/event/entity/player/PlayerXpEvent	net/minecraftforge/event/entity/player/PlayerXpEvent$LevelChange,net/minecraftforge/event/entity/player/PlayerXpEvent$PickupXp,net/minecraftforge/event/entity/player/PlayerXpEvent$XpChange
+26.3	busless	net/minecraftforge/event/level/BlockEvent	net/minecraftforge/event/level/BlockEvent$BreakEvent,net/minecraftforge/event/level/BlockEvent$CropGrowEvent,net/minecraftforge/event/level/BlockEvent$EntityMultiPlaceEvent,net/minecraftforge/event/level/BlockEvent$EntityPlaceEvent,net/minecraftforge/event/level/BlockEvent$FarmlandTrampleEvent,net/minecraftforge/event/level/BlockEvent$FluidPlaceBlockEvent,net/minecraftforge/event/level/BlockEvent$NeighborNotifyEvent,net/minecraftforge/event/level/BlockEvent$PortalSpawnEvent,net/minecraftforge/event/level/NoteBlockEvent,net/minecraftforge/event/level/PistonEvent$Post,net/minecraftforge/event/level/PistonEvent$Pre
+26.3	busless	net/minecraftforge/event/level/PistonEvent	net/minecraftforge/event/level/PistonEvent$Post,net/minecraftforge/event/level/PistonEvent$Pre
+26.3	busless	net/minecraftforge/registries/DataPackRegistryEvent	net/minecraftforge/registries/DataPackRegistryEvent$NewRegistry
+26.3	heirs	net/minecraftforge/client/event/ClientChatReceivedEvent	net/minecraftforge/client/event/ClientChatReceivedEvent$Player
+26.3	heirs	net/minecraftforge/event/PlayLevelSoundEvent	net/minecraftforge/event/PlayLevelSoundEvent$AtEntity,net/minecraftforge/event/PlayLevelSoundEvent$AtPosition
+26.3	heirs	net/minecraftforge/event/entity/EntityTeleportEvent	net/minecraftforge/event/entity/EntityTeleportEvent$ChorusFruit,net/minecraftforge/event/entity/EntityTeleportEvent$EnderPearl,net/minecraftforge/event/entity/EntityTeleportEvent$EntityRandom,net/minecraftforge/event/entity/EntityTeleportEvent$SpreadPlayersCommand,net/minecraftforge/event/entity/EntityTeleportEvent$TeleportCommand
+26.3	plain	net/minecraftforge/client/event/RenderNameTagEvent
+26.3	denies	net/minecraftforge/event/level/BlockEvent$BreakEvent
+# 26.3 busless rows leave out the row of net/minecraftforge/client/event/ModelEvent, whose events Forge 1.20.1 had all sat on the other bus
+# 26.3 busless rows leave out net/minecraftforge/client/event/sound/SoundEngineLoadEvent under net/minecraftforge/client/event/sound/SoundEvent, on the other bus in Forge 1.20.1

@@ -34,22 +34,8 @@ public class Forge_1_15_2_to_1_16_5 implements VersionShim {
             "net/minecraft/util/math/Vector3f",
             "net/minecraft/util/math/vector/Vector3f"
         );
-        // dimension changes from the Nether rework
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/dimension/DimensionType", "isUltrawarm",
-            "()Z",
-            "com/retromod/shim/forge/embedded/DimensionShim", "isUltrawarm",
-            "(Ljava/lang/Object;)Z"
-        );
         // WorldType became world presets; the mod's type loads but is not offered.
         LegacyWorldTypeBridge.register(transformer);
-        // worldgen moved to codecs
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/gen/feature/Feature", "withConfiguration",
-            "(Lnet/minecraft/world/gen/feature/IFeatureConfig;)Lnet/minecraft/world/gen/feature/ConfiguredFeature;",
-            "com/retromod/shim/forge/embedded/FeatureShim", "withConfiguration",
-            "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"
-        );
     }
 
     @Override

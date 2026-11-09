@@ -6,6 +6,7 @@ package com.retromod.shim.common;
 
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
@@ -62,7 +63,10 @@ public final class LegacySynchedDataBridge {
     public static void register(RetromodTransformer transformer) {
         if (!hostDefinesThroughBuilder()) return;
         registerRedirects(transformer);
-        LOGGER.info("Bridged pre-1.20.5 entity data definitions onto SynchedEntityData.Builder");
+        // NeoForge's chain and the Forge chain both register this, so the notice prints once.
+        if (transformer.firstRegistrationNotice(LegacySynchedDataBridge.class.getName())) {
+            LOGGER.debug(RetromodLog.DETAIL, "Bridged pre-1.20.5 entity data definitions onto SynchedEntityData.Builder");
+        }
     }
 
     /**

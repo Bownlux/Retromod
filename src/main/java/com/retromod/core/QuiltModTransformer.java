@@ -4,7 +4,9 @@
  */
 package com.retromod.core;
 
+import com.retromod.inplace.WorkFolder;
 import com.retromod.util.ArchivePublication;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import com.retromod.util.JarSignatureSanitizer;
 import org.slf4j.Logger;
@@ -55,7 +57,7 @@ public class QuiltModTransformer {
         validateArchiveInput(sourceJar);
         String originalName = sourceJar.getFileName().toString();
 
-        LOGGER.info("Transforming Quilt mod: {}", originalName);
+        LOGGER.debug(RetromodLog.DETAIL, "Transforming Quilt mod: {}", originalName);
 
         if (com.retromod.util.OptOutCheck.isOptedOut(sourceJar)) {
             com.retromod.util.OptOutCheck.logSkipped(sourceJar);
@@ -66,7 +68,7 @@ public class QuiltModTransformer {
 
         String modMcVersion = extractMinecraftVersion(sourceJar);
         if (fabricTransformer.isNativeVersionMod(modMcVersion)) {
-            LOGGER.info("  {} is already for {} - passing through", originalName, targetMcVersion);
+            LOGGER.debug(RetromodLog.DETAIL, "  {} is already for {} - passing through", originalName, targetMcVersion);
             Path directCopy = outputDir.resolve(originalName);
             copyReplacingAtomically(sourceJar, directCopy);
             return directCopy;
@@ -93,7 +95,7 @@ public class QuiltModTransformer {
     }
     
     protected void updateQuiltModJson(Path jarPath) throws IOException {
-        Path tempDir = Files.createTempDirectory("retromod-quilt-");
+        Path tempDir = WorkFolder.createTempDirectory("retromod-quilt-");
 
         try {
             // A mod entry can misreport its size, so count bytes actually decompressed.
@@ -176,11 +178,11 @@ public class QuiltModTransformer {
         Set<String> entryNames = new HashSet<>();
         var entries = jar.entries();
         while (entries.hasMoreElements()) {
-            String canonical = canonicalEntryName(entries.nextElement().getName());
-            if (!entryNames.add(canonical)) {
-                throw new IOException("Quilt mod contains a duplicate normalized entry: "
-                    + canonical);
-            }
+            var entry = entries.nextElement();
+            String canonical = canonicalEntryName(entry.getName());
+            // A merged fat jar repeats folder entries, which carry no content.
+            ZipSecurity.firstSighting(entryNames, canonical, entry.isDirectory(),
+                    () -> "Quilt mod contains a duplicate normalized entry: " + canonical);
         }
     }
 

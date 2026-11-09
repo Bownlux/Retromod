@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.neoforge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -257,7 +258,7 @@ public final class LegacyHandlerCapabilities {
             };
             Object wrapped = Class.forName(type, true, loader).getMethod("of", current).invoke(null, resourceHandler);
             // An item's fluid handler had to be IFluidHandlerItem, which has no adapter to wrap with.
-            Class<?> expected = (Class<?>) capability.getClass().getMethod("typeClass").invoke(capability);
+            Class<?> expected = (Class<?>) LegacyPublicMethods.method(capability.getClass(), "typeClass").invoke(capability);
             return expected.isInstance(wrapped) ? wrapped : null;
         } catch (ReflectiveOperationException failure) {
             return null;
@@ -508,7 +509,7 @@ public final class LegacyHandlerCapabilities {
 
     /** A public method by name and arity whose parameters accept the arguments. */
     private static Object call(Object target, String name, Object... arguments) {
-        for (Method method : target.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(target.getClass())) {
             if (!method.getName().equals(name) || method.getParameterCount() != arguments.length) continue;
             Class<?>[] parameters = method.getParameterTypes();
             boolean fits = true;

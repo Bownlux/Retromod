@@ -4,6 +4,7 @@
  */
 package com.retromod.virtual;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.function.*;
@@ -30,8 +31,9 @@ public class VirtualMinecraftForge {
                     Class<?>[] params = method.getParameterTypes();
                     if (params.length == 1) {
                         Class<?> eventType = params[0];
+                        // The annotation is read on the class's own method; the call goes through a public declaration.
                         handlers.computeIfAbsent(eventType, k -> new ArrayList<>())
-                                .add(new EventHandler(target, method));
+                                .add(new EventHandler(target, LegacyPublicMethods.invocable(target.getClass(), method)));
                     }
                 }
             }
@@ -56,7 +58,7 @@ public class VirtualMinecraftForge {
             }
             
             try {
-                Method isCanceled = event.getClass().getMethod("isCanceled");
+                Method isCanceled = LegacyPublicMethods.method(event.getClass(), "isCanceled");
                 return (boolean) isCanceled.invoke(event);
             } catch (Exception e) {
                 return false;

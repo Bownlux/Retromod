@@ -28,18 +28,6 @@ public class NeoForge_1_20_1_to_1_20_2 implements VersionShim {
             "net/neoforged/neoforge/network/NetworkRegistry",
             "net/neoforged/neoforge/network/registration/PayloadRegistrar"
         );
-        transformer.registerMethodRedirect(
-            "net/neoforged/neoforge/network/simple/SimpleChannel", "sendToServer",
-            "(Ljava/lang/Object;)V",
-            "com/retromod/shim/neoforge/embedded/NetworkShim", "sendToServer",
-            "(Ljava/lang/Object;Ljava/lang/Object;)V"
-        );
-        transformer.registerMethodRedirect(
-            "net/neoforged/neoforge/network/PacketDistributor", "sendToPlayer",
-            "(Ljava/lang/Object;Ljava/lang/Object;)V",
-            "com/retromod/shim/neoforge/embedded/NetworkShim", "sendToPlayer",
-            "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V"
-        );
     }
 
     @Override

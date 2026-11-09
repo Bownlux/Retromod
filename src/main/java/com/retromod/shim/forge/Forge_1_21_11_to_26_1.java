@@ -1,13 +1,6 @@
 /*
  * Retromod - Backwards Compatibility Layer for Minecraft Mods
  * Copyright (c) 2026 Bownlux
- *
- * Forge 1.21.11 to 26.1 shim. MC 26.1 uses Mojang official names directly, and
- * Forge mods built for 1.21.11 already use Mojang names, so this handles vanilla
- * MC API changes rather than remapping. Most Forge-on-1.21+ mods are really
- * NeoForge; this covers the few that still target Lexforge. Forge-specific
- * changes (capabilities, registries) live in ForgeCapabilitiesShim and
- * ForgeRegistryApiShim.
  */
 package com.retromod.shim.forge;
 
@@ -16,11 +9,7 @@ import com.retromod.core.RetromodVersion;
 import com.retromod.core.VersionShim;
 import com.retromod.util.McReflect;
 
-/**
- * Compatibility shim for Forge mods built for 1.21.11 to run on 26.1+.
- * Covers vanilla MC API changes; Forge-specific redirects live in the
- * shim.api.forge package.
- */
+/** Updates Forge 1.21.11 mods for the vanilla 26.1 changes and Forge's own 26.1 renames. */
 public class Forge_1_21_11_to_26_1 implements VersionShim {
 
     @Override
@@ -45,50 +34,13 @@ public class Forge_1_21_11_to_26_1 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // The vanilla 26.1 set, shared with the NeoForge and Fabric shims, the CLI and AOT.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
+        // Mods built for 1.21.11 also reach the members 26.1 and 26.2 removed; each row is checked on the host.
+        com.retromod.shim.common.LegacyRemovedMemberBridge.register(transformer);
 
-        // Neutralize the imperative RenderSystem state setters deleted in the
-        // blaze3d refactor. Forge doesn't share the Common class-moves path, so
-        // wire it here directly.
-        com.retromod.shim.common.RemovedRenderStateNeutralize.register(transformer);
         // 26.1 removed BlockEntityType.Builder; the type takes the supplier and blocks directly.
         com.retromod.shim.common.LegacyBlockEntityTypeBuilderBridge.register(transformer);
-
-        // 26.1 removed the single-arg is() overloads from BlockState/ItemStack/FluidState;
-        // same wiring note as above (Forge doesn't run the Common class-moves path).
-        com.retromod.shim.common.IsOverloadBridgeSynthetic.register(transformer);
-        com.retromod.shim.common.LegacyBiomeEffectsBridge.register(transformer);
-        com.retromod.shim.common.LegacyBiomeSpawnsBridge.register(transformer);
-        com.retromod.shim.common.LegacyPaintingVariantBridge.register(transformer);
-        com.retromod.shim.common.LegacyArmorLayerBridge.register(transformer);
-        com.retromod.shim.common.LegacyPoseGuiBridge.register(transformer);
-        com.retromod.shim.common.LegacyEitherHolderBridge.register(transformer);
-        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerParticleRegistrationMove(transformer);
-        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
-            .registerOfficialEntityTypeBuildBridge(transformer);
-        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
-            .registerLegacyContainerInput(transformer);
-        // The 26.1 vanilla descriptor changes and client bridges (render types, ItemBlockRenderTypes,
-        // text events, key mappings, NBT, reload listeners, GUI calls, particles) name only vanilla
-        // classes, so Forge mods built for 1.21.x need them as much as Fabric and NeoForge mods do.
-        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
-            .registerCorpus26xDescriptorAdaptations(transformer);
-
-        // Vanilla class moves/renames the corpus scan surfaced (Forge doesn't run the Common
-        // class-moves path, so these mirror Common_1_21_11_to_26_1_ClassMoves for Forge hosts):
-        // Painting + PaintingVariant into entity/decoration/painting/, Husk into
-        // entity/monster/zombie/, and MobSpawnType -> EntitySpawnReason (all verified on 26.1/26.2).
-        transformer.registerClassRedirect(
-            "net/minecraft/world/entity/decoration/Painting",
-            "net/minecraft/world/entity/decoration/painting/Painting");
-        transformer.registerClassRedirect(
-            "net/minecraft/world/entity/decoration/PaintingVariant",
-            "net/minecraft/world/entity/decoration/painting/PaintingVariant");
-        transformer.registerClassRedirect(
-            "net/minecraft/world/entity/monster/Husk",
-            "net/minecraft/world/entity/monster/zombie/Husk");
-        transformer.registerClassRedirect(
-            "net/minecraft/world/entity/MobSpawnType",
-            "net/minecraft/world/entity/EntitySpawnReason");
 
         // Forge 64.x for MC 26.1 renamed net.minecraft.resources.ResourceLocation
         // to .Identifier; pre-26.1 mods reference the old name and crash with
@@ -119,35 +71,29 @@ public class Forge_1_21_11_to_26_1 implements VersionShim {
             "(Ljava/lang/String;)Lnet/minecraft/resources/Identifier;"
         );
 
-        // 26.1 renamed the Registry value getter get(Identifier) -> getValue(Identifier) (the
-        // ResourceLocation -> Identifier companion). Shared with the NeoForge/Fabric path.
-        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
-            .registerRegistryValueGetterRename(transformer);
-        // Vanilla client accessor renames that landed by 26.1 (Minecraft.getTimer -> getDeltaTracker,
-        // Camera.getPosition -> position). Shared with the NeoForge/Fabric path.
-        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
-            .registerClientAccessorRenames26_1(transformer);
-        // Corpus-mined 26.x descriptor adaptations (Mth.cos/sin arg widen, Window.getGuiScale return
-        // narrow, SoundManager.play now-returns, CompoundTag.getList type-hint drop, Screen.hasX ->
-        // Minecraft.getInstance().hasX). Shared with the NeoForge/Fabric path.
-        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
-            .registerCorpus26xDescriptorAdaptations(transformer);
-        // 26.1 renamed every GameRules constant (RULE_MOBGRIEFING -> MOB_GRIEFING and 45 more).
-        // The old spelling is the pre-26.1 Mojang name, so a 1.20 or 1.21 Forge mod carries it and
-        // hits NoSuchFieldError without this. Shared with the NeoForge/Fabric path.
-        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
-            .registerGameRuleFieldRenames(transformer);
-        // The block and item tags 26.1 renamed. Shared with the NeoForge/Fabric path.
-        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerTagRenames26_1(transformer);
-        // Forge 26.x builds network channels its own way; old SimpleChannel code opens one through it.
-        LegacyForgeNetworkBridge.register(transformer);
+        // Since 1.21.2 the registry id must be on Block/Item Properties before construction, and
+        // Forge's DeferredRegister.register(String, Supplier) builds the object with no id
+        // (RegisterEvent dies "Block/Item id not set", as on NeoForge in #87, hit in-game on
+        // Macaw's). Forge has no id-aware register overload, so the supplier is wrapped and the
+        // id comes from the returned RegistryObject.getKey(). Registered here as well as at
+        // 1.21.11, so an offline chain that starts at 1.21.11 keeps it.
+        if (!McReflect.isNeoForge()) {
+            RegistryIdBridgeSynthetic.registerForgeRedirects(transformer);
+        }
 
-        // Bases Minecraft deleted, rebased so a mod that extends one still loads. Forge assembles
-        // its own list instead of calling the common register(), so it reached neither of these:
-        // a Forge mod with a custom tool, armour piece or music disc failed at its extends in game
-        // while the same jar transformed correctly on the command line.
-        com.retromod.shim.common.RemovedItemBaseBridge.register(transformer);
-        com.retromod.shim.common.RemovedBaseToParentBridge.register(transformer);
+        // A Forge mod bound for NeoForge takes NeoForge's item renderer bridge here, since an offline Forge chain has no
+        // NeoForge shim. The bridge registers nothing for a Forge target.
+        com.retromod.shim.neoforge.LegacyNeoForgeItemRendererBridge.register(transformer);
+        com.retromod.shim.neoforge.LegacyNeoForgeRegisterAdditionalBridge.register(transformer);
+        com.retromod.shim.neoforge.LegacyNeoForgeBakedModelBridge.register(transformer);
+        // NeoForge keys AddLayers player renderers by model type, and its getSkins() returns those types.
+        com.retromod.shim.neoforge.LegacyNeoForgeAddLayersBridge.register(transformer);
+        // NeoForge 26.1 replaced the block color event with block tint sources, and 1.21.4 removed the item color event.
+        com.retromod.shim.neoforge.LegacyNeoForgeColorBridge.register(transformer);
+
+        // Forge 26.x builds network channels its own way; old SimpleChannel code opens one through it.
+        // Capabilities and registries have their own shims, ForgeCapabilitiesShim and ForgeRegistryApiShim.
+        LegacyForgeNetworkBridge.register(transformer);
 
         // EntityType.BOAT/CHEST_BOAT split into per-wood types in 26.1; OAK is
         // the common default for old mods.
@@ -191,24 +137,8 @@ public class Forge_1_21_11_to_26_1 implements VersionShim {
             true
         );
 
-        // Listener.setGain(float) removed (volume moved per-source); no-op it.
-        transformer.registerMethodRedirect(
-            "com/mojang/blaze3d/audio/Listener", "setGain",
-            "(F)V",
-            "com/retromod/shim/fabric/embedded/ItemSafetyShim", "noOp",
-            "(Ljava/lang/Object;F)V",
-            true
-        );
-
-        // Item components are data-driven in 26.1; getDefaultInstance() before
-        // binding NPEs, so route through a safe wrapper.
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/item/Item", "getDefaultInstance",
-            "()Lnet/minecraft/world/item/ItemStack;",
-            "com/retromod/shim/fabric/embedded/ItemSafetyShim", "safeGetDefaultInstance",
-            "(Ljava/lang/Object;)Ljava/lang/Object;",
-            true
-        );
+        // Listener.setGain(float) is gone from 1.21.9; no-op it.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerListenerSetGainNoOp(transformer);
 
         // Window.getWindow() renamed to record-style accessor handle().
         transformer.registerMethodRedirect(
@@ -234,14 +164,9 @@ public class Forge_1_21_11_to_26_1 implements VersionShim {
             "(DD)Lnet/minecraft/world/inventory/Slot;"
         );
 
-        // GameNarrator.sayNow(Component) renamed to saySystemNow in 26.1 (verified absent in
-        // 26.1-snapshot-10, present in 1.21.11; corpus scan: Revamped Phantoms ClientPacketListenerMixin).
-        transformer.registerMethodRedirect(
-            "net/minecraft/client/GameNarrator", "sayNow",
-            "(Lnet/minecraft/network/chat/Component;)V",
-            "net/minecraft/client/GameNarrator", "saySystemNow",
-            "(Lnet/minecraft/network/chat/Component;)V"
-        );
+        // GameNarrator.sayNow(Component) is saySystemNow from 1.21.6 (corpus scan: Revamped
+        // Phantoms ClientPacketListenerMixin).
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerNarratorSayNowRename(transformer);
 
         // FriendlyByteBuf.readJsonWithCodec renamed to readLenientJsonWithCodec in 26.1 (same
         // descriptor; writeJsonWithCodec unchanged; corpus scan: NoChatReports MixinFriendlyByteBuf).
@@ -323,7 +248,7 @@ public class Forge_1_21_11_to_26_1 implements VersionShim {
     @Override
     public String[] getShimClasses() {
         return new String[] {
-            // Loader-agnostic; reused from Fabric for the safe Item/Listener redirects.
+            // Loader-agnostic; reused from Fabric for the permission and Listener redirects.
             "com.retromod.shim.fabric.embedded.ItemSafetyShim"
         };
     }

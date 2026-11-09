@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
@@ -45,6 +46,6 @@ public final class LegacyBlockRandomTickBridge {
     }
 
     private static Method publicMethod(Class<?> owner, String name) throws NoSuchMethodException {
-        return owner.getMethod(name);
+        return LegacyPublicMethods.method(owner, name);
     }
 }

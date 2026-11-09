@@ -7,7 +7,9 @@ package com.retromod.gui;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.retromod.core.RetromodConfig;
 import com.retromod.inplace.InPlaceSettings;
+import com.retromod.security.SignatureVerifier;
 import com.retromod.util.JsonSecurity;
 import com.retromod.util.McI18n;
 import com.retromod.util.McReflect;
@@ -39,7 +41,6 @@ public final class ConfigScreenFactory {
     private static Class<?> screenClass;
     private static Class<?> textClass;
     private static Class<?> buttonWidgetClass;
-    private static Class<?> minecraftClientClass;
     private static Class<?> pressActionClass;
     private static boolean resolved;
 
@@ -52,9 +53,17 @@ public final class ConfigScreenFactory {
         "use_aot",
         "polyfills_enabled",
         "verify_transforms",
-        "force_translate_complex",
         InPlaceSettings.KEY,
     };
+
+    // What the runtime uses when config.json lacks a key. A config written before a key existed
+    // lacks it, so the screen must show this value, not the value a new file would carry.
+    private static final Map<String, Boolean> RUNTIME_DEFAULTS = Map.of(
+        "use_aot", true,
+        "polyfills_enabled", true,
+        "verify_transforms", false,
+        InPlaceSettings.KEY, InPlaceSettings.DEFAULT_WRITE_TRANSLATED_JARS
+    );
 
     /** Shown under the toggles while the saved in-place switch waits for a restart. */
     private static final String NEXT_LAUNCH_KEY = "retromod.settings.next_launch";
@@ -79,12 +88,18 @@ public final class ConfigScreenFactory {
         Object screen = ScreenClassGenerator.createScreen(
                 title,
                 s -> addAllWidgets(s, config, parentScreen),
-                () -> saveConfig(config)
+                closeTo(parentScreen)
         );
 
         if (screen != null) {
             setScreen(screen);
         }
+    }
+
+    /** What Escape does: return to the parent screen like Done. */
+    private static Runnable closeTo(Object parentScreen) {
+        // Each toggle saved its own key when pressed, so closing writes nothing.
+        return () -> setScreen(parentScreen);
     }
 
     // WIDGET LAYOUT
@@ -97,8 +112,8 @@ public final class ConfigScreenFactory {
                                        Map<String, Boolean> config,
                                        Object parentScreen) {
         try {
-            int width  = McReflect.getIntField(screen, screenClass, 854, "width");
-            int height = McReflect.getIntField(screen, screenClass, 480, "height");
+            int width  = McReflect.getIntField(screen, screenClass, 854, "width", "field_22789");
+            int height = McReflect.getIntField(screen, screenClass, 480, "height", "field_22790");
 
             // The bottom area is reserved for the Done button so toggle rows
             // can never overlap it. Available content height = whatever's
@@ -144,7 +159,7 @@ public final class ConfigScreenFactory {
                 rowSpacing = Math.max(1, unitsAvail - rowH);
             }
 
-            // (No action row: Add Mods / Open Mods Folder live in the
+            // (No action row: Choose Mods / Open retromod-input/ live in the
             // main Retromod screen; this is the settings-only screen.)
 
             for (int i = 0; i < toggleKeys.size(); i++) {
@@ -174,11 +189,9 @@ public final class ConfigScreenFactory {
                 addWidget(screen, note);
             }
 
-            // displayLine() is §-colored ("§aVerified build§r", …) and verify()
-            // is cached after the startup verifyAndLog(), so no I/O happens on
-            // the render thread. Informational only; pressing does nothing.
-            Object statusText = McI18n.literal(
-                    com.retromod.security.SignatureVerifier.verify().displayLine());
+            // The lang value carries the § color codes. verify() is cached after the startup
+            // verifyAndLog(), so no I/O happens on the render thread. Pressing does nothing.
+            Object statusText = McI18n.translatable(statusKey(SignatureVerifier.verify().status()));
             if (statusText != null) {
                 Object statusRow = buildButton(statusText,
                         makePressAction(() -> { }),
@@ -199,10 +212,25 @@ public final class ConfigScreenFactory {
     /** The toggle rows this game shows. */
     static List<String> visibleToggleKeys(Properties properties) {
         List<String> keys = new ArrayList<>(List.of(TOGGLE_KEYS));
-        // The in-place switch shows only where Retromod's Forge or NeoForge bootstrap loaded it.
-        // Nowhere else can it change anything: Fabric and Quilt always write translated jars into mods/.
-        if (!InPlaceSettings.switchApplies(properties)) keys.remove(InPlaceSettings.KEY);
+        if (InPlaceSettings.switchApplies(properties)) {
+            // Only the Fabric and Quilt entry point reads use_aot, so Forge and NeoForge hide it.
+            keys.remove("use_aot");
+        } else {
+            // The in-place switch shows only where the Forge or NeoForge bootstrap loaded Retromod.
+            // Fabric and Quilt always write translated jars into mods/.
+            keys.remove(InPlaceSettings.KEY);
+        }
         return keys;
+    }
+
+    /** The lang key of the build status line for each verification result. */
+    static String statusKey(SignatureVerifier.Status status) {
+        return switch (status) {
+            case VERIFIED -> "retromod.settings.status.verified";
+            case MODIFIED -> "retromod.settings.status.modified";
+            case IMPOSTOR -> "retromod.settings.status.impostor";
+            case UNKNOWN -> "retromod.settings.status.unknown";
+        };
     }
 
     /** True when the saved in-place switch differs from what this launch runs. */
@@ -224,7 +252,8 @@ public final class ConfigScreenFactory {
                                           String key) {
         boolean newVal = !config.getOrDefault(key, false);
         config.put(key, newVal);
-        saveConfig(config);
+        // Only the pressed key is written, so a value the screen could not read stays as it is.
+        saveSetting(CONFIG_PATH, key, newVal);
 
         // Re-open the screen to refresh button labels; runs on render thread
         // because the press action is dispatched by MC on the render thread.
@@ -232,7 +261,7 @@ public final class ConfigScreenFactory {
         Object fresh = ScreenClassGenerator.createScreen(
                 title,
                 s -> addAllWidgets(s, config, parentScreen),
-                () -> saveConfig(config)
+                closeTo(parentScreen)
         );
         if (fresh != null) setScreen(fresh);
     }
@@ -250,17 +279,17 @@ public final class ConfigScreenFactory {
             if (text == null || pressAction == null) return null;
 
             Method builderMethod = McReflect.findMethod(buttonWidgetClass,
-                    new Class[]{textClass, pressActionClass}, "builder");
+                    new Class[]{textClass, pressActionClass}, "builder", "method_46430");
             if (builderMethod == null) return null;
 
             Object builder = builderMethod.invoke(null, text, pressAction);
 
             Method dim = McReflect.findMethod(builder.getClass(),
                     new Class[]{int.class, int.class, int.class, int.class},
-                    "dimensions", "bounds", "pos");
+                    "dimensions", "bounds", "method_46434", "pos");
             if (dim != null) builder = dim.invoke(builder, x, y, w, h);
 
-            Method buildMethod = McReflect.findMethod(builder.getClass(), "build");
+            Method buildMethod = McReflect.findMethod(builder.getClass(), "build", "method_46431");
             if (buildMethod == null) return null;
             return buildMethod.invoke(builder);
         } catch (Exception e) {
@@ -286,7 +315,7 @@ public final class ConfigScreenFactory {
         if (widget == null) return;
         try {
             Method add = McReflect.findMethod(screenClass,
-                    "addDrawableChild", "addRenderableWidget", "addWidget");
+                    "addDrawableChild", "addRenderableWidget", "method_37063", "addWidget");
             if (add != null) {
                 add.setAccessible(true);
                 add.invoke(screen, widget);
@@ -299,55 +328,45 @@ public final class ConfigScreenFactory {
     // CONFIG I/O
 
     static Map<String, Boolean> loadConfig() {
-        Map<String, Boolean> config = new LinkedHashMap<>();
-        config.put("use_aot", true);
-        config.put("force_translate_complex", false);
-        config.put("polyfills_enabled", true);
-        config.put("verify_transforms", true);
-        config.put(InPlaceSettings.KEY, InPlaceSettings.DEFAULT_WRITE_TRANSLATED_JARS);
+        return loadConfig(CONFIG_PATH);
+    }
 
-        try {
-            if (Files.exists(CONFIG_PATH)) {
-                String json = JsonSecurity.readUtf8(CONFIG_PATH, MAX_CONFIG_BYTES,
-                        JsonSecurity.DEFAULT_MAX_DEPTH, "Retromod config");
-                for (String key : config.keySet()) {
-                    if (json.contains("\"" + key + "\": true") ||
-                        json.contains("\"" + key + "\":true")) {
-                        config.put(key, true);
-                    } else if (json.contains("\"" + key + "\": false") ||
-                               json.contains("\"" + key + "\":false")) {
-                        config.put(key, false);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            LOGGER.debug("Could not load config: {}", e.getMessage());
+    /** Reads each toggle with the runtime's reader and default, so the screen shows what runs. */
+    static Map<String, Boolean> loadConfig(Path configPath) {
+        Map<String, Boolean> config = new LinkedHashMap<>();
+        for (String key : TOGGLE_KEYS) {
+            config.put(key, RetromodConfig.getBooleanIfPresent(
+                    configPath, key, RUNTIME_DEFAULTS.get(key)));
         }
         return config;
     }
 
-    static void saveConfig(Map<String, Boolean> config) {
+    /** Writes one setting into config.json and keeps every other key as it is. */
+    static void saveSetting(Path configPath, String key, boolean value) {
+        Path folder = configPath.toAbsolutePath().getParent();
         try {
-            Files.createDirectories(CONFIG_PATH.getParent());
-            String existing = Files.exists(CONFIG_PATH)
-                    ? JsonSecurity.readUtf8(CONFIG_PATH, MAX_CONFIG_BYTES,
+            Files.createDirectories(folder);
+            String existing = Files.exists(configPath)
+                    ? JsonSecurity.readUtf8(configPath, MAX_CONFIG_BYTES,
                             JsonSecurity.DEFAULT_MAX_DEPTH, "Retromod config")
                     : "";
-            String merged = mergeConfigJson(existing, config);
-            Path temp = Files.createTempFile(CONFIG_PATH.getParent(), ".config.json.", ".tmp");
+            String merged = mergeConfigJson(existing, Map.of(key, value));
+            // Write a temporary file first, so a failed write never leaves half a config.
+            Path temp = Files.createTempFile(folder, ".config.json.", ".tmp");
             try {
                 Files.writeString(temp, merged);
                 try {
-                    Files.move(temp, CONFIG_PATH, StandardCopyOption.ATOMIC_MOVE,
+                    Files.move(temp, configPath, StandardCopyOption.ATOMIC_MOVE,
                             StandardCopyOption.REPLACE_EXISTING);
                 } catch (AtomicMoveNotSupportedException e) {
-                    Files.move(temp, CONFIG_PATH, StandardCopyOption.REPLACE_EXISTING);
+                    Files.move(temp, configPath, StandardCopyOption.REPLACE_EXISTING);
                 }
             } finally {
                 Files.deleteIfExists(temp);
             }
         } catch (Exception e) {
-            LOGGER.warn("Could not save config: {}", e.getMessage());
+            LOGGER.warn("Retromod could not save {} to {}: {}. Check that the folder is writable, "
+                    + "or set the value in the file by hand.", key, configPath, e.getMessage());
         }
     }
 
@@ -381,23 +400,27 @@ public final class ConfigScreenFactory {
 
         screenClass = McReflect.findClass(
             "net.minecraft.client.gui.screen.Screen",
-            "net.minecraft.client.gui.screens.Screen"
+            "net.minecraft.client.gui.screens.Screen",
+            "net.minecraft.class_437"  // intermediary, pre-26.1 Fabric
         );
         textClass = McReflect.findClass(
             "net.minecraft.text.Text",
-            "net.minecraft.network.chat.Component"
+            "net.minecraft.network.chat.Component",
+            "net.minecraft.class_2561"
         );
         buttonWidgetClass = McReflect.findClass(
             "net.minecraft.client.gui.widget.ButtonWidget",
-            "net.minecraft.client.gui.components.Button"
-        );
-        minecraftClientClass = McReflect.findClass(
-            "net.minecraft.client.MinecraftClient",
-            "net.minecraft.client.Minecraft"
+            "net.minecraft.client.gui.components.Button",
+            "net.minecraft.class_4185"
         );
 
-        if (buttonWidgetClass != null) {
-            // yarn: ButtonWidget$PressAction, mojang: Button$OnPress
+        // Named first, because Button's other one-method interface is CreateNarration.
+        pressActionClass = McReflect.findClass(
+            "net.minecraft.client.gui.widget.ButtonWidget$PressAction",
+            "net.minecraft.client.gui.components.Button$OnPress",
+            "net.minecraft.class_4185$class_4241"
+        );
+        if (pressActionClass == null && buttonWidgetClass != null) {
             for (Class<?> inner : buttonWidgetClass.getDeclaredClasses()) {
                 if (inner.isInterface() && inner.getMethods().length <= 2) {
                     pressActionClass = inner;
@@ -405,35 +428,11 @@ public final class ConfigScreenFactory {
                 }
             }
         }
-        if (pressActionClass == null) {
-            pressActionClass = McReflect.findClass(
-                "net.minecraft.client.gui.widget.ButtonWidget$PressAction",
-                "net.minecraft.client.gui.components.Button$OnPress"
-            );
-        }
 
         return screenClass != null && textClass != null && buttonWidgetClass != null;
     }
 
     private static void setScreen(Object screen) {
-        try {
-            Object client = getClientInstance();
-            if (client == null) return;
-            Method set = McReflect.findMethod(minecraftClientClass,
-                    new Class[]{screenClass}, "setScreen");
-            if (set != null) set.invoke(client, screen);
-        } catch (Exception e) {
-            LOGGER.debug("Could not set screen: {}", e.getMessage());
-        }
-    }
-
-    private static Object getClientInstance() {
-        try {
-            Method getInstance = McReflect.findMethod(minecraftClientClass, "getInstance");
-            if (getInstance != null) return getInstance.invoke(null);
-        } catch (Exception e) {
-            LOGGER.debug("Could not get MC client: {}", e.getMessage());
-        }
-        return null;
+        McScreens.show(screen);
     }
 }

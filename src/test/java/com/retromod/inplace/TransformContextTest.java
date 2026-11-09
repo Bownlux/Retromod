@@ -52,6 +52,19 @@ class TransformContextTest {
     }
 
     @Test
+    @DisplayName("the side the loader reports changes the hash, so a client never shares a server's copies")
+    void reportedSideChangesTheHash() {
+        Properties server = new Properties();
+        server.setProperty(InPlaceStatus.DIST_PROPERTY, InPlaceStatus.DIST_DEDICATED_SERVER);
+        Properties client = new Properties();
+        client.setProperty(InPlaceStatus.DIST_PROPERTY, InPlaceStatus.DIST_CLIENT);
+        assertNotEquals(context("neoforge", "26.3.0.43-beta", server).hash(),
+                context("neoforge", "26.3.0.43-beta", client).hash());
+        assertNotEquals(context("neoforge", "26.3.0.43-beta", server).hash(),
+                context("neoforge", "26.3.0.43-beta", new Properties()).hash());
+    }
+
+    @Test
     @DisplayName("turning polyfills off changes the hash")
     void polyfillSettingChangesTheHash() throws IOException {
         String defaults = context("forge", "47.4.26", new Properties()).hash();

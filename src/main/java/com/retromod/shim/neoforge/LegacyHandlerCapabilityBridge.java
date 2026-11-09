@@ -68,7 +68,10 @@ public final class LegacyHandlerCapabilityBridge {
             LegacyTransferApi.registerCapabilities(t);
             return;
         }
-        register(t, ClassResourceInspector.exists(CAPS + "Capabilities$Item") && !ClassResourceInspector.exists(OLD_ITEM_CAPS));
+        // NeoForge 1.21.9 replaced them; offline, where the capabilities cannot be read, the target decides.
+        boolean readable = ClassResourceInspector.read(CAPS + "Capabilities") != null;
+        register(t, readable ? ClassResourceInspector.exists(CAPS + "Capabilities$Item")
+                && !ClassResourceInspector.exists(OLD_ITEM_CAPS) : OfflineHostVersion.neoForgeFrom("1.21.9"));
     }
 
     static void register(RetromodTransformer t, boolean hostReplacedTheCapabilities) {

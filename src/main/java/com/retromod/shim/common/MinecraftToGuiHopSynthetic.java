@@ -6,15 +6,20 @@ package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 
 import static org.objectweb.asm.Opcodes.ACC_FINAL;
 import static org.objectweb.asm.Opcodes.ACC_PUBLIC;
 import static org.objectweb.asm.Opcodes.ACC_STATIC;
+import static org.objectweb.asm.Opcodes.ACONST_NULL;
 import static org.objectweb.asm.Opcodes.ALOAD;
 import static org.objectweb.asm.Opcodes.ARETURN;
+import static org.objectweb.asm.Opcodes.DUP;
 import static org.objectweb.asm.Opcodes.GETFIELD;
+import static org.objectweb.asm.Opcodes.IFNULL;
 import static org.objectweb.asm.Opcodes.INVOKEVIRTUAL;
+import static org.objectweb.asm.Opcodes.POP;
 import static org.objectweb.asm.Opcodes.RETURN;
 import static org.objectweb.asm.Opcodes.V17;
 
@@ -24,6 +29,9 @@ import static org.objectweb.asm.Opcodes.V17;
  * <p>The old receiver cannot be redirected straight to {@code Gui}: the stack contains a
  * {@code Minecraft}, not its {@code gui} field. Static forwarders keep the old call shape while
  * inserting that field hop. The synthetic is embedded only into mods that reference it.
+ *
+ * <p>26.2 assigns {@code Minecraft.gui} after mods construct. Until then a read gives
+ * {@code null}, as the old field did, and a write does nothing.
  */
 public final class MinecraftToGuiHopSynthetic {
 
@@ -52,9 +60,16 @@ public final class MinecraftToGuiHopSynthetic {
                 null,
                 null);
         getOverlay.visitCode();
+        Label noGuiToRead = new Label();
         getOverlay.visitVarInsn(ALOAD, 0);
         getOverlay.visitFieldInsn(GETFIELD, MINECRAFT, "gui", GUI_DESC);
+        getOverlay.visitInsn(DUP);
+        getOverlay.visitJumpInsn(IFNULL, noGuiToRead);
         getOverlay.visitMethodInsn(INVOKEVIRTUAL, GUI, "overlay", "()" + OVERLAY_DESC, false);
+        getOverlay.visitInsn(ARETURN);
+        getOverlay.visitLabel(noGuiToRead);
+        getOverlay.visitInsn(POP);
+        getOverlay.visitInsn(ACONST_NULL);
         getOverlay.visitInsn(ARETURN);
         getOverlay.visitMaxs(0, 0);
         getOverlay.visitEnd();
@@ -66,11 +81,17 @@ public final class MinecraftToGuiHopSynthetic {
                 null,
                 null);
         setOverlay.visitCode();
+        Label noGuiToWrite = new Label();
         setOverlay.visitVarInsn(ALOAD, 0);
         setOverlay.visitFieldInsn(GETFIELD, MINECRAFT, "gui", GUI_DESC);
+        setOverlay.visitInsn(DUP);
+        setOverlay.visitJumpInsn(IFNULL, noGuiToWrite);
         setOverlay.visitVarInsn(ALOAD, 1);
         setOverlay.visitMethodInsn(
                 INVOKEVIRTUAL, GUI, "setOverlay", "(" + OVERLAY_DESC + ")V", false);
+        setOverlay.visitInsn(RETURN);
+        setOverlay.visitLabel(noGuiToWrite);
+        setOverlay.visitInsn(POP);
         setOverlay.visitInsn(RETURN);
         setOverlay.visitMaxs(0, 0);
         setOverlay.visitEnd();

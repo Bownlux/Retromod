@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -59,7 +60,7 @@ public class ResourceManagerHelperShim {
 
             // new API: registerReloader(Identifier, ResourceReloader)
             try {
-                Method registerMethod = realLoader.getClass().getMethod(
+                Method registerMethod = LegacyPublicMethods.method(realLoader.getClass(),
                     "registerReloader",
                     id.getClass(),
                     Class.forName("net.minecraft.resource.ResourceReloader")
@@ -123,7 +124,7 @@ public class ResourceManagerHelperShim {
     /** New API only; the old API has no ordering, so this is a no-op there. */
     public void addReloaderOrdering(Object first, Object second) {
         try {
-            Method orderMethod = realLoader.getClass().getMethod(
+            Method orderMethod = LegacyPublicMethods.method(realLoader.getClass(),
                 "addReloaderOrdering",
                 first.getClass(),
                 second.getClass()

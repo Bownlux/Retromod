@@ -151,11 +151,15 @@ com.retromod.shim.api.forge.ForgeRegistryApiShim
 # Cross-loader API shims (work on both Fabric and Forge/NeoForge)
 com.retromod.shim.api.common.GeckoLibApiShim
 com.retromod.shim.api.common.GeckoLib5ApiShim
+com.retromod.shim.common.LegacyEnchantmentRegistryShim
+com.retromod.shim.common.LegacyComponentJsonShim
 com.retromod.shim.common.LegacyEquipableShim
 com.retromod.shim.common.DedicatedServerTintGetterShim
 com.retromod.shim.common.LegacyRecipeSerializerShim
 com.retromod.shim.common.LegacyCauldronInteractionShim
 com.retromod.shim.common.LegacyMemberRenames
+com.retromod.shim.common.LegacyRemovedRegistryShim
+com.retromod.shim.common.LegacyDfuRenames
 com.retromod.shim.common.LegacySavedDataFactoryShim
 com.retromod.shim.api.common.ArchitecturyApiShim
 com.retromod.shim.api.common.CreateModApiShim

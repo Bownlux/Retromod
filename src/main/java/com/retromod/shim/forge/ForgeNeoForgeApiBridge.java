@@ -7,6 +7,7 @@ package com.retromod.shim.forge;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.shim.forge.capability.LegacyCapabilitySynthetics;
 import com.retromod.util.McReflect;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -93,6 +94,8 @@ public final class ForgeNeoForgeApiBridge {
             {"server/ServerLifecycleHooks", "server/ServerLifecycleHooks"},
             {"common/util/FakePlayer", "common/util/FakePlayer"},
             {"common/util/FakePlayerFactory", "common/util/FakePlayerFactory"},
+            // The shapeless matcher a recipe that reads an item handler matches its inputs with.
+            {"common/util/RecipeMatcher", "common/util/RecipeMatcher"},
             // Global loot modifiers. NeoForge reads their serializers as MapCodecs, which
             // LegacyLootModifierCodecs converts as the mod registers them.
             {"common/loot/IGlobalLootModifier", "common/loot/IGlobalLootModifier"},
@@ -150,6 +153,12 @@ public final class ForgeNeoForgeApiBridge {
     static final String[][] ABSOLUTE_MOVES = {
             {"net/minecraftforge/forgespi/language/IModFileInfo", "net/neoforged/neoforgespi/language/IModFileInfo"},
             {"net/minecraftforge/forgespi/locating/IModFile", "net/neoforged/neoforgespi/locating/IModFile"},
+            // Annotation scans (YUNG's API finds its auto-registered fields this way); same records on NeoForge.
+            {"net/minecraftforge/forgespi/language/ModFileScanData", "net/neoforged/neoforgespi/language/ModFileScanData"},
+            {"net/minecraftforge/forgespi/language/ModFileScanData$AnnotationData",
+                    "net/neoforged/neoforgespi/language/ModFileScanData$AnnotationData"},
+            {"net/minecraftforge/forgespi/language/ModFileScanData$ClassData",
+                    "net/neoforged/neoforgespi/language/ModFileScanData$ClassData"},
     };
 
     /**
@@ -176,6 +185,8 @@ public final class ForgeNeoForgeApiBridge {
 
         registerEventBusSubscriber(transformer);
         int moved = registerMoves(transformer, ForgeNeoForgeApiBridge::hostHasClass);
+        // The item, fluid and energy handlers, which also move where NeoForge 26.3 removed them or no host is readable.
+        moved += ForgeTransferApiMoves.register(transformer);
         registerClassOwners(transformer, ForgeNeoForgeApiBridge::hostDeclaresClass);
         moved += registerAbsoluteMoves(transformer, ForgeNeoForgeApiBridge::hostHasClass);
         registerRemovedMarkers(transformer, ForgeNeoForgeApiBridge::hostHasClass);
@@ -190,7 +201,8 @@ public final class ForgeNeoForgeApiBridge {
         LegacyFluidSupplierBridge.register(transformer);
         LegacyForgeModAttributes.register(transformer);
         registerStrictIngredient(transformer, ForgeNeoForgeApiBridge::hostHasClass);
-        LOGGER.info("Bridged {} renamed Forge API classes and the Forge capability system", moved);
+        registerCombinedIngredients(transformer, ForgeNeoForgeApiBridge::hostHasClass);
+        LOGGER.debug(RetromodLog.DETAIL, "Bridged {} renamed Forge API classes and the Forge capability system", moved);
     }
 
     static final String STRICT_INGREDIENT = "net/minecraftforge/common/crafting/StrictNBTIngredient";
@@ -226,6 +238,30 @@ public final class ForgeNeoForgeApiBridge {
         transformer.registerMethodRedirect(STRICT_INGREDIENT, "of", "(" + stack + ")L" + STRICT_INGREDIENT + ";",
                 STRICT_HELPER, "of", "(" + stack + ")L" + ingredient + ";");
         transformer.registerClassRedirect(STRICT_INGREDIENT, ingredient);
+    }
+
+    /**
+     * Forge's compound, intersection and difference factories are NeoForge's, which return an
+     * {@code Ingredient}. NeoForge's {@code Ingredient} is final, so a mod's own subclass of the old
+     * compound has nothing to extend and is not bridged.
+     */
+    static void registerCombinedIngredients(RetromodTransformer transformer,
+            java.util.function.Predicate<String> hostHasClass) {
+        String ingredient = "net/minecraft/world/item/crafting/Ingredient";
+        String fromArray = "([L" + ingredient + ";)L" + ingredient + ";";
+        for (String name : new String[]{"CompoundIngredient", "IntersectionIngredient"}) {
+            String neo = NEO + "common/crafting/" + name;
+            if (hostHasClass.test(neo)) {
+                transformer.registerMethodRedirect(FORGE + "common/crafting/" + name, "of", fromArray, neo, "of", fromArray);
+            }
+        }
+        // The old difference factory returned its own type, which becomes Ingredient like the strict one above.
+        String difference = NEO + "common/crafting/DifferenceIngredient";
+        if (!hostHasClass.test(difference)) return;
+        String old = FORGE + "common/crafting/DifferenceIngredient";
+        String pair = "(L" + ingredient + ";L" + ingredient + ";)";
+        transformer.registerMethodRedirect(old, "of", pair + "L" + old + ";", difference, "of", pair + "L" + ingredient + ";");
+        transformer.registerClassRedirect(old, ingredient);
     }
 
     /**

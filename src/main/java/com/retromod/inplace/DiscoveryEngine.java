@@ -10,6 +10,8 @@ import com.retromod.embedder.ModVersionInfo;
 import com.retromod.util.OptOutCheck;
 
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -144,6 +146,8 @@ public final class DiscoveryEngine {
         STALE_RETROMOD,
         /** Already translated by Retromod. */
         TRANSLATED,
+        /** Translated by a dedicated server, which left out its client-only code, found on a client. */
+        SERVER_ONLY,
         /** The author opted out of translation. */
         OPTED_OUT,
         /** Already built for this Minecraft version. */
@@ -199,8 +203,24 @@ public final class DiscoveryEngine {
         } catch (Throwable failure) {
             log.accept("error", "Retromod's in-place pass failed: " + failure
                     + ". The loader continues without it. Please report this with "
-                    + "logs/latest.log.");
+                    + "logs/latest.log." + System.lineSeparator() + stackTrace(failure));
             return Map.of("protocol", PROTOCOL, "mode", "error");
+        }
+    }
+
+    /** The full stack trace of a failed pass, causes included; never throws. */
+    private static String stackTrace(Throwable failure) {
+        // The same text as the bootstrap's LoaderHooks.describe, which this class loader cannot
+        // see. Only a String crosses the call, so the protocol stays the same.
+        try {
+            StringWriter text = new StringWriter();
+            try (PrintWriter out = new PrintWriter(text)) {
+                failure.printStackTrace(out);
+            }
+            return text.toString().stripTrailing();
+        } catch (Throwable unprintable) {
+            // Printing runs the exception's own toString, which may be what failed.
+            return failure.getClass().getName();
         }
     }
 
@@ -238,7 +258,7 @@ public final class DiscoveryEngine {
                     request.properties());
             if (mode.writeTranslatedJars()) return runRewrite();
             List<Classified> mods = classifyAll(request.modsListing(), MODS, true);
-            hideStaleRuntimes(mods);
+            hideUnusableRetromodFiles(mods);
             List<Classified> inputs = classifyAll(listInputFolder(), INPUT, true);
             try (TranslatedModCache cache = TranslatedModCache.open(request.gameDir(),
                     request.loader(), request.minecraftVersion(),
@@ -263,13 +283,14 @@ public final class DiscoveryEngine {
          * handled is still in {@code mods/}, untranslated. If the loader refuses it, the
          * launch stops before Retromod's entry point can rewrite it. Holding back exactly
          * those originals lets the entry point rewrite them in this launch. Without a cache
-         * index, only an older Retromod file is looked for, which keeps this pass cheap.
+         * index, only an older Retromod file and a dedicated server's copy are looked for, which keeps
+         * this pass cheap.
          */
         private Outcome runRewrite() {
             Set<String> known = TranslatedModCache.knownSources(request.gameDir(),
                     request.loader(), request.minecraftVersion());
             List<Classified> mods = classifyAll(request.modsListing(), MODS, !known.isEmpty());
-            hideStaleRuntimes(mods);
+            hideUnusableRetromodFiles(mods);
             for (Classified jar : mods) {
                 if (jar.kind() != Kind.OLD || jar.loaderWouldLoad()) continue;
                 // Only what the rewrite flow will rewrite: it skips these names, and a jar it
@@ -294,14 +315,27 @@ public final class DiscoveryEngine {
             return !fileName.contains("-retromod") && !fileName.startsWith("retromod");
         }
 
-        private void hideStaleRuntimes(List<Classified> mods) {
+        private void hideUnusableRetromodFiles(List<Classified> mods) {
             for (Classified jar : mods) {
+                if (jar.kind() == Kind.SERVER_ONLY) {
+                    // Its client-only methods and fields are gone, so the client would fail on them later.
+                    hideOriginal(jar);
+                    warn(jar.fileName() + " was translated by Retromod on a dedicated server, which "
+                            + "leaves out client-only code, so this client does not load it. Put the "
+                            + "mod's original jar in mods/ instead, so Retromod translates it here.");
+                }
                 if (jar.kind() != Kind.STALE_RETROMOD) continue;
                 hideOriginal(jar);
                 warn("Found an older Retromod file in mods/: " + jar.fileName()
                         + ". Retromod now loads from its newer file, so this one is ignored. "
                         + "Delete it.");
             }
+        }
+
+        /** True when the loader told the bootstrap this launch is a client. */
+        private boolean onClient() {
+            return InPlaceStatus.DIST_CLIENT.equals(
+                    request.properties().getProperty(InPlaceStatus.DIST_PROPERTY));
         }
 
         private List<Path> listInputFolder() {
@@ -353,6 +387,11 @@ public final class DiscoveryEngine {
                     .filter("retromod"::equals).isPresent()) {
                 return new Classified(path, location, Kind.STALE_RETROMOD, effective, true);
             }
+            // A dedicated server's copy is checked in every pass, since rewrite mode's jars are the shared ones.
+            if (TranslatedJarMarkers.isRetromodOutput(manifest) && TranslatedJarMarkers.isServerOnly(manifest)
+                    && onClient()) {
+                return new Classified(path, location, Kind.SERVER_ONLY, effective, true);
+            }
             if (!full) return ignored(path, location);
             if (TranslatedJarMarkers.isRetromodOutput(manifest)) {
                 warnIfTranslatedForAnotherVersion(name, manifest);
@@ -360,7 +399,8 @@ public final class DiscoveryEngine {
             }
             ModVersionInfo info;
             try {
-                info = ModVersionDetector.metadataOnly().detectVersion(path);
+                // A jar built for several loaders is read through this loader's own metadata.
+                info = ModVersionDetector.metadataOnly().preferring(request.loader()).detectVersion(path);
             } catch (IOException | RuntimeException | LinkageError e) {
                 return ignored(path, location);
             }

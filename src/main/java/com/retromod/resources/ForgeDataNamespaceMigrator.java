@@ -13,6 +13,7 @@ import com.google.gson.JsonPrimitive;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -75,6 +76,9 @@ final class ForgeDataNamespaceMigrator implements ModResourceConverter {
     private static final Pattern FORGE_TAG = Pattern.compile(ROOT
             + "data/forge/tags/(blocks|items|fluids|entity_types|block|item|fluid|entity_type|worldgen/biome)/(.+)\\.json");
     private static final Pattern DATA_JSON = Pattern.compile(ROOT + "data/[a-z0-9_.-]+/.+\\.json");
+    // A tag file: its namespace, its registry folder (two segments under worldgen/), and its path.
+    private static final Pattern TAG_FILE = Pattern.compile(
+            ROOT + "data/([a-z0-9_.-]+)/tags/(worldgen/[^/]+|[^/]+)/(.+)\\.json");
 
     /** Each tag folder, by either of its names, to its 1.21 name. */
     private static final Map<String, String> TAG_KIND = Map.of(
@@ -115,7 +119,7 @@ final class ForgeDataNamespaceMigrator implements ModResourceConverter {
         // Tags are copied, not moved, since the mod's own code still reads its forge: tags.
         int copiedTags = host.tags() ? copyConventionTags(tree, host) : 0;
         if (moved + rewritten + copiedTags > 0) {
-            LOGGER.info("Updated Forge data for {} {}: {} moved, {} rewritten, {} c: tag(s) added",
+            LOGGER.debug(RetromodLog.DETAIL, "Updated Forge data for {} {}: {} moved, {} rewritten, {} c: tag(s) added",
                     context.targetLoader(), context.targetMcVersion(), moved, rewritten, copiedTags);
         }
         return moved + rewritten + copiedTags;
@@ -333,6 +337,10 @@ final class ForgeDataNamespaceMigrator implements ModResourceConverter {
             JsonElement original = parse(bytes);
             if (original == null) continue;
             JsonElement migrated = rewrite(original, host, true);
+            // A c: tag that listed its forge: twin, as Balm's do, would now name itself. The host's tag
+            // sorter recurses without end on a tag that names itself, and the server cannot load data.
+            String self = tagReference(name);
+            if (self != null) migrated = withoutReference(migrated, self);
             if (migrated.equals(original)) continue;
             tree.write(name, json(migrated));
             rewritten++;
@@ -368,6 +376,29 @@ final class ForgeDataNamespaceMigrator implements ModResourceConverter {
         }
         // NeoForge also renamed Forge's holder set and loot condition types.
         return host.neoForge() ? renameNeoForgeTypes(out, host) : out;
+    }
+
+    /** The reference {@code #namespace:path} to the tag a data file defines, or null when it is no tag. */
+    private static String tagReference(String name) {
+        Matcher match = TAG_FILE.matcher(name);
+        if (!match.matches() || underAssets(match.group(1))) return null;
+        return "#" + match.group(2) + ":" + match.group(4);
+    }
+
+    /** The tag without entries in its values or remove list that name {@code reference}. */
+    private static JsonElement withoutReference(JsonElement tag, String reference) {
+        if (!tag.isJsonObject()) return tag;
+        JsonObject out = tag.getAsJsonObject().deepCopy();
+        for (String list : new String[] {"values", "remove"}) {
+            if (!(out.get(list) instanceof JsonArray entries)) continue;
+            JsonArray kept = new JsonArray();
+            for (JsonElement entry : entries) {
+                String id = entry.isJsonObject() ? string(entry.getAsJsonObject().get("id")) : string(entry);
+                if (!reference.equals(id)) kept.add(entry);
+            }
+            out.add(list, kept);
+        }
+        return out;
     }
 
     /** Fields naming a tag without its #: ingredients, predicates, rule tests and tag loot entries. */

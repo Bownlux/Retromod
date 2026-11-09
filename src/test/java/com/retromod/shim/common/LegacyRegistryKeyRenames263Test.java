@@ -34,6 +34,22 @@ class LegacyRegistryKeyRenames263Test {
                 "Registries.BIOME"), fieldReads(renamed));
     }
 
+    @Test
+    @DisplayName("BuiltInRegistries.FEATURE becomes FEATURE_TYPE in any jar, while the Registries key keeps its name")
+    void builtInFeatureRegistryIsRenamed() {
+        byte[] renamed = LegacyRegistryKeyRenames263.rename(reads("BuiltInRegistries.FEATURE", "Registries.FEATURE"));
+        assertEquals(List.of("BuiltInRegistries.FEATURE_TYPE", "Registries.FEATURE"), fieldReads(renamed),
+                "26.3 kept Registries.FEATURE for configured features, so only the old-model jar pass renames it");
+    }
+
+    @Test
+    @DisplayName("A host that still has BuiltInRegistries.FEATURE keeps that read, while the other built-in keys are renamed")
+    void builtInFeatureStaysOnAHostThatKeepsIt() {
+        byte[] renamed = LegacyRegistryKeyRenames263.rename(reads("BuiltInRegistries.FEATURE", "BuiltInRegistries.CARVER"), false);
+        assertEquals(List.of("BuiltInRegistries.FEATURE", "BuiltInRegistries.CARVER_TYPE"), fieldReads(renamed),
+                "FEATURE_TYPE is only right where the host dropped FEATURE");
+    }
+
     /** A class whose one method reads each named static field, in order. */
     private static byte[] reads(String... fields) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);

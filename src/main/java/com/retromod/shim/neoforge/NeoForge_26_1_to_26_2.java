@@ -34,5 +34,8 @@ public class NeoForge_26_1_to_26_2 implements VersionShim {
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
         Mc26_1To26_2CoreMoves.register(transformer);
+        // 26.2 made structure processor types map codecs, so a 1.21 mod's register event converts them too.
+        // A chain that starts at 1.21 never passes the 1.20.5 step that registers the conversion otherwise.
+        com.retromod.shim.common.LegacyRegistryMapCodecBridge.register(transformer);
     }
 }

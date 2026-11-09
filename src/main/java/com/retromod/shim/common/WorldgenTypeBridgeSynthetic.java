@@ -7,6 +7,7 @@
 package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.GeneratedLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -64,6 +65,18 @@ public final class WorldgenTypeBridgeSynthetic {
     public static final String LOOT_CONDITION_WRAPPER =
             "com/retromod/shim/common/embedded/LootItemConditionType";
 
+    private static final String LOOT = "net/minecraft/world/level/storage/loot/";
+    private static final String STAND_INS = "com/retromod/shim/common/embedded/";
+
+    /** The loot type records 26.1 deleted, each with its stand-in; their registries hold map codecs since. */
+    static final String[][] LOOT_TYPE_STAND_INS = {
+            {LOOT + "functions/LootItemFunctionType", LOOT_FUNCTION_WRAPPER},
+            {LOOT + "predicates/LootItemConditionType", LOOT_CONDITION_WRAPPER},
+            {LOOT + "entries/LootPoolEntryType", STAND_INS + "LootPoolEntryType"},
+            {LOOT + "providers/number/LootNumberProviderType", STAND_INS + "LootNumberProviderType"},
+            {LOOT + "providers/nbt/LootNbtProviderType", STAND_INS + "LootNbtProviderType"},
+            {LOOT + "providers/score/LootScoreProviderType", STAND_INS + "LootScoreProviderType"}};
+
     // Registries whose element type is now MapCodec directly. Loot + density changed at 26.1;
     // STRUCTURE_PROCESSOR only at 26.2 (26.1 still holds StructureProcessorType SAM objects, so
     // converting there would BREAK a 26.1 host - hence the two layer-specific variants below).
@@ -85,19 +98,16 @@ public final class WorldgenTypeBridgeSynthetic {
      * and registers it - NoClassDefFoundError at its entrypoint, then every {@code aer:} loot
      * condition datapack reference failed). Provides Retromod-named wrapper stand-ins (a
      * class-redirect rewrites the mod's references; embedding at the original names would
-     * split-package with the live loot packages on NeoForge/Forge) whose {@code codec()} the
-     * value conversion unwraps at registration.
+     * split-package with the live loot packages on NeoForge/Forge).
      */
     public static void registerPre26_2(RetromodTransformer t) {
         registerWith(t, generate(false));
-        t.registerSyntheticClass(LOOT_FUNCTION_WRAPPER, generateWrapper(LOOT_FUNCTION_WRAPPER));
-        t.registerSyntheticClass(LOOT_CONDITION_WRAPPER, generateWrapper(LOOT_CONDITION_WRAPPER));
-        t.registerClassRedirect(
-                "net/minecraft/world/level/storage/loot/functions/LootItemFunctionType",
-                LOOT_FUNCTION_WRAPPER);
-        t.registerClassRedirect(
-                "net/minecraft/world/level/storage/loot/predicates/LootItemConditionType",
-                LOOT_CONDITION_WRAPPER);
+        // Each stand-in is the map codec it wraps, so every registration path stores a value the
+        // registry's dispatch reads, and the mod's own holder still gives it the type it expects.
+        for (String[] standIn : LOOT_TYPE_STAND_INS) {
+            t.registerSyntheticClass(standIn[1], generateWrapper(standIn[1]));
+            t.registerClassRedirect(standIn[0], standIn[1]);
+        }
     }
 
     private static void registerWith(RetromodTransformer t, byte[] bridgeBytes) {
@@ -137,20 +147,16 @@ public final class WorldgenTypeBridgeSynthetic {
         return cw.toByteArray();
     }
 
-    /**
-     * Stand-in for a deleted MapCodec-wrapper record ({@code LootItemFunctionType} /
-     * {@code LootItemConditionType} on 1.21.x): {@code <init>(MapCodec)} + {@code codec()}.
-     * The registration-time conversion invokes {@code codec()} and registers the MapCodec.
-     */
-    public static byte[] generateWrapper(String internalName) {
+    /** {@code final class <name> extends MapCodec implements <interfaces>}: the old type's {@code <init>(MapCodec)} and {@code codec()}, read as its codec. */
+    public static byte[] generateWrapper(String internalName, String... interfaces) {
         ClassWriter cw = newWriter();
-        cw.visit(V17, ACC_PUBLIC | ACC_FINAL, internalName, null, "java/lang/Object", null);
+        cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, internalName, null, MAP_CODEC, interfaces.length == 0 ? null : interfaces);
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "codec", "L" + MAP_CODEC + ";", null, null).visitEnd();
 
         MethodVisitor c = cw.visitMethod(ACC_PUBLIC, "<init>", "(L" + MAP_CODEC + ";)V", null, null);
         c.visitCode();
         c.visitVarInsn(ALOAD, 0);
-        c.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        c.visitMethodInsn(INVOKESPECIAL, MAP_CODEC, "<init>", "()V", false);
         c.visitVarInsn(ALOAD, 0);
         c.visitVarInsn(ALOAD, 1);
         c.visitFieldInsn(PUTFIELD, internalName, "codec", "L" + MAP_CODEC + ";");
@@ -158,6 +164,7 @@ public final class WorldgenTypeBridgeSynthetic {
         c.visitMaxs(0, 0);
         c.visitEnd();
 
+        // The record's accessor. MapCodec's own codec() returns a Codec, so the two do not clash.
         MethodVisitor g = cw.visitMethod(ACC_PUBLIC, "codec", "()L" + MAP_CODEC + ";", null, null);
         g.visitCode();
         g.visitVarInsn(ALOAD, 0);
@@ -166,8 +173,38 @@ public final class WorldgenTypeBridgeSynthetic {
         g.visitMaxs(0, 0);
         g.visitEnd();
 
+        // The registry's dispatch reads and writes the element through the wrapped codec.
+        String ops = "Lcom/mojang/serialization/DynamicOps;";
+        delegate(cw, internalName, "keys", "(" + ops + ")Ljava/util/stream/Stream;");
+        delegate(cw, internalName, "decode", "(" + ops + "Lcom/mojang/serialization/MapLike;)"
+                + "Lcom/mojang/serialization/DataResult;");
+        delegate(cw, internalName, "encode", "(" + L_OBJ + ops + "Lcom/mojang/serialization/RecordBuilder;)"
+                + "Lcom/mojang/serialization/RecordBuilder;");
+        MethodVisitor text = cw.visitMethod(ACC_PUBLIC, "toString", "()Ljava/lang/String;", null, null);
+        text.visitCode();
+        text.visitVarInsn(ALOAD, 0);
+        text.visitFieldInsn(GETFIELD, internalName, "codec", "L" + MAP_CODEC + ";");
+        text.visitMethodInsn(INVOKESTATIC, "java/lang/String", "valueOf", "(" + L_OBJ + ")Ljava/lang/String;", false);
+        text.visitInsn(ARETURN);
+        text.visitMaxs(0, 0);
+        text.visitEnd();
+
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    /** An instance method that calls the same method on the wrapped codec. */
+    private static void delegate(ClassWriter cw, String owner, String name, String desc) {
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, name, desc, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitFieldInsn(GETFIELD, owner, "codec", "L" + MAP_CODEC + ";");
+        int parameters = org.objectweb.asm.Type.getArgumentTypes(desc).length;
+        for (int slot = 1; slot <= parameters; slot++) mv.visitVarInsn(ALOAD, slot);
+        mv.visitMethodInsn(INVOKEVIRTUAL, MAP_CODEC, name, desc, false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 
     /**
@@ -308,37 +345,23 @@ public final class WorldgenTypeBridgeSynthetic {
         m.visitLabel(tryEnd);
         m.visitInsn(ARETURN);
         m.visitLabel(handler);
-        // print the failure AND its cause (an InvocationTargetException wraps the real error from
-        // the processor class's <clinit>, which codec() triggers via GETSTATIC CODEC)
+        // Log the failure with its stack trace: an InvocationTargetException wraps the real error
+        // from the processor class's <clinit>, which codec() triggers via GETSTATIC CODEC.
         m.visitVarInsn(ASTORE, 3);
-        m.visitFieldInsn(GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;");
-        m.visitLdcInsn("[Retromod] processor-type codec() reflection failed: ");
+        GeneratedLog.pushLogger(m);
+        m.visitLdcInsn("[Retromod] Could not read the codec of an old structure processor type");
         m.visitVarInsn(ALOAD, 3);
-        m.visitMethodInsn(INVOKESTATIC, "java/lang/String", "valueOf",
-                "(" + L_OBJ + ")Ljava/lang/String;", false);
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
-                "(Ljava/lang/String;)Ljava/lang/String;", false);
-        m.visitLdcInsn(" | cause: ");
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
-                "(Ljava/lang/String;)Ljava/lang/String;", false);
-        m.visitVarInsn(ALOAD, 3);
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Throwable", "getCause",
-                "()Ljava/lang/Throwable;", false);
-        m.visitMethodInsn(INVOKESTATIC, "java/lang/String", "valueOf",
-                "(" + L_OBJ + ")Ljava/lang/String;", false);
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
-                "(Ljava/lang/String;)Ljava/lang/String;", false);
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+        GeneratedLog.warnWithCause(m);
         m.visitLabel(warn);
-        m.visitFieldInsn(GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;");
-        m.visitLdcInsn("[Retromod] Could not convert structure-processor type to MapCodec "
-                + "(26.2 registry shape); datapack references to it will fail: ");
+        GeneratedLog.pushLogger(m);
+        m.visitLdcInsn("[Retromod] Could not convert an old structure processor type to the codec this "
+                + "Minecraft version registers, and left it as it was: ");
         m.visitVarInsn(ALOAD, 1);
         m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Object", "getClass", "()Ljava/lang/Class;", false);
         m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Class", "getName", "()Ljava/lang/String;", false);
         m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
                 "(Ljava/lang/String;)Ljava/lang/String;", false);
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+        GeneratedLog.warn(m);
         m.visitLabel(ret);
         m.visitVarInsn(ALOAD, 1);
         m.visitInsn(ARETURN);

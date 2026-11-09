@@ -15,6 +15,8 @@ public final class Mc26_2To26_3CoreMoves {
     public static void register(RetromodTransformer t) {
         registerPushReactionRenames(t);
         LegacyResourceSelectorBridge.register(t);
+        // Every biome now spawns creatures with the same fixed probability.
+        LegacyCreatureProbabilityBridge.register(t);
         // The class moves come from the 26.2 and 26.3-snapshot-10 client jars. Each old name is in
         // 26.2 and not 26.3, each new name the reverse, and each pairing is proven by an identical
         // simple name, a unique structural match, or shared members, never by a similar name alone.
@@ -27,10 +29,24 @@ public final class Mc26_2To26_3CoreMoves {
         registerSdlInputBridges(t);
         registerGlfwPolls(t);
         registerRemovedToolBases(t);
+        // SignItem and BedItem went the same way; rebuilt, a mod's signs and beds still place.
+        LegacyRemovedBlockItems.register(t);
         // 26.3 also deleted much of the worldgen configuration system (FeatureConfiguration,
         // ConfiguredFeature, SurfaceRules, BlockStateProviderType, PlacementModifierType). A deleted
         // class has no move target, so it gets a bridge or needs a real port.
         LegacyFeatureBridge.register(t);
+        LegacyPlacementModifierBridge.register(t);
+        LegacyBlockStateProviderBridge.register(t);
+        // The noise sampler, biome lookups and configured features 26.3 reshaped.
+        LegacyWorldgenMembersBridge.register263(t);
+        // Structure placements became an interface keyed by codec, and their type was removed.
+        LegacyStructurePlacementBridge.register(t);
+        // KeyDispatchDataCodec went too; mods built for any version up to 26.2 name it. Material
+        // rules, conditions and density functions now return a map codec from codec().
+        LegacyKeyDispatchCodecBridge.registerRemovedClass(t);
+        LegacyKeyDispatchCodecBridge.registerAccessorBridges(t);
+        // Density functions now compile into samplers; old ones keep compute, mapAll and their nested types.
+        Legacy263DensityFunctionBridge.register(t);
         // Members and systems 26.3 reshaped: block codecs, model submission, swings, armor trims,
         // inventory and player members, and command sources.
         LegacyBlockCodecBridge.register(t);
@@ -39,14 +55,24 @@ public final class Mc26_2To26_3CoreMoves {
         LegacyArmorTrimBridge.register(t);
         Legacy263MemberBridge.register(t);
         LegacyCommandSourceBridge.register(t);
+        // BlockPos lost its Vec3i constructor; the coordinates still go to the int one.
+        LegacyBlockPosBridge.register(t);
         registerConsumeEffectConstructors(t);
         // 26.3 made the axe, hoe and shovel sounds holders. The 1.20.5 shims register this bridge
         // too, but a mod built for 1.21.2 to 26.2 never passes through them.
         LegacyHolderConstantBridge.register(t);
         // 26.3 deleted PotionBrewing for minecraft:brewing recipes; old readers get it rebuilt over them.
         LegacyPotionBrewingApi.register(t);
+        // 26.3 moved compost chances from ComposterBlock's table into the compostable item component.
+        LegacyComposterBridge.register(t);
         // ContextAwarePredicate became a holder of a loot condition, so old triggers read and test that.
         LegacyContextAwarePredicateBridge.register(t);
+        // FriendlyByteBuf lost its collection, map, id list, time, key, and hit result helpers.
+        LegacyFriendlyByteBufApi.register(t);
+        // Villager.FOOD_POINTS became the villager_food component, which any mod up to 26.2 can name.
+        LegacyAnimalFoodBridge.register(t);
+        // Pack suppliers now open metadata and a stream of packs; old ones answer through openPrimary and openFull.
+        LegacyPackSupplierAdapter.register(t);
     }
 
     /**
@@ -448,7 +474,8 @@ public final class Mc26_2To26_3CoreMoves {
      * constructors and literal codes passed to {@code isKeyDown} and {@code getOrCreate} are
      * translated by constant name through {@code RetroKeyMapping}; a GLFW host is left alone.
      * Not covered: {@code ToggleKeyMapping}, a {@code KeyMapping} subclass's {@code super(...)},
-     * and Forge's own conflict-context constructors.
+     * and Forge's own conflict-context constructors that already take a {@code Category} (mods
+     * built for 1.21.9 to 26.2), which keep their GLFW defaults.
      */
     private static void registerSdlInputBridges(RetromodTransformer t) {
         String poly = "com/retromod/polyfill/minecraft/RetroKeyMapping";
@@ -537,6 +564,39 @@ public final class Mc26_2To26_3CoreMoves {
         t.registerFieldRedirect(owner, oldName, "Lnet/minecraft/tags/TagKey;", owner, newName, "Lnet/minecraft/tags/TagKey;");
     }
 
+    /** The surface rule classes 26.3 renamed to material rules, and the old API rebuilt on them. */
+    static void registerSurfaceRuleMoves(RetromodTransformer t) {
+        // 26.3 renamed surface rules to material rules with the same factories and records, so
+        // code that builds them, such as MCreator's overworld biome splice, keeps loading.
+        String surface = "net/minecraft/world/level/levelgen/SurfaceRules";
+        String material = "net/minecraft/world/level/levelgen/material/";
+        String[][] surfaceRules = {
+            {"", "MaterialRules"}, {"$RuleSource", "rule/MaterialRule"},
+            {"$ConditionSource", "condition/MaterialCondition"}, {"$SequenceRuleSource", "rule/SequenceRule"},
+            {"$TestRuleSource", "rule/ConditionRule"}, {"$BlockRuleSource", "rule/BlockRule"},
+            {"$Bandlands", "rule/BandlandsRule"}, {"$NotConditionSource", "condition/NotCondition"},
+            {"$BiomeConditionSource", "condition/BiomeCondition"}, {"$Hole", "condition/HoleCondition"},
+            {"$Steep", "condition/SteepCondition"}, {"$Temperature", "condition/TemperatureCondition"},
+            {"$AbovePreliminarySurface", "condition/AbovePreliminarySurfaceCondition"},
+        };
+        for (String[] rule : surfaceRules) {
+            t.registerClassRedirect(surface + rule[0], material + rule[1]);
+        }
+        t.registerClassRedirect("net/minecraft/world/level/levelgen/SurfaceRules$NoiseThresholdConditionSource",
+                "net/minecraft/world/level/levelgen/material/condition/NoiseThresholdCondition");
+        t.registerClassRedirect("net/minecraft/world/level/levelgen/SurfaceRules$StoneDepthCheck",
+                "net/minecraft/world/level/levelgen/material/condition/StoneDepthCondition");
+        t.registerClassRedirect("net/minecraft/world/level/levelgen/SurfaceRules$VerticalGradientConditionSource",
+                "net/minecraft/world/level/levelgen/material/condition/VerticalGradientCondition");
+        t.registerClassRedirect("net/minecraft/world/level/levelgen/SurfaceRules$WaterConditionSource",
+                "net/minecraft/world/level/levelgen/material/condition/WaterCondition");
+        t.registerClassRedirect("net/minecraft/world/level/levelgen/SurfaceRules$YConditionSource",
+                "net/minecraft/world/level/levelgen/material/condition/YCondition");
+        // The rest of the old API (isBiome without a lookup, the evaluated rule and context, the old
+        // constants) is rebuilt on top of these names.
+        Legacy263SurfaceRuleBridge.register(t);
+    }
+
     private static void registerVanillaMoves(RetromodTransformer t) {
         // Several only fix capitalization, such as EnderMan to Enderman and RedStoneWireBlock to
         // RedstoneWireBlock.
@@ -564,6 +624,11 @@ public final class Mc26_2To26_3CoreMoves {
                 poseStack, "rotate", "(Lorg/joml/Quaternionfc;)V");
         t.registerMethodRedirect(poseStack, "mulPose", "(Lorg/joml/Quaternionf;)V",
                 poseStack, "rotate", "(Lorg/joml/Quaternionfc;)V");
+        // SignText.setColor(DyeColor) became withColor(DyeColor) with the same descriptor. The fuzzy
+        // resolver does not read a swapped word as a rename, so this one is pinned here.
+        String signText = "net/minecraft/world/level/block/entity/SignText";
+        String withDye = "(Lnet/minecraft/world/item/DyeColor;)L" + signText + ";";
+        t.registerMethodRedirect(signText, "setColor", withDye, signText, "withColor", withDye);
         // Axis.of(Vector3f) became Axis.of(Vector3fc), the JOML widening 26.2 applied elsewhere.
         // The value on the stack already implements Vector3fc, so only the descriptor changes.
         // The method dates from 1.19.3, so 1.20.1 mods call it too.
@@ -599,10 +664,13 @@ public final class Mc26_2To26_3CoreMoves {
                 "net/minecraft/core/registries/codec/RegistryFileCodec");
         t.registerClassRedirect("net/minecraft/resources/RegistryFixedCodec",
                 "net/minecraft/core/registries/codec/RegistryFixedCodec");
+        registerRegistryCodecFactories(t);
         t.registerClassRedirect("net/minecraft/server/commands/ItemCommands",
                 "net/minecraft/server/commands/item/ItemCommands");
         t.registerClassRedirect("net/minecraft/server/packs/AbstractPackResources",
                 "net/minecraft/server/packs/AbstractPackMetadataResources");
+        // The new base reads only metadata, so an old pack it now extends also has to stay a PackResources.
+        LegacyPackResourcesBaseAdapter.register(t);
         t.registerClassRedirect("net/minecraft/server/packs/CompositePackResources",
                 "net/minecraft/server/packs/OverlayedPackResources");
         t.registerClassRedirect("net/minecraft/util/datafix/fixes/AbstractBlockPropertyFix",
@@ -647,40 +715,7 @@ public final class Mc26_2To26_3CoreMoves {
                 "net/minecraft/world/level/levelgen/densityfunction/DensityFunctions$HolderHolder");
         t.registerClassRedirect("net/minecraft/world/level/levelgen/DensityFunctions$Spline$Coordinate",
                 "net/minecraft/world/level/levelgen/densityfunction/op/SplineFunction$Coordinate");
-        // 26.3 renamed surface rules to material rules with the same factories and records, so
-        // code that builds them, such as MCreator's overworld biome splice, keeps loading.
-        String surface = "net/minecraft/world/level/levelgen/SurfaceRules";
-        String material = "net/minecraft/world/level/levelgen/material/";
-        String[][] surfaceRules = {
-            {"", "MaterialRules"}, {"$RuleSource", "rule/MaterialRule"},
-            {"$ConditionSource", "condition/MaterialCondition"}, {"$SequenceRuleSource", "rule/SequenceRule"},
-            {"$TestRuleSource", "rule/ConditionRule"}, {"$BlockRuleSource", "rule/BlockRule"},
-            {"$Bandlands", "rule/BandlandsRule"}, {"$NotConditionSource", "condition/NotCondition"},
-            {"$BiomeConditionSource", "condition/BiomeCondition"}, {"$Hole", "condition/HoleCondition"},
-            {"$Steep", "condition/SteepCondition"}, {"$Temperature", "condition/TemperatureCondition"},
-            {"$AbovePreliminarySurface", "condition/AbovePreliminarySurfaceCondition"},
-        };
-        for (String[] rule : surfaceRules) {
-            t.registerClassRedirect(surface + rule[0], material + rule[1]);
-        }
-        // isBiome now takes the biome lookup, which the old call never passed.
-        com.retromod.core.SyntheticEmbedder.registerClassResource(t,
-                "com/retromod/shim/common/embedded/LegacyMaterialRules",
-                com.retromod.shim.common.embedded.LegacyMaterialRules.class);
-        t.registerMethodRedirect(material + "MaterialRules", "isBiome",
-                "([Lnet/minecraft/resources/ResourceKey;)L" + material + "condition/MaterialCondition;",
-                "com/retromod/shim/common/embedded/LegacyMaterialRules", "isBiome",
-                "([Ljava/lang/Object;)Ljava/lang/Object;");
-        t.registerClassRedirect("net/minecraft/world/level/levelgen/SurfaceRules$NoiseThresholdConditionSource",
-                "net/minecraft/world/level/levelgen/material/condition/NoiseThresholdCondition");
-        t.registerClassRedirect("net/minecraft/world/level/levelgen/SurfaceRules$StoneDepthCheck",
-                "net/minecraft/world/level/levelgen/material/condition/StoneDepthCondition");
-        t.registerClassRedirect("net/minecraft/world/level/levelgen/SurfaceRules$VerticalGradientConditionSource",
-                "net/minecraft/world/level/levelgen/material/condition/VerticalGradientCondition");
-        t.registerClassRedirect("net/minecraft/world/level/levelgen/SurfaceRules$WaterConditionSource",
-                "net/minecraft/world/level/levelgen/material/condition/WaterCondition");
-        t.registerClassRedirect("net/minecraft/world/level/levelgen/SurfaceRules$YConditionSource",
-                "net/minecraft/world/level/levelgen/material/condition/YCondition");
+        registerSurfaceRuleMoves(t);
         t.registerClassRedirect("net/minecraft/world/level/levelgen/SurfaceSystem$1",
                 "net/minecraft/world/level/levelgen/material/MaterialSystem$1");
         t.registerClassRedirect("net/minecraft/world/level/levelgen/feature/configurations/BlockColumnConfiguration$Layer",
@@ -712,6 +747,33 @@ public final class Mc26_2To26_3CoreMoves {
         LegacyNumberProviderBridge.register(t);
         // The loot entry builders were rebuilt in the same release.
         LegacyLootBuilderBridge.register(t);
+        // A conditional loot function now holds one optional condition instead of a list.
+        LegacyLootConditionListBridge.register(t);
+        // LootPoolSingletonContainer is gone; old single entries get it back, rebuilt over the new base.
+        LegacyLootSingletonBridge.register(t);
+    }
+
+    /**
+     * The registry codec factories that moved with their classes. 26.3 declares them to return a plain
+     * {@code Codec}, still building the same codec class, so an old call reaches the new factory and casts
+     * back; {@code homogeneousList} became {@code holderSet}. Bookshelf builds a codec for every registry
+     * this way in one static block, which failed whole on the first missing factory.
+     */
+    static void registerRegistryCodecFactories(RetromodTransformer t) {
+        String codecs = "net/minecraft/core/registries/codec/";
+        String key = "Lnet/minecraft/resources/ResourceKey;";
+        String codec = "Lcom/mojang/serialization/Codec;";
+        t.registerMethodRedirect(codecs + "RegistryFixedCodec", "create", "(" + key + ")L" + codecs + "RegistryFixedCodec;",
+                codecs + "RegistryFixedCodec", "create", "(" + key + ")" + codec);
+        t.registerMethodRedirect(codecs + "RegistryFileCodec", "create", "(" + key + codec + "Z)L" + codecs + "RegistryFileCodec;",
+                codecs + "RegistryFileCodec", "create", "(" + key + codec + "Z)" + codec);
+        // The two-argument factory allowed inline values, as the registry codecs' holder(key, codec) does.
+        t.registerMethodRedirect(codecs + "RegistryFileCodec", "create", "(" + key + codec + ")L" + codecs + "RegistryFileCodec;",
+                codecs + "RegistryCodecs", "holder", "(" + key + codec + ")" + codec);
+        for (String args : new String[] {key, key + "Z", key + codec, key + codec + "Z"}) {
+            t.registerMethodRedirect(codecs + "RegistryCodecs", "homogeneousList", "(" + args + ")" + codec,
+                    codecs + "RegistryCodecs", "holderSet", "(" + args + ")" + codec);
+        }
     }
 
     /**

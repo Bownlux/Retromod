@@ -7,6 +7,7 @@ package com.retromod.shim.api.fabric;
 import com.retromod.core.AuxiliaryVersionShim;
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -86,7 +87,7 @@ public class ZineApiShim implements AuxiliaryVersionShim {
             transformer.registerClassRedirect(OLD_SYNCING_BLOCK_ENTITY, NEW_SYNCING_BLOCK_ENTITY);
         }
         if (!codecUtilRenamed && !syncingRenamed) return false;
-        LOGGER.info("Registered Zine 1.8 to 1.10 renames for the installed Zine");
+        LOGGER.debug(RetromodLog.DETAIL, "Registered Zine 1.8 to 1.10 renames for the installed Zine");
         return true;
     }
 

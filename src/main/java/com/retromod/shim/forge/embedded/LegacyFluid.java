@@ -4,6 +4,8 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
+
 /**
  * Stand-in for the 1.12.2 {@code net.minecraftforge.fluids.Fluid} definition object. 1.13
  * replaced it with flowing fluids and, later, fluid types, which a mod's static initializer
@@ -112,7 +114,7 @@ public class LegacyFluid {
             this.color = n.intValue();
         } else if (color != null) {
             try {
-                this.color = (Integer) color.getClass().getMethod("getRGB").invoke(color);
+                this.color = (Integer) LegacyPublicMethods.method(color.getClass(), "getRGB").invoke(color);
             } catch (ReflectiveOperationException | ClassCastException ignored) {
                 // Not a color object; keep the previous color.
             }

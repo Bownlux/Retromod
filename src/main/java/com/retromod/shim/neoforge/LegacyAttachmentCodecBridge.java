@@ -28,10 +28,11 @@ public final class LegacyAttachmentCodecBridge {
     /** Registers on a host whose attachment builder has no {@code serialize(Codec)}. */
     public static void register(RetromodTransformer t) {
         ClassNode builder = ClassResourceInspector.read(BUILDER);
-        if (builder == null || builder.methods.stream().anyMatch(m -> m.name.equals("serialize")
-                && m.desc.equals("(L" + CODEC + ";)L" + BUILDER + ";"))) {
-            return;
-        }
+        // NeoForge 1.21.6 replaced the Codec overloads with MapCodec ones; offline the target decides.
+        boolean removed = builder == null ? OfflineHostVersion.neoForgeFrom("1.21.6")
+                : builder.methods.stream().noneMatch(m -> m.name.equals("serialize")
+                        && m.desc.equals("(L" + CODEC + ";)L" + BUILDER + ";"));
+        if (!removed) return;
         t.registerSyntheticClass(CALLS, generate());
         String self = "L" + BUILDER + ";";
         t.registerMethodRedirect(BUILDER, "serialize", "(L" + CODEC + ";)" + self, CALLS, "serialize",

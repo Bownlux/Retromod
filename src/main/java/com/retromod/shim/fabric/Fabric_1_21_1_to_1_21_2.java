@@ -32,7 +32,7 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
         return "fabric";
     }
     
-    /** Two 1.21.2 member changes, in the intermediary names a Fabric host before 26.1 runs. */
+    /** The 1.21.2 member changes, in the intermediary names a Fabric host before 26.1 runs. */
     private static void registerIntermediaryMemberChanges(RetromodTransformer transformer) {
         // Property.getPossibleValues() now returns a List, which is still the Collection the old
         // call returned.
@@ -44,10 +44,34 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
         // A helper rather than a rename: a mob's own override of the old method must still run,
         // and that override's super call, which names its direct superclass, must still link.
         com.retromod.shim.common.Legacy1212MemberBridge.registerIntermediaryHurt(transformer);
+        // Item.getDescription() became getName(), which reads the item_name component.
+        String item = "net/minecraft/class_1792";
+        transformer.registerInheritedMethodRedirect(item, "method_7848", "()Lnet/minecraft/class_2561;",
+                item, "method_63680", "()Lnet/minecraft/class_2561;");
+        // RegistryAccess.registry(key) became lookup(key), which these hosts name method_46759.
+        String registryAccess = "net/minecraft/class_5455";
+        String optionalDesc = "(Lnet/minecraft/class_5321;)Ljava/util/Optional;";
+        for (String owner : new String[]{registryAccess, registryAccess + "$class_6890"}) {
+            transformer.registerMethodRedirect(owner, "method_33310", optionalDesc, owner, "method_46759",
+                    optionalDesc);
+        }
+        // BlockState.isSolidRender(level, pos) kept its id and lost both arguments.
+        String solidDesc = "(Lnet/minecraft/class_1922;Lnet/minecraft/class_2338;)Z";
+        for (String owner : new String[]{"net/minecraft/class_2680", "net/minecraft/class_4970$class_4971"}) {
+            transformer.registerArgDropMethodRedirect(owner, "method_26216", solidDesc, owner, "method_26216", "()Z");
+        }
+        // Level's constructor lost its profiler supplier.
+        com.retromod.shim.common.Legacy1212MemberBridge.registerIntermediaryLevelConstructor(transformer);
+        // Reload listeners lost their two profilers.
+        com.retromod.shim.common.LegacyReloadListenerBridge.registerIntermediary(transformer);
+        // Registry became its own lookup: getTagNames() became listTagIds() and asLookup() went away.
+        com.retromod.shim.common.LegacyRegistryLookupBridge.registerIntermediary(transformer);
     }
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // The RenderSystem setters this version removed.
+        com.retromod.shim.common.RemovedRenderStateNeutralize.registerRemovedIn(transformer, "1.21.2");
 
         // Vanilla attributes became Holder<Attribute>. Distributed Fabric mods use these
         // intermediary names, so retype both the constants and AttributeSupplier.Builder.add.
@@ -192,26 +216,41 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
             "net/minecraft/world/ItemInteractionResult",
             "net/minecraft/world/InteractionResult"
         );
+        // The holder's factories and getters, in the names this host runs.
+        com.retromod.shim.common.LegacyInteractionResultHolderBridge.registerFabric(transformer);
 
         // The block adapter matches Mojang names, which a Fabric mod only has after the 26.x remap.
         if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
                 com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            // The intermediary unwrap above never matches here, because calls are redirected after
+            // the remap. The Mixin repair retypes Patchouli's accessor in Mojang names on these hosts.
+            com.retromod.shim.common.PatchouliSmithingAccessorBridge.register(transformer);
             com.retromod.shim.common.LegacyBlockApiSynthetic.register(transformer);
             com.retromod.shim.common.LegacyBlockMethodBridge.register(transformer);
             com.retromod.shim.common.LegacyChestBlockBridge.register(transformer);
             com.retromod.shim.common.LegacyFoodConsumableBridge.register(transformer);
+            // 1.20.5 made food a record kept in the item's components: meat(), the old getters,
+            // Item.isEdible and getFoodProperties. The consumable bridge above covers 1.21.2.
+            com.retromod.shim.common.LegacyFoodPropertiesBridge.register(transformer);
             // 1.21.2 turned the eat and drink sounds into holders. NeoForge and Forge register
-            // this bridge from their 1.20.5 shims; Fabric has no earlier Mojang-named shim for it.
+            // this bridge from their 1.20.5 and 1.21.2 shims; Fabric has no earlier Mojang-named shim for it.
             com.retromod.shim.common.LegacyHolderConstantBridge.register(transformer);
             com.retromod.shim.common.LegacyItemConstructorBridge.register(transformer);
             // Entity, goal and level members 1.20.5 and 1.21.2 changed. NeoForge and Forge
             // register the 1.20.5 bridge from their 1.20.5 shims, which Fabric lacks.
             com.retromod.shim.common.Legacy1205MemberBridge.register(transformer);
+            // 1.20.5 turned loot table ids into registry keys; old reads and calls keep getting the id.
+            com.retromod.shim.common.LegacyLootTableKeyBridge.register(transformer);
+            // An old mob's own default loot table, which the host stopped asking for, picks its death drops again.
+            com.retromod.shim.common.LegacyMobLootBridge.register(transformer);
             // 1.20.5 priced trades in item costs, so the old item stack trade constructors are gone.
             com.retromod.shim.common.LegacyMerchantOfferBridge.register(transformer);
             // 1.20.5 also replaced the Gson loot serializers that custom loot functions and conditions used.
             com.retromod.shim.common.LegacyLootSerializerBridge.register(transformer);
             com.retromod.shim.common.Legacy1212MemberBridge.register(transformer);
+            // 1.21 replaced Minecraft.getFrameTime() with the delta tracker. NeoForge and Forge register
+            // this bridge from their 1.21 shims; Fabric has no earlier Mojang-named shim for it.
+            com.retromod.shim.common.LegacyFrameTimeBridge.register(transformer);
             // 1.21.2 made armor materials plain records, with no registry to put them in.
             com.retromod.shim.common.LegacyArmorMaterialRecordBridge.register(transformer);
             // Tool rules take block holder sets instead of a tag or a list of blocks.
@@ -223,6 +262,8 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
             com.retromod.shim.common.LegacyExplosionBaseBridge.register(transformer);
             // Later versions hid Level.isClientSide and Level.random behind their getters.
             com.retromod.shim.common.LegacyLevelFieldBridge.register(transformer);
+            // GuiGraphics lost setColor and bufferSource, and its blits gained a render type argument.
+            com.retromod.shim.common.LegacyGuiGraphicsBridge.register1212(transformer);
             // 1.20.5 made the Attributes constants holders, which NeoForge and Forge also bridge
             // from their 1.20.5 shims. Without it a mob's createAttributes() failed with
             // NoSuchFieldError: Attributes.MAX_HEALTH in the mod's entry point.
@@ -230,21 +271,47 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
             // 1.20.5 turned the SpawnPlacements.Type enum into SpawnPlacementTypes, bridged the same
             // way on NeoForge and Forge. The entry point otherwise stopped at a biome spawn rule.
             com.retromod.shim.common.LegacySpawnPlacementTypeBridge.register(transformer);
+            // 1.21 turned the dye's float array color into one int. Fabric_1_20_6_to_1_21 bridges
+            // the intermediary call on 1.21 to 1.21.11 hosts.
+            com.retromod.shim.common.LegacyDyeColorBridge.register(transformer);
+            // The other 1.20.3 and 1.20.5 removals that NeoForge and Forge bridge from their 1.20
+            // shims: MobType, entity data defined in defineSynchedData(), the tree grower classes,
+            // and worldgen types whose codec() became a MapCodec.
+            com.retromod.shim.common.LegacyMobTypeBridge.register(transformer);
+            com.retromod.shim.common.LegacySynchedDataBridge.register(transformer);
+            com.retromod.shim.common.LegacyTreeGrowerBridge.register(transformer);
+            com.retromod.shim.common.LegacyCodecTypeBridge.register(transformer);
+            // KeyDispatchDataCodec moved to map codecs in 1.20.5. Before 26.1 the intermediary
+            // form is registered from RetromodPreLaunch.
+            com.retromod.shim.common.LegacyKeyDispatchCodecBridge.register(transformer);
+            // Pre1_20_5ParticleTypeBridge covers the same change in intermediary names before 26.1.
+            Pre1_20_5MojangParticleTypeBridge.register(transformer);
             // 1.20.2 split Advancement into its data and an AdvancementHolder.
             com.retromod.shim.common.LegacyAdvancementBridge.register(transformer);
             // The same release read advancement triggers with codecs instead of a mod's JSON reader.
             com.retromod.shim.common.LegacyCriterionTriggerBridge.register(transformer);
+            // 1.20.2 turned the dispenser BlockSource into a record. NeoForge and Forge register
+            // this bridge from their 1.20.5 and 1.21 shims.
+            com.retromod.shim.common.LegacyDispenserBridge.register(transformer);
             // Block constructors 1.20.3 reshaped. Pre-26.1 Fabric has the intermediary
             // Pre1_20_3BlockConstructorBridge instead.
             com.retromod.shim.common.LegacyBlockConstructorBridge.register(transformer);
             // The same release put doors, trapdoors, fence gates and pressure plates' type ahead of their properties.
             com.retromod.shim.common.LegacyBlockSetTypeBridge.register(transformer);
             com.retromod.shim.common.LegacyProtectedBlockCallBridge.register(transformer);
+            // 1.20.5 gave flowers an effect holder and seconds; NeoForge and Forge register this from their 1.21 shim.
+            com.retromod.shim.forge.LegacyFlowerBlockBridge.register(transformer);
+            // Reload listeners lost their two profilers; old listeners get the host's reload.
+            com.retromod.shim.common.LegacyReloadListenerBridge.register(transformer);
         } else {
             // Before 26.x these two calls keep intermediary names, so they are bridged here. On 26.x
             // the Mojang-named bridges above own them.
             registerIntermediaryMemberChanges(transformer);
         }
+        // The max build height getters and the map color kept their ids when their meaning changed,
+        // so the name table alone gives an old mod the inclusive height and an ARGB color.
+        com.retromod.shim.common.LegacyBuildHeightBridge.registerFabric(transformer);
+        com.retromod.shim.common.LegacyMapColorBridge.registerFabric(transformer);
 
         // Registry getter renames
         transformer.registerMethodRedirect(
@@ -252,13 +319,6 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
             "(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/core/Holder$Reference;",
             "net/minecraft/core/Registry", "getOrThrow",
             "(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/core/Holder$Reference;"
-        );
-
-        transformer.registerMethodRedirect(
-            "net/minecraft/core/Registry", "getOptional",
-            "(Lnet/minecraft/resources/ResourceLocation;)Ljava/util/Optional;",
-            "net/minecraft/core/Registry", "getOptionalValue",
-            "(Lnet/minecraft/resources/ResourceLocation;)Ljava/util/Optional;"
         );
 
         // 1.21.2 dropped the GENERIC_ prefix on the Attributes constants.

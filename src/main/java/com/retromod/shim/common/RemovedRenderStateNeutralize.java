@@ -6,84 +6,89 @@ package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
 
-/**
- * Stubs out the imperative {@code RenderSystem} state setters deleted in the blaze3d
- * GPU refactor (enableBlend/blendFunc/depthMask/colorMask/...). They're gone from
- * 1.21.11 on with no replacement to redirect to (render state moved onto the immutable
- * {@code RenderPipeline}), so an old mod (~1.16-1.21.4) calling them would hit
- * {@code NoSuchMethodError} at link time. We pop the args and push a default return:
- * the mod loads, minus that one bit of manual GL state. A fully manual immediate-mode
- * renderer may blend wrong and needs hand-porting (roadmap).
- *
- * <p>Match is on owner+name+descriptor, and every entry below is absent on 1.21.11+,
- * so a wrong descriptor just fails to match. {@code RenderSystem} keeps its
- * {@code com.mojang.blaze3d} name on all three loaders. Raw {@code GL11.*} calls are
- * left to {@code GraphicsBackendCompat}.
- */
+import java.util.List;
+
+/** Drops calls to the imperative RenderSystem setters 1.21.2 to 1.21.11 removed, so old mods load. */
 public final class RemovedRenderStateNeutralize {
 
     private RemovedRenderStateNeutralize() {}
 
+    // RenderSystem keeps this name on every loader, Fabric's intermediary hosts included, so one
+    // key serves all of them. Raw GL11 calls are left to GraphicsBackendCompat.
     private static final String RENDER_SYSTEM = "com/mojang/blaze3d/systems/RenderSystem";
 
+    private static final String SOURCE_OLD = "Lcom/mojang/blaze3d/platform/GlStateManager$SourceFactor;";
+    private static final String DEST_OLD = "Lcom/mojang/blaze3d/platform/GlStateManager$DestFactor;";
+    private static final String SOURCE_NEW = "Lcom/mojang/blaze3d/platform/SourceFactor;";
+    private static final String DEST_NEW = "Lcom/mojang/blaze3d/platform/DestFactor;";
+
+    /** A removed setter: the first version without it, its name, and its descriptor there. */
+    record Removed(String since, String name, String desc) {}
+
+    /**
+     * Each setter with the version that removed it, checked with javap against every vanilla
+     * client jar from 1.21.1 to 1.21.11. Render state moved onto the immutable RenderPipeline, so
+     * there is nothing to redirect to: the call's arguments are popped and the mod loads, minus
+     * that bit of manual GL state. A fully manual immediate-mode renderer may still draw wrong.
+     */
+    static final List<Removed> REMOVED = List.of(
+            // 1.21.2 replaced the supplier with a compiled shader program.
+            new Removed("1.21.2", "setShader", "(Ljava/util/function/Supplier;)V"),
+            // 1.21.2 made getModelViewMatrix() return the model-view stack, so the copy is gone.
+            new Removed("1.21.2", "applyModelViewMatrix", "()V"),
+            // 1.21.5 moved blend, depth, cull, mask, clear, offset and logic-op state onto pipelines.
+            new Removed("1.21.5", "enableBlend", "()V"),
+            new Removed("1.21.5", "disableBlend", "()V"),
+            new Removed("1.21.5", "defaultBlendFunc", "()V"),
+            new Removed("1.21.5", "blendFunc", "(II)V"),
+            new Removed("1.21.5", "blendFunc", "(" + SOURCE_OLD + DEST_OLD + ")V"),
+            new Removed("1.21.5", "blendFuncSeparate", "(IIII)V"),
+            new Removed("1.21.5", "blendFuncSeparate", "(" + SOURCE_OLD + DEST_OLD + SOURCE_OLD + DEST_OLD + ")V"),
+            new Removed("1.21.5", "enableDepthTest", "()V"),
+            new Removed("1.21.5", "disableDepthTest", "()V"),
+            new Removed("1.21.5", "depthMask", "(Z)V"),
+            new Removed("1.21.5", "depthFunc", "(I)V"),
+            new Removed("1.21.5", "enableCull", "()V"),
+            new Removed("1.21.5", "disableCull", "()V"),
+            new Removed("1.21.5", "colorMask", "(ZZZZ)V"),
+            new Removed("1.21.5", "clearColor", "(FFFF)V"),
+            new Removed("1.21.5", "clearDepth", "(D)V"),
+            new Removed("1.21.5", "enablePolygonOffset", "()V"),
+            new Removed("1.21.5", "disablePolygonOffset", "()V"),
+            new Removed("1.21.5", "polygonOffset", "(FF)V"),
+            new Removed("1.21.5", "enableColorLogicOp", "()V"),
+            new Removed("1.21.5", "disableColorLogicOp", "()V"),
+            // Texture binds by GL id or by name went too; 1.21.5 binds a GpuTexture.
+            new Removed("1.21.5", "setShaderTexture", "(II)V"),
+            new Removed("1.21.5", "setShaderTexture", "(ILnet/minecraft/resources/ResourceLocation;)V"),
+            // Fabric hosts before 26.1 name the identifier class by its intermediary id.
+            new Removed("1.21.5", "setShaderTexture", "(ILnet/minecraft/class_2960;)V"),
+            // 1.21.6 dropped the imperative scissor (enableScissorForRenderTypeDraws remains) and the shader tint.
+            new Removed("1.21.6", "enableScissor", "(IIII)V"),
+            new Removed("1.21.6", "disableScissor", "()V"),
+            new Removed("1.21.6", "setShaderColor", "(FFFF)V"),
+            new Removed("1.21.11", "lineWidth", "(F)V"));
+
+    /** The same calls as 26.1 shapes them, after its class moves and the Identifier rename. */
+    private static final List<Removed> SHAPES_26_1 = List.of(
+            new Removed("26.1", "blendFunc", "(" + SOURCE_NEW + DEST_NEW + ")V"),
+            new Removed("26.1", "blendFuncSeparate", "(" + SOURCE_NEW + DEST_NEW + SOURCE_NEW + DEST_NEW + ")V"),
+            new Removed("26.1", "setShaderTexture", "(ILnet/minecraft/resources/Identifier;)V"));
+
+    /** Every setter, for 26.x hosts, which lack them all. */
     public static void register(RetromodTransformer transformer) {
-        // blend
-        neutralize(transformer, "enableBlend", "()V");
-        neutralize(transformer, "disableBlend", "()V");
-        neutralize(transformer, "defaultBlendFunc", "()V");
-        neutralize(transformer, "blendFunc", "(II)V");
-        neutralize(transformer, "blendFuncSeparate", "(IIII)V");
-        // The enum overloads 1.21.x mods actually call. Registered in BOTH spellings: the raw
-        // GlStateManager$SourceFactor/$DestFactor inners (pre-class-move; also the literal
-        // GlStateManager$class_4534/4535 hybrids map to the promoted names first) and the promoted
-        // 26.1 top-level SourceFactor/DestFactor the class-move rewrites descriptors to. On 26.2
-        // the promoted enums are deleted too; CoreMoves nulls their GETSTATICs, so the popped args
-        // here are just ACONST_NULLs.
-        String srcOld = "Lcom/mojang/blaze3d/platform/GlStateManager$SourceFactor;";
-        String dstOld = "Lcom/mojang/blaze3d/platform/GlStateManager$DestFactor;";
-        String srcNew = "Lcom/mojang/blaze3d/platform/SourceFactor;";
-        String dstNew = "Lcom/mojang/blaze3d/platform/DestFactor;";
-        neutralize(transformer, "blendFunc", "(" + srcOld + dstOld + ")V");
-        neutralize(transformer, "blendFunc", "(" + srcNew + dstNew + ")V");
-        neutralize(transformer, "blendFuncSeparate", "(" + srcOld + dstOld + srcOld + dstOld + ")V");
-        neutralize(transformer, "blendFuncSeparate", "(" + srcNew + dstNew + srcNew + dstNew + ")V");
-        // depth
-        neutralize(transformer, "enableDepthTest", "()V");
-        neutralize(transformer, "disableDepthTest", "()V");
-        neutralize(transformer, "depthMask", "(Z)V");
-        neutralize(transformer, "depthFunc", "(I)V");
-        // cull / color mask
-        neutralize(transformer, "enableCull", "()V");
-        neutralize(transformer, "disableCull", "()V");
-        neutralize(transformer, "colorMask", "(ZZZZ)V");
-        // clear
-        neutralize(transformer, "clearColor", "(FFFF)V");
-        neutralize(transformer, "clearDepth", "(D)V");
-        // scissor (imperative form; 26.x keeps enableScissorForRenderTypeDraws)
-        neutralize(transformer, "enableScissor", "(IIII)V");
-        neutralize(transformer, "disableScissor", "()V");
-        // polygon offset + line width
-        neutralize(transformer, "enablePolygonOffset", "()V");
-        neutralize(transformer, "disablePolygonOffset", "()V");
-        neutralize(transformer, "polygonOffset", "(FF)V");
-        neutralize(transformer, "lineWidth", "(F)V");
-        // color logic op
-        neutralize(transformer, "enableColorLogicOp", "()V");
-        neutralize(transformer, "disableColorLogicOp", "()V");
-        // Imperative shader binding, deleted in the 26.x GpuDevice/RenderPipeline refactor (shaders
-        // moved onto pipeline objects). setShader(Supplier)/setShaderColor(FFFF)/setShaderTexture(
-        // int,Identifier) are gone (verified absent on 26.2; only setShaderFog/setShaderLights
-        // remain), so a 1.21.x mod calling them dies NoSuchMethodError at RENDER time (a game crash
-        // when the mod draws). Neutralizing turns that into a soft-fail: the custom shader/tint/
-        // texture bind is lost (rendering may look wrong) but the game doesn't crash. Top-frequency
-        // in the 87-mod corpus re-audit (setShader 26 mods, setShaderTexture 18). The
-        // setShaderTexture(int,int) glId overload is left alone (a still-present low-level form).
-        neutralize(transformer, "setShader", "(Ljava/util/function/Supplier;)V");
-        neutralize(transformer, "setShaderColor", "(FFFF)V");
-        neutralize(transformer, "setShaderTexture", "(ILnet/minecraft/resources/Identifier;)V");
+        for (Removed removed : REMOVED) neutralize(transformer, removed);
+        for (Removed removed : SHAPES_26_1) neutralize(transformer, removed);
     }
 
-    private static void neutralize(RetromodTransformer transformer, String name, String desc) {
-        transformer.registerRemovedMethodNeutralize(RENDER_SYSTEM, name, desc);
+    /** The setters the given version removed, called from that version's shim so the host gate holds. */
+    public static void registerRemovedIn(RetromodTransformer transformer, String version) {
+        for (Removed removed : REMOVED) {
+            if (removed.since().equals(version)) neutralize(transformer, removed);
+        }
+    }
+
+    private static void neutralize(RetromodTransformer transformer, Removed removed) {
+        transformer.registerRemovedMethodNeutralize(RENDER_SYSTEM, removed.name(), removed.desc());
     }
 }

@@ -79,21 +79,9 @@ public class Forge_1_19_2_to_1_19_3 implements VersionShim {
 
         // No class-redirect for Registry: it still exists as a type, so renaming it would break
         // every Registry<T> use. The moved statics (BLOCK, ITEM, ...) need FieldRedirects instead.
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/item/CreativeModeTab", "builder",
-            "(Lnet/minecraft/world/item/CreativeModeTab$Row;I)Lnet/minecraft/world/item/CreativeModeTab$Builder;",
-            "com/retromod/shim/forge/embedded/CreativeTabShim", "builder",
-            "(Ljava/lang/Object;I)Ljava/lang/Object;"
-        );
         transformer.registerClassRedirect(
             "net/minecraftforge/event/RegistryEvent",
             "net/minecraftforge/registries/RegisterEvent"
-        );
-        transformer.registerMethodRedirect(
-            "net/minecraftforge/client/event/RenderGuiOverlayEvent", "getMatrixStack",
-            "()Lcom/mojang/blaze3d/vertex/PoseStack;",
-            "com/retromod/shim/forge/embedded/RenderShim", "getGuiGraphics",
-            "(Ljava/lang/Object;)Ljava/lang/Object;"
         );
 
         // Widget renamed to Renderable

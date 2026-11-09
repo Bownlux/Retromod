@@ -6,7 +6,10 @@ package com.retromod.loaderapi.fabric.v26.content;
 
 import com.retromod.loaderapi.fabric.v26.HostLink.Member;
 import com.retromod.loaderapi.fabric.v26.HostSurface;
+import com.retromod.shim.common.LegacyItemComponentValues;
+import com.retromod.shim.neoforge.LegacyDataMapComponentBridge;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.objectweb.asm.ClassReader;
@@ -41,12 +44,18 @@ class ContentHostMembersTest {
     private static List<Member> members() throws IllegalAccessException {
         List<Member> members = new ArrayList<>();
         for (Class<?> helper : List.of(LegacyContentRegistries.class, LegacyHoeActions.class, LegacyTrades.class,
-                LegacyWorldPacks.class, LegacyBrewing.class)) {
-            for (Field field : helper.getDeclaredFields()) {
-                if (field.getType() == Member.class && Modifier.isStatic(field.getModifiers())) {
-                    field.setAccessible(true);
-                    members.add((Member) field.get(null));
-                }
+                LegacyWorldPacks.class, LegacyBrewing.class, LegacyItemComponentValues.class)) {
+            members.addAll(memberConstants(helper));
+        }
+        return members;
+    }
+
+    private static List<Member> memberConstants(Class<?> helper) throws IllegalAccessException {
+        List<Member> members = new ArrayList<>();
+        for (Field field : helper.getDeclaredFields()) {
+            if (field.getType() == Member.class && Modifier.isStatic(field.getModifiers())) {
+                field.setAccessible(true);
+                members.add((Member) field.get(null));
             }
         }
         return members;
@@ -101,6 +110,29 @@ class ContentHostMembersTest {
             }
         }
         assertEquals(List.of(), missing, "in " + jar);
+    }
+
+    @Test
+    @DisplayName("The Minecraft and NeoForge members the 26.3 data map bridge calls are in the local jars")
+    void dataMapBridgeMembersExist() throws Exception {
+        Path client = releaseJar("26.3");
+        Path neoForge = Path.of(System.getProperty("user.home"),
+                "Library/Application Support/PrismLauncher/libraries/net/neoforged/neoforge/26.3.0.43-beta",
+                "neoforge-26.3.0.43-beta-universal.jar");
+        assumeTrue(client != null && Files.exists(neoForge),
+                "no local 26.3 client or NeoForge 26.3.0.43-beta jar; they are local test material");
+        List<Member> members = memberConstants(LegacyDataMapComponentBridge.class);
+        assertTrue(members.size() >= 12, "the bridge lost its member constants: " + members);
+        List<String> missing = new ArrayList<>();
+        try (ZipFile minecraft = new ZipFile(client.toFile()); ZipFile neo = new ZipFile(neoForge.toFile())) {
+            for (Member member : members) {
+                ZipFile jar = member.owner().startsWith("net/neoforged/") ? neo : minecraft;
+                if (!declaredInHierarchy(jar, member.owner(), member)) {
+                    missing.add(member.owner() + "." + member.name() + member.desc());
+                }
+            }
+        }
+        assertEquals(List.of(), missing);
     }
 
     /** The release client jar for {@code version}, from the launcher's library or the test folder, or null. */

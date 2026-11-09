@@ -162,6 +162,11 @@ final class ItemStackDataMigrator {
                     && RetromodVersion.compareMcVersions(source, version) < 0;
         }
 
+        private boolean sourceAtLeast(String version) {
+            return source != null && source.matches("\\d+\\.\\d+.*")
+                    && RetromodVersion.compareMcVersions(source, version) >= 0;
+        }
+
         JsonElement file(Kind kind, JsonElement root) {
             if (kind == Kind.RECIPE && root instanceof JsonObject recipe) recipe(recipe);
             if (kind == Kind.ADVANCEMENT && root instanceof JsonObject advancement) advancement(advancement);
@@ -693,8 +698,10 @@ final class ItemStackDataMigrator {
                 if (structure == null || location.has("structure") || location.has("structures")) return false;
                 replace(location, "feature", "structure", new JsonPrimitive(structure));
             }
-            // 1.20.5 renamed "biome" and "structure" to the lists "biomes" and "structures".
-            if (!atLeast(target, ItemStackComponents.FIRST_COMPONENT_HOST)) return true;
+            // 1.20.5 renamed "biome" and "structure" to the lists "biomes" and "structures". A mod built
+            // after that ignored a stale one, which then matched every location, so it stays ignored.
+            if (!atLeast(target, ItemStackComponents.FIRST_COMPONENT_HOST)
+                    || sourceAtLeast(ItemStackComponents.FIRST_COMPONENT_HOST)) return true;
             if (string(location.get("biome")) != null && !location.has("biomes")) {
                 renameKey(location, "biome", "biomes");
                 changed = true;

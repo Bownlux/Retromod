@@ -71,8 +71,8 @@ public final class LegacyRegistries {
     private static void addModBusListener(Class<?> event, Consumer<Object> listener) throws ReflectiveOperationException {
         ClassLoader loader = LegacyRegistries.class.getClassLoader();
         Object context = Class.forName("net.neoforged.fml.ModLoadingContext", false, loader).getMethod("get").invoke(null);
-        Object container = context.getClass().getMethod("getActiveContainer").invoke(context);
-        Object bus = container.getClass().getMethod("getEventBus").invoke(container);
+        Object container = LegacyPublicMethods.method(context.getClass(), "getActiveContainer").invoke(context);
+        Object bus = LegacyPublicMethods.method(container.getClass(), "getEventBus").invoke(container);
         if (bus == null || !LISTENING_BUSES.add(System.identityHashCode(bus) + ":" + event.getName())) return;
         Class.forName("net.neoforged.bus.api.IEventBus", false, loader)
                 .getMethod("addListener", Class.class, Consumer.class).invoke(bus, event, listener);

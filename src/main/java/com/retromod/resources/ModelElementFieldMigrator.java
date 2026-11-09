@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import com.retromod.util.RetromodLog;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.slf4j.Logger;
@@ -73,7 +74,7 @@ public final class ModelElementFieldMigrator implements ModResourceConverter {
             }
         }
         if (changed > 0) {
-            LOGGER.info("Updated element shading or translucency in {} model(s) for Minecraft {}", changed,
+            LOGGER.debug(RetromodLog.DETAIL, "Updated element shading or translucency in {} model(s) for Minecraft {}", changed,
                     context.targetMcVersion());
         }
         return changed;

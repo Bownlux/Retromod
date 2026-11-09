@@ -6,7 +6,7 @@
 
     <groupId>com.retromod</groupId>
     <artifactId>retromod</artifactId>
-    <version>1.4.0-snapshot.3.1</version>
+    <version>1.4.0-snapshot.4</version>
     <packaging>jar</packaging>
 
     <name>Retromod</name>
@@ -37,6 +37,10 @@
         
         <!-- ASM version -->
         <asm.version>9.11.1</asm.version>
+        <!-- The oldest ASM a supported loader ships: Forge 46.x and early 47.x and 48.x, most
+             NeoForge builds from 47.1.x to 21.1.47, and Quilt Loader 0.20 and 0.21. The loader jars
+             run on the host's ASM, so HostAsmFloorTest checks every Retromod class against it. -->
+        <asm.floor.version>9.5</asm.floor.version>
         
         <!-- Other dependencies -->
         <gson.version>2.14.0</gson.version>
@@ -122,17 +126,12 @@
             <version>${toml4j.version}</version>
         </dependency>
 
-        <!-- Logging -->
+        <!-- Logging. com.retromod.util.HostLogProvider binds it to the game's log, so no
+             SLF4J backend is bundled. -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
             <version>${slf4j.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-simple</artifactId>
-            <version>${slf4j.version}</version>
-            <scope>runtime</scope>
         </dependency>
 
         <!-- Mixin (provided - loaded by mod loader) -->
@@ -363,6 +362,52 @@
                 </executions>
             </plugin>
 
+            <!-- Copies the floor ASM jars for HostAsmFloorTest. They never reach a classpath or a jar. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.7.0</version>
+                <executions>
+                    <execution>
+                        <id>host-asm-floor</id>
+                        <phase>generate-test-resources</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/asm-floor</outputDirectory>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>org.ow2.asm</groupId>
+                                    <artifactId>asm</artifactId>
+                                    <version>${asm.floor.version}</version>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.ow2.asm</groupId>
+                                    <artifactId>asm-commons</artifactId>
+                                    <version>${asm.floor.version}</version>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.ow2.asm</groupId>
+                                    <artifactId>asm-tree</artifactId>
+                                    <version>${asm.floor.version}</version>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.ow2.asm</groupId>
+                                    <artifactId>asm-util</artifactId>
+                                    <version>${asm.floor.version}</version>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.ow2.asm</groupId>
+                                    <artifactId>asm-analysis</artifactId>
+                                    <version>${asm.floor.version}</version>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
             <!-- JAR Plugin - Main JAR -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -484,6 +529,11 @@
                         </goals>
                         <configuration>
                             <classifier>agent</classifier>
+                            <!-- This jar is not shaded, so its SLF4J provider file would offer
+                                 Retromod's provider to the game's own SLF4J. -->
+                            <excludes combine.children="append">
+                                <exclude>META-INF/services/org.slf4j.spi.SLF4JServiceProvider</exclude>
+                            </excludes>
                             <archive>
                                 <manifestEntries>
                                     <Premain-Class>com.retromod.agent.RetromodAgent</Premain-Class>
@@ -597,6 +647,14 @@
                                              relocations moved, so it describes nothing real. -->
                                         <exclude>module-info.class</exclude>
                                         <exclude>META-INF/versions/*/module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                                <!-- SLF4J's license ships under META-INF/licenses/slf4j/, so its
+                                     root copy is not mistaken for Retromod's own license. -->
+                                <filter>
+                                    <artifact>org.slf4j:slf4j-api</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/LICENSE.txt</exclude>
                                     </excludes>
                                 </filter>
                             </filters>

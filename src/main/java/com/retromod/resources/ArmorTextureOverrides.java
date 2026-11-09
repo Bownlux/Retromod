@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AbstractInsnNode;
@@ -85,7 +86,7 @@ final class ArmorTextureOverrides {
             }
         }
         if (!ownModels.isEmpty()) {
-            LOGGER.info("Left out {} armor class(es) drawn with their own model, whose textures do not fit "
+            LOGGER.debug(RetromodLog.DETAIL, "Left out {} armor class(es) drawn with their own model, whose textures do not fit "
                     + "the humanoid armor layout: {}", ownModels.size(), ownModels);
         }
         if (overriding.isEmpty()) return Map.of();
@@ -119,7 +120,7 @@ final class ArmorTextureOverrides {
         // An asset that two items give different textures for is left out.
         conflicts.forEach(assets::remove);
         if (!unresolved.isEmpty() || !conflicts.isEmpty()) {
-            LOGGER.info("Could not derive equipment assets for {} armor class(es) whose getArmorTexture "
+            LOGGER.debug(RetromodLog.DETAIL, "Could not derive equipment assets for {} armor class(es) whose getArmorTexture "
                     + "texture or armor material is not a constant{}: {}", unresolved.size(),
                     conflicts.isEmpty() ? "" : ", and skipped " + conflicts + " whose items disagree on a texture",
                     unresolved);

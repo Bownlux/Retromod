@@ -15,6 +15,14 @@ public final class ClassResourceInspector {
 
     private ClassResourceInspector() {}
 
+    /** Jars the CLI reads as the host's own classes ({@code --host-jar}); the game reads its real host. */
+    private static volatile ClassLoader offlineHost;
+
+    /** Sets the jars an offline translation reads as the host, or {@code null} for none. */
+    public static void setOfflineHost(ClassLoader loader) {
+        offlineHost = loader;
+    }
+
     public static ClassNode read(String internalName) {
         ClassNode fabricNode = readFabricPreMixin(internalName);
         if (fabricNode != null) return fabricNode;
@@ -26,6 +34,10 @@ public final class ClassResourceInspector {
         ClassNode node = readFrom(own, resource);
         if (node == null && context != own) {
             node = readFrom(context, resource);
+        }
+        // Read from every thread alike, since batch translates classes on worker threads.
+        if (node == null && offlineHost != null) {
+            node = readFrom(offlineHost, resource);
         }
         if (node == null && internalName.startsWith("java/")) {
             node = readBootstrap(resource);

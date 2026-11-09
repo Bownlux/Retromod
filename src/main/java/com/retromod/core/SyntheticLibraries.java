@@ -4,16 +4,20 @@
  */
 package com.retromod.core;
 
+import com.retromod.shim.forge.ServerClientStandIns;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.Handle;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.commons.ClassRemapper;
 import org.objectweb.asm.commons.Remapper;
+import org.objectweb.asm.signature.SignatureReader;
+import org.objectweb.asm.signature.SignatureVisitor;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.MethodNode;
@@ -59,6 +63,12 @@ import java.util.zip.ZipFile;
  * addon calls. A copy is not reused when an addon class left behind in the same package uses one
  * of its package-private or protected members, because the two would no longer share a package.
  *
+ * <p>An addon can hand one stand-in to two libraries that each took their own copy. It then keeps
+ * one copy and converts the value where it calls or overrides the other library, through small
+ * adapters of its own (see {@code StandInAdapters}). No library changes for it. The link file
+ * lists each such library copy as {@code crosses <copy>}, so the addon goes stale when one moves
+ * or a new one appears.
+ *
  * <p>The copies a jar reuses are listed in {@link #LINKS_ENTRY}, so a cache can tell when they
  * are gone or when a library arrived after the jar was translated. Libraries must be translated
  * before the jars that use them; {@link #librariesFirst} orders a batch by class references,
@@ -70,6 +80,11 @@ public final class SyntheticLibraries {
 
     /** Lists, one per line, the stand-in copies a translated jar reuses from other jars. */
     public static final String LINKS_ENTRY = "META-INF/retromod-synthetic-links.txt";
+    /** Marks a link line naming a library's copy the jar hands a stand-in to while it uses another copy. */
+    static final String CROSSES = "crosses ";
+
+    /** A library the jar hands a stand-in to that took another copy: its classes, the stand-in and its copy. */
+    record OtherCopy(Set<String> libraryClasses, String standIn, String copy) {}
 
     /** No libraries: every jar keeps its own copies, as before libraries were indexed. */
     public static final SyntheticLibraries NONE = new SyntheticLibraries(true);
@@ -145,30 +160,84 @@ public final class SyntheticLibraries {
     synchronized Map<String, String> borrowable(Map<String, byte[]> jarClasses, Set<String> wanted,
             Function<String, byte[]> localStandIn) {
         if (libraries.isEmpty() || wanted.isEmpty() || jarClasses.isEmpty()) return Map.of();
-        List<Library> linked = linkedLibraries(jarClasses);
-        if (linked.isEmpty()) return Map.of();
+        return borrowFrom(crossings(jarClasses, wanted), wanted, localStandIn);
+    }
+
+    /** The stand-ins a jar hands to each library it links to, in index order, read once per jar. */
+    private Map<Library, Set<String>> crossings(Map<String, byte[]> jarClasses, Set<String> wanted) {
+        Map<Library, Set<String>> crossings = new LinkedHashMap<>();
+        for (Library library : linkedLibraries(jarClasses)) {
+            Set<String> crossing = crossingStandIns(jarClasses, library, wanted);
+            if (!crossing.isEmpty()) crossings.put(library, crossing);
+        }
+        return crossings;
+    }
+
+    /** The copies a jar borrows, given what it hands to each library. */
+    private Map<String, String> borrowFrom(Map<Library, Set<String>> crossings, Set<String> wanted,
+            Function<String, byte[]> localStandIn) {
+        // Each stand-in's copies by name, so the jar picks the same one whatever order the index has.
+        Map<String, TreeMap<String, Library>> offers = new TreeMap<>();
+        crossings.forEach((library, crossing) -> {
+            for (String standIn : crossing) {
+                String copy = library.provided.get(standIn);
+                if (copy != null) offers.computeIfAbsent(standIn, any -> new TreeMap<>()).putIfAbsent(copy, library);
+            }
+        });
         Map<String, String> borrowed = new TreeMap<>();
         Map<String, ClassNode> copies = new HashMap<>();
-        for (Library library : linked) {
-            for (String standIn : crossingStandIns(jarClasses, library, wanted)) {
-                if (borrowed.containsKey(standIn)) continue;
+        for (Map.Entry<String, TreeMap<String, Library>> offer : offers.entrySet()) {
+            String standIn = offer.getKey();
+            if (borrowed.containsKey(standIn)) continue;
+            for (Library library : offer.getValue().values()) {
                 Map<String, String> group = borrowedGroup(standIn, library, wanted, borrowed,
                         localStandIn, copies);
-                if (group == null) {
-                    LOGGER.debug("Keeping a local copy of {}: the copy in {} cannot be linked whole",
-                            standIn, library.jar.getFileName());
-                    continue;
+                if (group != null) {
+                    borrowed.putAll(group);
+                    break;
                 }
-                borrowed.putAll(group);
+                LOGGER.debug("Keeping a local copy of {}: the copy in {} cannot be linked whole",
+                        standIn, library.jar.getFileName());
             }
         }
         return borrowed;
     }
 
+    /** The libraries a jar hands a stand-in to whose copy differs from the one in {@code jarCopies}. */
+    synchronized List<OtherCopy> otherCopies(Map<String, byte[]> jarClasses, Set<String> wanted,
+            Map<String, String> jarCopies) {
+        if (libraries.isEmpty() || wanted.isEmpty() || jarClasses.isEmpty()) return List.of();
+        return othersFrom(crossings(jarClasses, wanted), jarCopies);
+    }
+
+    private static List<OtherCopy> othersFrom(Map<Library, Set<String>> crossings, Map<String, String> jarCopies) {
+        List<OtherCopy> others = new ArrayList<>();
+        crossings.forEach((library, crossing) -> {
+            for (String standIn : crossing) {
+                String copy = library.provided.get(standIn);
+                if (copy != null && !copy.equals(jarCopies.get(standIn))) {
+                    others.add(new OtherCopy(library.classes, standIn, copy));
+                }
+            }
+        });
+        return others;
+    }
+
+    /** Whether an indexed jar holds the relocated class {@code relocated}. */
+    synchronized boolean holdsCopy(String relocated) {
+        return copyOwners.containsKey(relocated);
+    }
+
+    /** The bytes of a relocated class some indexed jar holds, or null. */
+    synchronized byte[] heldCopyBytes(String relocated) {
+        return copyBytes(relocated);
+    }
+
     /**
      * Whether a translated jar should be translated again against the libraries indexed now: a
-     * copy it reuses is gone, it holds its own copy of a stand-in it would now take from a
-     * library, or that library's copy moved.
+     * copy it reuses or converts to is gone, it holds its own copy of a stand-in it would now take
+     * from a library, that library's copy moved, or it hands a stand-in to a library whose copy it
+     * does not convert to yet.
      */
     public synchronized boolean isStale(Path translatedJar) {
         if (frozen || translatedJar == null) return false;
@@ -177,9 +246,14 @@ public final class SyntheticLibraries {
             for (String relocated : self.borrowed.values()) {
                 if (!copyOwners.containsKey(relocated)) return true;
             }
+            for (String relocated : self.crossed) {
+                if (!copyOwners.containsKey(relocated)) return true;
+            }
             if (self.provided.isEmpty() || libraries.isEmpty()) return false;
             Map<String, byte[]> classes = self.ownClassesWithoutRelocation();
-            if (linkedLibraries(classes).isEmpty()) return false;
+            // The crossings are worked out once and serve both checks below.
+            Map<Library, Set<String>> crossings = crossings(classes, self.provided.keySet());
+            if (crossings.isEmpty()) return false;
 
             Map<String, String> ownCopies = new HashMap<>();
             for (String relocated : self.copies) ownCopies.put(standInOf(relocated), relocated);
@@ -193,17 +267,26 @@ public final class SyntheticLibraries {
                     return null;
                 }
             };
-            Map<String, String> now = borrowable(classes, self.provided.keySet(), localStandIn);
+            Map<String, String> now = borrowFrom(crossings, self.provided.keySet(), localStandIn);
             for (Map.Entry<String, String> link : now.entrySet()) {
                 if (ownCopies.containsKey(link.getKey())) return true;
                 String had = self.borrowed.get(link.getKey());
                 if (had != null && !had.equals(link.getValue())) return true;
+            }
+            // Every library copy the jar was translated against is listed, so a new one means stale.
+            for (OtherCopy other : othersFrom(crossings, self.provided)) {
+                if (!self.crossed.contains(other.copy())) return true;
             }
             return false;
         } catch (IOException | RuntimeException e) {
             LOGGER.debug("Could not check the links of {}: {}", translatedJar.getFileName(), e.toString());
             return false;
         }
+    }
+
+    /** Whether an indexed library has a class file for {@code internalName}, read from its entry names alone. */
+    public synchronized boolean defines(String internalName) {
+        return classOwners.containsKey(internalName);
     }
 
     /** A class defined by an indexed library, or null when no library defines it. */
@@ -214,6 +297,36 @@ public final class SyntheticLibraries {
             return library.read(internalName + ".class");
         } catch (IOException | RuntimeException e) {
             return null;
+        }
+    }
+
+    /**
+     * The libraries {@code jar}'s own classes reference, each as its file name and the SHA-256 of
+     * its translated file, or empty when it references none. A translation that read those
+     * libraries stays valid only while they are the same files.
+     */
+    public synchronized String fingerprint(Path jar) throws IOException {
+        if (frozen || libraries.isEmpty() || jar == null) return "";
+        Map<String, byte[]> classes = new HashMap<>();
+        Library.read(jar).forEachOwnClass(classes::put);
+        StringBuilder out = new StringBuilder();
+        for (Library library : linkedLibraries(classes)) {
+            if (out.length() > 0) out.append(',');
+            // Only plain characters, so the value can sit in a manifest and compare exactly.
+            out.append(library.jar.getFileName().toString().replaceAll("[^A-Za-z0-9._+-]", "_"))
+                    .append('=').append(sha256(library.jar));
+        }
+        return out.toString();
+    }
+
+    private static String sha256(Path file) throws IOException {
+        try (InputStream in = Files.newInputStream(file)) {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[8192];
+            for (int read; (read = in.read(buffer)) != -1; ) digest.update(buffer, 0, read);
+            return java.util.HexFormat.of().formatHex(digest.digest());
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IOException("SHA-256 is not available", e);
         }
     }
 
@@ -282,7 +395,8 @@ public final class SyntheticLibraries {
     /**
      * Stand-ins that cross between the jar and one library: named by a member the jar uses on a
      * library class, or on its own class built on one; named by a method such a class declares,
-     * which may override a library method; or a supertype of a library class the jar extends.
+     * which may override a library method; a supertype of a library class the jar extends; or named
+     * by the generic signature of a library class the jar uses or extends, or of a member it uses.
      */
     private Set<String> crossingStandIns(Map<String, byte[]> jarClasses, Library library,
             Set<String> wanted) {
@@ -307,6 +421,9 @@ public final class SyntheticLibraries {
         Set<String> crossing = new TreeSet<>();
         Function<String, Boolean> crosses = owner ->
                 library.classes.contains(owner) || builtOnLibrary.contains(owner);
+        // Library classes the jar names, with the members it uses on each, for their generic signatures.
+        Map<String, Set<String>> usedMembers = new TreeMap<>();
+        for (String ancestor : libraryAncestors) usedMembers.put(ancestor, new HashSet<>());
         for (Map.Entry<String, byte[]> entry : jarClasses.entrySet()) {
             boolean onLibrary = builtOnLibrary.contains(entry.getKey());
             new ClassReader(entry.getValue()).accept(new ClassVisitor(Opcodes.ASM9) {
@@ -321,12 +438,14 @@ public final class SyntheticLibraries {
                         public void visitFieldInsn(int opcode, String owner, String fieldName,
                                 String fieldDescriptor) {
                             if (crosses.apply(owner)) addTypes(fieldDescriptor, wanted, crossing);
+                            noteUse(owner, fieldName + fieldDescriptor);
                         }
 
                         @Override
                         public void visitMethodInsn(int opcode, String owner, String methodName,
                                 String methodDescriptor, boolean isInterface) {
                             if (crosses.apply(owner)) addTypes(methodDescriptor, wanted, crossing);
+                            noteUse(owner, methodName + methodDescriptor);
                         }
 
                         @Override
@@ -335,13 +454,24 @@ public final class SyntheticLibraries {
                             for (Object argument : arguments) {
                                 if (argument instanceof Handle handle && crosses.apply(handle.getOwner())) {
                                     addTypes(handle.getDesc(), wanted, crossing);
+                                    noteUse(handle.getOwner(), handle.getName() + handle.getDesc());
                                 }
+                            }
+                        }
+
+                        private void noteUse(String owner, String member) {
+                            if (library.classes.contains(owner)) {
+                                usedMembers.computeIfAbsent(owner, any -> new HashSet<>()).add(member);
                             }
                         }
                     };
                 }
             }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
         }
+
+        // An erased descriptor can name only Object where the library's generic signature names a
+        // stand-in: an event built on Event<BlockColor, Block> takes register(Object, Object[]).
+        usedMembers.forEach((type, members) -> addSignatureTypes(library, type, members, wanted, crossing));
 
         // A class built on a library class is also an instance of whatever that class extends.
         ArrayDeque<String> pending = new ArrayDeque<>(libraryAncestors);
@@ -360,6 +490,75 @@ public final class SyntheticLibraries {
             }
         }
         return crossing;
+    }
+
+    /**
+     * Adds the stand-ins named by the generic signatures of a library class and its library
+     * supertypes, and of the members the jar uses on it, wherever in that chain they are declared.
+     */
+    private static void addSignatureTypes(Library library, String type, Set<String> members,
+            Set<String> wanted, Set<String> into) {
+        ArrayDeque<String> pending = new ArrayDeque<>(List.of(type));
+        Set<String> seen = new HashSet<>();
+        while (!pending.isEmpty() && seen.size() < MAX_HIERARCHY_DEPTH) {
+            String current = pending.poll();
+            if (!seen.add(current)) continue;
+            byte[] bytes = classBytesOf(library, current);
+            if (bytes == null) continue;
+            // Read under the registered names, which is how the wanted stand-ins are named.
+            new ClassReader(withoutRelocation(bytes)).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public void visit(int version, int access, String name, String signature, String superName,
+                        String[] interfaces) {
+                    if (signature != null) signatureTypes(signature, wanted, into);
+                    if (superName != null && library.classes.contains(superName)) pending.add(superName);
+                    for (String parent : interfaces) {
+                        if (library.classes.contains(parent)) pending.add(parent);
+                    }
+                }
+
+                @Override
+                public FieldVisitor visitField(int access, String name, String descriptor,
+                        String signature, Object value) {
+                    if (signature != null && members.contains(name + descriptor)) {
+                        signatureTypes(signature, wanted, into);
+                    }
+                    return null;
+                }
+
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String descriptor, String signature,
+                        String[] exceptions) {
+                    if (signature != null && members.contains(name + descriptor)) {
+                        signatureTypes(signature, wanted, into);
+                    }
+                    return null;
+                }
+            }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        }
+    }
+
+    /** Adds every wanted stand-in a generic signature names, type arguments and bounds included. */
+    private static void signatureTypes(String signature, Set<String> wanted, Set<String> into) {
+        try {
+            new SignatureReader(signature).accept(new SignatureVisitor(Opcodes.ASM9) {
+                private String current;
+
+                @Override
+                public void visitClassType(String name) {
+                    current = name;
+                    if (wanted.contains(name)) into.add(name);
+                }
+
+                @Override
+                public void visitInnerClassType(String name) {
+                    current = current + "$" + name;
+                    if (wanted.contains(current)) into.add(current);
+                }
+            });
+        } catch (RuntimeException malformed) {
+            // A signature ASM cannot read names nothing this check can use.
+        }
     }
 
     /** The library classes directly above a jar class, through the jar's own classes. */
@@ -407,7 +606,29 @@ public final class SyntheticLibraries {
             group.putAll(more);
         }
         if (group == null || conflicts(group, borrowed)) return null;
+        // A generated base grows the constructors of each jar that extends it, so a library's copy
+        // can lack ones the jar calls; then the jar keeps its own.
+        if (lacksLocalMethods(group, localStandIn, copies)) return null;
         return group;
+    }
+
+    /** Whether a library copy in {@code group} lacks a method the jar's own copy of that stand-in declares. */
+    private boolean lacksLocalMethods(Map<String, String> group, Function<String, byte[]> localStandIn,
+            Map<String, ClassNode> copies) {
+        for (Map.Entry<String, String> entry : group.entrySet()) {
+            byte[] local = localStandIn.apply(entry.getKey());
+            ClassNode copy = local == null ? null : copyNode(entry.getValue(), copies);
+            if (copy == null) continue;
+            Set<String> offered = new HashSet<>();
+            for (MethodNode method : copy.methods) offered.add(method.name + withoutClientStandIns(method.desc));
+            ClassNode own = new ClassNode();
+            new ClassReader(local).accept(own, ClassReader.SKIP_CODE);
+            for (MethodNode method : own.methods) {
+                boolean visible = (method.access & Opcodes.ACC_PRIVATE) == 0;
+                if (visible && !offered.contains(method.name + withoutClientStandIns(method.desc))) return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -532,7 +753,9 @@ public final class SyntheticLibraries {
             byte[] bytes = copyBytes(next);
             if (bytes == null) return null;
             for (String reference : SyntheticEmbedder.referencedClasses(bytes)) {
-                if (reference.startsWith(SyntheticEmbedder.PREFIX) && !group.containsValue(reference)) {
+                // A library's client stand-ins stay its own; the borrowed copy still reaches them there.
+                if (reference.startsWith(SyntheticEmbedder.PREFIX) && !isClientStandIn(reference)
+                        && !group.containsValue(reference)) {
                     pending.add(reference);
                 }
             }
@@ -616,6 +839,33 @@ public final class SyntheticLibraries {
 
     /** The registered stand-in name inside a relocated name, or null when it is not one. */
     static String standInOf(String relocated) {
+        String inner = insideEmbeddedPackage(relocated);
+        // A dedicated server's client stand-ins belong to one mod and are never shared.
+        return inner == null || inner.startsWith(ServerClientStandIns.FOLDER) ? null : inner;
+    }
+
+    /**
+     * A descriptor naming each client class itself instead of a jar's stand-in for it. A server's
+     * library copy names its own stand-ins, while an addon's copy names the client class until its
+     * stand-ins are added, or its own stand-ins after that.
+     */
+    static String withoutClientStandIns(String descriptor) {
+        if (!descriptor.contains(ServerClientStandIns.FOLDER)) return descriptor;
+        return CLIENT_STAND_IN_PREFIX.matcher(descriptor).replaceAll("");
+    }
+
+    private static final java.util.regex.Pattern CLIENT_STAND_IN_PREFIX = java.util.regex.Pattern.compile(
+            java.util.regex.Pattern.quote(SyntheticEmbedder.PREFIX) + "[^/;]+/"
+                    + java.util.regex.Pattern.quote(ServerClientStandIns.FOLDER));
+
+    /** Whether a relocated name is one of a dedicated server's per-mod client stand-ins. */
+    static boolean isClientStandIn(String relocated) {
+        String inner = insideEmbeddedPackage(relocated);
+        return inner != null && inner.startsWith(ServerClientStandIns.FOLDER);
+    }
+
+    /** The name after a jar's embedded package, or null when the name is not inside one. */
+    private static String insideEmbeddedPackage(String relocated) {
         if (relocated == null || !relocated.startsWith(SyntheticEmbedder.PREFIX)) return null;
         String rest = relocated.substring(SyntheticEmbedder.PREFIX.length());
         int slash = rest.indexOf('/');
@@ -638,9 +888,17 @@ public final class SyntheticLibraries {
 
     /** The link list a jar that reuses {@code borrowed} carries. */
     static byte[] linksFile(Map<String, String> borrowed) {
+        return linksFile(borrowed, Set.of());
+    }
+
+    /** The link list of a jar that reuses {@code borrowed} and hands stand-ins to the copies {@code crossed}. */
+    static byte[] linksFile(Map<String, String> borrowed, Set<String> crossed) {
         StringBuilder text = new StringBuilder();
         for (String relocated : new TreeSet<>(borrowed.values())) {
             text.append(relocated).append('\n');
+        }
+        for (String relocated : new TreeSet<>(crossed)) {
+            text.append(CROSSES).append(relocated).append('\n');
         }
         return text.toString().getBytes(StandardCharsets.UTF_8);
     }
@@ -680,13 +938,16 @@ public final class SyntheticLibraries {
         final Map<String, String> borrowed;
         /** Every stand-in this jar links to, to the relocated name it uses. */
         final Map<String, String> provided;
+        /** Library copies this jar hands stand-ins to while it uses other copies itself. */
+        final Set<String> crossed;
 
         private Library(Path jar, Set<String> classes, Set<String> copies,
-                Map<String, String> borrowed) {
+                Map<String, String> borrowed, Set<String> crossed) {
             this.jar = jar;
             this.classes = classes;
             this.copies = copies;
             this.borrowed = borrowed;
+            this.crossed = crossed;
             Map<String, String> all = new HashMap<>(borrowed);
             for (String relocated : copies) all.put(standInOf(relocated), relocated);
             this.provided = all;
@@ -697,6 +958,7 @@ public final class SyntheticLibraries {
             Set<String> classes = new HashSet<>();
             Set<String> copies = new HashSet<>();
             Map<String, String> borrowed = new HashMap<>();
+            Set<String> crossed = new HashSet<>();
             try (ZipFile zip = new ZipFile(jar.toFile())) {
                 int count = 0;
                 for (Enumeration<? extends ZipEntry> entries = zip.entries(); entries.hasMoreElements(); ) {
@@ -722,15 +984,21 @@ public final class SyntheticLibraries {
                                 StandardCharsets.UTF_8);
                         for (String line : text.split("\n")) {
                             String relocated = line.trim();
+                            boolean crosses = relocated.startsWith(CROSSES);
+                            if (crosses) relocated = relocated.substring(CROSSES.length()).trim();
                             String standIn = standInOf(relocated);
                             if (standIn == null) continue;
                             ZipSecurity.safeEntryName(relocated + ".class");
-                            borrowed.put(standIn, relocated);
+                            if (crosses) {
+                                crossed.add(relocated);
+                            } else {
+                                borrowed.put(standIn, relocated);
+                            }
                         }
                     }
                 }
             }
-            return new Library(jar, classes, copies, borrowed);
+            return new Library(jar, classes, copies, borrowed, crossed);
         }
 
         byte[] read(String entryName) throws IOException {

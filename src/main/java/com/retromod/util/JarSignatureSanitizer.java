@@ -186,9 +186,10 @@ public final class JarSignatureSanitizer {
             while ((entry = input.getNextEntry()) != null) {
                 String name = ZipSecurity.safeEntryName(entry.getName());
                 String canonicalName = ZipSecurity.canonicalEntryName(name);
-                if (!names.add(canonicalName)) {
-                    throw new IOException("Nested JAR contains a duplicate normalized entry: "
-                            + name);
+                // A repeated folder entry carries no content, so it is skipped.
+                if (!ZipSecurity.firstSighting(names, canonicalName, entry.isDirectory(),
+                        () -> "Nested JAR contains a duplicate normalized entry: " + name)) {
+                    continue;
                 }
                 if (++entries > DEFAULT_MAX_ENTRIES) {
                     throw new IOException("Nested JAR contains more than "

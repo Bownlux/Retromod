@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.OptionalInt;
 
 /**
  * On a 26.2+ client (where MC ships both OpenGL and Vulkan and defaults to Vulkan),
@@ -38,7 +39,12 @@ import java.util.List;
  *
  * <p>26.3 also adds an {@code OptionsForceDefaultGraphicsApiFix} datafixer, so a client may reset
  * this option back to {@code default} on upgrade. Retromod writes the preference again on the next
- * launch, because it only acts when the key is absent or {@code default}.
+ * launch, because it only acts when the key is absent or {@code default}. 26.4-snapshot-7 registers
+ * that fix again at data version 5117, and its {@code default} picks OpenGL or Vulkan at random on
+ * each start, so the first start after an upgrade can still run Vulkan.
+ *
+ * <p>Minecraft runs every options fix on a file without a {@code version} line, so a file Retromod
+ * creates carries the game's own data version and keeps the preference on the first start.
  */
 public final class GraphicsBackendCompat {
 
@@ -94,7 +100,7 @@ public final class GraphicsBackendCompat {
             return Result.IO_ERROR;
         }
         try {
-            return apply(gameDir.resolve(OPTIONS_FILE));
+            return apply(gameDir.resolve(OPTIONS_FILE), gameDataVersion());
         } catch (IOException e) {
             LOGGER.warn("Could not update the graphics setting in options.txt: {}",
                     e.getMessage());
@@ -104,10 +110,18 @@ public final class GraphicsBackendCompat {
 
     /** options.txt read/modify/write; package-private for tests. */
     static Result apply(Path optionsTxt) throws IOException {
+        return apply(optionsTxt, OptionalInt.empty());
+    }
+
+    /** The same, writing {@code dataVersion} into a file it creates. */
+    static Result apply(Path optionsTxt, OptionalInt dataVersion) throws IOException {
         // Minecraft creates this file after pre-launch. Writing the one needed setting now makes
-        // the first launch use OpenGL, and Minecraft fills in the rest when it saves.
+        // the first launch use OpenGL, and Minecraft fills in the rest when it saves. The game's
+        // data version keeps the options fixes, which reset the setting, from running on it.
         if (!Files.exists(optionsTxt)) {
-            Files.writeString(optionsTxt, OPENGL_LINE + System.lineSeparator(),
+            String version = dataVersion.isPresent()
+                    ? "version:" + dataVersion.getAsInt() + System.lineSeparator() : "";
+            Files.writeString(optionsTxt, version + OPENGL_LINE + System.lineSeparator(),
                     StandardCharsets.UTF_8);
             logSet(true);
             return Result.SET_OPENGL;
@@ -146,6 +160,27 @@ public final class GraphicsBackendCompat {
         Files.write(optionsTxt, lines, StandardCharsets.UTF_8);
         logSet(false);
         return Result.SET_OPENGL;
+    }
+
+    private static final java.util.regex.Pattern WORLD_VERSION =
+            java.util.regex.Pattern.compile("\"world_version\"\\s*:\\s*(\\d+)");
+
+    /** The data version in the game jar's version.json, read as a resource so no game class is loaded. */
+    static OptionalInt gameDataVersion() {
+        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        if (loader == null) loader = GraphicsBackendCompat.class.getClassLoader();
+        try (InputStream input = loader.getResourceAsStream("version.json")) {
+            if (input == null) return OptionalInt.empty();
+            return worldVersion(new String(ZipSecurity.safeReadAllBytes(input, MAX_OPTIONS_BYTES),
+                    StandardCharsets.UTF_8));
+        } catch (IOException | RuntimeException unreadable) {
+            return OptionalInt.empty();
+        }
+    }
+
+    static OptionalInt worldVersion(String versionJson) {
+        java.util.regex.Matcher match = WORLD_VERSION.matcher(versionJson);
+        return match.find() ? OptionalInt.of(Integer.parseInt(match.group(1))) : OptionalInt.empty();
     }
 
     private static List<String> readOptions(Path optionsTxt) throws IOException {

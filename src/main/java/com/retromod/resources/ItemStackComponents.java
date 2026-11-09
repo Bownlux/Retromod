@@ -498,6 +498,11 @@ final class ItemStackComponents {
         return null;
     }
 
+    /** The components whose tooltip lines 1.21.1's hide_additional_tooltip hid. */
+    static List<String> additionalTooltipComponents() {
+        return HIDDEN_BY_FLAG.get(32);
+    }
+
     /** {@code tooltip_display} listing every component the HideFlags bits hid. */
     private static JsonObject tooltipDisplay(int flags) {
         Set<String> hidden = new TreeSet<>();

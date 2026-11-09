@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.common;
 
+import com.retromod.core.SyntheticEmbedder;
 import com.retromod.util.SafeClassWriter;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
@@ -90,7 +91,7 @@ public final class LegacyBlockApiAdapter {
         } catch (Throwable unreadable) {
             return classBytes;
         }
-        if ((cn.access & Opcodes.ACC_INTERFACE) != 0 || cn.name.startsWith("com/retromod/")) {
+        if ((cn.access & Opcodes.ACC_INTERFACE) != 0 || SyntheticEmbedder.isRetromodClass(cn.name)) {
             return classBytes;
         }
 

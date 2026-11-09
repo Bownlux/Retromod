@@ -270,8 +270,9 @@ class CreativeModeTabBridgeTest {
         Files.createDirectories(mod.resolve("test/tabs"));
         Files.write(mod.resolve(MOD_TAB + ".class"), cw.toByteArray());
 
-        // The tab, its contents callback, and the helper that remembers which item went where.
-        assertEquals(3, com.retromod.core.SyntheticEmbedder.embed(mod, "srg-tab", transformer));
+        // The tab, its contents callback, the helper that remembers which item went where, and the
+        // shared method lookup that helper calls.
+        assertEquals(4, com.retromod.core.SyntheticEmbedder.embed(mod, "srg-tab", transformer));
 
         Path embedded;
         try (var walk = Files.walk(mod)) {

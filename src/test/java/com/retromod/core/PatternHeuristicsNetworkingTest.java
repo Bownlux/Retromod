@@ -47,4 +47,20 @@ class PatternHeuristicsNetworkingTest {
         // empty tail; the length guard declines it
         assertNull(guess("S2C"), "an empty channel is declined");
     }
+
+    @Test
+    @DisplayName("a mod's own networking classes keep their S2C and C2S names")
+    void leavesModNetworkingAlone() {
+        String adaptorDesc = "(Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload$Type;"
+                + "Lnet/minecraft/network/codec/StreamCodec;Ldev/architectury/networking/NetworkManager$NetworkReceiver;)V";
+        assertNull(p.resolveMethod("dev/architectury/networking/forge/NetworkManagerImpl$1", "registerS2C", adaptorDesc),
+                "Architectury's adaptor declares registerS2C itself");
+        assertNull(p.resolveMethod("dev/architectury/networking/simple/SimpleNetworkManager", "registerC2S",
+                "(Ljava/lang/String;Ldev/architectury/networking/simple/MessageDecoder;)"
+                        + "Ldev/architectury/networking/simple/MessageType;"));
+        assertNull(p.resolveMethod("me/fzzyhmstrs/fzzy_config/networking/impl/NetworkApiImpl", "registerS2C", "()V"));
+        assertEquals("clientboundPlay", p.resolveMethod(
+                "net/fabricmc/fabric/api/client/networking/v1/ClientPlayNetworking", "playS2C", "()V").newName(),
+                "Fabric API's client networking classes still get the rename");
+    }
 }

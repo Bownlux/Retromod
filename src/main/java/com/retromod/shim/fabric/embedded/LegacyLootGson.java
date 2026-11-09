@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -125,7 +126,7 @@ public final class LegacyLootGson implements InvocationHandler {
     }
 
     private static Object call(Object target, String name, Object... args) throws Throwable {
-        for (Method method : target.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(target.getClass())) {
             if (method.getName().equals(name) && method.getParameterCount() == args.length
                     && (args.length == 0 || isOps(method.getParameterTypes()[0]))) {
                 // Codec implementations are often private classes; the method itself is public.

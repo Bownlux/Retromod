@@ -9,7 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.retromod.loaderapi.LoaderApiTestSupport;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -58,9 +60,40 @@ class ForgeArchiveSecurityTest {
                 new Entry("assets/example/value.txt", new byte[] {2})));
         Path output = Files.createDirectory(directory.resolve("output"));
 
-        Path transformed = new ForgeModTransformer("26.2").transformMod(source, output);
+        Path[] transformed = new Path[1];
+        String log = LoaderApiTestSupport.captureErr(() ->
+                transformed[0] = new ForgeModTransformer("26.2").transformMod(source, output));
 
-        assertNull(transformed);
+        assertNull(transformed[0]);
+        assertFalse(Files.exists(output.resolve("duplicate-retromod.jar")));
+        // The failure must carry its stack trace, since the default log level hides DEBUG.
+        int failure = log.indexOf("Failed to transform duplicate.jar");
+        assertTrue(failure >= 0, "the failure must name the jar; log was:\n" + log);
+        assertTrue(log.indexOf("\tat ", failure) > failure,
+                "a stack frame must follow the failure line; log was:\n" + log);
+    }
+
+    @Test
+    void inPlaceTranslationThrowsTheArchiveErrorInsteadOfReturningNull(@TempDir Path directory)
+            throws Exception {
+        String metadata = "modLoader=\"javafml\"\nloaderVersion=\"[1,)\"\n"
+                + "[[mods]]\nmodId=\"duplicate_fixture\"\nversion=\"1.0\"\n"
+                + "[[dependencies.duplicate_fixture]]\nmodId=\"minecraft\"\n"
+                + "versionRange=\"[1.20.1,1.20.2)\"\n";
+        Path source = directory.resolve("duplicate.jar");
+        writeJar(source, List.of(
+                new Entry("META-INF/mods.toml", metadata.getBytes(StandardCharsets.UTF_8)),
+                new Entry("assets/example//value.txt", new byte[] {1}),
+                new Entry("assets/example/value.txt", new byte[] {2})));
+        Path output = Files.createDirectory(directory.resolve("output"));
+        ForgeModTransformer forge = new ForgeModTransformer("26.2");
+
+        assertNull(forge.transformMod(source, output), "the rewrite flow still gets null");
+        IOException thrown = assertThrows(IOException.class, () -> forge.translateOrThrow(
+                source, output, SyntheticLibraries.NONE));
+
+        assertTrue(thrown.getMessage().contains("duplicate normalized entry"),
+                "the in-place cache records why it failed, got: " + thrown.getMessage());
         assertFalse(Files.exists(output.resolve("duplicate-retromod.jar")));
     }
 

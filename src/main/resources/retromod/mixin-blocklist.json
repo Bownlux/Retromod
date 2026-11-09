@@ -18,6 +18,8 @@
     "Format: each entry needs a 'mixin' (the mixin class, '/' or '.' separated). If",
     "'methods' is given, only those handler methods are stripped (surgical, preferred).",
     "If 'methods' is omitted/empty, every injector handler on the class is stripped.",
+    "A 'methods' entry is a bare name, or a name followed by its descriptor when a later",
+    "build of the same mod reuses the name for a handler that still works.",
     "",
     "Add '\"strip\": \"class\"' to neutralize the WHOLE mixin instead of stripping",
     "handlers - Retromod repoints the @Mixin annotation at a non-existent target so",
@@ -119,6 +121,35 @@
       "targetAtMost": "1.21.11",
       "issue": "#179",
       "reason": "ENGRAM 0.8.0-beta's render injection drives the screenshot path that depends on its unbindable GameRendererAccessor and several removed render internals. Disable the exact companion mixin on Fabric 1.21.11 so the screenshot feature is consistently inert rather than failing after its delayed scheduler fires."
+    },
+    {
+      "mixin": "org/embeddedt/modernfix/common/mixin/perf/resourcepacks/ForgePathPackResourcesMixin",
+      "strip": "class",
+      "targetAtLeast": "26.2",
+      "reason": "ModernFix 5.x for Forge 1.20.1 caches the file listing of Forge's own net.minecraftforge.resource.PathPackResources: it injects into that class's (String, boolean, Path) constructor, shadows its resolve and getNamespacesFromDisk methods, and adds ICachingResourcePack. Forge 26.2 and 26.3 removed the class, and Retromod sends every reference to it to the vanilla PathPackResources, which has none of those members, so the mixin would fail against the vanilla class. Disable the whole mixin: old mod packs load without the cache."
+    },
+    {
+      "mixin": "com/supermartijn642/fusion/mixin/forge/ForgePathPackResourcesMixin",
+      "strip": "class",
+      "targetAtLeast": "26.2",
+      "reason": "Fusion 1.x for Forge 1.20.1 adds PackResourcesExtension and its overrides folder to Forge's own net.minecraftforge.resource.PathPackResources, reading that class's source field. Forge 26.2 and 26.3 removed the class, and Retromod sends every reference to it to the vanilla PathPackResources, which Fusion's PathPackResourcesMixin already extends with the same interface, so this second copy would collide there. Disable it: the vanilla mixin still covers every folder pack, the old ones included."
+    },
+    {
+      "mixin": "glitchcore/forge/mixin/MixinServerPlayer",
+      "methods": [
+        "onChangeDimension(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraftforge/common/util/ITeleporter;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V"
+      ],
+      "targetAtLeast": "1.21",
+      "reason": "GlitchCore 0.0.1 for Forge 1.20.1 fires its PlayerEvent.ChangeDimension from the tail of Forge's ServerPlayer.changeDimension(ServerLevel, ITeleporter). From 1.21 no host has that method: vanilla moves players through changeDimension(DimensionTransition), and from 1.21.2 through teleport(TeleportTransition). Forge 26.2 and 26.3 also removed ITeleporter, and Mixin cannot read a handler whose parameter type is missing, so it rejected the whole mixin with ClassMetadataNotFoundException. With require=0 Mixin would skip this handler anyway once it could read it, so only this handler goes: GlitchCore's dimension change event does not fire, as before, and the mixin no longer fails. The entry names the descriptor because GlitchCore 2.x for 1.21.1 has an onChangeDimension(DimensionTransition, ...) handler of the same name."
+    },
+    {
+      "mixin": "net/blay09/mods/balm/mixin/AbstractContainerScreenAccessor",
+      "methods": [
+        "callRenderSlot(Lnet/minecraft/client/gui/GuiGraphics;Lnet/minecraft/world/inventory/Slot;)V",
+        "callRenderSlot(Lnet/minecraft/class_332;Lnet/minecraft/class_1735;)V"
+      ],
+      "targetAtLeast": "1.21.11",
+      "reason": "Balm 7.x for 1.20.1 and 21.x for 1.21.1 (Forge, NeoForge and Fabric) expose AbstractContainerScreen's leftPos, topPos, imageWidth, imageHeight, hoveredSlot, isHovering and renderSlot through one accessor interface. 1.21.11 added the mouse position to renderSlot and 26.1 renamed it extractSlot, so the invoker no longer binds, and Mixin locates every accessor of the interface before it generates any: the interface was added to the screen with none of its methods, and Waystones' inventory button and Sophisticated Core's trash slot layout, which call getLeftPos and getTopPos, would fail with AbstractMethodError. Remove only the renderSlot invoker so the other six bind. No mod in the 1.20.1 Forge corpus calls callRenderSlot; one that does fails at that call, as it did before."
     }
   ]
 }

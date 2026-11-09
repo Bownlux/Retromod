@@ -5,6 +5,7 @@
 package com.retromod.shim.api.common;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,7 +28,7 @@ import java.util.function.Predicate;
  *
  * <p>The host's own GeckoLib decides whether this applies: it registers only when the merged
  * {@code AnimationController} exists and the core one does not. That leaves a 1.20.1 host's GeckoLib
- * alone, and a 1.21.5 or newer host to {@link GeckoLib5ApiShim}, whose GeckoLib has neither.
+ * alone. GeckoLib 5.0 to 5.3 and 5.5 or newer have neither class; {@link GeckoLib5ApiShim} covers 5.5.
  * GeckoLib 3 names are not moved: that version loads beside GeckoLib 4 under its own package.
  */
 public final class GeckoLibCorePackageMoves {
@@ -48,7 +49,7 @@ public final class GeckoLibCorePackageMoves {
         if (!hostHasClass.test(MERGED_CONTROLLER) || hostHasClass.test(CORE_CONTROLLER)) return 0;
         Map<String, String> moves = classMoves();
         moves.forEach(transformer::registerClassRedirect);
-        LOGGER.info("Registered {} GeckoLib core package move(s) for this host's GeckoLib", moves.size());
+        LOGGER.debug(RetromodLog.DETAIL, "Registered {} GeckoLib core package move(s) for this host's GeckoLib", moves.size());
         return moves.size();
     }
 

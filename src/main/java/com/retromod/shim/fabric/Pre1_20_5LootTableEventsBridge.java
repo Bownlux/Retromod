@@ -6,6 +6,7 @@ package com.retromod.shim.fabric;
 
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.GeneratedLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -270,9 +271,9 @@ public final class Pre1_20_5LootTableEventsBridge {
         call.visitVarInsn(Opcodes.ALOAD, 0);
         call.visitInsn(Opcodes.ICONST_1);
         call.visitFieldInsn(Opcodes.PUTFIELD, adapter, "reported", "Z");
-        // One println, because the game's console captures stderr per line and other threads
-        // log while data packs load. The callback's class names the mod it came from.
-        call.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;");
+        // One warning in the game log, so other threads logging while data packs load cannot
+        // split it. The callback's class names the mod it came from.
+        GeneratedLog.pushLogger(call);
         call.visitLdcInsn("[Retromod] The pre-1.20.5 loot table " + callback.sam() + " callback ");
         call.visitVarInsn(Opcodes.ALOAD, 0);
         call.visitFieldInsn(Opcodes.GETFIELD, adapter, "delegate", delegateDesc);
@@ -285,7 +286,7 @@ public final class Pre1_20_5LootTableEventsBridge {
         call.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/String", "valueOf",
                 "(Ljava/lang/Object;)Ljava/lang/String;", false);
         concat(call);
-        call.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+        GeneratedLog.warn(call);
         call.visitLabel(reported);
         if (returnType.getSort() == Type.VOID) {
             call.visitInsn(Opcodes.RETURN);

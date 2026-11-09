@@ -346,6 +346,126 @@ class StaticFieldRegistryIdsTest {
     }
 
     @Test
+    @DisplayName("NeoForge: a consumer registered under BuiltInRegistries.BLOCK.key(), as Nature's Compass writes it")
+    void readsARegistryKeyCall() {
+        String event = "net/neoforged/neoforge/registries/RegisterEvent";
+        String helper = "net/neoforged/neoforge/registries/RegisterEvent$RegisterHelper";
+        byte[] loader = classWith(LOADER, cw -> {
+            MethodVisitor onRegister = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "onRegister",
+                    "(L" + event + ";)V", null, null);
+            onRegister.visitCode();
+            onRegister.visitVarInsn(Opcodes.ALOAD, 0);
+            onRegister.visitFieldInsn(Opcodes.GETSTATIC, BUILT_IN, "BLOCK", "Lnet/minecraft/core/DefaultedRegistry;");
+            onRegister.visitMethodInsn(Opcodes.INVOKEINTERFACE, "net/minecraft/core/DefaultedRegistry", "key",
+                    "()L" + RESOURCE_KEY + ";", true);
+            onRegister.visitInvokeDynamicInsn("accept", "()Ljava/util/function/Consumer;", metafactory(),
+                    Type.getType("(Ljava/lang/Object;)V"),
+                    new Handle(Opcodes.H_INVOKESTATIC, LOADER, "lambda$onRegister$0", "(L" + helper + ";)V", false),
+                    Type.getType("(L" + helper + ";)V"));
+            onRegister.visitMethodInsn(Opcodes.INVOKEVIRTUAL, event, "register",
+                    "(L" + RESOURCE_KEY + ";Ljava/util/function/Consumer;)V", false);
+            onRegister.visitInsn(Opcodes.RETURN);
+            onRegister.visitMaxs(0, 0);
+            onRegister.visitEnd();
+            MethodVisitor lambda = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC,
+                    "lambda$onRegister$0", "(L" + helper + ";)V", null, null);
+            lambda.visitCode();
+            lambda.visitVarInsn(Opcodes.ALOAD, 0);
+            lambda.visitTypeInsn(Opcodes.NEW, RESOURCE_LOCATION);
+            lambda.visitInsn(Opcodes.DUP);
+            lambda.visitLdcInsn("xclass");
+            lambda.visitLdcInsn("foo");
+            lambda.visitMethodInsn(Opcodes.INVOKESPECIAL, RESOURCE_LOCATION, "<init>",
+                    "(Ljava/lang/String;Ljava/lang/String;)V", false);
+            lambda.visitFieldInsn(Opcodes.GETSTATIC, COMMON, "FOO", "L" + BLOCK + ";");
+            lambda.visitMethodInsn(Opcodes.INVOKEINTERFACE, helper, "register",
+                    "(L" + RESOURCE_LOCATION + ";Ljava/lang/Object;)V", true);
+            lambda.visitInsn(Opcodes.RETURN);
+            lambda.visitMaxs(0, 0);
+            lambda.visitEnd();
+        });
+
+        assertArrayEquals(new String[]{"xclass", "foo"}, index(commonBlocks("FOO"), loader).fieldsOf(COMMON).get("FOO"));
+    }
+
+    @Test
+    @DisplayName("Forge: a consumer that hands helper::register to the item class's own submit method (Patchouli)")
+    void readsAConsumerThatForwardsItsHelper() {
+        String event = "net/minecraftforge/registries/RegisterEvent";
+        String helper = "net/minecraftforge/registries/RegisterEvent$RegisterHelper";
+        String items = "test/xclass/PatchouliItems";
+        String item = "net/minecraft/world/item/Item";
+        String biConsumer = "java/util/function/BiConsumer";
+        // PatchouliItems: BOOK_ID = new ResourceLocation("xclass", "guide_book"); BOOK = new Item(...);
+        // submitItemRegistrations(BiConsumer c) { c.accept(BOOK_ID, BOOK); }
+        byte[] itemClass = classWith(items, cw -> {
+            cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "BOOK_ID",
+                    "L" + RESOURCE_LOCATION + ";", null, null).visitEnd();
+            cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "BOOK", "L" + item + ";", null, null).visitEnd();
+            MethodVisitor init = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+            init.visitCode();
+            init.visitTypeInsn(Opcodes.NEW, RESOURCE_LOCATION);
+            init.visitInsn(Opcodes.DUP);
+            init.visitLdcInsn("xclass");
+            init.visitLdcInsn("guide_book");
+            init.visitMethodInsn(Opcodes.INVOKESPECIAL, RESOURCE_LOCATION, "<init>",
+                    "(Ljava/lang/String;Ljava/lang/String;)V", false);
+            init.visitFieldInsn(Opcodes.PUTSTATIC, items, "BOOK_ID", "L" + RESOURCE_LOCATION + ";");
+            init.visitInsn(Opcodes.ACONST_NULL);
+            init.visitFieldInsn(Opcodes.PUTSTATIC, items, "BOOK", "L" + item + ";");
+            init.visitInsn(Opcodes.RETURN);
+            init.visitMaxs(0, 0);
+            init.visitEnd();
+            MethodVisitor submit = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "submitItemRegistrations",
+                    "(L" + biConsumer + ";)V", null, null);
+            submit.visitCode();
+            submit.visitVarInsn(Opcodes.ALOAD, 0);
+            submit.visitFieldInsn(Opcodes.GETSTATIC, items, "BOOK_ID", "L" + RESOURCE_LOCATION + ";");
+            submit.visitFieldInsn(Opcodes.GETSTATIC, items, "BOOK", "L" + item + ";");
+            submit.visitMethodInsn(Opcodes.INVOKEINTERFACE, biConsumer, "accept",
+                    "(Ljava/lang/Object;Ljava/lang/Object;)V", true);
+            submit.visitInsn(Opcodes.RETURN);
+            submit.visitMaxs(0, 0);
+            submit.visitEnd();
+        });
+        // register(RegisterEvent e) { e.register(Registries.ITEM, h -> PatchouliItems.submitItemRegistrations(h::register)); }
+        byte[] loader = classWith(LOADER, cw -> {
+            MethodVisitor onRegister = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "register",
+                    "(L" + event + ";)V", null, null);
+            onRegister.visitCode();
+            onRegister.visitVarInsn(Opcodes.ALOAD, 0);
+            onRegister.visitFieldInsn(Opcodes.GETSTATIC, REGISTRIES, "ITEM", "L" + RESOURCE_KEY + ";");
+            onRegister.visitInvokeDynamicInsn("accept", "()Ljava/util/function/Consumer;", metafactory(),
+                    Type.getType("(Ljava/lang/Object;)V"),
+                    new Handle(Opcodes.H_INVOKESTATIC, LOADER, "lambda$register$0", "(L" + helper + ";)V", false),
+                    Type.getType("(L" + helper + ";)V"));
+            onRegister.visitMethodInsn(Opcodes.INVOKEVIRTUAL, event, "register",
+                    "(L" + RESOURCE_KEY + ";Ljava/util/function/Consumer;)V", false);
+            onRegister.visitInsn(Opcodes.RETURN);
+            onRegister.visitMaxs(0, 0);
+            onRegister.visitEnd();
+            MethodVisitor lambda = cw.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC,
+                    "lambda$register$0", "(L" + helper + ";)V", null, null);
+            lambda.visitCode();
+            lambda.visitVarInsn(Opcodes.ALOAD, 0);
+            lambda.visitInvokeDynamicInsn("accept", "(L" + helper + ";)L" + biConsumer + ";", metafactory(),
+                    Type.getType("(Ljava/lang/Object;Ljava/lang/Object;)V"),
+                    new Handle(Opcodes.H_INVOKEINTERFACE, helper, "register",
+                            "(L" + RESOURCE_LOCATION + ";Ljava/lang/Object;)V", true),
+                    Type.getType("(L" + RESOURCE_LOCATION + ";Ljava/lang/Object;)V"));
+            lambda.visitMethodInsn(Opcodes.INVOKESTATIC, items, "submitItemRegistrations",
+                    "(L" + biConsumer + ";)V", false);
+            lambda.visitInsn(Opcodes.RETURN);
+            lambda.visitMaxs(0, 0);
+            lambda.visitEnd();
+        });
+
+        StaticFieldRegistryIds ids = index(itemClass, loader);
+        assertArrayEquals(new String[]{"xclass", "guide_book"}, ids.fieldsOf(items).get("BOOK"));
+        assertNull(ids.fieldsOf(items).get("BOOK_ID"), "the id field itself is not an item");
+    }
+
+    @Test
     @DisplayName("NeoForge: a deferred register's supplier that returns the common class's field")
     void readsADeferredRegisterSupplier() {
         String deferred = "net/neoforged/neoforge/registries/DeferredRegister";

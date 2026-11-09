@@ -19,6 +19,8 @@ public final class NeoForgeMovedMembers {
     private static final String NEO = "net/neoforged/neoforge/";
     private static final String FALL_MEMBERS = RebuiltApiClasses.ROOT + "neoforge/event/LivingFallMembers";
     private static final String UPDATE_CAUSE = RebuiltApiClasses.ROOT + "neoforge/event/TagsUpdateCause";
+    private static final String RENDER_MEMBERS = RebuiltApiClasses.ROOT + "neoforge/client/event/RenderLivingMembers";
+    private static final String HELD_MODIFIERS = RebuiltApiClasses.ROOT + "minecraft/client/input/LegacyHeldModifiers";
 
     // The screen key events a mod can name; the members live on their package-private base.
     static final List<String> SCREEN_KEY_EVENTS = List.of("KeyInput", "KeyPressed", "KeyPressed$Pre",
@@ -37,6 +39,7 @@ public final class NeoForgeMovedMembers {
         }
         registerKeyEvents(t);
         registerRetypedEvents(t);
+        registerRenderAndCharacterEvents(t);
     }
 
     /** 26.3 named the key event members after its KeyEvent: the key, and the keycode that was the scan code. */
@@ -51,6 +54,32 @@ public final class NeoForgeMovedMembers {
         String key = NEO + "client/event/InputEvent$Key";
         if (moved(key, "getScanCode", "()I", key, "getKeycode", "()I", "26.3")) {
             t.registerMethodRedirect(key, "getScanCode", "()I", key, "getKeycode", "()I");
+        }
+    }
+
+    /** Members later releases dropped with nothing of the same meaning left on the event. */
+    private static void registerRenderAndCharacterEvents(RetromodTransformer t) {
+        // 1.21.2 passes a render state to RenderLivingEvent, so the entity is found from that state, where the host makes
+        // a state per draw that names its entity type. 1.21.2 to 1.21.8 keep the old call, which fails as before.
+        String render = NEO + "client/event/RenderLivingEvent";
+        String state = "()Lnet/minecraft/client/renderer/entity/state/LivingEntityRenderState;";
+        String getEntity = "()Lnet/minecraft/world/entity/LivingEntity;";
+        if (moved(render, "getEntity", getEntity, render, "getRenderState", state, "1.21.2")
+                && com.retromod.shim.common.RenderStateLookupHost.supported()) {
+            RebuiltApiClasses.registerTree(t, RENDER_MEMBERS);
+            for (String event : List.of(render, render + "$Pre", render + "$Post")) {
+                t.registerMethodRedirect(event, "getEntity", getEntity, RENDER_MEMBERS, "getEntity",
+                        "(L" + render + ";)Lnet/minecraft/world/entity/LivingEntity;", true);
+            }
+        }
+        // 26.2 dropped a typed character's modifiers, so they come from the keys held.
+        String character = NEO + "client/event/ScreenEvent$CharacterTyped";
+        if (moved(character, "getModifiers", "()I", character, "getCharacterEvent",
+                "()Lnet/minecraft/client/input/CharacterEvent;", "26.2")) {
+            RebuiltApiClasses.registerTree(t, HELD_MODIFIERS);
+            for (String event : List.of(character, character + "$Pre", character + "$Post")) {
+                t.registerMethodRedirect(event, "getModifiers", "()I", HELD_MODIFIERS, "modifiers", "(Ljava/lang/Object;)I", true);
+            }
         }
     }
 

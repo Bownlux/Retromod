@@ -1137,12 +1137,13 @@ public class ModScorer {
         public List<String> brokenMixins = List.of();
         public List<String> loaderSpecificFindings = List.of();
 
+        /** What the overall score says about the references, not about whether the mod runs. */
         public String getVerdict() {
-            if (overallScore >= 90) return "EXCELLENT -- mod should work perfectly";
-            if (overallScore >= 75) return "GOOD -- most features will work";
-            if (overallScore >= 50) return "FAIR -- some features may break";
-            if (overallScore >= 25) return "POOR -- significant issues expected";
-            return "INCOMPATIBLE -- major rework needed";
+            if (overallScore >= 90) return "nearly every reference resolves on the target";
+            if (overallScore >= 75) return "most references resolve on the target";
+            if (overallScore >= 50) return "many references do not resolve on the target";
+            if (overallScore >= 25) return "most references do not resolve on the target";
+            return "few references resolve on the target";
         }
 
         public String getVerdictIcon() {

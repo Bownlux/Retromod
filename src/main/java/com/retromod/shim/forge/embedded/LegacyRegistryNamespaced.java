@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.util.Collections;
 
@@ -72,7 +73,7 @@ public final class LegacyRegistryNamespaced {
     public Object getObjectById(int id) {
         Object registry = registry();
         if (registry == null) return null;
-        for (Method method : registry.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(registry.getClass())) {
             if (method.getName().equals("byId") && method.getParameterCount() == 1
                     && method.getParameterTypes()[0] == int.class) {
                 try {
@@ -117,7 +118,7 @@ public final class LegacyRegistryNamespaced {
     }
 
     private static Object invoke(Object target, String name, Object argument) {
-        for (Method method : target.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(target.getClass())) {
             if (!method.getName().equals(name) || method.getParameterCount() != (argument == null ? 0 : 1)) continue;
             if (argument != null && !method.getParameterTypes()[0].isInstance(argument)) continue;
             try {

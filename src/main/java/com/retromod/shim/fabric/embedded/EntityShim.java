@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.*;
 
 /**
@@ -30,7 +31,7 @@ public class EntityShim {
 
             for (String methodName : new String[]{"getBlockPos", "getPosition", "blockPosition"}) {
                 try {
-                    Method m = entity.getClass().getMethod(methodName);
+                    Method m = LegacyPublicMethods.method(entity.getClass(), methodName);
                     return m.invoke(entity);
                 } catch (NoSuchMethodException ignored) {}
             }
@@ -57,7 +58,7 @@ public class EntityShim {
 
             for (String methodName : new String[]{"getEntityWorld", "getWorld", "level", "getLevel"}) {
                 try {
-                    Method m = entity.getClass().getMethod(methodName);
+                    Method m = LegacyPublicMethods.method(entity.getClass(), methodName);
                     return m.invoke(entity);
                 } catch (NoSuchMethodException ignored) {}
             }
@@ -104,15 +105,15 @@ public class EntityShim {
 
         try {
             try {
-                getEntityWorldMethod = entityClass.getMethod("getEntityWorld");
+                getEntityWorldMethod = LegacyPublicMethods.method(entityClass, "getEntityWorld");
             } catch (NoSuchMethodException ignored) {}
 
             try {
-                getWorldMethod = entityClass.getMethod("getWorld");
+                getWorldMethod = LegacyPublicMethods.method(entityClass, "getWorld");
             } catch (NoSuchMethodException ignored) {}
 
             try {
-                getBlockPosMethod = entityClass.getMethod("getBlockPos");
+                getBlockPosMethod = LegacyPublicMethods.method(entityClass, "getBlockPos");
             } catch (NoSuchMethodException ignored) {}
 
             methodsInitialized = true;
@@ -124,7 +125,7 @@ public class EntityShim {
     private static double getDoubleField(Object obj, String... methodNames) {
         for (String name : methodNames) {
             try {
-                Method m = obj.getClass().getMethod(name);
+                Method m = LegacyPublicMethods.method(obj.getClass(), name);
                 return (double) m.invoke(obj);
             } catch (Exception ignored) {}
 
@@ -139,7 +140,7 @@ public class EntityShim {
     private static float getFloatField(Object obj, String... methodNames) {
         for (String name : methodNames) {
             try {
-                Method m = obj.getClass().getMethod(name);
+                Method m = LegacyPublicMethods.method(obj.getClass(), name);
                 return (float) m.invoke(obj);
             } catch (Exception ignored) {}
             
@@ -154,7 +155,7 @@ public class EntityShim {
     private static boolean getBooleanField(Object obj, String... names) {
         for (String name : names) {
             try {
-                Method m = obj.getClass().getMethod(name);
+                Method m = LegacyPublicMethods.method(obj.getClass(), name);
                 return (boolean) m.invoke(obj);
             } catch (Exception ignored) {}
             
@@ -169,7 +170,7 @@ public class EntityShim {
     private static Object invokeMethod(Object obj, String... methodNames) {
         for (String name : methodNames) {
             try {
-                Method m = obj.getClass().getMethod(name);
+                Method m = LegacyPublicMethods.method(obj.getClass(), name);
                 return m.invoke(obj);
             } catch (Exception ignored) {}
         }

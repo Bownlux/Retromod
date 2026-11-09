@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge;
 
+import com.retromod.core.SyntheticEmbedder;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.tree.AbstractInsnNode;
@@ -61,7 +62,7 @@ public final class LegacyCreativeTabClaimAdapter {
         }
         ClassNode cn = new ClassNode();
         new ClassReader(classBytes).accept(cn, 0);
-        if (cn.name.startsWith("com/retromod/")) return classBytes;
+        if (SyntheticEmbedder.isRetromodClass(cn.name)) return classBytes;
         boolean changed = false;
         for (MethodNode method : cn.methods) {
             changed |= claimItems(method);

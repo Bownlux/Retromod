@@ -9,6 +9,7 @@ import com.retromod.loaderapi.LoaderApiContext;
 import com.retromod.loaderapi.LoaderApiFixtures;
 import com.retromod.loaderapi.LoaderApiRuntime;
 import com.retromod.loaderapi.LoaderApiTestSupport;
+import com.retromod.util.RetromodLog;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -58,6 +59,7 @@ class LoaderApiRuntimeOnTest {
         runtime.close();
         transformer.clearRedirectsForTesting();
         RetromodVersion.TARGET_MC_VERSION = savedHost;
+        RetromodLog.setDetailInGameLogForTesting(null);
     }
 
     @Test
@@ -160,8 +162,10 @@ class LoaderApiRuntimeOnTest {
     @Test
     @DisplayName("AOT output names the Fabric API references the host still lacks")
     void aotReportsMissingFabricApi() throws Exception {
-        Path input = dir.resolve("loaderapi-fixture-fabric.jar");
-        Files.write(input, LoaderApiFixtures.fabricJar());
+        // A reference no row or redirect covers. The fixture's FabricEntityTypeBuilder calls stopped
+        // counting once AOT took the game's redirect for that class, to vanilla's builder.
+        Path input = dir.resolve("stalelib.jar");
+        Files.write(input, staleLibrary());
         String log = LoaderApiTestSupport.captureErr(
                 () -> CliHarness.aot(input, dir.resolve("aot.jar"), HOST));
         assertTrue(log.contains("Fabric API reference(s) that Minecraft " + HOST + " does not have"),
@@ -203,6 +207,8 @@ class LoaderApiRuntimeOnTest {
         Path input = dir.resolve("tooltip-mod.jar");
         Files.write(input, LoaderApiFixtures.jar(mod));
 
+        // The embed line is a detail line; this writes it where captureErr reads.
+        RetromodLog.setDetailInGameLogForTesting(true);
         String cliLog = LoaderApiTestSupport.captureErr(
                 () -> CliHarness.transform(input, dir.resolve("cli.jar"), HOST));
         String aotLog = LoaderApiTestSupport.captureErr(

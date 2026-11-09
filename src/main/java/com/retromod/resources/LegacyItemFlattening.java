@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import com.retromod.util.RetromodLog;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -69,7 +70,7 @@ final class LegacyItemFlattening implements ModResourceConverter {
             }
         }
         if (changed > 0) {
-            LOGGER.info("Renamed 1.12 item ids in {} copied data file(s) for Minecraft {}", changed,
+            LOGGER.debug(RetromodLog.DETAIL, "Renamed 1.12 item ids in {} copied data file(s) for Minecraft {}", changed,
                     context.targetMcVersion());
         }
         return changed;

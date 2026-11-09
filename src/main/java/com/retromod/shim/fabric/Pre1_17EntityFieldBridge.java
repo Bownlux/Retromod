@@ -6,6 +6,7 @@ package com.retromod.shim.fabric;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.ClassResourceInspector;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,7 +52,7 @@ public final class Pre1_17EntityFieldBridge {
 
         transformer.registerFieldAccessorRedirect(ENTITY, "field_5952",
                 "method_24828", "()Z", "method_24830", "(Z)V");
-        LOGGER.info("Registered pre-1.17 Entity field bridge "
+        LOGGER.debug(RetromodLog.DETAIL, "Registered pre-1.17 Entity field bridge "
                 + "(onGround field access -> isOnGround/setOnGround)");
     }
 }

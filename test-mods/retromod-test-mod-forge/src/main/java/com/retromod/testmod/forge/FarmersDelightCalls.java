@@ -4,10 +4,12 @@
  */
 package com.retromod.testmod.forge;
 
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Tiers;
-import net.minecraftforge.registries.RegisterEvent;
+import net.minecraftforge.eventbus.api.IEventBus;
+import net.minecraftforge.registries.DeferredRegister;
+import net.minecraftforge.registries.ForgeRegistries;
+import net.minecraftforge.registries.RegistryObject;
 import vectorwing.farmersdelight.common.item.KnifeItem;
 import vectorwing.farmersdelight.common.registry.ModBlocks;
 import vectorwing.farmersdelight.common.registry.ModEffects;
@@ -16,21 +18,26 @@ import vectorwing.farmersdelight.common.registry.ModItems;
 import java.lang.reflect.Method;
 import java.util.List;
 
-/**
- * The #302 calls, written against the Farmer's Delight 1.20.1 API (stand-ins in {@code src/fdstubs}).
- * Loading this class needs the real library, so only {@link FarmersDelightAddon} may load it.
- */
+/** The #302 calls, written against the Farmer's Delight 1.20.1 API (stand-ins in {@code src/fdstubs}). */
 final class FarmersDelightCalls {
 
     private static final String ENTRY_IDS =
             "farmersdelight:nourishment farmersdelight:tomato farmersdelight:tomatoes";
+    private static final DeferredRegister<Item> ITEMS =
+            DeferredRegister.create(ForgeRegistries.ITEMS, "retromod_test_mod_forge");
+    // Damage and speed, which the library's NeoForge 1.21 knife no longer takes: it wants a tier and properties only.
+    private static final RegistryObject<Item> KNIFE = ITEMS.register("legacy_knife",
+            () -> new KnifeItem(Tiers.IRON, 0.5F, -2.0F, new Item.Properties()));
 
     private FarmersDelightCalls() {}
 
-    static String registerKnifeAndReadEntries(RegisterEvent.RegisterHelper<Item> helper)
-            throws ReflectiveOperationException {
-        Item knife = new KnifeItem(Tiers.IRON, 0.5F, -2.0F, new Item.Properties());
-        helper.register(new ResourceLocation("retromod_test_mod_forge", "legacy_knife"), knife);
+    static void register(IEventBus modBus) {
+        ITEMS.register(modBus);
+    }
+
+    static String readKnifeAndEntries() throws ReflectiveOperationException {
+        Item knife = KNIFE.get();
+        // The NeoForge 1.21 library declares these as Holder, Supplier and DeferredHolder fields.
         String ids = ModEffects.NOURISHMENT.getId() + " " + ModItems.TOMATO.getId() + " "
                 + ModBlocks.TOMATO_CROP.getId();
         if (!ids.equals(ENTRY_IDS)) return "fail: read the entries " + ids;

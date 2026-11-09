@@ -22,10 +22,19 @@ public class NeoForge_1_20_6_to_1_21 implements VersionShim {
         // Vanilla item bases removed in 1.21, rebased only on hosts that lost them.
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21");
         com.retromod.shim.common.LegacyDyeColorBridge.register(transformer);
+        // 1.21 renamed ChunkAccess.getStatus() to getPersistedStatus(). Lootr asks for it in its chunk
+        // load handler; Fabric's intermediary id stayed the same, so only Mojang names need this.
+        com.retromod.shim.common.Legacy1205MemberBridge.registerChunkStatusRename(transformer);
+        // 1.21 replaced Minecraft.getFrameTime() with the delta tracker.
+        com.retromod.shim.common.LegacyFrameTimeBridge.register(transformer);
+        // 1.21 replaced the VertexConsumer builder chain (vertex, color, uv, endVertex) with addVertex and setters.
+        com.retromod.shim.common.LegacyVertexApiBridge.register(transformer);
         // The Forge-era StairBlock(Supplier, Properties) that NeoForge 1.21 dropped.
         com.retromod.shim.forge.LegacyStairBlockBridge.register(transformer);
         // Rarity.create became an enum extension declared in the mod's metadata.
         com.retromod.shim.forge.LegacyRarityBridge.register(transformer);
+        // RecipeBookType.create went the same way; an old call gets an existing book type.
+        com.retromod.shim.forge.LegacyRecipeBookTypeBridge.registerNeoForge(transformer);
         // 1.21 made painting variants data.
         com.retromod.shim.common.LegacyPaintingVariantBridge.register(transformer);
         // ResourceLocation(namespace, path) ctor went private in 1.21; point it at the static factory (#92)

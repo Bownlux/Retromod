@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import com.retromod.util.RetromodLog;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
@@ -91,7 +92,7 @@ public final class LegacyLangMigrator implements ModResourceConverter {
             tree.write(target, GSON.toJson(json).getBytes(StandardCharsets.UTF_8));
             written++;
         }
-        LOGGER.info("Wrote {} JSON language file(s) from 1.12 .lang files, with {} modern key(s)",
+        LOGGER.debug(RetromodLog.DETAIL, "Wrote {} JSON language file(s) from 1.12 .lang files, with {} modern key(s)",
                 written, aliases);
         return written;
     }

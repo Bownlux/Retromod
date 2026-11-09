@@ -48,7 +48,7 @@ Known fatal handlers can be removed through the mixin blocklist, leaving the ass
 
 Fabric 26.1 and newer uses the full intermediary-to-Mojang pass. Pre-26.1 Fabric hosts must remain intermediary-named, so they use targeted bridges for known API changes instead of a global remap. That path has real old-mod launch coverage but is not a universal bridge for redesigned APIs.
 
-NeoForge is Mojang-named. Forge source names are decoded through SRG mappings. When the host is Forge 1.20.1, a second owner-and-descriptor-qualified table emits the exact target SRG names. Other pre-26 Forge hosts currently keep unsupported source members unchanged instead of guessing.
+NeoForge 1.20.2 and newer, Forge 1.20.6 and newer, and every 26.x host run Mojang names, so old Forge SRG names are decoded to Mojang names there. Forge 1.20 to 1.20.4 still run SRG names, and each numbers some members differently. On those hosts a second owner-and-descriptor-qualified table emits the host's own SRG names: `target-srg-1.20.1.tsv` plus a changes file for 1.20, 1.20.2, and 1.20.3, which 1.20.4 shares. NeoForge 1.20.1 is a Forge fork and uses the 1.20.1 table in the game. A member the host table does not name is not given a guessed id, and Forge hosts before 1.20 have no table, so their source member names stay unchanged.
 
 Forge-to-NeoForge support combines metadata promotion, mappings, and per-mod synthetic classes for selected common APIs: `SimpleChannel` networking as NeoForge payloads, configs, menus, capabilities, custom registries, and client extensions. It does not recreate every Forge registry, data-generation, rendering, or event subsystem.
 

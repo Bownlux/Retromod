@@ -8,6 +8,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
+import com.retromod.shim.common.LegacyItemPropertiesBridge;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -18,6 +19,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 
 /** Turns a pre-1.21.4 item model's {@code overrides} into a client item definition's model tree. */
 final class LegacyItemOverrides {
@@ -25,7 +27,7 @@ final class LegacyItemOverrides {
     /** A tree larger than this is given up rather than written: no real item needs one. */
     private static final int MAX_NODES = 512;
 
-    private enum Kind { CONDITION, MAIN_HAND, CHARGE, RANGE }
+    private enum Kind { CONDITION, MAIN_HAND, CHARGE, RANGE, MOD_PROPERTY }
 
     private record Variable(Kind kind, String property, Set<String> names, double scale) {}
 
@@ -51,6 +53,9 @@ final class LegacyItemOverrides {
     /** {@code pull} counted use ticks in twentieths for a bow, and charge progress for a crossbow. */
     private static final double BOW_PULL_SCALE = 0.05;
 
+    // A property id the host's Identifier codec reads; any other name fails the whole definition.
+    private static final Pattern PROPERTY_ID = Pattern.compile("([a-z0-9_.-]+:)?[a-z0-9_./-]+");
+
     /** The result: the tree, or null when no override survives, and the properties that were dropped. */
     record Translation(JsonObject model, Set<String> droppedProperties) {}
 
@@ -63,20 +68,23 @@ final class LegacyItemOverrides {
         this.leaf = leaf;
     }
 
-    /** Translates {@code overrides} for an item whose own model is {@code baseModel}. */
-    static Translation translate(JsonArray overrides, String baseModel, Function<String, JsonObject> leaf) {
+    /**
+     * Translates {@code overrides} for an item whose own model is {@code baseModel}. With {@code modProperties}, a property
+     * with no vanilla equivalent reads the function an old mod registered through Retromod's item property type.
+     */
+    static Translation translate(JsonArray overrides, String baseModel, Function<String, JsonObject> leaf, boolean modProperties) {
         Set<String> dropped = new LinkedHashSet<>();
         List<Rule> kept = new ArrayList<>();
-        // A property with no vanilla equivalent was computed by the mod's own code, which nothing
-        // calls on 1.21.4 and newer. That includes angle and time: a compass that pointed at a biome
-        // would now point at spawn. Such a property never matched in the old game when unregistered
-        // either, so the overrides that need it are dropped and reported.
+        // A property with no vanilla equivalent was computed by the mod's own code through ItemProperties. That
+        // includes angle and time: a compass that pointed at a biome would point at spawn under vanilla's. Where
+        // Retromod's property type reads the rebuilt ItemProperties, the override keeps it. Elsewhere such a
+        // property never matched in the old game when unregistered either, so the overrides are dropped and reported.
         for (JsonElement element : overrides) {
             Rule override = parse(element);
             if (override == null) continue;
             Set<String> unknown = new LinkedHashSet<>();
             for (String name : override.predicate().keySet()) {
-                if (!isKnown(name)) unknown.add(name);
+                if (!isKnown(name) && !(modProperties && PROPERTY_ID.matcher(name).matches())) unknown.add(name);
             }
             if (unknown.isEmpty()) {
                 kept.add(override);
@@ -126,6 +134,7 @@ final class LegacyItemOverrides {
         // Sort every name the overrides use into its 1.21.4 property kind.
         Map<String, Set<String>> conditions = new LinkedHashMap<>();
         Set<String> ranges = new LinkedHashSet<>();
+        Set<String> modOwn = new LinkedHashSet<>();
         boolean mainHand = false;
         boolean charge = false;
         for (Rule override : overrides) {
@@ -136,8 +145,10 @@ final class LegacyItemOverrides {
                     mainHand = true;
                 } else if (name.equals("charged") || name.equals("firework")) {
                     charge = true;
-                } else {
+                } else if (isKnown(name)) {
                     ranges.add(name);
+                } else {
+                    modOwn.add(name);
                 }
             }
         }
@@ -161,6 +172,10 @@ final class LegacyItemOverrides {
             } else {
                 variables.add(new Variable(Kind.RANGE, RANGES.get(name), Set.of(name), 1));
             }
+        }
+        // A mod's own property is a range on Retromod's type, which asks the old function for the stack's item.
+        for (String name : modOwn) {
+            variables.add(new Variable(Kind.MOD_PROPERTY, LegacyItemPropertiesBridge.TYPE_ID, Set.of(name), 1));
         }
     }
 
@@ -211,21 +226,23 @@ final class LegacyItemOverrides {
                 cases.put("rocket", rocket);
                 yield select(variable, none, cases);
             }
-            case RANGE -> range(overrides, variable, index, baseModel);
+            case RANGE, MOD_PROPERTY -> range(overrides, variable, index, baseModel);
         };
     }
 
     /** Builds a range dispatch with one entry per threshold. */
     private JsonObject range(List<Rule> overrides, Variable variable, int index, String baseModel) {
         String name = variable.names().iterator().next();
-        // Every old numeric property was zero or more, so a threshold at or below zero always held.
+        // Every old vanilla numeric property was zero or more, so a threshold at or below zero always held. A mod's
+        // function could answer any value, and a property with no function read as negative infinity.
+        double floor = variable.kind() == Kind.MOD_PROPERTY ? Double.NEGATIVE_INFINITY : 0;
         TreeSet<Double> thresholds = new TreeSet<>();
         for (Rule override : overrides) {
             Double threshold = override.predicate().get(name);
-            if (threshold != null && threshold > 0) thresholds.add(threshold);
+            if (threshold != null && threshold > floor) thresholds.add(threshold);
         }
         // The fallback shows what the item showed below the lowest threshold.
-        JsonObject fallback = build(reaching(overrides, name, 0), index + 1, baseModel);
+        JsonObject fallback = build(reaching(overrides, name, floor), index + 1, baseModel);
         JsonArray entries = new JsonArray();
         JsonObject below = fallback;
         for (double threshold : thresholds) {
@@ -240,6 +257,7 @@ final class LegacyItemOverrides {
         }
         if (entries.isEmpty()) return fallback;
         JsonObject node = typed("minecraft:range_dispatch", variable.property());
+        if (variable.kind() == Kind.MOD_PROPERTY) node.addProperty(LegacyItemPropertiesBridge.ID_FIELD, propertyId(name));
         if (variable.scale() != 1) node.addProperty("scale", variable.scale());
         node.add("entries", entries);
         node.add("fallback", fallback);
@@ -261,6 +279,11 @@ final class LegacyItemOverrides {
         node.add("cases", list);
         node.add("fallback", fallback);
         return node;
+    }
+
+    /** The full id of an old property name; an unprefixed one was in Minecraft's namespace, as {@code new ResourceLocation(name)} put it. */
+    private static String propertyId(String name) {
+        return name.indexOf(':') >= 0 ? name : "minecraft:" + name;
     }
 
     private static JsonObject typed(String type, String property) {

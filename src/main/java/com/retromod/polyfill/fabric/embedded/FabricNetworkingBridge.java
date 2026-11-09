@@ -4,6 +4,7 @@
  */
 package com.retromod.polyfill.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -145,7 +146,7 @@ public class FabricNetworkingBridge {
 
             bridgeAvailable = serverRegisterMethod != null;
             if (bridgeAvailable) {
-                LOGGER.info("Fabric networking bridge initialized - old-style handlers will be adapted");
+                LOGGER.debug("Fabric networking bridge initialized - old-style handlers will be adapted");
             } else {
                 LOGGER.warn("Fabric networking bridge: could not find new registerGlobalReceiver method");
             }
@@ -169,11 +170,11 @@ public class FabricNetworkingBridge {
         initialize();
 
         String channelStr = channelId.toString();
-        LOGGER.info("Bridging old-style server receiver for channel: {}", channelStr);
+        LOGGER.debug("Bridging old-style server receiver for channel: {}", channelStr);
 
         if (!bridgeAvailable || serverRegisterMethod == null || serverContextClass == null) {
-            LOGGER.warn("Cannot bridge server receiver for '{}' - new API not available. " +
-                "Server-client syncing for this channel will not work.", channelStr);
+            LOGGER.warn("Could not bridge the old server receiver for '{}': the new networking API "
+                + "is not available, so Retromod did not register it.", channelStr);
             return false;
         }
 
@@ -198,7 +199,7 @@ public class FabricNetworkingBridge {
 
             // Register via reflection
             Object result = serverRegisterMethod.invoke(null, payloadId, newHandler);
-            LOGGER.info("Successfully bridged server receiver for channel: {}", channelStr);
+            LOGGER.debug("Successfully bridged server receiver for channel: {}", channelStr);
             return result instanceof Boolean b ? b : true;
 
         } catch (Exception e) {
@@ -218,11 +219,11 @@ public class FabricNetworkingBridge {
         initialize();
 
         String channelStr = channelId.toString();
-        LOGGER.info("Bridging old-style client receiver for channel: {}", channelStr);
+        LOGGER.debug("Bridging old-style client receiver for channel: {}", channelStr);
 
         if (!bridgeAvailable || clientRegisterMethod == null || clientContextClass == null) {
-            LOGGER.warn("Cannot bridge client receiver for '{}' - new API not available. " +
-                "Client networking for this channel will not work.", channelStr);
+            LOGGER.warn("Could not bridge the old client receiver for '{}': the new networking API "
+                + "is not available, so Retromod did not register it.", channelStr);
             return false;
         }
 
@@ -242,7 +243,7 @@ public class FabricNetworkingBridge {
             }
 
             Object result = clientRegisterMethod.invoke(null, payloadId, newHandler);
-            LOGGER.info("Successfully bridged client receiver for channel: {}", channelStr);
+            LOGGER.debug("Successfully bridged client receiver for channel: {}", channelStr);
             return result instanceof Boolean b ? b : true;
 
         } catch (Exception e) {
@@ -393,7 +394,7 @@ public class FabricNetworkingBridge {
         } catch (NoSuchFieldException e) {
             // Try getter methods
             try {
-                return player.getClass().getMethod("connection").invoke(player);
+                return LegacyPublicMethods.method(player.getClass(), "connection").invoke(player);
             } catch (Exception e2) {
                 return null;
             }
@@ -408,7 +409,7 @@ public class FabricNetworkingBridge {
     private static Object getClientPlayNetworkHandler(Object client) {
         if (client == null) return null;
         try {
-            return client.getClass().getMethod("getConnection").invoke(client);
+            return LegacyPublicMethods.method(client.getClass(), "getConnection").invoke(client);
         } catch (Exception e) {
             try {
                 return client.getClass().getField("connection").get(client);
@@ -428,7 +429,7 @@ public class FabricNetworkingBridge {
             // Try common getter names for the raw data
             for (String methodName : new String[]{"data", "buf", "getData", "getBuf"}) {
                 try {
-                    Method m = payload.getClass().getMethod(methodName);
+                    Method m = LegacyPublicMethods.method(payload.getClass(), methodName);
                     return m.invoke(payload);
                 } catch (NoSuchMethodException ignored) {}
             }
@@ -464,8 +465,8 @@ public class FabricNetworkingBridge {
             return;
         }
         initialize();
-        LOGGER.warn("Bridged clientSend({}) - old channel-based send is not supported in 26.1. " +
-            "Packet will be dropped.", channelId);
+        LOGGER.warn("Dropped a packet sent with the old clientSend({}). Retromod has no replacement "
+            + "for channel-based sending on 26.1 yet.", channelId);
         // Release the ByteBuf if it's a Netty buffer to prevent leaks
         releaseBuf(buf);
     }
@@ -480,8 +481,8 @@ public class FabricNetworkingBridge {
             return;
         }
         initialize();
-        LOGGER.warn("Bridged serverSend({}) - old channel-based send is not supported in 26.1. " +
-            "Packet will be dropped.", channelId);
+        LOGGER.warn("Dropped a packet sent with the old serverSend({}). Retromod has no replacement "
+            + "for channel-based sending on 26.1 yet.", channelId);
         releaseBuf(buf);
     }
 
@@ -489,7 +490,7 @@ public class FabricNetworkingBridge {
         if (buf == null) return;
         try {
             // FriendlyByteBuf extends ByteBuf which has release()
-            Method release = buf.getClass().getMethod("release");
+            Method release = LegacyPublicMethods.method(buf.getClass(), "release");
             release.invoke(buf);
         } catch (Exception ignored) {}
     }

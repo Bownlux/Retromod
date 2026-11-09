@@ -11,6 +11,9 @@ import com.retromod.shim.common.Mc26_2To26_3CoreMoves;
 /** Updates Forge 26.2 mods for 26.3. */
 public class Forge_26_2_to_26_3 implements VersionShim {
 
+    static final String KEY_MAPPING_TRIGGERED = "net/minecraftforge/client/event/InputEvent$InteractionKeyMappingTriggered";
+    static final String KEY_MAPPING_TRIGGERS = com.retromod.shim.common.RebuiltApiClasses.ROOT + "forge/event/KeyMappingTriggers";
+
     @Override
     public String getShimName() {
         return "Forge 26.2 to 26.3";
@@ -49,10 +52,27 @@ public class Forge_26_2_to_26_3 implements VersionShim {
         // data-driven tools; NeoForge 26.3 did the same to ItemAbilities.
         com.retromod.shim.neoforge.LegacyItemAbilitiesBridge.registerForge(transformer);
 
+        // 66 split the key mapping event into one event per key and dropped isAttack, isUseItem and isPickBlock,
+        // which old listeners call once they run on those events, so each answers from the event's class.
+        if (ForgeHostMembers.lacksMethod(KEY_MAPPING_TRIGGERED, "isUseItem", "()Z", "26.3")) {
+            com.retromod.shim.common.RebuiltApiClasses.registerTree(transformer, KEY_MAPPING_TRIGGERS);
+            for (String key : java.util.List.of("isAttack", "isUseItem", "isPickBlock")) {
+                transformer.registerMethodRedirect(KEY_MAPPING_TRIGGERED, key, "()Z",
+                        KEY_MAPPING_TRIGGERS, key, "(Ljava/lang/Object;)Z", true);
+            }
+        }
+
+        // 66 dropped getScanCode from its key events. The key event's layout keycode stands in, in the same position.
+        LegacyForgeEventMembersBridge.registerScanCode(transformer);
+
         // The ender teleport event was generalised; constructor, BUS and getEntityLiving match.
         transformer.registerClassRedirect(
                 "net/minecraftforge/event/entity/EntityTeleportEvent$EnderEntity",
                 "net/minecraftforge/event/entity/EntityTeleportEvent$EntityRandom");
+
+        // 66 removed the brewing recipe classes and registry with 26.3's brewing recipe files, as
+        // NeoForge 26.3 did, so old recipes are recorded and written as recipe files the same way.
+        LegacyBrewingBridge.registerForge(transformer);
 
         // BiomeInfo.Builder became a record: the getters lost their "get", descriptors unchanged.
         String biomeBuilder = "net/minecraftforge/common/world/ModifiableBiomeInfo$BiomeInfo$Builder";
@@ -72,7 +92,6 @@ public class Forge_26_2_to_26_3 implements VersionShim {
         // Not carried: RenderBlockScreenEffectEvent renamed getBlockState to getBlockSate, but it
         // also became abstract with a BUS per overlay kind, so an old listener fails on BUS before
         // any getter runs. BiomeInfo.Builder.getMobSpawnSettings has no Forge 66 counterpart.
-        // The brewing recipe API and ForgeRegistries.FEATURES were removed with no same-meaning
-        // replacement, so those mods need a port.
+        // ForgeRegistries.FEATURES was removed with no same-meaning replacement, so those mods need a port.
     }
 }

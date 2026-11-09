@@ -55,6 +55,14 @@ public class LegacySavedDataFactoryShimTest {
     }
 
     @Test
+    @DisplayName("Offline, where Minecraft cannot be read, the shim still registers, as JourneyMap needed for 26.3")
+    void registersOfflineWithoutTheHost() {
+        new LegacySavedDataFactoryShim().registerRedirects(transformer);
+        assertEquals(LegacySavedDataFactoryShim.FACTORY,
+                transformer.getClassRedirects().get(LegacySavedDataFactoryShim.OLD_FACTORY));
+    }
+
+    @Test
     @DisplayName("Factory construction and the storage lookup route to the stand-in")
     void legacyLookupRoutesToStandIn() {
         LegacySavedDataFactoryShim.register(transformer);

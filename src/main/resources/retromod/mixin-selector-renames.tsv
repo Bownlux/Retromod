@@ -1,0 +1,14 @@
+# Mixin target methods the host renamed, each proven against the Mojang-named jars before and after.
+# owner	oldName	oldDesc	newName	newDesc	since
+# owner * means any class that declares newDesc itself. A desc of * means any descriptor.
+# since is the first host verified without oldName; the host must also lack oldName and declare newName.
+net/minecraft/client/Minecraft	resizeDisplay	()V	resizeGui	()V	26.1
+net/minecraft/client/Minecraft	pickBlock	()V	pickBlockOrEntity	()V	26.1
+net/minecraft/client/Minecraft	destroy	()V	exitWorldAndClose	()V	26.2
+net/minecraft/client/renderer/LevelRenderer	allChanged	()V	invalidateCompiledGeometry	*	26.2
+net/minecraft/server/ReloadableServerResources	updateRegistryTags	*	updateComponentsAndStaticRegistryTags	()V	26.1
+net/minecraft/server/ReloadableServerResources	updateStaticRegistryTags	()V	updateComponentsAndStaticRegistryTags	()V	26.1
+net/minecraft/server/ReloadableServerResources	updateRegistryTags	*	updateStaticRegistryTags	()V	1.21.11
+net/minecraft/client/MouseHandler	onPress	(JIII)V	onButton	(JLnet/minecraft/client/input/MouseButtonInfo;I)V	1.21.11
+*	hurt	(Lnet/minecraft/world/damagesource/DamageSource;F)Z	hurtServer	(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/damagesource/DamageSource;F)Z	1.21.11
+*	hurtClient	(Lnet/minecraft/world/damagesource/DamageSource;F)Z	hurtServer	(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/damagesource/DamageSource;F)Z	26.1

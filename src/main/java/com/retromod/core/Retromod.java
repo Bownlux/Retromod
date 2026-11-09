@@ -4,12 +4,15 @@
  */
 package com.retromod.core;
 
+import com.retromod.shim.ShimRegistration;
 import com.retromod.shim.ShimRegistry;
 import com.retromod.embedder.ApiEmbedder;
 import com.retromod.embedder.ModVersionInfo;
 import com.retromod.aot.AotCompiler;
 import com.retromod.mixin.MixinCompatibilityTransformer;
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import com.retromod.util.ArchivePublication;
+import com.retromod.util.RetromodLog;
 import net.fabricmc.api.ModInitializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,7 +62,7 @@ public class Retromod implements ModInitializer {
             try {
                 Class<?> fmlLoader = Class.forName("net.neoforged.fml.loading.FMLLoader");
                 Object versionInfo = fmlLoader.getMethod("versionInfo").invoke(null);
-                String mcVersion = (String) versionInfo.getClass().getMethod("mcVersion").invoke(versionInfo);
+                String mcVersion = (String) LegacyPublicMethods.method(versionInfo.getClass(), "mcVersion").invoke(versionInfo);
                 if (mcVersion != null) {
                     TARGET_MC_VERSION = mcVersion;
                     RetromodVersion.TARGET_MC_VERSION = mcVersion;
@@ -120,7 +123,7 @@ public class Retromod implements ModInitializer {
     public void onInitialize() {
         instance = this;
         RetromodVersion.logPresenceBanner(LOGGER);
-        LOGGER.info("Starting Retromod on Fabric for Minecraft {}", TARGET_MC_VERSION);
+        LOGGER.debug(RetromodLog.DETAIL, "Starting Retromod on Fabric for Minecraft {}", TARGET_MC_VERSION);
 
         EnvironmentDetector.logEnvironment();
 
@@ -199,7 +202,7 @@ public class Retromod implements ModInitializer {
             int srgEntries = com.retromod.mapping.SrgToMojangMapper.getInstance()
                     .applyTo(RetromodTransformer.getInstance());
             if (srgEntries > 0) {
-                LOGGER.info("Registered {} SRG → Mojang mapping(s)", srgEntries);
+                LOGGER.debug(RetromodLog.DETAIL, "Registered {} SRG → Mojang mapping(s)", srgEntries);
             }
         } catch (Exception e) {
             LOGGER.warn("Could not register SRG mappings", e);
@@ -215,7 +218,7 @@ public class Retromod implements ModInitializer {
                 AutoFixEngine autoFixEngine = new AutoFixEngine();
                 int savedFixes = autoFixEngine.loadAndApplySavedFixes(RetromodTransformer.getInstance());
                 if (savedFixes > 0) {
-                    LOGGER.info("AutoFix: loaded {} saved fix(es) from previous launch", savedFixes);
+                    LOGGER.debug(RetromodLog.DETAIL, "AutoFix: loaded {} saved fix(es) from previous launch", savedFixes);
                 }
             } catch (Exception e) {
                 LOGGER.warn("Could not load auto-fix saved fixes", e);
@@ -299,7 +302,7 @@ public class Retromod implements ModInitializer {
                     + "(see security notes in Retromod.java).");
         }
 
-        LOGGER.info("Retromod is ready with {} method redirects and {} class redirects",
+        LOGGER.debug(RetromodLog.DETAIL, "Retromod is ready with {} method redirects and {} class redirects",
                 RetromodTransformer.getInstance().getMethodRedirectCount(),
                 RetromodTransformer.getInstance().getClassRedirectCount());
     }
@@ -319,7 +322,7 @@ public class Retromod implements ModInitializer {
             Path inputFolder = gameDir.resolve("retromod-input");
             if (!java.nio.file.Files.exists(inputFolder)) {
                 java.nio.file.Files.createDirectories(inputFolder);
-                LOGGER.info("Created retromod-input/ folder");
+                LOGGER.debug(RetromodLog.DETAIL, "Created retromod-input/ folder");
 
                 Path readme = inputFolder.resolve("README.txt");
                 java.nio.file.Files.writeString(readme, getReadmeContent());
@@ -404,7 +407,7 @@ public class Retromod implements ModInitializer {
             if (config.has("use_aot")) useAotCompilation = config.get("use_aot").getAsBoolean();
             if (config.has("transform_mixins")) transformMixins = config.get("transform_mixins").getAsBoolean();
             if (config.has("polyfills_enabled")) polyfillsEnabled = config.get("polyfills_enabled").getAsBoolean();
-            LOGGER.info("Loaded config from {}", RetromodConfig.CONFIG_PATH);
+            LOGGER.debug(RetromodLog.DETAIL, "Loaded config from {}", RetromodConfig.CONFIG_PATH);
         } catch (Exception e) {
             LOGGER.warn("Could not apply config, using defaults", e);
         }
@@ -419,13 +422,13 @@ public class Retromod implements ModInitializer {
 
         createBackupFolder();
 
-        LOGGER.info("Preparing legacy mods ahead of launch");
-        LOGGER.info("Original mod backups will be kept in {}", BACKUP_FOLDER);
+        LOGGER.debug(RetromodLog.DETAIL, "Preparing legacy mods ahead of launch");
+        LOGGER.debug(RetromodLog.DETAIL, "Original mod backups will be kept in {}", BACKUP_FOLDER);
 
         List<AotCompiler.AotResult> results = aotCompiler.compileAllModsSync(
             modsFolder,
             (current, total, name) -> {
-                LOGGER.info("Preparing mod {} of {}: {}", current, total, name);
+                LOGGER.debug(RetromodLog.DETAIL, "Preparing mod {} of {}: {}", current, total, name);
             }
         );
 
@@ -447,7 +450,7 @@ public class Retromod implements ModInitializer {
         try {
             if (!java.nio.file.Files.exists(BACKUP_FOLDER)) {
                 java.nio.file.Files.createDirectories(BACKUP_FOLDER);
-                LOGGER.info("Created backup folder: {}", BACKUP_FOLDER);
+                LOGGER.debug(RetromodLog.DETAIL, "Created backup folder: {}", BACKUP_FOLDER);
             }
         } catch (Exception e) {
             LOGGER.error("Failed to create backup folder", e);
@@ -472,7 +475,7 @@ public class Retromod implements ModInitializer {
             }
 
             ArchivePublication.copyNew(modFile, backupPath);
-            LOGGER.info("Backed up {} to {}", fileName, backupPath);
+            LOGGER.debug(RetromodLog.DETAIL, "Backed up {} to {}", fileName, backupPath);
             return true;
 
         } catch (Exception e) {
@@ -563,6 +566,7 @@ public class Retromod implements ModInitializer {
         ServiceLoader<VersionShim> shims = ServiceLoader.load(VersionShim.class);
 
         int loaded = 0;
+        int failed = 0;
         int skippedNonFabric = 0;
         // iterate defensively: lite builds exclude some shim classes
         java.util.Iterator<VersionShim> it = shims.iterator();
@@ -593,12 +597,20 @@ public class Retromod implements ModInitializer {
 
             LOGGER.debug("Loading shim: {} ({} -> {})",
                     shim.getShimName(), shim.getSourceVersion(), shim.getTargetVersion());
-            shim.registerRedirects(RetromodTransformer.getInstance());
+            // One shim that throws is skipped alone, so later shims and the built-in ones apply.
+            if (!ShimRegistration.register(shim, RetromodTransformer.getInstance())) {
+                failed++;
+                continue;
+            }
             shimRegistry.register(shim);
             loaded++;
         }
-        LOGGER.info("Loaded {} Fabric/common shims (skipped {} non-Fabric shims)",
+        LOGGER.debug(RetromodLog.DETAIL, "Loaded {} Fabric/common shims (skipped {} non-Fabric shims)",
                 loaded, skippedNonFabric);
+        if (failed > 0) {
+            LOGGER.warn("{} Fabric/common version shim(s) could not be registered; see the "
+                    + "warnings above", failed);
+        }
 
         registerBuiltInShims();
     }
@@ -636,7 +648,7 @@ public class Retromod implements ModInitializer {
             LOGGER.warn("Could not register rendering backend shim", e);
         }
 
-        LOGGER.info("Registered built-in shims for 1.21.x compatibility");
+        LOGGER.debug(RetromodLog.DETAIL, "Registered built-in shims for 1.21.x compatibility");
     }
 
     // Stub classes for removed APIs, to head off ClassNotFoundException and
@@ -664,7 +676,7 @@ public class Retromod implements ModInitializer {
                 ModVersionInfo info = versionDetector.detectVersion(modFile.toPath());
 
                 if (info != null && info.needsTransformation(TARGET_MC_VERSION)) {
-                    LOGGER.info("Found legacy mod: {} (built for {}, current: {})",
+                    LOGGER.debug(RetromodLog.DETAIL, "Found legacy mod: {} (built for {}, current: {})",
                             info.modId(), info.targetMcVersion(), TARGET_MC_VERSION);
 
                     for (String pkg : info.modPackages()) {
@@ -672,7 +684,7 @@ public class Retromod implements ModInitializer {
                     }
 
                     if (info.usesRemovedApis()) {
-                        LOGGER.info("Mod {} uses removed APIs - embedding shims", info.modId());
+                        LOGGER.debug(RetromodLog.DETAIL, "Mod {} uses removed APIs - embedding shims", info.modId());
                         apiEmbedder.embedRequiredShims(modFile.toPath(), info);
                     }
                 }

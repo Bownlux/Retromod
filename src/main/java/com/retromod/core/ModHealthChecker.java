@@ -5,11 +5,12 @@
 package com.retromod.core;
 
 import com.retromod.util.ArchivePublication;
+import com.retromod.util.McOpener;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
-import java.awt.*;
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
@@ -50,7 +51,7 @@ public final class ModHealthChecker {
             Path inputFolder = gameDir.resolve("retromod-input");
             if (!Files.exists(inputFolder)) {
                 Files.createDirectories(inputFolder);
-                LOGGER.info("Created retromod-input/ folder");
+                LOGGER.debug(RetromodLog.DETAIL, "Created retromod-input/ folder");
                 createReadme(inputFolder);
             }
 
@@ -62,7 +63,7 @@ public final class ModHealthChecker {
             Path backupFolder = gameDir.resolve(BACKUP_FOLDER);
             if (!Files.exists(backupFolder)) {
                 Files.createDirectories(backupFolder);
-                LOGGER.info("Created retromod-backups/ folder");
+                LOGGER.debug(RetromodLog.DETAIL, "Created retromod-backups/ folder");
             }
 
         } catch (IOException e) {
@@ -290,18 +291,12 @@ public final class ModHealthChecker {
         }
     }
     
-    /** Open GitHub Issues via the Desktop API (no Runtime.exec). */
+    /** Opens a new GitHub issue through Minecraft, or shows the link to copy when it cannot. */
     private static void openGitHub() {
-        try {
-            String url = "https://github.com/Bownlux/Retromod/issues/new?title=Bug%20Report%20-%20Mod%20Not%20Working";
-            if (Desktop.isDesktopSupported()) {
-                Desktop.getDesktop().browse(java.net.URI.create(url));
-            } else {
-                LOGGER.warn("Desktop API not available - please visit {} manually", url);
-            }
-        } catch (Exception e) {
-            LOGGER.warn("Could not open browser");
-        }
+        String url = "https://github.com/Bownlux/Retromod/issues/new?title=Bug%20Report%20-%20Mod%20Not%20Working";
+        if (McOpener.openLink(url)) return;
+        JOptionPane.showMessageDialog(null, "Please visit: " + url, "Report an issue",
+                JOptionPane.INFORMATION_MESSAGE);
     }
     
     public static boolean isModHealthy(String modId) {

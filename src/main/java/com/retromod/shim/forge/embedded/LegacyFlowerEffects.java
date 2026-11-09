@@ -21,6 +21,12 @@ public final class LegacyFlowerEffects {
         return properties;
     }
 
+    /** The same for vanilla 1.20.1's {@code FlowerBlock(MobEffect, int, Properties)}, which passes the effect itself. */
+    public static Object stashEffect(Object effect, int seconds, Object properties) {
+        PENDING.set(new Object[] {holderOf(effect), (float) seconds});
+        return properties;
+    }
+
     /** The stashed effect as the {@code Holder<MobEffect>} the constructor takes now. */
     public static Object holder() {
         Object[] pending = PENDING.get();
@@ -34,22 +40,22 @@ public final class LegacyFlowerEffects {
     }
 
     private static Object holder(Object effectSupplier) {
+        // A cast, not a reflective call: the mod's lambda class is not accessible from here.
+        return holderOf(((java.util.function.Supplier<?>) effectSupplier).get());
+    }
+
+    private static Object holderOf(Object effect) {
         try {
-            // A cast, not a reflective call: the mod's lambda class is not accessible from here.
-            Object effect = ((java.util.function.Supplier<?>) effectSupplier).get();
             ClassLoader loader = LegacyFlowerEffects.class.getClassLoader();
             Class<?> holderType = Class.forName("net.minecraft.core.Holder", false, loader);
             if (holderType.isInstance(effect)) return effect;
             Object registry = Class.forName("net.minecraft.core.registries.BuiltInRegistries", true, loader)
                     .getField("MOB_EFFECT").get(null);
-            for (java.lang.reflect.Method method : registry.getClass().getMethods()) {
-                if (method.getName().equals("wrapAsHolder") && method.getParameterCount() == 1) {
-                    return method.invoke(registry, effect);
-                }
-            }
+            // Through the public Registry interface: Forge's registry class is not public, so its own method is out of reach.
+            return Class.forName("net.minecraft.core.Registry", false, loader)
+                    .getMethod("wrapAsHolder", Object.class).invoke(registry, effect);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
             throw new IllegalStateException("Retromod could not read the flower's stew effect", e);
         }
-        throw new IllegalStateException("Retromod found no way to wrap the flower's stew effect");
     }
 }

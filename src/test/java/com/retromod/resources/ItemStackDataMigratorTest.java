@@ -559,4 +559,12 @@ class ItemStackDataMigratorTest {
         assertSame(in, ModDataMigrator.migrate("data/mod/loot_table/entities/skull.json", in, "26.3", "26.3",
                 MigrationContext.Loader.NEOFORGE));
     }
+
+    @Test
+    @DisplayName("a stale biome field in a mod built after 1.20.5 stays ignored instead of naming a biome")
+    void staleBiomeFieldStaysIgnored() {
+        String predicate = "{\"condition\":\"minecraft:location_check\",\"predicate\":{\"biome\":\"other:plains\"}}";
+        assertFalse(rules("data/mod/predicate/in_plains.json", predicate, "1.21", "26.3").contains("\"biomes\""));
+        assertTrue(rules("data/mod/predicate/in_plains.json", predicate, "1.20.1", "26.3").contains("\"biomes\""));
+    }
 }

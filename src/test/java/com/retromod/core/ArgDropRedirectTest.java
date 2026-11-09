@@ -22,10 +22,12 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.analysis.Analyzer;
+import org.objectweb.asm.tree.analysis.BasicVerifier;
 
 /**
  * Arg-dropping method redirect (§B, Chunky). When a method was renamed AND lost a trailing
- * parameter (26.1 `ServerChunkCache.addRegionTicket(TicketType,ChunkPos,int,T)` ->
+ * parameter (1.21.5 `ServerChunkCache.addRegionTicket(TicketType,ChunkPos,int,T)` ->
  * `addTicketWithRadius(TicketType,ChunkPos,int)`), the call must pop the dropped value and invoke
  * the shorter method. A plain rename can't do this (descriptor mismatch).
  */
@@ -71,8 +73,62 @@ class ArgDropRedirectTest {
                 && ((MethodInsnNode) i).name.equals("addRegionTicket")), "no leftover addRegionTicket");
     }
 
-    /** {@code static void go(cache, type, pos, radius, value)} calling the old 4-arg addRegionTicket. */
+    @Test
+    @DisplayName("removeRegionTicket(4 args) -> one POP + removeTicketWithRadius(3 args)")
+    void releasingATicketDropsTheValue() throws Exception {
+        MethodNode go = transformedTicketCall("removeRegionTicket", OLD_DESC);
+
+        assertEquals("removeTicketWithRadius " + NEW_DESC, ticketCall(go));
+        assertEquals(1, pops(go), "only the dropped value is popped");
+        new Analyzer<>(new BasicVerifier()).analyze("test/ChunkCaller", go);
+    }
+
+    @Test
+    @DisplayName("the Forge and NeoForge (..., value, forceTicks) forms pop both trailing values")
+    void forceTicksOverloadsPopTwoValues() throws Exception {
+        String forceTicks = OLD_DESC.replace(")V", "Z)V");
+        for (String[] shape : new String[][]{{"addRegionTicket", "addTicketWithRadius"},
+                {"removeRegionTicket", "removeTicketWithRadius"}}) {
+            MethodNode go = transformedTicketCall(shape[0], forceTicks);
+
+            assertEquals(shape[1] + " " + NEW_DESC, ticketCall(go));
+            assertEquals(2, pops(go), "the value and the forceTicks flag are both dropped");
+            new Analyzer<>(new BasicVerifier()).analyze("test/ChunkCaller", go);
+        }
+    }
+
+    /** The {@code go} method after a caller of {@code name(desc)} runs through the ticket bridge. */
+    private static MethodNode transformedTicketCall(String name, String desc) {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        com.retromod.shim.common.LegacyChunkTicketBridge.register(t);
+        ClassNode cn = new ClassNode();
+        new ClassReader(t.transformClass(callerClass(name, desc), "test/ChunkCaller")).accept(cn, 0);
+        MethodNode go = cn.methods.stream().filter(m -> m.name.equals("go")).findFirst().orElseThrow();
+        assertFalse(Arrays.stream(go.instructions.toArray()).anyMatch(i -> i instanceof MethodInsnNode call
+                && call.name.endsWith("RegionTicket")), "no *RegionTicket call may be left");
+        return go;
+    }
+
+    private static String ticketCall(MethodNode go) {
+        return Arrays.stream(go.instructions.toArray())
+                .filter(i -> i instanceof MethodInsnNode call && call.owner.equals(SCC))
+                .map(i -> ((MethodInsnNode) i).name + " " + ((MethodInsnNode) i).desc)
+                .findFirst().orElseThrow();
+    }
+
+    private static long pops(MethodNode go) {
+        return Arrays.stream(go.instructions.toArray())
+                .filter(i -> i instanceof InsnNode && i.getOpcode() == Opcodes.POP).count();
+    }
+
     private static byte[] callerClass() {
+        return callerClass("addRegionTicket", OLD_DESC);
+    }
+
+    /** {@code static void go(cache, type, pos, radius, value)} calling the old 4-arg addRegionTicket. */
+    private static byte[] callerClass(String name, String desc) {
+        boolean forceTicks = desc.endsWith("Z)V");
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/ChunkCaller", null, "java/lang/Object", null);
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "go",
@@ -84,7 +140,8 @@ class ArgDropRedirectTest {
         mv.visitVarInsn(Opcodes.ALOAD, 2); // ChunkPos
         mv.visitVarInsn(Opcodes.ILOAD, 3); // int radius
         mv.visitVarInsn(Opcodes.ALOAD, 4); // Object value (dropped)
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, SCC, "addRegionTicket", OLD_DESC, false);
+        if (forceTicks) mv.visitInsn(Opcodes.ICONST_1); // boolean forceTicks (dropped)
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, SCC, name, desc, false);
         mv.visitInsn(Opcodes.RETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

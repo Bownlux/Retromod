@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.RetromodLog;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
@@ -77,7 +78,7 @@ public final class SealedSupertypeUnsealer {
             Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
             Files.writeString(modJson, gson.toJson(mod), StandardCharsets.UTF_8);
         }
-        LOGGER.info("Unsealed {} for {}, which the host sealed after the mod was built", sealed, jarRoot.getFileName());
+        LOGGER.debug(RetromodLog.DETAIL, "Unsealed {} for {}, which the host sealed after the mod was built", sealed, jarRoot.getFileName());
         return sealed;
     }
 

@@ -8,6 +8,7 @@ import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import com.retromod.util.McReflect;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -125,7 +126,7 @@ public final class LegacyToolItemBridge {
             return;
         }
         registerRedirects(transformer, tools);
-        LOGGER.info("Bridged {} pre-1.20.5 tool constructors", tools.size());
+        LOGGER.debug(RetromodLog.DETAIL, "Bridged {} pre-1.20.5 tool constructors", tools.size());
     }
 
     /** Unconditional registration for transform-shape tests. */

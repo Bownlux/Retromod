@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -153,7 +154,7 @@ public final class LegacyBiomeDictionary {
     }
 
     private static Object call(Object target, String name, Object... arguments) throws ReflectiveOperationException {
-        for (Method method : target.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(target.getClass())) {
             if (method.getName().equals(name) && method.getParameterCount() == arguments.length) {
                 return method.invoke(target, arguments);
             }

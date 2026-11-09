@@ -6,6 +6,7 @@ package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
 import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.commons.ClassRemapper;
 import org.objectweb.asm.commons.Remapper;
 import org.objectweb.asm.tree.ClassNode;
@@ -30,21 +31,36 @@ public final class RebuiltApiClasses {
 
     /** Registers a rebuilt class and every rebuilt class it names, read from Retromod's own jar. */
     public static void registerTree(RetromodTransformer t, String root) {
+        registerTree(t, root, null);
+    }
+
+    /** Registers the same tree rewritten by {@code names}, such as into a Fabric host's intermediary names, each under its new name. */
+    public static void registerTree(RetromodTransformer t, String root, Remapper names) {
         ArrayDeque<String> work = new ArrayDeque<>(List.of(root));
         Set<String> seen = new HashSet<>();
         while (!work.isEmpty()) {
             String name = work.poll();
-            if (!seen.add(name) || t.getSyntheticClasses().containsKey(name)) continue;
+            String registered = names == null ? name : names.mapType(name);
+            if (!seen.add(name) || t.getSyntheticClasses().containsKey(registered)) continue;
             byte[] bytes = read(name);
             if (bytes == null) {
-                LOGGER.warn("Retromod's rebuilt class {} is missing from its jar; old code that needs it will fail", name);
+                LOGGER.warn("Retromod's rebuilt class {} is missing from its jar, so it was not added to "
+                        + "this mod. Report this line with the Retromod version.", name);
                 continue;
             }
-            t.registerSyntheticClass(name, bytes);
+            // registerSyntheticClass renames Retromod's relocated Gson and SLF4J to the game's own.
+            t.registerSyntheticClass(registered, names == null ? bytes : rename(bytes, names));
             for (String referenced : referencedClasses(bytes)) {
                 if (!seen.contains(referenced)) work.add(referenced);
             }
         }
+    }
+
+    private static byte[] rename(byte[] bytes, Remapper names) {
+        // Only names change, so the class keeps its own stack map frames.
+        ClassWriter out = new ClassWriter(0);
+        new ClassReader(bytes).accept(new ClassRemapper(out, names), 0);
+        return out.toByteArray();
     }
 
     private static byte[] read(String name) {

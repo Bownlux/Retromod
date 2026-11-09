@@ -47,6 +47,8 @@ class InPlaceLibraryLinkingTest {
     private static final String MATERIAL = "com/retromod/generated/fixture/LegacyMaterial";
     private static final String CORE_BLOCK = "core/blocks/BaseMetaBlock";
     private static final String ADDON_BLOCK = "addon/blocks/MetaIO";
+    private static final String TOOL_API = "tools/ToolApi";
+    private static final String ADDON_TOOLS = "addon/UsesTools";
     private static final String CTOR = "(Ljava/lang/String;L" + MATERIAL + ";)V";
 
     @TempDir
@@ -97,6 +99,130 @@ class InPlaceLibraryLinkingTest {
         assertEquals(2, translated, "the core, then the addon again");
         assertEquals(List.of("z-core.jar", "a-rocks.jar"), order);
         assertAddonLinksToCore(discover(game));
+    }
+
+    @Test
+    @DisplayName("an addon of two libraries served from an earlier launch calls each with its own Material")
+    void addonOfTwoEarlierLibrariesLinksToBoth() throws IOException {
+        // Only an interface stand-in, as the rebuilt Tier is, can be converted between copies.
+        ClassWriter material = new ClassWriter(0);
+        material.visit(V17, ACC_PUBLIC | ACC_ABSTRACT | ACC_INTERFACE, MATERIAL, null, "java/lang/Object", null);
+        material.visitEnd();
+        RetromodTransformer.getInstance().registerSyntheticClass(MATERIAL, material.toByteArray());
+        Path game = game();
+        tools(game.resolve("mods/m-tools.jar"));
+        core(game.resolve("mods/z-core.jar"));
+        assertEquals(2, launchFor(discover(game)).translatePending("1.20.1", () -> recording(new ArrayList<>())));
+        addonOfBoth(game.resolve("mods/a-rocks.jar"));
+        List<String> order = new ArrayList<>();
+
+        assertEquals(1, launchFor(discover(game)).translatePending("1.20.1", () -> recording(order)));
+
+        assertEquals(List.of("a-rocks.jar"), order, "the libraries are not translated again");
+        DiscoveryEngine.Outcome next = discover(game);
+        Path core = served(next, "z-core");
+        Path tools = served(next, "m-tools");
+        Path addon = served(next, "a-rocks");
+        String coreCtor = constructorOf(read(core, CORE_BLOCK));
+        assertEquals(List.of(CORE_BLOCK + ".<init>" + coreCtor), superCalls(read(addon, ADDON_BLOCK)),
+                "the addon calls the core's constructor as the core declares it");
+        String toolsUse = methodDesc(read(tools, TOOL_API), "use");
+        assertEquals(List.of(TOOL_API + ".use" + toolsUse), calls(read(addon, ADDON_TOOLS), TOOL_API),
+                "the addon calls the tool library as it declares the method");
+        assertNotEquals(coreCtor.replace("(Ljava/lang/String;", "("), toolsUse, "each library keeps its own Material");
+
+        // A later launch with nothing new finds every served copy current.
+        com.retromod.core.SyntheticLibraries served = com.retromod.core.SyntheticLibraries.create();
+        for (Path jar : List.of(core, tools, addon)) served.add(jar);
+        assertFalse(served.isStale(addon), "the addon's adapters match the libraries as served");
+    }
+
+    @Test
+    @DisplayName("an addon crossing a class stand-in into two libraries stays current, and a new mod translates alone")
+    void classStandInCrossingStaysCurrent() throws IOException {
+        Path game = game();
+        tools(game.resolve("mods/m-tools.jar"));
+        core(game.resolve("mods/z-core.jar"));
+        assertEquals(2, launchFor(discover(game)).translatePending("1.20.1", () -> recording(new ArrayList<>())));
+        addonOfBoth(game.resolve("mods/a-rocks.jar"));
+        assertEquals(1, launchFor(discover(game)).translatePending("1.20.1", () -> recording(new ArrayList<>())));
+
+        // A class stand-in cannot be converted, so one call stays unlinked, but the translation is current.
+        DiscoveryEngine.Outcome served = discover(game);
+        com.retromod.core.SyntheticLibraries libraries = com.retromod.core.SyntheticLibraries.create();
+        for (String prefix : List.of("z-core", "m-tools", "a-rocks")) libraries.add(served(served, prefix));
+        assertFalse(libraries.isStale(served(served, "a-rocks")), "the addon matches what it was translated with");
+
+        // An unrelated mod arriving later is the only jar translated.
+        modJar(game.resolve("mods/b-other.jar"), "other", Map.of("other/Thing", plainClass("other/Thing")));
+        List<String> order = new ArrayList<>();
+        launchFor(discover(game)).translatePending("1.20.1", () -> recording(order));
+
+        assertEquals(List.of("b-other.jar"), order, "the addon and its libraries are not translated again");
+    }
+
+    private static byte[] plainClass(String name) {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, name, null, "java/lang/Object", null);
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    private static Path served(DiscoveryEngine.Outcome outcome, String prefix) throws IOException {
+        try (Stream<Path> served = Files.list(outcome.serveFolder())) {
+            return served.filter(jar -> jar.getFileName().toString().startsWith(prefix)).findFirst()
+                    .orElseThrow(() -> new AssertionError(prefix + " is not served"));
+        }
+    }
+
+    private static String methodDesc(ClassNode node, String name) {
+        return node.methods.stream().filter(m -> m.name.equals(name)).findFirst().orElseThrow().desc;
+    }
+
+    private static List<String> calls(ClassNode node, String owner) {
+        List<String> calls = new ArrayList<>();
+        for (MethodNode method : node.methods) {
+            for (AbstractInsnNode insn : method.instructions) {
+                if (insn instanceof MethodInsnNode call && call.owner.equals(owner)) {
+                    calls.add(call.owner + "." + call.name + call.desc);
+                }
+            }
+        }
+        return calls;
+    }
+
+    /** {@code public class ToolApi { public static void use(Material m) {} }} */
+    private static void tools(Path file) throws IOException {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, TOOL_API, null, "java/lang/Object", null);
+        MethodVisitor use = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "use", "(L" + MATERIAL + ";)V", null, null);
+        use.visitCode();
+        use.visitInsn(RETURN);
+        use.visitMaxs(0, 0);
+        use.visitEnd();
+        cw.visitEnd();
+        modJar(file, "tools", Map.of(TOOL_API, cw.toByteArray()));
+    }
+
+    /** The core addon, plus a class that hands a Material to the tool library. */
+    private static void addonOfBoth(Path file) throws IOException {
+        addon(file);
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, ADDON_TOOLS, null, "java/lang/Object", null);
+        MethodVisitor run = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "run", "()V", null, null);
+        run.visitCode();
+        run.visitInsn(ACONST_NULL);
+        run.visitMethodInsn(INVOKESTATIC, TOOL_API, "use", "(L" + MATERIAL + ";)V", false);
+        run.visitInsn(RETURN);
+        run.visitMaxs(0, 0);
+        run.visitEnd();
+        cw.visitEnd();
+        Map<String, byte[]> classes = new LinkedHashMap<>();
+        try (JarFile jar = new JarFile(file.toFile())) {
+            classes.put(ADDON_BLOCK, jar.getInputStream(jar.getJarEntry(ADDON_BLOCK + ".class")).readAllBytes());
+        }
+        classes.put(ADDON_TOOLS, cw.toByteArray());
+        modJar(file, "rocks", classes);
     }
 
     private static InPlaceLaunch.LinkingTranslator recording(List<String> order) {
@@ -179,10 +305,14 @@ class InPlaceLibraryLinkingTest {
 
     private static void modJar(Path file, String modId, String className, byte[] classBytes)
             throws IOException {
+        modJar(file, modId, Map.of(className, classBytes));
+    }
+
+    private static void modJar(Path file, String modId, Map<String, byte[]> classes) throws IOException {
         Map<String, byte[]> entries = new LinkedHashMap<>();
         entries.put("META-INF/mods.toml", TestModJars.toml(modId, "1.0.0", "[1.19.2,1.20)", "forge",
                 "[40,)", "mandatory=true").getBytes(StandardCharsets.UTF_8));
-        entries.put(className + ".class", classBytes);
+        classes.forEach((className, classBytes) -> entries.put(className + ".class", classBytes));
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(file))) {
             for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
                 out.putNextEntry(new JarEntry(entry.getKey()));

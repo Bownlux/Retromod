@@ -1,0 +1,9 @@
+// Compile-only stub of a 26.3 host type for src/legacyapi; never packaged.
+package net.minecraft.world.level.levelgen;
+
+import net.minecraft.core.Holder;
+import net.minecraft.world.level.levelgen.material.rule.MaterialRule;
+
+public final class NoiseGeneratorSettings {
+    public Holder<MaterialRule> materialRule() { throw new UnsupportedOperationException(); }
+}

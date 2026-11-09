@@ -5,6 +5,7 @@
 package com.retromod.shim.common;
 
 import com.retromod.core.ClassResourceInspector;
+import com.retromod.core.FuzzyMethodResolver;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import org.objectweb.asm.ClassWriter;
@@ -28,7 +29,8 @@ import java.util.Map;
  * as a {@code SoundEvent}, typically inside its armor material enum, fails with
  * {@code NoSuchFieldError} while that class initializes. The read becomes a generated getter that
  * unwraps the host's holder. A mod that reads the field as a holder is left alone, because only the
- * old descriptor is redirected. The host's own field list decides which constants apply.
+ * old descriptor is redirected. The host's own field list decides which constants apply, read from
+ * the indexed target jar when the host class is not on the classpath, as in the CLI.
  */
 public final class LegacyHolderConstantBridge {
 
@@ -38,7 +40,10 @@ public final class LegacyHolderConstantBridge {
     private static final String HOLDER = "net/minecraft/core/Holder";
     private static final Map<String, String> OWNERS = Map.of(
             "net/minecraft/sounds/SoundEvents", "net/minecraft/sounds/SoundEvent",
-            "net/minecraft/world/item/alchemy/Potions", "net/minecraft/world/item/alchemy/Potion");
+            "net/minecraft/world/item/alchemy/Potions", "net/minecraft/world/item/alchemy/Potion",
+            // GameEvent's own constants turned into holders with them; Sophisticated Core's
+            // allay mixin reads JUKEBOX_PLAY's radius on every allay tick.
+            "net/minecraft/world/level/gameevent/GameEvent", "net/minecraft/world/level/gameevent/GameEvent");
 
     /** The tool sounds 26.3 turned into holders, for an offline transform that cannot read the host. */
     static final List<String> TOOL_SOUNDS_HELD_FROM_26_3 = List.of(
@@ -50,17 +55,22 @@ public final class LegacyHolderConstantBridge {
         Map<String, Map<String, String>> constants = new LinkedHashMap<>();
         for (String owner : OWNERS.keySet()) {
             ClassNode host = ClassResourceInspector.read(owner);
-            Map<String, String> fields = holderFields(host);
-            if (host == null && owner.equals("net/minecraft/sounds/SoundEvents")
-                    && RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.3") >= 0) {
-                for (String sound : TOOL_SOUNDS_HELD_FROM_26_3) fields.put(sound, "L" + HOLDER + "$Reference;");
+            Map<String, String> fields = host != null ? holderFields(host)
+                    : indexedHolderFields(transformer.getFuzzyResolver(), owner);
+            // With neither the host class nor an indexed jar, only the 26.3 tool sounds are known.
+            if (fields == null) {
+                fields = new LinkedHashMap<>();
+                if (owner.equals("net/minecraft/sounds/SoundEvents")
+                        && RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.3") >= 0) {
+                    for (String sound : TOOL_SOUNDS_HELD_FROM_26_3) fields.put(sound, "L" + HOLDER + "$Reference;");
+                }
             }
             constants.put(owner, fields);
         }
         int count = constants.values().stream().mapToInt(Map::size).sum();
         if (count == 0) return;
         registerRedirects(transformer, constants);
-        LOGGER.debug("Bridged {} sound event and potion constants that became holders", count);
+        LOGGER.debug("Bridged {} sound event, potion and game event constants that became holders", count);
     }
 
     /** {@code constants}: owner to field name to the field's holder descriptor on the host. */
@@ -81,11 +91,27 @@ public final class LegacyHolderConstantBridge {
         if (owner == null) return fields;
         for (FieldNode field : owner.fields) {
             if ((field.access & Opcodes.ACC_STATIC) == 0) continue;
-            if (field.desc.equals("L" + HOLDER + ";") || field.desc.equals("L" + HOLDER + "$Reference;")) {
-                fields.put(field.name, field.desc);
-            }
+            if (isHolder(field.desc)) fields.put(field.name, field.desc);
         }
         return fields;
+    }
+
+    /**
+     * Holder fields of {@code owner} in the indexed target jar, which the CLI and offline AOT have
+     * when the host class is not on their classpath. Null when the jar does not have the class.
+     */
+    static Map<String, String> indexedHolderFields(FuzzyMethodResolver index, String owner) {
+        if (index == null || !index.hasClass(owner)) return null;
+        Map<String, String> fields = new LinkedHashMap<>();
+        // The index keeps no access flags, but every holder field on these constant classes is static.
+        for (FuzzyMethodResolver.FieldInfo field : index.getDeclaredFields(owner)) {
+            if (isHolder(field.descriptor())) fields.put(field.name(), field.descriptor());
+        }
+        return fields;
+    }
+
+    private static boolean isHolder(String descriptor) {
+        return descriptor.equals("L" + HOLDER + ";") || descriptor.equals("L" + HOLDER + "$Reference;");
     }
 
     static String getterName(String owner, String field) {

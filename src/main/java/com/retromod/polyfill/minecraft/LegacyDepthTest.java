@@ -4,6 +4,7 @@
  */
 package com.retromod.polyfill.minecraft;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.Map;
@@ -67,7 +68,7 @@ public final class LegacyDepthTest {
         try {
             Method withOptional = null;
             Method withState = null;
-            for (Method method : builder.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(builder.getClass())) {
                 if (!method.getName().equals("withDepthStencilState") || method.getParameterCount() != 1) continue;
                 if (method.getParameterTypes()[0] == Optional.class) {
                     withOptional = method;

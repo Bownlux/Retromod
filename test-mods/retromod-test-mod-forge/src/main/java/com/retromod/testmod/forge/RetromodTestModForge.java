@@ -64,13 +64,178 @@ public class RetromodTestModForge {
         net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()
                 .addListener(CrossClassRegistration::register);
         // #302: an addon's knife and registry reads against the installed Farmer's Delight.
-        net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()
-                .addListener(FarmersDelightAddon::register);
+        FarmersDelightAddon.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        // A listener on the ModConfigEvent base, which Forge 26.2 made an interface, reads its config.
+        ConfigEventCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
         // An entity type built from its bare name in a deferred register's supplier.
         EntityTypeKeys.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
         // #372: a 1.20.1 recipe serializer and advancement trigger, checked once the server's data loads.
         LegacyRecipesAndTriggers.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        ListenerTriggerCase.register();
         net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener(this::checkLoadedData);
+        // Old listener objects with explicit priorities and a lone listener, checked when the server starts.
+        ListenerPriorities.register();
+        // Listeners on EntityInteract and SaplingGrowTreeEvent, which Forge 26.2 replaced.
+        RenamedEvents.register();
+        // NetworkHooks, ForgeMod reach, tags and the griefing hook, checked once a server runs.
+        ForgeSmallRemovals.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        // FakePlayerFactory and instanceof FakePlayer across the library jar, checked once a server runs.
+        FakePlayerCase.register();
+        // Villager and wandering trader trades from the removed trade events, checked once a server runs.
+        LegacyTradeCase.register();
+        // Forge's folder pack, which Forge 26.2 removed, built again where mods add their packs. Forge only.
+        if (!LegacyEventBaseCase.onNeoForge()) {
+            LegacyPathPacks.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            // A spark-style hook on the base TickEvent, unregistered at run time. Forge only.
+            TickHookCase.register();
+            // Listeners on RenderLevelStageEvent, which Forge 26.2 replaced with frame passes. Client only.
+            if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) ClientRenderCases.register();
+            // Block and item color handlers, which Forge 26.2 and Minecraft 26.1 replaced with tint sources. Client only.
+            if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) {
+                ColorHandlerCases.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            }
+            // An item drawn by an old BlockEntityWithoutLevelRenderer, which Minecraft 1.21.4 removed. The item is registered on
+            // both sides; its renderer and checks are client only.
+            ItemRendererItems.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) ItemRendererCases.register();
+            // The same item builds a second renderer while items register, before 26.x has its model manager. Client only.
+            if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) EarlyModelsCase.register();
+        }
+        // A mod's own sprite atlas on TextureAtlasHolder, as JEI's GUI sprites are, which 26.x removed. Client only;
+        // the class is vanilla, so this runs on NeoForge too.
+        if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) {
+            LegacyAtlasCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            // A KeyMapping subclass whose super(...) names a String category, as Carry On's keybinds do.
+            KeyMappingSubclassCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            // An arm pose built with a transformer in client setup, as Farmer's Delight's skillet flip is.
+            ArmPoseCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            // The frame's tick delta through the old getter, as Jade's overlay reads it.
+            FrameDeltaCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            // A mixin on a method 26.1 renamed, as many client mods hook resizeDisplay().
+            RenamedMixinTargetCase.register();
+            // Item properties registered in client setup's queued work, as Farmer's Delight and Sophisticated Core register theirs.
+            ItemPropertyCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            // The server brand and connection id that JEI reads while joining a world.
+            ClientConnectionCase.register();
+            // Layers on the player renderers through getSkinMap() and the AddLayers lookups, as Sophisticated Backpacks and Curios add theirs.
+            PlayerLayerCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            // An old block entity renderer and entity renderer driven through 26.x's state and submit, as Farmer's Delight's are.
+            OldRendererDrawCase.register();
+            // An old entity renderer drawing a cube with the 1.20.1 vertex calls from renderFinal, as GeckoLib 4's does.
+            OldCubeRendererCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            // Old model calls through ItemRenderer and BlockRenderDispatcher, as Sophisticated Backpacks, Farmer's Delight and Carry On make them.
+            BakedItemModelCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        }
+        // ForgeRegistries.ENCHANTMENTS lookups, checked once a server has loaded the world's enchantments.
+        EnchantmentRegistryReads.register();
+        // Reload listeners of the 1.20.1 shape, which 1.21.2 and 1.21.9 changed: the server's data reload on both
+        // sides, and the client's resource reload, registered the way GeckoLib registers its cache.
+        OldReloadListenerCases.register();
+        if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) {
+            OldReloadListenerCases.registerClient(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        }
+        // Component.Serializer's JSON text statics and the two Gson adapters, checked once a server runs.
+        TextJsonCase.register();
+        // The level height getters 1.21.2 renamed, called and overridden, checked once a server runs.
+        LevelHeightCase.register();
+        // Registry.getTags() pairs, an advancement's id and a mod's own LivingEvent, checked once a server runs, and
+        // the render and screen event members Forge 26.2 and 26.3 dropped, checked as the client posts them.
+        EventMemberCases.register();
+        if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) EventMemberCases.registerClient();
+        // Listeners on a parent event, Forge's version classes, setConfig and FMLConfig, which stopped Forge mods
+        // while NeoForge constructed them.
+        NeoForgeStartupCases.register();
+        // Handler, entity and capability data saved with the old NBT methods, and an item's old capability hook,
+        // checked once a server runs. Forge only: NeoForge rebuilds Forge's capabilities on its own system.
+        if (!LegacyEventBaseCase.onNeoForge()) {
+            LegacyCapabilityDataCases.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        }
+        // ModLoader.get() posts and warnings, checked once a server runs. Forge only, as NeoForge has its own ModLoader.
+        if (!LegacyEventBaseCase.onNeoForge()) ModLoaderCases.register();
+        // Lambda and @SubscribeEvent listeners that cancel a Forge event, which Forge 26.2 cancels by return value.
+        // Forge only: NeoForge keeps its own cancel calls.
+        if (!LegacyEventBaseCase.onNeoForge()) {
+            LegacyCancelCases.register();
+            // Listeners on ScreenEvent.Init, which Forge 26.2 posts only as Init.Pre and Init.Post. Client only.
+            if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) BuslessParentCases.register();
+            // A sapling listener's denial read back after the post, which Forge 26.2 renamed. Forge only.
+            LegacyResultCases.register();
+            // An old HUD overlay and render-event listeners, which Forge 26.2 removed. Client only; NeoForge maps
+            // these events onto its own layers.
+            if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) {
+                LegacyHudOverlays.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            }
+            // Chunk render type sets, block layers and int[] quads, which Forge 26.2 removed, checked at client
+            // setup. Client only; NeoForge keeps its own.
+            if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) {
+                ModelFoundationCases.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            }
+            // A wrapped block model and an extra model through Forge 1.20.1's baked model events, which Forge 26.2
+            // rebuilt. Client only; NeoForge keeps its own.
+            if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) {
+                BakedModelCases.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            }
+            // A geometry loader whose model nests a vanilla model, which Forge 26.2's loaders no longer read the same way.
+            // Client only; NeoForge keeps its own.
+            if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) {
+                GeometryLoaderCases.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            }
+        }
+        // The static brewing registry, which Forge 26.2 replaced with an event, read back once a server runs.
+        // Forge only: NeoForge has no static lookups, so Retromod bridges only the adds there.
+        if (!LegacyEventBaseCase.onNeoForge()) {
+            LegacyBrewingRegistryCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        }
+        // A command context of the mod's own, which 1.20.5 made a registry provider, used while commands register.
+        CommandContextCase.register();
+        // A capability registered through RegisterCapabilitiesEvent, attached to an entity and a stack, and read back.
+        // Forge only: on NeoForge, Retromod rebuilds Forge's capabilities on NeoForge's own system.
+        if (!LegacyEventBaseCase.onNeoForge()) {
+            LegacyCapabilityCases.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        }
+        // Biome modifier serializers registered as 1.20.1 codecs, which Forge 26.2 and NeoForge read as map codecs,
+        // and a biome with 1.20.1's carvers per step. A failure is this case's result, so the other cases still run.
+        try {
+            LegacyBiomeModifierCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        } catch (Throwable t) {
+            LOG.info("{} 1.20.1 biome modifier codecs registered while the mod constructs: fail: {}: {}", PREFIX,
+                    t.getClass().getSimpleName(), t.getMessage());
+        }
+        // A loot function type and a condition type built around 1.20.1 serializers, which 26.1 turned into map codec
+        // registries, used by a data loot table the world reads. A failure is this case's result.
+        try {
+            LegacyLootTypeCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        } catch (Throwable t) {
+            LOG.info("{} 1.20.1 loot function and condition types registered while the mod constructs: fail: {}: {}", PREFIX,
+                    t.getClass().getSimpleName(), t.getMessage());
+        }
+        // A structure processor type from a deferred register, which 26.2 turned into a map codec registry, named by a
+        // data processor list. A failure is this case's result.
+        try {
+            LegacyProcessorTypeCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        } catch (Throwable t) {
+            LOG.info("{} 1.20.1 structure processor type registered while the mod constructs: fail: {}: {}", PREFIX,
+                    t.getClass().getSimpleName(), t.getMessage());
+        }
+        // Placement modifier and block state provider types and subclasses, whose bases 26.3 turned into interfaces.
+        try {
+            PlacementTypesCase.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+        } catch (Throwable t) {
+            LOG.info("{} 1.20.1 placement modifier and block state provider types registered while the mod constructs: "
+                    + "fail: {}: {}", PREFIX, t.getClass().getSimpleName(), t.getMessage());
+        }
+        // Old ingredient serializers registered through CraftingHelper, read by a data recipe once a server runs.
+        // Forge only: Retromod registers them in Forge 26.2's ingredient serializer registry.
+        if (!LegacyEventBaseCase.onNeoForge()) {
+            try {
+                LegacyIngredientCase.register(
+                        net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
+            } catch (Throwable t) {
+                // A serializer class that does not link fails this case only.
+                LOG.info("{} old ingredient serializers registered while the mod constructs: fail: {}: {}", PREFIX,
+                        t.getClass().getSimpleName(), t.getMessage());
+            }
+        }
     }
 
     /**
@@ -88,6 +253,13 @@ public class RetromodTestModForge {
                 PREFIX, recipes);
         LOG.info("{} #372 a 1.20.1 advancement trigger reads its player and item predicates (server started): {}",
                 PREFIX, LegacyRecipesAndTriggers.triggerRead());
+        String vanillaRecipes;
+        try {
+            vanillaRecipes = LegacyRecipesAndTriggers.vanillaRecipesListed(event.getServer());
+        } catch (Throwable t) {
+            vanillaRecipes = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} getAllRecipesFor lists the vanilla smelting recipes (server started): {}", PREFIX, vanillaRecipes);
         String explosion;
         try {
             explosion = LegacyExplosionCase.run(event.getServer().overworld());
@@ -102,6 +274,96 @@ public class RetromodTestModForge {
             rules = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
         }
         LOG.info("{} #366 level.getGameRules().getBoolean(rule) (server started): {}", PREFIX, rules);
+        String surfaceRules;
+        try {
+            surfaceRules = SurfaceRuleCases.wrapsTheWorldRule(event.getServer());
+        } catch (Throwable t) {
+            surfaceRules = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} the overworld's surface rule through the old accessor, wrapped in a rule source of the mod's own (server started): {}",
+                PREFIX, surfaceRules);
+        // Item stacks need item components, which are bound only once a server loads its data.
+        String ingredients;
+        try {
+            ingredients = ConstructionCases.compoundIngredientsMatch() ? "success" : "fail: assertion was false";
+        } catch (Throwable t) {
+            ingredients = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} A CompoundIngredient subclass and CompoundIngredient.of match their children's items (server started): {}",
+                PREFIX, ingredients);
+        String food;
+        try {
+            food = WorldLoadMemberCases.foodAndRemainder() ? "success" : "fail: assertion was false";
+        } catch (Throwable t) {
+            food = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} ItemStack.isEdible and the crafting remainder (server started): {}", PREFIX, food);
+        String earlyStacks;
+        try {
+            earlyStacks = EarlyStackCases.matchOnServer();
+        } catch (Throwable t) {
+            earlyStacks = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} Item stacks built while constructing match, stack with and save as new ones (server started): {}",
+                PREFIX, earlyStacks);
+        // A block entity saves through the server's registries, and Lootr reads persistent data from its tile ticker.
+        String blockEntityData;
+        try {
+            blockEntityData = BlockEntityDataCases.savesAndLoads();
+        } catch (Throwable t) {
+            blockEntityData = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} A 1.20.1 block entity save and load, with getPersistentData under ForgeData (server started): {}",
+                PREFIX, blockEntityData);
+        String vanillaData;
+        try {
+            vanillaData = BlockEntityDataCases.vanillaChestKeepsItsData() ? "success" : "fail: assertion was false";
+        } catch (Throwable t) {
+            vanillaData = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} getPersistentData on a vanilla chest, one compound per block entity (server started): {}",
+                PREFIX, vanillaData);
+        // Arrows, stack comparison and world data saves that 1.20.5 to 1.21 reshaped.
+        String arrows;
+        try {
+            arrows = LegacyGameplayCases.arrowsBuildAndSave(event.getServer().overworld());
+        } catch (Throwable t) {
+            arrows = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} An arrow built with the 1.20.1 constructors and knockback saves its pickup stack (server started): {}",
+                PREFIX, arrows);
+        // A mob's own getDefaultLootTable(), which hosts from 1.20.5 no longer ask, as Alex's Mobs names its tables.
+        String ownLoot;
+        try {
+            ownLoot = OwnLootMobCase.dropsItsOwnTable(event.getServer().overworld());
+        } catch (Throwable t) {
+            ownLoot = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} A mob that overrides getDefaultLootTable() drops its own table when it dies (server started): {}", PREFIX, ownLoot);
+        String sameTags;
+        try {
+            sameTags = LegacyGameplayCases.sameItemSameTags() ? "success" : "fail: assertion was false";
+        } catch (Throwable t) {
+            sameTags = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} ItemStack.isSameItemSameTags and setHoverName after 1.20.5 (server started): {}", PREFIX, sameTags);
+        String tags;
+        try {
+            tags = LegacyGameplayCases.tagsKeepWrites() ? "success" : "fail: assertion was false";
+        } catch (Throwable t) {
+            tags = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} getOrCreateTag and getOrCreateTagElement keep a new stack's writes after 1.20.5 (server started): {}",
+                PREFIX, tags);
+        String dataSave;
+        try {
+            dataSave = LegacyGameplayCases.worldDataSaves() ? "success" : "fail: assertion was false";
+        } catch (Throwable t) {
+            dataSave = "fail: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+        LOG.info("{} SavedData.save(tag) through SavedData after 1.20.5 (server started): {}", PREFIX, dataSave);
+        // A mod-bus class whose key-mapping event left the mod bus on Forge 26.2; a dedicated server never loads it.
+        if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) MovedModBusSubscriber.report();
     }
 
     /**
@@ -238,6 +500,41 @@ public class RetromodTestModForge {
         // the transformed Forge class links to the current GameRules field.
         n++; passed += check(n, "#234 GameRules mob-griefing field", () ->
             GameRules.RULE_MOBGRIEFING != null);
+        // 1.21.5 made getString, getInt and getBoolean return Optional, so these calls compiled
+        // against 1.20.1 reach the host only through Retromod's NBT getter bridge.
+        n++; passed += check(n, "CompoundTag getString, getInt and getBoolean round-trips", () -> {
+            net.minecraft.nbt.CompoundTag c = new net.minecraft.nbt.CompoundTag();
+            c.putString("k", "v");
+            c.putInt("n", 42);
+            c.putBoolean("b", true);
+            return "v".equals(c.getString("k")) && c.getInt("n") == 42 && c.getBoolean("b")
+                && "".equals(c.getString("missing")) && c.getInt("missing") == 0;
+        });
+        // ResourceKey.location() and the ChunkPos(long) constructor are gone on 26.x. Forge's
+        // 26.1 shim once kept its own list and skipped these, while the CLI repaired them.
+        n++; passed += check(n, "ResourceKey.location() and new ChunkPos(long) on 26.x", () ->
+            net.minecraft.world.level.Level.OVERWORLD.location() != null
+                && new net.minecraft.world.level.ChunkPos(0L) != null);
+        // 1.21.4 turned the foliage color getters into constants. Only the color is compared,
+        // because newer versions return the same color with a full alpha byte.
+        n++; passed += check(n, "1.21.4 foliage color getters", () ->
+            (net.minecraft.world.level.FoliageColor.getEvergreenColor() & 0xFFFFFF) == 0x619961
+                && (net.minecraft.world.level.FoliageColor.getBirchColor() & 0xFFFFFF) == 0x80A755
+                && (net.minecraft.world.level.FoliageColor.getDefaultColor() & 0xFFFFFF) == 0x48B518
+                && (net.minecraft.world.level.FoliageColor.getMangroveColor() & 0xFFFFFF) == 0x92C648);
+        // Members world generation, loot chests, player join, crash reports and meals reach on 26.x.
+        n++; passed += check(n, "ChunkPos.asLong packs region keys on 26.1 and newer", WorldLoadMemberCases::chunkKeys);
+        n++; passed += check(n, "WeightedEntry and WeightedRandom pick by weight after 1.21.5", WorldLoadMemberCases::weightedPick);
+        n++; passed += check(n, "EntityDataSerializers.COMPOUND_TAG after 1.21.9", WorldLoadMemberCases::compoundTagSerializer);
+        n++; passed += check(n, "SystemReport.setDetail(name, supplier) on 26.2", WorldLoadMemberCases::systemReportDetail);
+        n++; passed += check(n, "A chest's lootTable id and setLootTable(id, seed) after 1.20.5", WorldLoadMemberCases::lootTableId);
+        // The stack checks need item stacks, so they are logged once a server starts.
+        n++; passed += check(n, "GameEvent radius while constructing", WorldLoadMemberCases::gameEventRadius);
+        n++; passed += check(n, "VillagerData.getProfession() after 1.21.5", WorldLoadMemberCases::profession);
+        // Biomes O' Plenty builds its surface rules while it constructs; 26.3 replaced them with material rules.
+        n++; passed += check(n, "SurfaceRules factories, constants and isBiome with no server", SurfaceRuleCases::buildsWithoutServer);
+        // Tectonic and Lithostitched compute and walk old density functions; 26.3 compiles them into samplers.
+        n++; passed += check(n, "an old density function computes, and mapAll swaps a marker under a reference", DensityFunctionCases::computesAndSwaps);
 
         // #260: item bases Minecraft deleted rather than renamed. RecordItem went when jukebox
         // playability became a component, EnchantedBookItem when stored enchantments did. Neither
@@ -414,6 +711,10 @@ public class RetromodTestModForge {
         n++; passed += check(n, "#358 a library versioned only by its manifest is translated with this mod",
             () -> LibraryCalls.manifestVersionedLibraryTranslatedLike(RetromodTestModForge.class,
                     "retromod-test-mod-forge"));
+        // A move for a library's users never applies to the jar that defines the class, as GeckoLib 4's own
+        // jar was moved onto com.geckolib and its classes could not load.
+        n++; passed += check(n, "A class this mod ships under a library name Retromod moves stays its own",
+            OwnLibraryCopy::staysTheModsOwn);
 
         // #340: 26.3 removed NumberProvider, ConstantValue and UniformGenerator, and its loot pools
         // and count functions take int or float providers.
@@ -440,7 +741,8 @@ public class RetromodTestModForge {
             () -> linksWithoutInheritanceError(LegacyRegistrationShapes::buildOldBlocks));
         n++; passed += check(n, "#283 CauldronInteraction.EMPTY as a map", () ->
             linksWithoutInheritanceError(LegacyRegistrationShapes::readEmptyCauldronTable));
-        n++; passed += check(n, "#283 Rarity.create is added as a rarity", LegacyRegistrationShapes::rarityWasAdded);
+        n++; passed += check(n, "#283 Rarity.create adds a rarity, or the vanilla fallback where Rarity is a plain enum",
+            LegacyRegistrationShapes::rarityWasAdded);
         n++; passed += check(n, "#283 a vanilla ArmorMaterials constant read as an ArmorMaterial",
             LegacyRegistrationShapes::vanillaArmorIsAMaterial);
         n++; passed += check(n, "#283 a block's menu provider asked through another block", () ->
@@ -459,6 +761,146 @@ public class RetromodTestModForge {
         // #271: 26.1 removed EitherHolder.
         n++; passed += check(n, "#271 an EitherHolder built from a key reports that key",
             RemovedEitherHolder::keyReadsBack);
+
+        // 26.1 renamed the atlas and texture Material to SpriteId and gave its name to an unrelated
+        // record. A client class, so a dedicated server has nothing to check.
+        n++; passed += check(n, "Material(atlas, texture) reads both back on a client", () ->
+            !net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()
+                || SpriteIdMaterial.atlasAndTextureReadBack());
+
+        // Forge 26.2 made ModList static, and Fuzs mods null-check ModList.get() while they construct.
+        n++; passed += check(n, "ModList.get() is not null while mods construct", () -> {
+            net.minecraftforge.fml.ModList mods = net.minecraftforge.fml.ModList.get();
+            return mods != null && mods.isLoaded("retromod_test_mod_forge");
+        });
+
+        // Forge 26.2 removed DistExecutor, which old mods call while their proxy class initializes.
+        n++; passed += check(n, "DistExecutor.runForDist in a static initializer picks this side's proxy",
+            DistProxyCase::pickedThisSide);
+        n++; passed += check(n, "DistExecutor run, call and safe forms run only on the side they name",
+            DistProxyCase::runsOnlyOnTheNamedSide);
+        // Smaller Forge 26.2 removals; the menu, tag data, reach value and griefing checks are logged later.
+        n++; passed += check(n, "ToolActions.SHIELD_BLOCK and DEFAULT_SHIELD_ACTIONS", ForgeSmallRemovals::shieldAction);
+        n++; passed += check(n, "ForgeRegistries.Keys.ENCHANTMENTS", ForgeSmallRemovals::enchantmentKey);
+        n++; passed += check(n, "Tags.Blocks.STONE and Tags.Items.STAINED_GLASS", ForgeSmallRemovals::tagConstants);
+        n++; passed += check(n, "ForgeMod.ENTITY_REACH is one registry object", ForgeSmallRemovals::reachIsOneObject);
+        // Forge 26.2 removed ForgeRegistries.ENCHANTMENTS, which old mods read in static initializers.
+        // The entry is checked again in the log once registry events are over.
+        n++; passed += check(n, "DeferredRegister.create(ForgeRegistries.ENCHANTMENTS) with an entry in a static initializer", () ->
+            EnchantmentRegistryReads.staticRegisterNamesEnchantments(
+                net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()));
+        // Forge 26.2 removed its folder pack; NeoForge gets no stand-in for it, so these are Forge cases.
+        n++; passed += check(n, "new PathPackResources(id, builtin, folder) reads pack.mcmeta", () ->
+            LegacyEventBaseCase.onNeoForge() || LegacyPathPacks.builtPackReads());
+        n++; passed += check(n, "A PathPackResources subclass reads through its resolve override", () ->
+            LegacyEventBaseCase.onNeoForge() || LegacyPathPacks.subclassReadsThroughResolve());
+
+        // Forge 26.2 removed the Event base a mod's own events extend, and Event.Result. NeoForge keeps
+        // its own base, so these are Forge cases.
+        n++; passed += check(n, "A mod's own events on the old Event base cancel and keep a result", () ->
+            LegacyEventBaseCase.onNeoForge() || LegacyEventBaseCase.cancelAndResult());
+        n++; passed += check(n, "instanceof Event and Event.class see a mod's own event, and cancel through it", () ->
+            LegacyEventBaseCase.onNeoForge() || LegacyEventBaseCase.eventTypedCode());
+        n++; passed += check(n, "A switch over Event.Result takes each constant's branch", () ->
+            LegacyEventBaseCase.onNeoForge() || LegacyEventBaseCase.resultSwitch());
+        n++; passed += check(n, "A GenericEvent built with its type reports it", () ->
+            LegacyEventBaseCase.onNeoForge() || LegacyEventBaseCase.genericType());
+        n++; passed += check(n, "A result set on a library's event reads back in the library", () ->
+            LegacyEventBaseCase.onNeoForge() || LegacyEventBaseCase.crossModResult());
+        // Forge 26.2's own Result enum on the events that kept a result, and a result kept for the ones that lost it.
+        n++; passed += check(n, "BonemealEvent.setResult(ALLOW) reads back and hasResult() is true", () ->
+            LegacyEventBaseCase.onNeoForge() || LegacyResultCases.bonemealAllow());
+        n++; passed += check(n, "CropGrowEvent.Pre keeps a DENY result", () ->
+            LegacyEventBaseCase.onNeoForge() || LegacyResultCases.cropGrowDeny());
+        n++; passed += check(n, "Two equal EntityMountEvent records keep their own results", () ->
+            LegacyEventBaseCase.onNeoForge() || LegacyResultCases.mountResultsStaySeparate());
+        // Posting those events keeps Forge 1.20.1's dispatch; the game-bus cases are logged once a server starts.
+        n++; passed += check(n, "A game-bus post of an own event during construction runs nothing and returns false", () ->
+            LegacyEventBaseCase.onNeoForge() || LegacyEventDispatchCases.gameBusClosedDuringConstruction());
+        n++; passed += check(n, "A library's mod-bus event reaches a listener on this mod's bus", () ->
+            LegacyEventBaseCase.onNeoForge() || LegacyEventDispatchCases.libraryEventOnModBus());
+        // Forge 26.2 made ModLoader static, and a warning handed to it stops the game bus on a client.
+        n++; passed += check(n, "ModLoader.get().addWarning while constructing (the server-started lines must still print)", () ->
+            LegacyEventBaseCase.onNeoForge() || ModLoaderCases.warnDuringConstruction());
+        n++; passed += check(n, "ModLoader.get().getWarnings() does not hold that warning", () ->
+            LegacyEventBaseCase.onNeoForge() || ModLoaderCases.warningStayedOutOfForge());
+        // Balm, Farmer's Delight and JEI: DataFixerUpper 6's getOrThrow, a field typed as Tiers, and an override
+        // of a method newer hosts made final. Each failed as soon as its class loaded.
+        n++; passed += check(n, "DataResult.getOrThrow(false, consumer) returns the value and reports an error once",
+            OldShapeCases::dataResultGetOrThrow);
+        n++; passed += check(n, "A static field typed as Tiers holds IRON, and Tiers.values() and valueOf name it IRON", OldShapeCases::tierField);
+        n++; passed += check(n, "A recipe that overrides ShapedRecipe.showNotification loads", OldShapeCases::finalOverrideLoads);
+
+        // Balm and Farmer's Delight construct with these: DataFixerUpper 9 moved Codec.unit to
+        // MapCodec.unitCodec, and Forge 26.2 cannot add a recipe book type.
+        n++; passed += check(n, "Codec.unit(value) and Codec.unit(supplier) parse to their values", ConstructionCases::unitCodecs);
+        n++; passed += check(n, "RecipeBookType.create in a static initializer gives a book type", ConstructionCases::recipeBookType);
+        // Farmer's Delight, Balm through Waystones and JEI stopped constructing on these: Forge 26.2 moved the old
+        // ingredient types, 1.21.11 renamed the buffer's id members, and the event channel and getByName went away.
+        // Matching needs item stacks, so it is logged once a server starts.
+        n++; passed += check(n, "A CompoundIngredient subclass and CompoundIngredient.of build while constructing",
+            ConstructionCases::compoundIngredientsBuild);
+        n++; passed += check(n, "FriendlyByteBuf.writeResourceLocation and readResourceLocation, by call and by reference",
+            ConstructionCases::bufferIdentifierRoundTrip);
+        n++; passed += check(n, "NetworkRegistry.newEventChannel and addListener while constructing", ConstructionCases::eventChannel);
+        n++; passed += check(n, "ChatFormatting.getByName finds a color by name", ConstructionCases::chatFormattingByName);
+        // 1.20.5 moved KeyDispatchDataCodec to map codecs, and 26.3 removed it; TerraBlender registers
+        // its surface rule codec with these calls while Minecraft bootstraps.
+        n++; passed += check(n, "KeyDispatchDataCodec.of(Codec) and its constructor build, and codec() parses",
+            KeyDispatchCodecCases::oldFactoriesParse);
+        n++; passed += check(n, "KeyDispatchDataCodec.codec() handed to a registration is the dispatch's own codec",
+            KeyDispatchCodecCases::registrationGetsTheDispatchCodec);
+        n++; passed += check(n, "KeyDispatchDataCodec.of(Codec.unit(x)).codec() parses {}, which has no value key",
+            KeyDispatchCodecCases::unitCodecParsesWithoutAValueKey);
+        // Farmer's Delight, Lootr and Sophisticated Backpacks stopped in RegisterEvent on Forge 26.2 on these.
+        n++; passed += check(n, "A fence gate built from its open and close sounds links its constructor",
+            () -> linksWithoutInheritanceError(RegisterEventCases::buildSoundGate));
+        n++; passed += check(n, "A flower built from a mob effect and seconds links its constructor",
+            () -> linksWithoutInheritanceError(RegisterEventCases::buildWildCrop));
+        n++; passed += check(n, "Mth.color(1, 0.5, 0) packs to 0xFF7F00", RegisterEventCases::packedColor);
+        n++; passed += check(n, "RandomPatchConfiguration builds and keeps its tries and spreads",
+            RegisterEventCases::randomPatchConfiguration);
+        n++; passed += check(n, "A block entity implementing the 1.20.1 RecipeHolder records and clears its recipe",
+            RegisterEventCases::recipeHolder);
+        n++; passed += check(n, "FoodProperties.Builder.effect with a supplier builds the food",
+            RegisterEventCases::suppliedFoodEffect);
+        n++; passed += check(n, "An entity client factory naming PlayMessages.SpawnEntity links",
+            () -> linksWithoutInheritanceError(RegisterEventCases::clientFactory));
+        n++; passed += check(n, "An item reads Item.BASE_ATTACK_DAMAGE_UUID through its own class",
+            RegisterEventCases::baseAttackUuid);
+        n++; passed += check(n, "A branch between two of a library's result kinds returns the library's base type",
+            () -> RegisterEventCases.libraryJoin());
+        // Forge 26.2's mob effect registry is a class that is not public, so Retromod reads a flower's effect through
+        // the public Registry interface. The block itself may still be refused outside registration.
+        n++; passed += check(n, "A flower built from a mob effect gets its effect through Forge's registry",
+            RegisterEventCases::wildCropReadsItsEffect);
+        // Patchouli reads Minecraft.screen from a crash report hook while mods construct. 26.2 moved the screen
+        // behind Minecraft.gui, which is still null then, so the read gives null as the old field did. Clients only.
+        n++; passed += check(n, "Minecraft.screen reads null while the game constructs", () ->
+            !net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()
+                || net.minecraft.client.Minecraft.getInstance().screen == null);
+        // Carry On reads a registry's tag names and its lookup while configs load; 1.21.2 made the registry its own
+        // lookup, and 26.x refuses to list tags before a world binds them.
+        n++; passed += check(n, "Registry.getTagNames() lists while mods construct, before any tag is bound", () ->
+            net.minecraft.core.registries.BuiltInRegistries.ITEM.getTagNames().count() >= 0);
+        n++; passed += check(n, "Registry.asLookup() answers the registry's lookup", () ->
+            net.minecraft.core.registries.BuiltInRegistries.ITEM.asLookup() != null);
+        // Carry On and FancyMenu read item strings with ItemParser.parseForItem, which 1.20.5 removed with its result.
+        n++; passed += check(n, "ItemParser.parseForItem reads an item id and the NBT after it", () -> {
+            net.minecraft.commands.arguments.item.ItemParser.ItemResult result =
+                net.minecraft.commands.arguments.item.ItemParser.parseForItem(
+                    net.minecraft.core.registries.BuiltInRegistries.ITEM.asLookup(),
+                    new com.mojang.brigadier.StringReader("minecraft:diamond{Damage:3}"));
+            return result.item().value() == Items.DIAMOND && String.valueOf(result.nbt()).contains("Damage:3");
+        });
+        // 26.x binds item components only when a world's data loads; the stacks are matched once a server starts.
+        n++; passed += check(n, "new ItemStack in a static field and from a holder, and getDefaultInstance, while constructing",
+            EarlyStackCases::buildWhileConstructing);
+        // Sophisticated Backpacks builds its entity loot mapping from BuiltInLootTables, which 1.20.5 keyed.
+        n++; passed += check(n, "BuiltInLootTables constants and all() read as ids, equal each time and usable as map keys",
+            LootTableIds::constantsAreIds);
+        n++; passed += check(n, "BuiltInLootTables.EMPTY, Block.getLootTable() and EntityType.getDefaultLootTable() read as ids",
+            LootTableIds::emptyAndGetters);
 
         LOG.info("{} SUMMARY: {}/{} passed", PREFIX, passed, n);
     }

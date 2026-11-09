@@ -1,0 +1,42 @@
+{
+  "type": "minecraft:chest",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "retromod_test_mod_neoforge:legacy_named_item",
+          "name": "minecraft:emerald",
+          "weight": 5,
+          "conditions": [
+            {
+              "condition": "retromod_test_mod_neoforge:legacy_always"
+            }
+          ],
+          "functions": [
+            {
+              "function": "minecraft:set_count",
+              "count": 4
+            }
+          ]
+        },
+        {
+          "type": "retromod_test_mod_neoforge:legacy_named_item",
+          "name": "minecraft:dirt",
+          "weight": 0
+        },
+        {
+          "type": "retromod_test_mod_neoforge:legacy_named_item",
+          "name": "minecraft:stone",
+          "weight": 100,
+          "conditions": [
+            {
+              "condition": "minecraft:random_chance",
+              "chance": 0.0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

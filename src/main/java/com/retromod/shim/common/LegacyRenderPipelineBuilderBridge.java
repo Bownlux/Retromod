@@ -7,6 +7,7 @@ package com.retromod.shim.common;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.SyntheticEmbedder;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.InvocationTargetException;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -77,7 +78,7 @@ public final class LegacyRenderPipelineBuilderBridge {
                     "com.mojang.blaze3d.pipeline.ColorTargetState", false, loader);
             Object colorState = colorStateClass.getConstructor(blendClass)
                     .newInstance(blendFunction);
-            return builder.getClass().getMethod("withColorTargetState", colorStateClass)
+            return LegacyPublicMethods.method(builder.getClass(), "withColorTargetState", colorStateClass)
                     .invoke(builder, colorState);
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             // Losing custom blending is safer than crashing before the title screen.
@@ -90,7 +91,7 @@ public final class LegacyRenderPipelineBuilderBridge {
         String migrated = "core/rendertype_item_entity_translucent_cull".equals(shader)
                 ? "core/item" : shader;
         try {
-            return builder.getClass().getMethod("withFragmentShader", String.class)
+            return LegacyPublicMethods.method(builder.getClass(), "withFragmentShader", String.class)
                     .invoke(builder, migrated);
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             return builder;
@@ -105,9 +106,9 @@ public final class LegacyRenderPipelineBuilderBridge {
                     "com.mojang.blaze3d.vertex.VertexFormat", false, loader);
             Class<?> topologyClass = Class.forName(
                     "com.mojang.blaze3d.PrimitiveTopology", false, loader);
-            Object result = builder.getClass().getMethod(
+            Object result = LegacyPublicMethods.method(builder.getClass(),
                     "withVertexBinding", int.class, formatClass).invoke(builder, 0, format);
-            return result.getClass().getMethod("withPrimitiveTopology", topologyClass)
+            return LegacyPublicMethods.method(result.getClass(), "withPrimitiveTopology", topologyClass)
                     .invoke(result, topology);
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             return builder;
@@ -125,7 +126,7 @@ public final class LegacyRenderPipelineBuilderBridge {
     private static Object finish(Object builder, String terminalMethod) {
         applySamplerLayout(builder);
         try {
-            return builder.getClass().getMethod(terminalMethod).invoke(builder);
+            return LegacyPublicMethods.method(builder.getClass(), terminalMethod).invoke(builder);
         } catch (InvocationTargetException e) {
             Throwable cause = e.getCause();
             if (cause instanceof RuntimeException runtime) throw runtime;
@@ -151,7 +152,7 @@ public final class LegacyRenderPipelineBuilderBridge {
             Class<?> layoutClass = Class.forName(
                     "com.mojang.blaze3d.pipeline.BindGroupLayout", false, loader);
             Object layout = layoutsClass.getField(layoutField).get(null);
-            builder.getClass().getMethod("withBindGroupLayout", layoutClass)
+            LegacyPublicMethods.method(builder.getClass(), "withBindGroupLayout", layoutClass)
                     .invoke(builder, layout);
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             // A custom shader may render incorrectly, but the removed call must not kill startup.

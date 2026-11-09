@@ -66,4 +66,49 @@ class FuzzyMethodResolverTest {
         assertFalse(r.isRedirectStackSafe(sameParams, "V", "(" + modelPart + "FF)V"),
                 "extra parameter (arity change) is unsafe");
     }
+
+    @Test
+    @DisplayName("looksRenamed: a few edits that swap one word for another are not a rename")
+    void nearbyButDifferentNamesAreRefused() {
+        String[][] refused = {
+            {"CHAIN", "AIR"}, {"kill", "tick"}, {"GENERIC_EAT", "GENERIC_DEATH"},
+            {"ITEM_BREAK", "IRON_BREAK"}, {"value", "age"}, {"getMaxSection", "getMinSectionY"},
+            {"getFoliageColorOverride", "dryFoliageColorOverride"}, {"cos", "abs"}, {"sin", "sqrt"},
+            {"BOAT", "BAT"}, {"GRASS", "GLASS"}, {"isIndirect", "isDirect"},
+            {"setExhaustion", "addExhaustion"}, {"method_8322", "method_8615"},
+            {"method_48402", "method_48403"}, {"m_142469_", "m_142242_"},
+        };
+        for (String[] pair : refused) {
+            assertTrue(FuzzyMethodResolver.levenshteinAtMost(pair[0], pair[1], 3),
+                    pair[0] + " and " + pair[1] + " must sit inside the edit cap to test the shape rule");
+            assertFalse(FuzzyMethodResolver.looksRenamed(pair[0], pair[1]),
+                    pair[0] + " -> " + pair[1] + " names a different member, not a rename");
+        }
+    }
+
+    @Test
+    @DisplayName("looksRenamed: accessor prefixes, one added word, and respellings are renames")
+    void realRenamesAreAccepted() {
+        String[][] accepted = {
+            {"getGroup", "group"}, {"isHidden", "hidden"}, {"getAllowCommands", "isAllowCommands"},
+            {"markPosForPostprocessing", "markPosForPostProcessing"}, {"noCollission", "noCollision"},
+            {"isInstantenous", "isInstantaneous"}, {"dowse", "douse"}, {"sounds", "sound"},
+            {"getMinSection", "getMinSectionY"}, {"getMaxSection", "getMaxSectionY"},
+            {"createNewThreadLocalInstance", "createThreadLocalInstance"},
+            {"getTagEnchantments", "getEnchantments"}, {"getComponent", "getRawComponent"},
+            {"WORLDGEN_REGISTRIES", "WORLD_REGISTRIES"}, {"getPreferredVidMode", "getPreferredVideoMode"},
+        };
+        for (String[] pair : accepted) {
+            assertTrue(FuzzyMethodResolver.looksRenamed(pair[0], pair[1]),
+                    pair[0] + " -> " + pair[1] + " is the same member renamed");
+        }
+    }
+
+    @Test
+    @DisplayName("looksRenamed: names past the edit cap never count, whatever their shape")
+    void editCapStillApplies() {
+        assertFalse(FuzzyMethodResolver.looksRenamed("getFoliageColorOverride", "foliageColorOverride"),
+                "four edits apart; the substring rule scores this pair instead");
+        assertFalse(FuzzyMethodResolver.looksRenamed("CHAIN", "IRON_CHAIN"));
+    }
 }

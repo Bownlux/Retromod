@@ -41,6 +41,8 @@ public class Fabric_1_21_8_to_1_21_9 implements VersionShim {
     public void registerRedirects(RetromodTransformer transformer) {
         // authlib 7 made GameProfile a record; vanilla, so every loader needs it.
         com.retromod.shim.common.LegacyGameProfileBridge.register(transformer);
+        // WorldVersion.getPackVersion(PackType) became packVersion(PackType) with a major and minor number.
+        com.retromod.shim.common.LegacyPackVersionBridge.register(transformer);
 
         // Entity#getWorld -> getEntityWorld, including common named subclasses.
         transformer.registerMethodRedirect(
@@ -56,6 +58,19 @@ public class Fabric_1_21_8_to_1_21_9 implements VersionShim {
                 "net/minecraft/class_1297", "method_37908", "()Lnet/minecraft/class_1937;",
                 "net/minecraft/class_1297", "method_73183", "()Lnet/minecraft/class_1937;"
             );
+            // Keyframe's constructors took Vector3fc under the same intermediary names.
+            com.retromod.shim.common.JomlParameterWidening.registerIntermediary1_21_9(transformer);
+            // Entity.getServer() is gone; the entity's level still has the server.
+            com.retromod.shim.common.LegacyPlayerServerBridge.registerGetServerIntermediary(transformer);
+            // Style.withFont took a FontDescription; a font file is its Resource form.
+            com.retromod.shim.common.LegacyStyleFontBridge.registerIntermediary(transformer);
+            // Reload listeners take a shared state, so a 1.21.2 to 1.21.8 listener gets the host's reload.
+            com.retromod.shim.common.LegacyReloadListenerBridge.registerIntermediary(transformer);
+        } else {
+            // On 26.x the remap gives the call its Mojang name first.
+            com.retromod.shim.common.LegacyPlayerServerBridge.registerGetServer(transformer);
+            com.retromod.shim.common.LegacyStyleFontBridge.register(transformer);
+            com.retromod.shim.common.LegacyReloadListenerBridge.register(transformer);
         }
 
         transformer.registerMethodRedirect(
@@ -95,6 +110,23 @@ public class Fabric_1_21_8_to_1_21_9 implements VersionShim {
             "com/retromod/shim/fabric/embedded/KeyBindingShim", "create",
             "(Ljava/lang/String;Ljava/lang/Object;ILjava/lang/String;)Ljava/lang/Object;"
         );
+
+        // Distributed Fabric mods build keybinds with intermediary names, which the Yarn key above
+        // never matches. On 26.x the full remap makes them KeyMapping, and the 26.1 shims own that.
+        if (!RetromodVersion.isUnobfuscatedTarget(RetromodVersion.TARGET_MC_VERSION)) {
+            transformer.registerConstructorRedirect(
+                "net/minecraft/class_304",
+                "(Ljava/lang/String;Lnet/minecraft/class_3675$class_307;ILjava/lang/String;)V",
+                "com/retromod/shim/fabric/embedded/KeyBindingShim", "create",
+                "(Ljava/lang/String;Ljava/lang/Object;ILjava/lang/String;)Ljava/lang/Object;"
+            );
+            transformer.registerConstructorRedirect(
+                "net/minecraft/class_304",
+                "(Ljava/lang/String;ILjava/lang/String;)V",
+                "com/retromod/shim/fabric/embedded/KeyBindingShim", "createDefault",
+                "(Ljava/lang/String;ILjava/lang/String;)Ljava/lang/Object;"
+            );
+        }
 
         // BlockEntityRenderer moved to OrderedRenderCommandQueue; no redirect needed for the common cases.
     }

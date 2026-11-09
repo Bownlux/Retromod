@@ -4,6 +4,7 @@
  */
 package com.retromod.mixin.runtime;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -282,7 +283,7 @@ public final class ItemComponentsBridge {
     private static Object invoke(Object target, Class<?> type, String[] names, Object[] args)
             throws ReflectiveOperationException {
         List<Method> candidates = new ArrayList<>();
-        for (Method method : type.getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(type)) {
             if (method.getParameterCount() == args.length && matches(method.getName(), names)) {
                 candidates.add(method);
             }

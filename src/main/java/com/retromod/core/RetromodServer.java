@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.RetromodLog;
 import net.fabricmc.api.DedicatedServerModInitializer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -21,15 +22,15 @@ public class RetromodServer implements DedicatedServerModInitializer {
 
     @Override
     public void onInitializeServer() {
-        LOGGER.info("Starting Retromod on the dedicated server.");
+        LOGGER.debug(RetromodLog.DETAIL, "Starting Retromod on the dedicated server.");
 
         EnvironmentDetector.setEnvironment(false, true);
 
         initializeServerFeatures();
         registerServerCrashHandler();
 
-        LOGGER.info("Server mode is ready. Bytecode transforms and ahead-of-time compilation are enabled.");
-        LOGGER.info("GUI features are unavailable on a headless server, so warnings will appear here.");
+        LOGGER.debug(RetromodLog.DETAIL, "Server mode is ready. Bytecode transforms and ahead-of-time compilation are enabled.");
+        LOGGER.debug(RetromodLog.DETAIL, "GUI features are unavailable on a headless server, so warnings will appear here.");
     }
 
     private void initializeServerFeatures() {
@@ -42,7 +43,7 @@ public class RetromodServer implements DedicatedServerModInitializer {
         try {
             HybridTransformationEngine hybrid = HybridTransformationEngine.getInstance();
             hybrid.initialize(modsFolder, RetromodVersion.TARGET_MC_VERSION);
-            LOGGER.info("The server transform engine is ready.");
+            LOGGER.debug(RetromodLog.DETAIL, "The server transform engine is ready.");
         } catch (Exception e) {
             LOGGER.warn("Could not initialize hybrid engine: {}", e.getMessage());
         }
@@ -51,7 +52,7 @@ public class RetromodServer implements DedicatedServerModInitializer {
             long modCount = s
                 .filter(p -> p.toString().endsWith(".jar"))
                 .count();
-            LOGGER.info("Found {} mod JARs in mods folder", modCount);
+            LOGGER.debug(RetromodLog.DETAIL, "Found {} mod JARs in mods folder", modCount);
         } catch (Exception e) {
             LOGGER.debug("Could not count mods: {}", e.getMessage());
         }
@@ -74,7 +75,7 @@ public class RetromodServer implements DedicatedServerModInitializer {
     public static void onServerStarted(Object server) {
         try {
             SafeCrashHandler.getInstance().registerServer(server);
-            LOGGER.info("The crash handler is attached to the Minecraft server.");
+            LOGGER.debug(RetromodLog.DETAIL, "The crash handler is attached to the Minecraft server.");
         } catch (Exception e) {
             LOGGER.debug("Could not register server with crash handler");
         }

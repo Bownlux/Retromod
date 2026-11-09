@@ -5,6 +5,8 @@
 package com.retromod.resources;
 
 import com.retromod.core.RetromodVersion;
+import com.retromod.inplace.WorkFolder;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -95,14 +97,14 @@ public class DataPackTransformer {
             oldFormat.display(), targetDataFormat.display());
 
         if (oldFormats.supports(targetDataFormat) && !requiresContentMigration()) {
-            LOGGER.info("  Pack is already compatible - copying unchanged");
+            LOGGER.debug(RetromodLog.DETAIL, "  Pack is already compatible - copying unchanged");
             Path dest = outputDir.resolve(name);
             PackArchive.copyPathAtomically(sourcePack, dest);
             return dest;
         }
 
         // Create temp directory
-        Path tempDir = Files.createTempDirectory("retromod-dp-");
+        Path tempDir = WorkFolder.createTempDirectory("retromod-dp-");
         
         try {
             // Extract
@@ -130,7 +132,7 @@ public class DataPackTransformer {
                 .build();
             int migrated = ModResourceMigrations.migrateDirectory(tempDir, context);
             if (migrated > 0) {
-                LOGGER.info("  Updated {} data file(s)", migrated);
+                LOGGER.debug(RetromodLog.DETAIL, "  Updated {} data file(s)", migrated);
             }
             if (requiresContentMigration()) {
                 ModDataMigrator.validateStrictDataJsonTree(tempDir);
@@ -141,7 +143,7 @@ public class DataPackTransformer {
             Path outputPath = outputDir.resolve(outputName);
             PackArchive.packZip(tempDir, outputPath);
             
-            LOGGER.info("  Transformed: {}", outputName);
+            LOGGER.debug(RetromodLog.DETAIL, "  Transformed: {}", outputName);
             return outputPath;
             
         } finally {

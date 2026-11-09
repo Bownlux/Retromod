@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.api.common.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.lang.reflect.Constructor;
 
@@ -18,7 +19,7 @@ public class GeckoLibShim {
         try {
             String className = dataOrRegistrar.getClass().getName();
             if (className.contains("AnimationData")) {
-                for (Method m : animatable.getClass().getMethods()) {
+                for (Method m : LegacyPublicMethods.methods(animatable.getClass())) {
                     if (m.getName().equals("registerControllers")) {
                         Class<?>[] params = m.getParameterTypes();
                         if (params.length == 1 && params[0].getName().contains("ControllerRegistrar")) {
@@ -36,7 +37,7 @@ public class GeckoLibShim {
     
     private static Object createRegistrarFromData(Object animationData) {
         try {
-            Method getControllers = animationData.getClass().getMethod("getAnimationControllers");
+            Method getControllers = LegacyPublicMethods.method(animationData.getClass(), "getAnimationControllers");
             return getControllers.invoke(animationData);
         } catch (Exception e) {
             return animationData;
@@ -75,15 +76,15 @@ public class GeckoLibShim {
             if (builderClassName.contains("RawAnimation")) {
                 Class<?> loopTypeClass = Class.forName("software.bernie.geckolib.animation.Animation$LoopType");
                 Object loopType = loop ? loopTypeClass.getField("LOOP").get(null) : loopTypeClass.getField("PLAY_ONCE").get(null);
-                Method thenMethod = builder.getClass().getMethod("then", String.class, loopTypeClass);
+                Method thenMethod = LegacyPublicMethods.method(builder.getClass(), "then", String.class, loopTypeClass);
                 return thenMethod.invoke(builder, animationName, loopType);
             } else {
-                Method addMethod = builder.getClass().getMethod("addAnimation", String.class, boolean.class);
+                Method addMethod = LegacyPublicMethods.method(builder.getClass(), "addAnimation", String.class, boolean.class);
                 return addMethod.invoke(builder, animationName, loop);
             }
         } catch (Exception e) {
             try {
-                Method addMethod = builder.getClass().getMethod("addAnimation", String.class);
+                Method addMethod = LegacyPublicMethods.method(builder.getClass(), "addAnimation", String.class);
                 return addMethod.invoke(builder, animationName);
             } catch (Exception e2) {
                 throw new RuntimeException("Cannot add animation: " + animationName, e2);
