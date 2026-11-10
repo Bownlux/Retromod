@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.loaderapi.LoaderApiTestSupport;
 import com.retromod.mapping.IntermediaryToMojangMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -215,6 +216,48 @@ class FabricNestedJarRecursionTest {
                             .getAsJsonObject().getAsJsonObject("depends")
                             .get("minecraft").getAsString(),
                     "the fallback must update each nested mod's host constraint");
+        } finally {
+            transformer.clearRedirectsForTesting();
+            transformer.clearJarClassBytesProvider();
+        }
+    }
+
+    @Test
+    void unreadableNestedClassIsReportedAndTheRestIsWritten(@TempDir Path dir) throws Exception {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        try {
+            transformer.registerClassRedirect(OLD_TYPE, NEW_TYPE);
+            byte[] broken = "not a class".getBytes(StandardCharsets.UTF_8);
+            byte[] libraryJar = jarOf(entries(
+                    "fabric.mod.json", fabricMetadata("broken_library", null),
+                    "lib/Good.class", classWithRedirect("lib/Good"),
+                    "lib/Broken.class", broken));
+            Path extracted = dir.resolve("broken-extracted");
+            Path nested = extracted.resolve("META-INF/jars/library.jar");
+            Files.createDirectories(nested.getParent());
+            Files.write(nested, libraryJar);
+            Path original = dir.resolve("broken-outer.jar");
+            writeManifestJar(original);
+            Path output = dir.resolve("broken-output.jar");
+
+            // A pre-26.1 host takes the extracted-tree path for nested jars.
+            String log = LoaderApiTestSupport.captureErr(() -> invokeRepackage(
+                    new FabricModTransformer("1.21.1"), extracted, output, original));
+
+            byte[] libraryOut = readEntry(output, "META-INF/jars/library.jar");
+            assertEquals("L" + NEW_TYPE + ";",
+                    readClass(readEntry(libraryOut, "lib/Good.class")).fields.get(0).desc,
+                    "one unreadable class must not stop the rest of the library");
+            assertArrayEquals(broken, readEntry(libraryOut, "lib/Broken.class"),
+                    "the class that failed ships as it was");
+            long warnings = log.lines()
+                    .filter(line -> line.contains("WARN") && line.contains("lib/Broken")
+                            && line.contains("broken-outer.jar!/META-INF/jars/library.jar"))
+                    .count();
+            assertEquals(1, warnings,
+                    "the failed class must be named once at WARN with its nested jar; log was:\n"
+                            + log);
         } finally {
             transformer.clearRedirectsForTesting();
             transformer.clearJarClassBytesProvider();

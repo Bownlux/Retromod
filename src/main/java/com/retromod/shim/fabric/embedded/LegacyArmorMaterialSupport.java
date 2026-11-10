@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
@@ -75,7 +76,7 @@ public final class LegacyArmorMaterialSupport {
         if (target == null) {
             throw new IllegalStateException("Cannot read " + name + " from a missing armor material");
         }
-        for (Method method : target.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(target.getClass())) {
             if (!method.getName().equals(name) || method.getParameterCount() != args.length) continue;
             try {
                 // Mod materials are often package-private or anonymous classes.

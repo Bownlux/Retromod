@@ -13,6 +13,12 @@ import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import com.google.gson.stream.JsonReader;
 import com.retromod.core.RetromodVersion;
+import com.retromod.shim.common.LegacyItemPropertiesBridge;
+import com.retromod.shim.common.LegacyItemRendererBridge;
+import com.retromod.shim.forge.ForgeHostShape;
+import com.retromod.shim.forge.LegacyForgeItemRendererBridge;
+import com.retromod.shim.neoforge.LegacyNeoForgeItemRendererBridge;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,6 +37,7 @@ import java.util.SortedSet;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -49,6 +56,10 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
     private static final String TEMPLATE_SPAWN_EGG = "minecraft:item/template_spawn_egg";
     private static final String BUILTIN_ENTITY = "minecraft:builtin/entity";
     private static final String MAP_COLOR = "minecraft:map_color";
+    private static final String SEPARATE_TRANSFORMS = "forge:separate_transforms";
+    // The display contexts Forge 1.20.1 read in separate_transforms, which the 1.21.4 select reads under the same names.
+    private static final Set<String> DISPLAY_CONTEXTS = Set.of("none", "thirdperson_lefthand", "thirdperson_righthand",
+            "firstperson_lefthand", "firstperson_righthand", "head", "gui", "ground", "fixed");
 
     // The item model type ids every host from 1.21.4 to 26.3 registers, read from the ItemModels class
     // of the 1.21.4, 1.21.5, 1.21.6, 1.21.9, 1.21.11, 26.1, 26.2 and 26.3 client jars. A minecraft:
@@ -95,15 +106,41 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
         // A definition shipped by a mod known to predate 1.21.4 was never read on its own version,
         // where the model's overrides decided the look, so a plain one may give way to them.
         boolean shippedOverridesUnseen = context.sourceBefore(FIRST_DEFINITION_HOST);
+        // Read only when a definition needs it, since it scans the jar's classes.
+        Supplier<Set<String>> itemColorMods = () -> LegacyItemColorTints.modsWithItemColors(context, classNames, readClass);
+        // The same for the mods whose old item renderers Retromod runs through an item model type of their own.
+        Supplier<Set<String>> itemRendererMods = () -> itemRendererMods(context, classNames, readClass);
+        // Retromod's runtime adds the property type that reads old mods' ItemProperties functions from this host on.
+        boolean modProperties = context.targetAtLeast(LegacyItemPropertiesBridge.firstHost(
+                context.targetLoader() == MigrationContext.Loader.NEOFORGE));
         return new Run(tree, context.targetMcVersion(), context.ownNamespaces(), translateOverrides,
-                shippedOverridesUnseen, classNames, readClass).write();
+                shippedOverridesUnseen, forgeFamily(context), modProperties, classNames, readClass, itemColorMods, itemRendererMods).write();
+    }
+
+    // Each loader's install adds the type from its own first host: Forge from 26.2, NeoForge from 26.1.
+    private static Set<String> itemRendererMods(MigrationContext context, Collection<String> classNames,
+            Function<String, byte[]> readClass) {
+        if (context.targetLoader() == MigrationContext.Loader.NEOFORGE) {
+            return LegacyClientInstalls.modsInstalling(context, classNames, readClass, LegacyNeoForgeItemRendererBridge.INSTALLER,
+                    LegacyNeoForgeItemRendererBridge.FIRST_HOST, MigrationContext.Loader.NEOFORGE);
+        }
+        return LegacyClientInstalls.modsInstalling(context, classNames, readClass, LegacyForgeItemRendererBridge.INSTALLER,
+                ForgeHostShape.FIRST_CHECKED_VERSION);
+    }
+
+    // Forge's model loaders only mean something in a Forge or NeoForge mod.
+    private static boolean forgeFamily(MigrationContext context) {
+        MigrationContext.Loader source = context.sourceLoader();
+        return source.isForgeFamily() || (source == MigrationContext.Loader.UNKNOWN && context.targetLoader().isForgeFamily());
     }
 
     /** Writes the definitions for a caller without a {@link MigrationContext}, so with no egg colors. */
     static int write(ResourceTree tree, String targetMcVersion, Set<String> ownNamespaces) throws IOException {
         if (!atLeast(targetMcVersion, FIRST_DEFINITION_HOST)) return 0;
         // A null ownNamespaces writes in every namespace but the shared ones.
-        return new Run(tree, targetMcVersion, ownNamespaces, true, false, Set.of(), name -> null).write();
+        boolean modProperties = atLeast(targetMcVersion, LegacyItemPropertiesBridge.FIRST_HOST);
+        return new Run(tree, targetMcVersion, ownNamespaces, true, false, false, modProperties, Set.of(), name -> null, () -> null,
+                () -> null).write();
     }
 
     /** A model reference as a full id. */
@@ -120,8 +157,18 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
         private final Set<String> ownNamespaces;
         private final boolean translateOverrides;
         private final boolean shippedOverridesUnseen;
+        private final boolean forgeModels;
+        private final boolean modProperties;
+        // True while a separate_transforms select is built, so a model it names is not read as another one.
+        private boolean inSeparateTransforms;
         private final Collection<String> classNames;
         private final Function<String, byte[]> readClass;
+        private final Supplier<Set<String>> itemColorModsSource;
+        private Set<String> itemColorMods;
+        private boolean itemColorModsRead;
+        private final Supplier<Set<String>> itemRendererModsSource;
+        private Set<String> itemRendererMods;
+        private boolean itemRendererModsRead;
 
         private final Map<String, JsonObject> models = new HashMap<>();
         private SortedSet<String> names = new TreeSet<>();
@@ -143,16 +190,24 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
         private final Set<String> sharedParticles = new TreeSet<>();
         private final Set<String> repaired = new TreeSet<>();
         private final Set<String> notDefinitions = new TreeSet<>();
+        private final Set<String> legacyTinted = new TreeSet<>();
+        private final Set<String> drawnByRenderer = new TreeSet<>();
+        private final Set<String> separateTransforms = new TreeSet<>();
 
         Run(ResourceTree tree, String target, Set<String> ownNamespaces, boolean translateOverrides,
-            boolean shippedOverridesUnseen, Collection<String> classNames, Function<String, byte[]> readClass) {
+            boolean shippedOverridesUnseen, boolean forgeModels, boolean modProperties, Collection<String> classNames,
+            Function<String, byte[]> readClass, Supplier<Set<String>> itemColorMods, Supplier<Set<String>> itemRendererMods) {
             this.tree = tree;
             this.target = target;
             this.ownNamespaces = ownNamespaces;
             this.translateOverrides = translateOverrides;
             this.shippedOverridesUnseen = shippedOverridesUnseen;
+            this.forgeModels = forgeModels;
+            this.modProperties = modProperties;
             this.classNames = classNames;
             this.readClass = readClass;
+            this.itemColorModsSource = itemColorMods;
+            this.itemRendererModsSource = itemRendererMods;
         }
 
         /** Writes every definition and generated file, and returns how many files it wrote. */
@@ -249,14 +304,15 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
             JsonObject baseLeaf = leaf(base, item, null);
             if (baseLeaf == null) return null;
             // 1.21.4 no longer reads overrides. They become a condition, select or range dispatch
-            // tree, so a bow animates and a shield blocks.
+            // tree, so a bow animates and a shield blocks. Where Retromod's runtime adds the property type
+            // that reads a mod's own ItemProperties functions, those overrides keep working too.
             Set<String> codeRendered = new TreeSet<>();
             LegacyItemOverrides.Translation translation = LegacyItemOverrides.translate(overrides, base, reference -> {
                 JsonObject leaf = leaf(reference, item, null);
                 if (leaf != null) return leaf;
                 codeRendered.add(reference);
                 return baseLeaf;
-            });
+            }, modProperties);
             if (!translation.droppedProperties().isEmpty()) {
                 lostVariants.put(item, translation.droppedProperties());
             }
@@ -268,6 +324,20 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
 
         /** The node that shows {@code model} for {@code item}, or null when nothing can show it. */
         private JsonObject leaf(String model, String item, JsonArray tints) {
+            // Forge's separate_transforms picked a model per display context, which a select on it now does.
+            JsonObject separate = forgeModels && !inSeparateTransforms ? separateTransforms(model) : null;
+            if (separate != null) {
+                inSeparateTransforms = true;
+                try {
+                    JsonObject select = displaySelect(separate, model, item, tints);
+                    if (select != null) {
+                        separateTransforms.add(item);
+                        return select;
+                    }
+                } finally {
+                    inSeparateTransforms = false;
+                }
+            }
             Chain chain = chain(model);
             if (chain.spawnEggTemplate()) {
                 // 1.21.4 moved the egg colors from code into the definition, as tints.
@@ -295,9 +365,11 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
                 eggs.add(item);
                 return plain(egg, colors);
             }
-            // 1.21.4 removed builtin/entity. A 3D render needs a renderer registered in code, so the
-            // item shows a flat icon from its old model instead.
+            // 1.21.4 removed builtin/entity. An old Forge or NeoForge mod's renderer runs through the item model type its
+            // constructor adds; any other item shows a flat icon from its old model instead.
             if (chain.builtinEntity()) {
+                JsonObject drawn = forgeModels ? itemRendererNode(model, chain, item, tints) : null;
+                if (drawn != null) return drawn;
                 String icon = icon(model, chain, item);
                 String flat = icon == null ? null : generatedModel(model, item, "builtin_entity");
                 if (flat == null) return null;
@@ -305,7 +377,165 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
                 icons.add(item);
                 return plain(flat, tints);
             }
-            return plain(model, tints);
+            return plain(model, tints != null ? tints : legacyColorTints(model, item));
+        }
+
+        /** A node that runs the item's old renderer, with its flat icon as the fallback; null when no mod adds the type. */
+        private JsonObject itemRendererNode(String model, Chain chain, String item, JsonArray tints) {
+            if (!itemRendererModsRead) {
+                itemRendererMods = itemRendererModsSource.get();
+                itemRendererModsRead = true;
+            }
+            if (itemRendererMods == null) return null;
+            String transforms = generatedModel(model, item, "item_renderer");
+            if (transforms == null) return null;
+            generated.putIfAbsent(modelFile(transforms), json(transformsModel(model, chain)));
+            JsonObject node = new JsonObject();
+            node.addProperty("type", LegacyClientInstalls.typeId(namespace(item), itemRendererMods,
+                    LegacyItemRendererBridge.MODEL_TYPE_PATH));
+            node.addProperty("model", transforms);
+            // The flat icon stands in where the item has no renderer or its renderer fails.
+            String icon = icon(model, chain, item);
+            String flat = icon == null ? null : generatedModel(model, item, "builtin_entity");
+            if (flat != null) {
+                generated.putIfAbsent(modelFile(flat), json(iconModel(icon)));
+                node.add("fallback", plain(flat, tints));
+            }
+            drawnByRenderer.add(item);
+            return node;
+        }
+
+        /** The old model's display transforms, GUI light and particle, read through its parents as Forge 1.20.1 read them. */
+        private JsonObject transformsModel(String id, Chain chain) {
+            JsonObject display = new JsonObject();
+            JsonPrimitive guiLight = null;
+            Set<String> seen = new java.util.HashSet<>();
+            String current = id;
+            for (int depth = 0; depth < MAX_PARENT_DEPTH && seen.add(current); depth++) {
+                JsonObject model = model(current);
+                if (model == null) break;
+                if (model.get("display") instanceof JsonObject own) {
+                    // The nearest model that names a context decides it, even with an identity transform, as Forge
+                    // 1.20.1 asked a parent only for a context the child left out.
+                    for (Map.Entry<String, JsonElement> entry : withHandFallbacks(own).entrySet()) {
+                        if (!display.has(entry.getKey()) && entry.getValue() instanceof JsonObject) {
+                            display.add(entry.getKey(), entry.getValue().deepCopy());
+                        }
+                    }
+                }
+                if (guiLight == null && model.get("gui_light") instanceof JsonPrimitive light && light.isString()) guiLight = light;
+                if (!(model.get("parent") instanceof JsonPrimitive parent) || !parent.isString()) break;
+                current = modelId(parent.getAsString());
+            }
+            // No parent: the host knows no builtin/entity, and this model only carries what the renderer's item needs.
+            JsonObject transforms = new JsonObject();
+            if (guiLight != null) transforms.add("gui_light", guiLight);
+            String particle = chain.texture("particle");
+            if (particle != null) {
+                JsonObject textures = new JsonObject();
+                textures.addProperty("particle", particle);
+                transforms.add("textures", textures);
+            }
+            if (display.size() > 0) transforms.add("display", display);
+            return transforms;
+        }
+
+        /** The separate_transforms model {@code id} is or inherits, or null when its chain in the jar has none. */
+        private JsonObject separateTransforms(String id) {
+            Set<String> seen = new java.util.HashSet<>();
+            String current = id;
+            for (int depth = 0; depth < MAX_PARENT_DEPTH && seen.add(current); depth++) {
+                JsonObject model = model(current);
+                if (model == null) return null;
+                if (model.get("loader") instanceof JsonPrimitive loader && loader.isString()) {
+                    return modelId(loader.getAsString()).equals(SEPARATE_TRANSFORMS) ? model : null;
+                }
+                // A model with its own elements draws them, whatever its parents load.
+                if (model.has("elements")) return null;
+                if (!(model.get("parent") instanceof JsonPrimitive parent) || !parent.isString()) return null;
+                current = modelId(parent.getAsString());
+            }
+            return null;
+        }
+
+        /** A select on the display context: each perspective's model, and the base model everywhere else. */
+        private JsonObject displaySelect(JsonObject separate, String model, String item, JsonArray tints) {
+            if (!(separate.get("base") instanceof JsonObject baseModel)) return null;
+            // Without a base the item would show nothing, so it keeps the plain model instead.
+            JsonObject base = perspective(baseModel, model, item, "base", tints);
+            if (base == null) return null;
+            Map<JsonObject, JsonArray> cases = new LinkedHashMap<>();
+            if (separate.get("perspectives") instanceof JsonObject perspectives) {
+                for (Map.Entry<String, JsonElement> entry : perspectives.entrySet()) {
+                    // Forge 1.20.1 looked each context up by its exact name and never read another spelling, and the
+                    // select refuses a context named twice.
+                    String context = entry.getKey();
+                    if (!DISPLAY_CONTEXTS.contains(context) || !(entry.getValue() instanceof JsonObject view)) continue;
+                    JsonObject node = perspective(view, model, item, context, tints);
+                    if (node != null) cases.computeIfAbsent(node, key -> new JsonArray()).add(context);
+                }
+            }
+            if (cases.isEmpty()) return base;
+            JsonObject select = new JsonObject();
+            select.addProperty("type", "minecraft:select");
+            select.addProperty("property", "minecraft:display_context");
+            JsonArray list = new JsonArray();
+            cases.forEach((node, contexts) -> {
+                JsonObject entry = new JsonObject();
+                entry.add("when", contexts);
+                entry.add("model", node);
+                list.add(entry);
+            });
+            select.add("cases", list);
+            select.add("fallback", base);
+            return select;
+        }
+
+        /** The node for one perspective: the model a lone parent names, or the inline model written as a file of its own. */
+        private JsonObject perspective(JsonObject view, String model, String item, String context, JsonArray tints) {
+            if (view.size() == 1 && view.get("parent") instanceof JsonPrimitive parent && parent.isString()) {
+                return leaf(modelId(parent.getAsString()), item, tints);
+            }
+            String inline = generatedModel(model, item, "separate_transforms/" + context);
+            if (inline == null) return null;
+            generated.putIfAbsent(modelFile(inline), json(view.deepCopy()));
+            return plain(inline, tints);
+        }
+
+        /** Tints for an old item color on each tint index the model's quads use, or null when the jar sets up none. */
+        private JsonArray legacyColorTints(String model, String item) {
+            if (!itemColorModsRead) {
+                itemColorMods = itemColorModsSource.get();
+                itemColorModsRead = true;
+            }
+            if (itemColorMods == null) return null;
+            int slots = tintSlots(model);
+            if (slots <= 0) return null;
+            legacyTinted.add(item);
+            return LegacyItemColorTints.tints(LegacyItemColorTints.typeId(namespace(item), itemColorMods), slots);
+        }
+
+        /** How many tint indexes a model's quads use, read through its parents as old Minecraft baked it. */
+        private int tintSlots(String id) {
+            int highestLayer = -1;
+            Set<String> seen = new java.util.HashSet<>();
+            String current = id;
+            for (int depth = 0; depth < MAX_PARENT_DEPTH && seen.add(current); depth++) {
+                JsonObject model = model(current);
+                if (model == null) {
+                    // A parent the jar does not ship: vanilla's, from the table, or another mod's, which cannot be read here.
+                    if (!current.startsWith("minecraft:")) return LegacyItemColorTints.UNKNOWN_SLOTS;
+                    int vanilla = LegacyItemColorTints.vanillaSlots(current);
+                    // Generated item geometry tints each layer with the index of that layer.
+                    return vanilla == LegacyItemColorTints.GENERATED ? highestLayer + 1 : vanilla;
+                }
+                highestLayer = Math.max(highestLayer, highestLayer(model));
+                // The nearest model with elements defines the geometry, so its faces decide.
+                if (model.has("elements")) return highestFaceTint(model) + 1;
+                if (!(model.get("parent") instanceof JsonPrimitive parent) || !parent.isString()) return 0;
+                current = modelId(parent.getAsString());
+            }
+            return 0;
         }
 
         /** A flat icon for an item drawn by code, or null when the jar ships none that fits. */
@@ -542,52 +772,103 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
         /** Logs what the run changed and what it left as it was. */
         private void report(Set<String> keptVanilla) {
             if (!keptVanilla.isEmpty()) {
-                LOGGER.info("Kept vanilla's item definitions for {}; the mod's own models for them "
+                LOGGER.debug(RetromodLog.DETAIL, "Kept vanilla's item definitions for {}; the mod's own models for them "
                         + "still apply, but their old overrides are not translated", keptVanilla);
             }
             if (!translated.isEmpty()) {
-                LOGGER.info("Translated the model overrides of {} item(s) into item definitions", translated.size());
+                LOGGER.debug(RetromodLog.DETAIL, "Translated the model overrides of {} item(s) into item definitions", translated.size());
             }
             if (!lostVariants.isEmpty()) {
-                LOGGER.info("{} item(s) lose the variants that depend on properties only their code computed, "
+                LOGGER.debug(RetromodLog.DETAIL, "{} item(s) lose the variants that depend on properties only their code computed, "
                         + "which nothing reads since 1.21.4: {}", lostVariants.size(), sample(lostVariants.toString()));
             }
             if (!codeRenderedVariants.isEmpty()) {
-                LOGGER.info("{} item(s) show their own model in place of override models only their code could "
+                LOGGER.debug(RetromodLog.DETAIL, "{} item(s) show their own model in place of override models only their code could "
                         + "draw: {}", codeRenderedVariants.size(), sample(codeRenderedVariants.toString()));
             }
             if (!eggs.isEmpty()) {
                 long colored = eggs.stream().filter(eggColors::containsKey).count();
-                LOGGER.info("Gave {} spawn egg(s) Retromod's egg model, {} with the colors from the mod's code "
+                LOGGER.debug(RetromodLog.DETAIL, "Gave {} spawn egg(s) Retromod's egg model, {} with the colors from the mod's code "
                         + "and the rest in a neutral color", eggs.size(), colored);
             }
             if (!ownEggArt.isEmpty()) {
-                LOGGER.info("Gave {} spawn egg(s) a model on the egg texture the jar ships, since the egg "
+                LOGGER.debug(RetromodLog.DETAIL, "Gave {} spawn egg(s) a model on the egg texture the jar ships, since the egg "
                         + "template is gone: {}", ownEggArt.size(), sample(ownEggArt.toString()));
             }
             if (!icons.isEmpty()) {
-                LOGGER.info("Showing {} code-rendered item(s) as flat icons, since their 3D renderer "
+                LOGGER.debug(RetromodLog.DETAIL, "Showing {} code-rendered item(s) as flat icons, since their 3D renderer "
                         + "needs a code bridge", icons.size());
             }
             if (!sharedParticles.isEmpty()) {
-                LOGGER.info("Did not use the particle texture of {} code-rendered item(s) as their icon, since "
+                LOGGER.debug(RetromodLog.DETAIL, "Did not use the particle texture of {} code-rendered item(s) as their icon, since "
                         + "other items show it too: {}", sharedParticles.size(), sample(sharedParticles.toString()));
             }
             if (!withoutIcon.isEmpty()) {
-                LOGGER.info("Wrote no definition for {} code-rendered item(s) whose model names no icon texture "
+                LOGGER.debug(RetromodLog.DETAIL, "Wrote no definition for {} code-rendered item(s) whose model names no icon texture "
                         + "the jar ships, so they keep the missing model: {}",
                         withoutIcon.size(), sample(withoutIcon.toString()));
             }
             if (!notDefinitions.isEmpty()) {
-                LOGGER.info("Left {} file(s) under items/ that hold the mod's own JSON, not item definitions. "
-                        + "The host cannot load them, and the items they are named after show the missing "
-                        + "model: {}", notDefinitions.size(), sample(notDefinitions.toString()));
+                LOGGER.debug(RetromodLog.DETAIL, "Left {} file(s) under items/ unchanged because they hold the mod's own JSON, "
+                        + "not item definitions: {}", notDefinitions.size(), sample(notDefinitions.toString()));
             }
             if (!repaired.isEmpty()) {
-                LOGGER.info("Repaired {} item definition(s) the mod ships that the host could not load "
+                LOGGER.debug(RetromodLog.DETAIL, "Repaired {} item definition(s) the mod ships that the host could not load "
                         + "or render: {}", repaired.size(), sample(repaired.toString()));
             }
+            if (!separateTransforms.isEmpty()) {
+                LOGGER.debug(RetromodLog.DETAIL, "Gave {} item(s) a select on the display context for their Forge "
+                        + "separate_transforms model: {}", separateTransforms.size(), sample(separateTransforms.toString()));
+            }
+            if (!legacyTinted.isEmpty()) {
+                LOGGER.debug(RetromodLog.DETAIL, "Gave {} item definition(s) tints that ask the mod's old item colors: {}",
+                        legacyTinted.size(), sample(legacyTinted.toString()));
+            }
+            if (!drawnByRenderer.isEmpty()) {
+                LOGGER.debug(RetromodLog.DETAIL, "Gave {} code-rendered item(s) a model that runs their old item renderer: {}",
+                        drawnByRenderer.size(), sample(drawnByRenderer.toString()));
+            }
         }
+    }
+
+    private static final Pattern LAYER = Pattern.compile("layer(\\d+)");
+
+    /** A model's own display transforms, the left hand taking the right hand's when the model leaves it out, as Forge 1.20.1 read one model. */
+    private static JsonObject withHandFallbacks(JsonObject display) {
+        JsonObject out = display.deepCopy();
+        for (String view : List.of("thirdperson", "firstperson")) {
+            JsonElement right = display.get(view + "_righthand");
+            // Only an absent left hand takes the right one; an explicit one stays, identity or not.
+            if (right instanceof JsonObject && !display.has(view + "_lefthand")) out.add(view + "_lefthand", right.deepCopy());
+        }
+        return out;
+    }
+
+    /** The highest {@code layerN} texture a model sets, or -1. */
+    private static int highestLayer(JsonObject model) {
+        int highest = -1;
+        if (!(model.get("textures") instanceof JsonObject textures)) return highest;
+        for (String key : textures.keySet()) {
+            Matcher layer = LAYER.matcher(key);
+            if (layer.matches() && layer.group(1).length() < 4) highest = Math.max(highest, Integer.parseInt(layer.group(1)));
+        }
+        return highest;
+    }
+
+    /** The highest {@code tintindex} on a model's element faces, or -1. */
+    private static int highestFaceTint(JsonObject model) {
+        int highest = -1;
+        if (!(model.get("elements") instanceof JsonArray elements)) return highest;
+        for (JsonElement element : elements) {
+            if (!(element instanceof JsonObject cuboid) || !(cuboid.get("faces") instanceof JsonObject faces)) continue;
+            for (Map.Entry<String, JsonElement> face : faces.entrySet()) {
+                if (face.getValue() instanceof JsonObject value && value.get("tintindex") instanceof JsonPrimitive tint
+                        && tint.isNumber()) {
+                    highest = Math.max(highest, tint.getAsInt());
+                }
+            }
+        }
+        return highest;
     }
 
     /** {@code ns:id} as its item model id, {@code ns:item/id}. */

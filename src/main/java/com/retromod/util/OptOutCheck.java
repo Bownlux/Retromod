@@ -132,9 +132,9 @@ public final class OptOutCheck {
         try (JarFile jar = new JarFile(modJar.toFile())) {
             String renderer = rendererModId(jar);
             if (renderer != null && jar.getEntry(OPT_OUT_MARKER) == null) {
-                LOGGER.warn("Skipping {} - {} replaces Minecraft's renderer for one exact version and "
-                        + "cannot be converted. Install the {} build made for this Minecraft version instead.",
-                        modJar.getFileName(), renderer, renderer);
+                LOGGER.warn("Skipping {}: {} replaces Minecraft's renderer for one exact Minecraft "
+                        + "version, and Retromod does not translate renderer replacements.",
+                        modJar.getFileName(), renderer);
                 return;
             }
         } catch (IOException e) {

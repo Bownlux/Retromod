@@ -14,7 +14,7 @@ import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.MethodNode;
 
-/** Keeps pre-1.20.2 advancement lookups, progress reads, and criterion awards and revokes working. */
+/** Keeps pre-1.20.2 advancement lookups, ids, event reads, progress reads, and criterion awards and revokes working. */
 public final class LegacyAdvancementBridge {
 
     static final String HELPER = "com/retromod/generated/LegacyAdvancements";
@@ -36,6 +36,16 @@ public final class LegacyAdvancementBridge {
     static final String GET_OR_START_NEW = "(" + L_HOLDER + ")L" + PROGRESS + ";";
     static final String CRITERION_OLD = "(" + L_ADVANCEMENT + "Ljava/lang/String;)Z";
     static final String CRITERION_NEW = "(" + L_HOLDER + "Ljava/lang/String;)Z";
+
+    /** The advancement events of Forge and of NeoForge, whose getAdvancement() returns the holder since 1.20.2. */
+    static final java.util.List<String> ADVANCEMENT_EVENTS = java.util.List.of(
+            "net/minecraftforge/event/entity/player/AdvancementEvent",
+            "net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementEarnEvent",
+            "net/minecraftforge/event/entity/player/AdvancementEvent$AdvancementProgressEvent",
+            "net/neoforged/neoforge/event/entity/player/AdvancementEvent",
+            "net/neoforged/neoforge/event/entity/player/AdvancementEvent$AdvancementEarnEvent",
+            "net/neoforged/neoforge/event/entity/player/AdvancementEvent$AdvancementProgressEvent");
+    static final String FROM_HOLDER = "(" + L_HOLDER + ")" + L_ADVANCEMENT;
 
     /** Fields on the helper: the last holder found, and the manager the last lookup used. */
     static final String LAST = "last";
@@ -68,6 +78,15 @@ public final class LegacyAdvancementBridge {
             transformer.registerMethodRedirect(PLAYER_ADVANCEMENTS, criterion, CRITERION_OLD,
                     HELPER, criterion, receiverFirst(PLAYER_ADVANCEMENTS, CRITERION_OLD), true);
         }
+        // A Forge advancement event hands over the holder now. An old handler gets the data, and the holder is
+        // remembered for the getId() that usually follows, as in Lootr's advancement trigger.
+        for (String event : ADVANCEMENT_EVENTS) {
+            transformer.registerReturnAdapterRedirect(event, "getAdvancement", "()" + L_ADVANCEMENT,
+                    "getAdvancement", "()" + L_HOLDER, HELPER, "fromHolder", FROM_HOLDER);
+        }
+        // The advancement data lost its id, which only the holder keeps.
+        transformer.registerMethodRedirect(ADVANCEMENT, "getId", "()L" + idClass + ";",
+                HELPER, "getId", "(" + L_ADVANCEMENT + ")L" + idClass + ";", true);
     }
 
     /** The id type {@code get(id)} takes, or null when the host has no {@code get(id)}. */
@@ -122,6 +141,8 @@ public final class LegacyAdvancementBridge {
         cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE, SERVER_MANAGER, L_MANAGER,
                 null, null).visitEnd();
         emitLookup(cw, idClass);
+        emitFromHolder(cw);
+        emitGetId(cw, idClass);
         emitHolderFor(cw);
         emitGetOrStartProgress(cw);
         emitCriterion(cw, "award");
@@ -153,6 +174,41 @@ public final class LegacyAdvancementBridge {
         mv.visitFieldInsn(Opcodes.PUTSTATIC, HELPER, LAST, L_HOLDER);
         mv.visitVarInsn(Opcodes.ALOAD, 2);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, HOLDER, "value", "()" + L_ADVANCEMENT, false);
+        mv.visitInsn(Opcodes.ARETURN);
+        end(mv);
+    }
+
+    /** Writes {@code fromHolder(holder)}: the holder's data, remembering the holder, or null without one. */
+    private static void emitFromHolder(ClassWriter cw) {
+        MethodVisitor mv = begin(cw, Opcodes.ACC_PUBLIC, "fromHolder", FROM_HOLDER);
+        Label found = new Label();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitJumpInsn(Opcodes.IFNONNULL, found);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(found);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, HELPER, LAST, L_HOLDER);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, HOLDER, "value", "()" + L_ADVANCEMENT, false);
+        mv.visitInsn(Opcodes.ARETURN);
+        end(mv);
+    }
+
+    /** Writes {@code getId(advancement)}: the id of the holder that holds this data, or null when none is known. */
+    private static void emitGetId(ClassWriter cw, String idClass) {
+        MethodVisitor mv = begin(cw, Opcodes.ACC_PUBLIC, "getId", "(" + L_ADVANCEMENT + ")L" + idClass + ";");
+        Label found = new Label();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, HELPER, "holderFor", "(" + L_ADVANCEMENT + ")" + L_HOLDER, false);
+        mv.visitVarInsn(Opcodes.ASTORE, 1);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitJumpInsn(Opcodes.IFNONNULL, found);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(found);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, HOLDER, "id", "()L" + idClass + ";", false);
         mv.visitInsn(Opcodes.ARETURN);
         end(mv);
     }

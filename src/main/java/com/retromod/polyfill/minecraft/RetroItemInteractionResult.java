@@ -4,6 +4,8 @@
  */
 package com.retromod.polyfill.minecraft;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
+
 /**
  * 1.3.0: bridge for {@code ItemInteractionResult} ({@code class_9062}), the 1.20.5-1.21.1 sided
  * item-use result that 1.21.2 merged back into {@code InteractionResult} (6 corpus mods; absent
@@ -74,7 +76,7 @@ public final class RetroItemInteractionResult {
     public static boolean consumesAction(Object receiver) {
         try {
             return receiver != null
-                    && (Boolean) receiver.getClass().getMethod("consumesAction").invoke(receiver);
+                    && (Boolean) LegacyPublicMethods.method(receiver.getClass(), "consumesAction").invoke(receiver);
         } catch (Throwable t) {
             return false;
         }

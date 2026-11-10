@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 
 /**
@@ -69,7 +70,7 @@ public enum LegacyEventResult {
     }
 
     private static Method find(Class<?> type, String name, int parameters) {
-        for (Method method : type.getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(type)) {
             if (method.getName().equals(name) && method.getParameterCount() == parameters) return method;
         }
         return null;

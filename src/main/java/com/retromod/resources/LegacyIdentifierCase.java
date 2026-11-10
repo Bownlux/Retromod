@@ -13,6 +13,7 @@ import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import com.google.gson.stream.JsonReader;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -84,7 +85,7 @@ final class LegacyIdentifierCase implements ModResourceConverter {
         // Then files whose own names have uppercase letters get lowercase names.
         int copied = lowercaseFileNames(tree, context);
         if (rewritten + copied > 0) {
-            LOGGER.info("Lowercased the 1.12 identifiers in {} file(s) and gave {} file(s) "
+            LOGGER.debug(RetromodLog.DETAIL, "Lowercased the 1.12 identifiers in {} file(s) and gave {} file(s) "
                     + "lowercase names for Minecraft {}", rewritten, copied, context.targetMcVersion());
         }
         return rewritten + copied;

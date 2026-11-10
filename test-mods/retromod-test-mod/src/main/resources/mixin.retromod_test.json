@@ -8,11 +8,15 @@
     "LegacyMobEffectMixin",
     "LegacyPlayerModelPartsAccessor",
     "LegacyPoseInvokerMixin",
+    "LegacySurfaceRuleSettingsAccessor",
+    "LegacySurfaceRuleSettingsMixin",
     "LegacyTreeDecoratorTypeMixin"
   ],
   "client": [
     "LegacyChatOptionsSuperclassMixin",
     "LegacyClientCommandParserAccessor",
+    "LegacyGameRendererRefmapMixin",
+    "LegacyResolutionChangedMixin",
     "LegacyIntegratedServerPublishMixin",
     "LegacySoundSystemPrefixCaptureMixin"
   ],

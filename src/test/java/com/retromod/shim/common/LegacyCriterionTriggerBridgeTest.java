@@ -35,6 +35,7 @@ class LegacyCriterionTriggerBridgeTest {
     private static final String CRITERIA = "net/minecraft/advancements/critereon/";
     private static final String CONTEXT = "L" + CRITERIA + "ContextAwarePredicate;";
     private static final String ID = "Lnet/minecraft/resources/ResourceLocation;";
+    private static final String OLD_TRIGGER = "net/minecraft/advancements/CriterionTrigger";
 
     private final String previousHost = RetromodVersion.TARGET_MC_VERSION;
 
@@ -85,10 +86,46 @@ class LegacyCriterionTriggerBridgeTest {
     }
 
     @Test
+    @DisplayName("On 26.2 a trigger that keeps its own listeners, as Lootr's does, gets a codec, the rebuilt listener, and synced advancements")
+    void listenerTriggerIsBridgedOn262() {
+        RetromodTransformer transformer = bridged("26.2");
+        transformer.registerClassRedirect(OLD_TRIGGER, LegacyCriterionTriggerBridge.MOVED_CRITERION_TRIGGER);
+
+        ClassNode trigger = transform(transformer, listenerTrigger(), "mod/GenericTrigger");
+
+        assertEquals(List.of(LegacyCriterionTriggerBridge.DIRECT_TRIGGER), trigger.interfaces,
+                "the host asks the trigger for codec(), which the replacement interface supplies");
+        MethodNode add = trigger.methods.stream().filter(m -> m.name.equals("addPlayerListener")).findFirst().orElseThrow();
+        assertEquals("(Lnet/minecraft/server/PlayerAdvancements;L" + LegacyCriterionTriggerBridge.LISTENER + ";)V", add.desc);
+        List<String> calls = calls(trigger);
+        assertTrue(calls.contains(LegacyCriterionTriggerBridge.PLAYERS + ".advancements"),
+                "reading the player's advancements first fills the listeners: " + calls);
+        assertTrue(calls.contains(LegacyCriterionTriggerBridge.LISTENER + ".getTriggerInstance"), calls.toString());
+        assertTrue(transformer.getSyntheticClasses().containsKey(LegacyCriterionTriggerBridge.LISTENER));
+    }
+
+    @Test
+    @DisplayName("From 1.20.2 to 26.1 the host keeps the listener as a record, so only its accessor is renamed")
+    void listenerAccessorIsRenamedBefore262() {
+        RetromodTransformer transformer = bridged("1.21.1");
+
+        ClassNode trigger = transform(transformer, listenerTrigger(), "mod/GenericTrigger");
+
+        assertEquals(List.of(LegacyCriterionTriggerBridge.DIRECT_TRIGGER), trigger.interfaces);
+        List<String> calls = calls(trigger);
+        assertTrue(calls.contains(OLD_TRIGGER + "$Listener.trigger"), calls.toString());
+        assertTrue(calls.contains("net/minecraft/server/level/ServerPlayer.getAdvancements"),
+                "the host still adds listeners itself: " + calls);
+        assertFalse(transformer.getSyntheticClasses().containsKey(LegacyCriterionTriggerBridge.LISTENER));
+    }
+
+    @Test
     @DisplayName("The generated stand-ins verify")
     void generatedClassesVerify() {
         for (byte[] generated : List.of(LegacyCriterionTriggerBridge.generateInstance(), LegacyCriterionTriggerBridge.generateTrigger(),
-                LegacyCriterionTriggerBridge.generateCalls(), LegacyCriterionTriggerBridge.emptyClass(LegacyCriterionTriggerBridge.READ_CONTEXT))) {
+                LegacyCriterionTriggerBridge.generateCalls(), LegacyCriterionTriggerBridge.emptyClass(LegacyCriterionTriggerBridge.READ_CONTEXT),
+                LegacyCriterionTriggerBridge.generateDirectTrigger(LegacyCriterionTriggerBridge.MOVED_CRITERION_TRIGGER),
+                LegacyCriterionTriggerBridge.generateListener(), LegacyCriterionTriggerBridge.generatePlayers())) {
             new ClassReader(generated).accept(new CheckClassAdapter(new ClassWriter(0), true), 0);
         }
     }
@@ -99,6 +136,36 @@ class LegacyCriterionTriggerBridgeTest {
         transformer.clearRedirectsForTesting();
         LegacyCriterionTriggerBridge.register(transformer);
         return transformer;
+    }
+
+    /**
+     * Lootr's GenericTrigger cut down: it implements the old interface, keeps listeners, and fires by
+     * reading the player's advancements and each listener's instance.
+     */
+    private static byte[] listenerTrigger() {
+        String listener = "L" + OLD_TRIGGER + "$Listener;";
+        String advancements = "Lnet/minecraft/server/PlayerAdvancements;";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, "mod/GenericTrigger", null, "java/lang/Object", new String[] {OLD_TRIGGER});
+        MethodVisitor add = cw.visitMethod(ACC_PUBLIC, "addPlayerListener", "(" + advancements + listener + ")V", null, null);
+        add.visitCode();
+        add.visitInsn(RETURN);
+        add.visitMaxs(0, 0);
+        add.visitEnd();
+        MethodVisitor fire = cw.visitMethod(ACC_PUBLIC, "fire", "(Lnet/minecraft/server/level/ServerPlayer;" + listener + ")V", null, null);
+        fire.visitCode();
+        fire.visitVarInsn(ALOAD, 1);
+        fire.visitMethodInsn(INVOKEVIRTUAL, "net/minecraft/server/level/ServerPlayer", "getAdvancements", "()" + advancements, false);
+        fire.visitInsn(POP);
+        fire.visitVarInsn(ALOAD, 2);
+        fire.visitMethodInsn(INVOKEVIRTUAL, OLD_TRIGGER + "$Listener", "getTriggerInstance",
+                "()Lnet/minecraft/advancements/CriterionTriggerInstance;", false);
+        fire.visitInsn(POP);
+        fire.visitInsn(RETURN);
+        fire.visitMaxs(0, 0);
+        fire.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     /** {@code class EggTrigger extends SimpleCriterionTrigger} with the old no-argument constructor. */

@@ -482,7 +482,8 @@ public final class LegacyEitherHolderBridge {
                 "(Ljava/lang/Object;)Ljava/lang/String;", false);
         concat(m);
         m.visitLdcInsn(": Minecraft 26.1 removed EitherHolder and this component now needs a loaded"
-                + " registry entry. Use a version of the mod built for Minecraft 26.1 or newer.");
+                + " registry entry. Retromod has no replacement for this call yet. Report it with the"
+                + " mod and its version.");
         concat(m);
         m.visitMethodInsn(INVOKESPECIAL, "java/lang/IllegalStateException", "<init>",
                 "(Ljava/lang/String;)V", false);
@@ -529,7 +530,8 @@ public final class LegacyEitherHolderBridge {
         m.visitTypeInsn(NEW, "java/lang/UnsupportedOperationException");
         m.visitInsn(DUP);
         m.visitLdcInsn("Retromod cannot provide EitherHolder." + name + ", which Minecraft 26.1 removed"
-                + " with no replacement. Use a version of the mod built for Minecraft 26.1 or newer.");
+                + " with no replacement. Retromod has no replacement for this call yet. Report it with"
+                + " the mod and its version.");
         m.visitMethodInsn(INVOKESPECIAL, "java/lang/UnsupportedOperationException", "<init>",
                 "(Ljava/lang/String;)V", false);
         m.visitInsn(ATHROW);

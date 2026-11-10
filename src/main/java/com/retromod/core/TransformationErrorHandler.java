@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.McOpener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -12,7 +13,6 @@ import java.awt.*;
 import java.awt.datatransfer.StringSelection;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -46,7 +46,20 @@ public final class TransformationErrorHandler {
     /** Records a failed transform and tells the user how to report it. */
     public static void handleError(Path modPath, Throwable error, String modId, 
                                    String modLoader, String sourceVersion) {
+        FailedMod failed = recordFailure(modPath, error, modId, modLoader, sourceVersion);
         
+        if (EnvironmentDetector.canShowGui()) {
+            showErrorDialog(failed);
+        }
+        // A dedicated server has no dialog, so it prints the report with its stack trace.
+        if (EnvironmentDetector.isDedicatedServer()) {
+            logBugReportToConsole(failed);
+        }
+    }
+
+    /** Records a failed transform and logs it at ERROR with its stack trace. */
+    static FailedMod recordFailure(Path modPath, Throwable error, String modId,
+                                   String modLoader, String sourceVersion) {
         String modName = modPath.getFileName().toString();
         String errorType = error.getClass().getSimpleName();
         String errorMessage = error.getMessage() != null ? error.getMessage() : "Unknown error";
@@ -57,15 +70,27 @@ public final class TransformationErrorHandler {
         );
         failedMods.add(failed);
         
-        LOGGER.error("Retromod could not update {} ({}): {}", modName, errorType, errorMessage);
+        // The trace goes on the first line, since the default log level hides DEBUG.
+        LOGGER.error("Retromod could not update {} ({}): {}", modName, errorType, errorMessage, error);
         LOGGER.error("Loader: {}, source Minecraft: {}, mod ID: {}",
             known(modLoader), known(sourceVersion), known(modId));
         LOGGER.error("Report this failure at {} and attach logs/latest.log", GITHUB_ISSUES_URL);
-        LOGGER.debug("Full transform failure for " + modName, error);
-        
-        if (EnvironmentDetector.canShowGui()) {
-            showErrorDialog(failed);
-        }
+        return failed;
+    }
+
+    /** The text of the failure dialog. */
+    static String dialogMessage(FailedMod failed) {
+        return String.format("""
+            Retromod could not update %s.
+
+            Error: %s
+
+            The original mod was not replaced. Copy a report template,
+            or open GitHub Issues to report what happened.
+            """,
+            failed.modName(),
+            failed.errorType() + ": " + truncate(failed.errorMessage(), 50)
+        );
     }
     
     private static void showErrorDialog(FailedMod failed) {
@@ -74,17 +99,7 @@ public final class TransformationErrorHandler {
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             } catch (Exception ignored) {}
             
-            String message = String.format("""
-                Retromod could not update %s.
-
-                Error: %s
-
-                The original mod has not been replaced. You can copy a report
-                template or open GitHub Issues to tell us what happened.
-                """,
-                failed.modName(),
-                failed.errorType() + ": " + truncate(failed.errorMessage(), 50)
-            );
+            String message = dialogMessage(failed);
             
             int choice = JOptionPane.showOptionDialog(
                 null,
@@ -105,19 +120,9 @@ public final class TransformationErrorHandler {
         });
     }
     
-    /**
-     * Opens GitHub through the desktop API. If that is unavailable, shows a
-     * copyable URL instead of starting a platform-specific process.
-     */
+    /** Opens GitHub through Minecraft, or shows the link to copy when Minecraft cannot open it. */
     private static void openGitHub() {
-        try {
-            if (Desktop.isDesktopSupported()) {
-                Desktop.getDesktop().browse(URI.create(GITHUB_ISSUES_URL));
-                return;
-            }
-        } catch (Exception e) {
-            LOGGER.warn("Could not open browser: {}", e.getMessage());
-        }
+        if (McOpener.openLink(GITHUB_ISSUES_URL)) return;
         JOptionPane.showMessageDialog(
             null,
             "Please visit: " + GITHUB_ISSUES_URL,

@@ -4,10 +4,12 @@
  */
 package com.retromod.core;
 
+import com.retromod.inplace.WorkFolder;
 import com.retromod.mixin.MixinCompatibilityTransformer;
 import com.retromod.util.ArchivePublication;
 import com.retromod.util.JarSignatureSanitizer;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.*;
 import org.objectweb.asm.tree.*;
@@ -27,7 +29,7 @@ public class ForgeModTransformer {
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-ForgeTransform");
 
     /** Per-entry and total extracted size caps (zip-bomb guard). */
-    private static final long MAX_ENTRY_SIZE = 50 * 1024 * 1024;
+    private static final long MAX_ENTRY_SIZE = ZipSecurity.DEFAULT_MAX_ENTRY_SIZE;
     private static final long MAX_TOTAL_SIZE = 500 * 1024 * 1024;
     private static final int MAX_ENTRY_COUNT = 100_000;
     /** Loader metadata cap. These files are parsed as text and should stay small. */
@@ -71,6 +73,11 @@ public class ForgeModTransformer {
     private final MixinCompatibilityTransformer mixinTransformer;
     /** Libraries translated before the current jar, whose stand-in copies it may reuse. */
     private SyntheticLibraries syntheticLibraries = SyntheticLibraries.NONE;
+    /** The Minecraft version the jar in the class pass was built for, outer or bundled. */
+    private String classPassSourceVersion;
+    /** Whether this translation removed client-only code or stood in for it, which marks its jar as made for a dedicated server. */
+    private final java.util.concurrent.atomic.AtomicBoolean strippedForServer =
+            new java.util.concurrent.atomic.AtomicBoolean();
 
     public ForgeModTransformer(String targetMcVersion) {
         this.targetMcVersion = targetMcVersion;
@@ -93,15 +100,30 @@ public class ForgeModTransformer {
      */
     public Path transformMod(Path sourceJar, Path outputDir, SyntheticLibraries libraries)
             throws IOException {
+        return transform(sourceJar, outputDir, libraries, false);
+    }
+
+    /**
+     * Like {@link #transformMod}, but a failed translation is thrown, so the in-place cache can
+     * record its reason and retry a disk error.
+     */
+    public Path translateOrThrow(Path sourceJar, Path outputDir, SyntheticLibraries libraries)
+            throws IOException {
+        return transform(sourceJar, outputDir, libraries, true);
+    }
+
+    private Path transform(Path sourceJar, Path outputDir, SyntheticLibraries libraries,
+            boolean throwFailure) throws IOException {
         // SRG ids a Forge mod carries mean what they meant in its own version (see
         // RetromodTransformer.registerSrgVersionDrift), so the remap needs that version.
         String sourceVersion = extractMinecraftVersion(sourceJar);
         bytecodeTransformer.setSrgSourceVersion(sourceVersion);
         bytecodeTransformer.setModSourceVersion(sourceVersion);
+        bytecodeTransformer.setModSourceJar(sourceJar);
         SyntheticLibraries previousLibraries = syntheticLibraries;
         syntheticLibraries = libraries == null ? SyntheticLibraries.NONE : libraries;
         try {
-            return transformModForItsVersion(sourceJar, outputDir);
+            return transformModForItsVersion(sourceJar, outputDir, sourceVersion, throwFailure);
         } finally {
             syntheticLibraries = previousLibraries;
             bytecodeTransformer.setSrgSourceVersion(null);
@@ -109,7 +131,8 @@ public class ForgeModTransformer {
         }
     }
 
-    private Path transformModForItsVersion(Path sourceJar, Path outputDir) throws IOException {
+    private Path transformModForItsVersion(Path sourceJar, Path outputDir, String modMcVersion,
+            boolean throwFailure) throws IOException {
         String originalName = sourceJar.getFileName().toString();
         String baseName = originalName.replace(".jar", "");
         // When a mod ships no module-info, NeoForge/Forge derive the JPMS module
@@ -119,9 +142,11 @@ public class ForgeModTransformer {
         String outputName = safeBaseName + "-retromod.jar";
         Path outputJar = outputDir.resolve(outputName);
 
-        LOGGER.info("Checking Forge/NeoForge mod: {}", originalName);
+        LOGGER.debug(RetromodLog.DETAIL, "Checking Forge/NeoForge mod: {}", originalName);
 
         validateArchiveInput(sourceJar);
+        strippedForServer.set(false);
+        classPassSourceVersion = modMcVersion;
 
         // Honor mod-author opt-out (META-INF/retromod-opt-out marker).
         if (com.retromod.util.OptOutCheck.isOptedOut(sourceJar)) {
@@ -131,9 +156,8 @@ public class ForgeModTransformer {
             return passthrough;
         }
 
-        String modMcVersion = extractMinecraftVersion(sourceJar);
         if (targetMcVersion.equals(modMcVersion)) {
-            LOGGER.info("  {} is already for MC {} - no transformation needed", originalName, targetMcVersion);
+            LOGGER.debug(RetromodLog.DETAIL, "  {} is already for MC {} - no transformation needed", originalName, targetMcVersion);
             Path directCopy = outputDir.resolve(originalName);
             copyArchiveReplacingAtomically(sourceJar, directCopy);
             return directCopy;
@@ -145,21 +169,24 @@ public class ForgeModTransformer {
         String cacheKey = transformCacheKey(sourceJar);
         if (cacheKey != null && isCacheUpToDate(outputJar, cacheKey)
                 && !syntheticLibraries.isStale(outputJar)) {
-            LOGGER.info("  {} is up to date in the transform cache - reusing {}",
+            LOGGER.debug(RetromodLog.DETAIL, "  {} is up to date in the transform cache - reusing {}",
                     originalName, outputName);
             return outputJar;
         }
         // Stale or absent: drop any previous output + sidecar so we do not read a partial one.
         invalidateCache(outputJar);
 
-        LOGGER.info("Transforming Forge/NeoForge mod: {} -> {}", originalName, outputName);
+        LOGGER.debug(RetromodLog.DETAIL, "Transforming Forge/NeoForge mod: {} -> {}", originalName, outputName);
 
         // Extract, transform the bytecode, patch mods.toml or neoforge.mods.toml, and repackage,
         // as FabricModTransformer does with fabric.mod.json.
-        Path tempDir = Files.createTempDirectory("retromod-forge-");
+        Path tempDir = WorkFolder.createTempDirectory("retromod-forge-");
 
         try {
             extractJar(sourceJar, tempDir);
+            // Read from the original classes: on 1.21+ hosts the class pass turns Forge's @Mod
+            // into NeoForge's, and a leftover neoforge.mods.toml would then look current.
+            boolean staleNeoForgeToml = ForgeTomlChoice.hasStaleNeoForgeToml(tempDir);
 
             com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs =
                     collectRefmapRepairs(tempDir);
@@ -168,11 +195,11 @@ public class ForgeModTransformer {
                     com.retromod.shim.forge.LegacyRarityBridge.hostNeedsDeclarations()
                             ? com.retromod.shim.forge.LegacyRarityBridge.scan(tempDir) : java.util.List.of();
             int classesTransformed = transformClasses(tempDir, refmapRepairs);
-            LOGGER.info("Transformed {} class files", classesTransformed);
+            LOGGER.debug(RetromodLog.DETAIL, "Transformed {} class files", classesTransformed);
 
             int refmapsTransformed = transformRefmaps(tempDir);
             if (refmapsTransformed > 0) {
-                LOGGER.info("Transformed {} Mixin refmap(s)", refmapsTransformed);
+                LOGGER.debug(RetromodLog.DETAIL, "Transformed {} Mixin refmap(s)", refmapsTransformed);
             }
 
             makeMixinConfigsNonFatal(tempDir);
@@ -192,7 +219,7 @@ public class ForgeModTransformer {
             int dataMigrated = com.retromod.resources.ModResourceMigrations.migrateDirectory(
                     tempDir, resourceContext(sourceJar, false));
             if (dataMigrated > 0) {
-                LOGGER.info("Updated {} resource and data file(s)", dataMigrated);
+                LOGGER.debug(RetromodLog.DETAIL, "Updated {} resource and data file(s)", dataMigrated);
             }
 
             // Embed registered synthetic classes this mod references under a
@@ -200,9 +227,19 @@ public class ForgeModTransformer {
             // the mod's references there.
             int synthetics = SyntheticEmbedder.embed(tempDir, sourceJar.getFileName().toString(),
                     bytecodeTransformer, syntheticLibraries);
-            if (synthetics > 0) {
-                LOGGER.info("Embedded {} referenced synthetic class(es)", synthetics);
+            // A failed embed leaves classes naming stand-ins no jar holds, so refuse the jar as
+            // Fabric does instead of publishing one that stops with NoClassDefFoundError.
+            if (SyntheticEmbedder.hasRegisteredSyntheticReferences(tempDir, bytecodeTransformer)) {
+                throw new IOException("Could not place every generated compatibility class inside "
+                        + originalName + ". The 'Synthetic embedding skipped' warning in the log "
+                        + "names the cause; please report it with the log.");
             }
+            if (synthetics > 0) {
+                LOGGER.debug(RetromodLog.DETAIL, "Embedded {} referenced synthetic class(es)", synthetics);
+            }
+            addClientStandIns(tempDir, sourceJar.getFileName().toString());
+            // A shaded library's stale descriptor left at the root makes Forge refuse the whole jar.
+            ModuleInfoRepair.dropInvalid(tempDir, originalName);
 
             // 1.12.2 mods ship only mcmod.info and modern Forge/NeoForge never scans them;
             // synthesize a mods.toml (#79). promoteToNeoForgeToml below renames it on NeoForge.
@@ -210,7 +247,9 @@ public class ForgeModTransformer {
 
             updateModsToml(tempDir, "META-INF/mods.toml");
             updateModsToml(tempDir, "META-INF/neoforge.mods.toml");
-            promoteToNeoForgeToml(tempDir);
+            boolean promotedToml = promoteToNeoForgeToml(tempDir, staleNeoForgeToml);
+            // NeoForge 1.21.9 and newer never read the manifest's MixinConfigs, so the toml names them.
+            TomlMixinConfigs.listInDirectory(tempDir, targetMcVersion, promotedToml, modMcVersion);
             // NeoForge adds enum values only from metadata it reads before the game starts.
             com.retromod.shim.forge.LegacyRarityBridge.declareInJar(tempDir,
                     tempDir.resolve("META-INF/neoforge.mods.toml"), rarities);
@@ -220,7 +259,7 @@ public class ForgeModTransformer {
             int jijPatched = patchJarInJarMetadata(tempDir, 1,
                     RetromodTransformer.NestedArchiveBudget.defaults(), originalName);
             if (jijPatched > 0) {
-                LOGGER.info("Patched metadata in {} JIJ dependencies", jijPatched);
+                LOGGER.debug(RetromodLog.DETAIL, "Patched metadata in {} JIJ dependencies", jijPatched);
             }
 
             // Stamp the manifest so runtime code can tell a Retromod-brought mod from a
@@ -228,7 +267,7 @@ public class ForgeModTransformer {
             stampTransformedManifest(tempDir, originalName);
 
             repackageJar(tempDir, outputJar);
-            LOGGER.info("Created transformed mod: {}", outputJar.getFileName());
+            LOGGER.debug(RetromodLog.DETAIL, "Created transformed mod: {}", outputJar.getFileName());
 
             // Record the cache sidecar for this exact source + version + loader so a later
             // launch can skip the whole extract/transform when nothing changed.
@@ -243,7 +282,9 @@ public class ForgeModTransformer {
             return outputJar;
 
         } catch (Exception e) {
-            LOGGER.error("Failed to transform {}: {}", originalName, e.getMessage());
+            // The throwable goes to the log, so the failing launch shows the class and stack trace.
+            LOGGER.error("Failed to transform {}", originalName, e);
+            if (throwFailure) throw e;
             return null;
         } finally {
             try (var walk = Files.walk(tempDir)) {
@@ -275,24 +316,16 @@ public class ForgeModTransformer {
             ZipEntry entry = metadata == null ? null : jar.getEntry(metadata);
 
             if (entry != null) {
-                String content = readUtf8Metadata(jar, entry);
-                String declared = minecraftDependencyVersion(content);
+                String declared = minecraftDependencyVersion(readUtf8Metadata(jar, entry));
                 if (declared != null) {
                     return declared;
                 }
-                Pattern p = Pattern.compile("versionRange\\s*=\\s*\"\\[([0-9.]+)");
-                Matcher m = p.matcher(content);
-                // first match is usually the forge/neoforge version; keep
-                // scanning for the minecraft one
-                while (m.find()) {
-                    String version = m.group(1);
-                    if (version.startsWith("1.") || version.matches("\\d{2,}\\..*")) {
-                        return version;
-                    }
-                }
             }
         }
-        return null;
+        // Without a minecraft dependency, read the version as the CLI, AOT and in-place paths do.
+        // Another dependency's range is not a Minecraft version: forge [47.1.0,) read as 47.1.0 put
+        // a 1.20.1 mod past every limited redirect and gave its SRG ids their newest names.
+        return com.retromod.resources.SourceVersionResolver.resolve(jarPath);
     }
 
     private static final Pattern MINECRAFT_MOD_ID = Pattern.compile("modId\\s*=\\s*\"minecraft\"");
@@ -351,9 +384,10 @@ public class ForgeModTransformer {
                 }
                 String name = ZipSecurity.safeEntryName(entry.getName());
                 String canonicalName = ZipSecurity.canonicalEntryName(name);
-                if (!entryNames.add(canonicalName)) {
-                    throw new IOException("Mod archive contains a duplicate normalized entry: "
-                            + name);
+                // A merged fat jar repeats folder entries, which carry no content.
+                if (!ZipSecurity.firstSighting(entryNames, canonicalName, entry.isDirectory(),
+                        () -> "Mod archive contains a duplicate normalized entry: " + name)) {
+                    continue;
                 }
                 Path outputPath = ZipSecurity.safeResolve(outputDir, name);
 
@@ -390,8 +424,10 @@ public class ForgeModTransformer {
                 String name = ZipSecurity.safeEntryName(entry.getName());
                 String canonicalName = ZipSecurity.canonicalEntryName(name);
                 String qualifiedName = archiveKey + "!/" + name;
-                if (!entryNames.add(canonicalName)) {
-                    throw new IOException("duplicate nested JAR entry: " + qualifiedName);
+                // A repeated folder entry carries no content, so it is skipped.
+                if (!ZipSecurity.firstSighting(entryNames, canonicalName, entry.isDirectory(),
+                        () -> "duplicate nested JAR entry: " + qualifiedName)) {
+                    continue;
                 }
                 Path outputPath = ZipSecurity.safeResolve(outputDir, name);
 
@@ -455,9 +491,11 @@ public class ForgeModTransformer {
         }
         final Map<String, byte[]> originalClasses = Map.copyOf(classSnapshot);
         final boolean preFlatteningJar = isPreFlatteningForgeJar(dir, originalClasses.values());
-        // NeoForge has no dist cleaner, so a dedicated server removes @OnlyIn(CLIENT) members itself.
-        final boolean stripClientOnly = com.retromod.util.McReflect.isNeoForge()
-                && EnvironmentDetector.isDedicatedServer();
+        // NeoForge's dist cleaner never sees these markers, so a dedicated server removes @OnlyIn(CLIENT)
+        // members itself and stamps the jar, which keeps it off clients (see ForgeDistCleaner.markersFor).
+        final com.retromod.shim.forge.ForgeDistCleaner.Markers clientOnlyMarkers =
+                com.retromod.shim.forge.ForgeDistCleaner.markersFor(com.retromod.util.McReflect.isNeoForge(),
+                        EnvironmentDetector.isDedicatedServer(), System.getProperties(), classPassSourceVersion);
 
         // Classes are independent and the redirect tables are safe to read in parallel.
         final java.util.concurrent.atomic.AtomicInteger counter =
@@ -467,12 +505,19 @@ public class ForgeModTransformer {
         // transform classpath. Without this a branch between two of the mod's own types is typed as
         // Object, and the JVM rejects the method as soon as that value is passed somewhere that
         // wants a specific type. The Fabric pass has always done this; Forge and NeoForge did not.
-        bytecodeTransformer.setJarClassBytesProvider(originalClasses::get);
+        // The jar's bundled libraries come along, since a join can name two of their types.
+        bytecodeTransformer.setJarClassBytesProvider(BundledJarClasses.attach(
+                originalClasses::get, BundledJarClasses.fromDirectory(dir)));
         bytecodeTransformer.setLinkedLibraries(syntheticLibraries);
         // A block filled into a static field of one class can be registered by another, so the
         // jar's registry ids are indexed from all its classes before any is transformed.
         bytecodeTransformer.setJarRegistryIds(
                 bytecodeTransformer.indexJarRegistryIds(originalClasses.values()));
+        // A final host method the jar's own access transformer opens can still be overridden.
+        bytecodeTransformer.setJarOpenedFinals(com.retromod.shim.common.OpenedFinalMethods.read(dir, targetMcVersion));
+        // Calls that bridges add to the @Mod constructors are decided from the whole jar first.
+        final com.retromod.shim.forge.ModConstructorHooks.JarHooks constructorHooks =
+                com.retromod.shim.forge.ModConstructorHooks.forJar(bytecodeTransformer, originalClasses.values());
         try {
             com.retromod.core.parallel.RetromodExecutors.parallelForEach(classFiles, classFile -> {
                 try {
@@ -483,11 +528,12 @@ public class ForgeModTransformer {
 
                     // Mixin selectors are annotation text. Repair them before the ordinary class
                     // remap, then apply descriptor-sensitive repairs after Mojang names exist.
-                    byte[] preMixin = mixinTransformer.transformMixinClass(stripClientOnly
-                            ? com.retromod.shim.forge.ForgeDistCleaner.stripClientOnly(original) : original);
+                    byte[] cleaned = com.retromod.shim.forge.ForgeDistCleaner.stripClientOnly(original, clientOnlyMarkers);
+                    if (cleaned != original) strippedForServer.set(true);
+                    byte[] preMixin = mixinTransformer.transformMixinClass(cleaned);
                     byte[] preStripped = mixinTransformer.stripBlocklistedHandlers(preMixin);
                     // GUI migration needs the old GuiGraphics owner, before the class redirect.
-                    if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
+                    if (com.retromod.shim.common.Gui2DTransformMigration.appliesOnHost(
                             com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
                         preStripped = com.retromod.shim.common.Gui2DTransformMigration.migrate(preStripped);
                     }
@@ -501,10 +547,16 @@ public class ForgeModTransformer {
                         transformed = mixinTransformer.applyPostRemapRepairs(
                                 transformed, refmapRepairs);
                     }
-                    // These helpers inspect the class and leave unrelated versions unchanged.
-                    transformed = com.retromod.shim.forge.ForgeEventBusSynthetics
-                            .stripLenientAutoSubscriber(transformed);
+                    // Before the subscriber strip below, so a class the @Mod constructor subscribes gets no companion.
+                    if (constructorHooks != null) transformed = constructorHooks.apply(transformed);
+                    // These helpers inspect the class and leave unrelated versions unchanged. A
+                    // one-handler subscriber's companion is written now, before the embed.
+                    transformed = com.retromod.shim.forge.ForgeEventBusSynthetics.stripLenientAutoSubscriber(
+                            transformed, (name, bytes) -> writeCompanion(dir, originalClasses, className, name, bytes));
                     transformed = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard
+                            .apply(transformed, bytecodeTransformer.getSyntheticClasses()::containsKey);
+                    // The same for a listener added with a lambda, which links its event when the call runs.
+                    transformed = com.retromod.shim.forge.NeoForgeRemovedEventListeners
                             .apply(transformed, bytecodeTransformer.getSyntheticClasses()::containsKey);
                     transformed = com.retromod.shim.forge.LegacyTradeBridge.watchHandlers(transformed);
                     transformed = com.retromod.shim.forge.LegacyWorldgenBridge.guardOverworldInjection(transformed);
@@ -517,12 +569,10 @@ public class ForgeModTransformer {
                         wroteFirst = true;
                     }
 
-                    // Inject missing abstract methods for Button subclasses. The method names a
-                    // 26.x type, so only an unobfuscated host gets it, as in the CLI path.
+                    // Inject missing abstract methods for Button subclasses, in the shape the host
+                    // version declares (1.21.11 or 26.x), as in the CLI path.
                     byte[] current = (transformed != null && transformed != original) ? transformed : original;
-                    byte[] patched = com.retromod.core.RetromodVersion.isUnobfuscatedTarget(targetMcVersion)
-                            ? com.retromod.shim.common.LegacyAbstractButtonBridge.apply(current)
-                            : current;
+                    byte[] patched = com.retromod.shim.common.LegacyAbstractButtonBridge.apply(current, targetMcVersion);
                     if (patched != null && patched != current) {
                         Files.write(classFile, patched);
                         if (!wroteFirst) counter.incrementAndGet();
@@ -538,9 +588,27 @@ public class ForgeModTransformer {
             bytecodeTransformer.clearJarClassBytesProvider();
             bytecodeTransformer.clearLinkedLibraries();
             bytecodeTransformer.clearJarRegistryIds();
+            bytecodeTransformer.clearJarOpenedFinals();
         }
 
         return counter.get();
+    }
+
+    /** Writes the companion of {@code owner}'s one static event handler beside it, unless the jar has that name. */
+    private static void writeCompanion(Path dir, Map<String, byte[]> jarClasses, String owner,
+                                       String name, byte[] bytes) {
+        // Only the owner's own companion, so a class whose internal name differs from its path writes nothing.
+        if (!name.equals(com.retromod.shim.forge.ForgeEventBusSynthetics.companionName(owner))) return;
+        if (jarClasses.containsKey(name)) {
+            LOGGER.warn("{} already has a class named {}, so its one event handler will not run on EventBus 7",
+                    owner, name);
+            return;
+        }
+        try {
+            Files.write(dir.resolve(name + ".class"), bytes);
+        } catch (IOException e) {
+            LOGGER.warn("Could not write {}, so the event handler of {} will not run: {}", name, owner, e.toString());
+        }
     }
 
     private int transformRefmaps(Path dir) throws IOException {
@@ -552,6 +620,10 @@ public class ForgeModTransformer {
                 String original = readJsonFile(refmap, "Mixin refmap JSON");
                 String transformed = MixinRefmapRemapper.remapForgeSelectorsWithRepairs(
                         original, mixinTransformer).json();
+                // The classes are already repaired, so an entry can follow the handler a repair retyped.
+                transformed = com.retromod.mixin.MixinRefmapTargetRepair.apply(transformed,
+                        com.retromod.mixin.MixinRefmapTargetRepair.classesIn(dir),
+                        bytecodeTransformer.getFuzzyResolver());
                 if (!original.equals(transformed)) {
                     Files.writeString(refmap, transformed);
                     changed++;
@@ -639,14 +711,28 @@ public class ForgeModTransformer {
             LOGGER.debug("Keeping bundled provider JAR unchanged: {}", jijJar.getFileName());
             return false;
         }
-        Path tempDir = Files.createTempDirectory("retromod-jij-");
+        Path tempDir = WorkFolder.createTempDirectory("retromod-jij-");
         try {
             extractNestedJar(jijJar, tempDir, budget, archiveKey);
+            // Read before the class pass rewrites @Mod, from the tree the nested budget covers.
+            boolean staleNeoForgeToml = ForgeTomlChoice.hasStaleNeoForgeToml(tempDir);
             com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs =
                     collectRefmapRepairs(tempDir);
-            int classesTransformed = transformClasses(tempDir, refmapRepairs);
+            // A bundled library keeps the version it was built for, or the outer jar's when it names none.
+            String outerVersion = classPassSourceVersion;
+            String nestedVersion = extractMinecraftVersion(jijJar);
+            classPassSourceVersion = nestedVersion != null ? nestedVersion : outerVersion;
+            int classesTransformed;
+            try {
+                classesTransformed = transformClasses(tempDir, refmapRepairs);
+            } finally {
+                classPassSourceVersion = outerVersion;
+            }
             int refmapsTransformed = transformRefmaps(tempDir);
             boolean accessTransformerNormalized = sanitizeAccessTransformer(tempDir);
+            // A bundled library loads as its own module, so its copy of the package splits the same way.
+            boolean strippedSynthetic = stripsMixinSyntheticPackage(targetMcVersion)
+                    && stripMixinSyntheticEntries(tempDir);
             // A bundled mod loads its own @Mod class and data, so it gets its own biome modifier,
             // and its banner tags come from the resource migration below. The calls the biome
             // wiring adds pull in synthetics, which marks the jar changed.
@@ -661,6 +747,16 @@ public class ForgeModTransformer {
             // the parent path, as on the CLI and AOT paths, so two parents bundling different
             // libraries under one file name never export the same embedded package.
             int synthetics = SyntheticEmbedder.embed(tempDir, archiveKey, bytecodeTransformer);
+            // As on the Fabric, CLI, and AOT nested paths, a library whose stand-ins could not be
+            // relocated keeps its original bytes, so one bundled jar does not fail the whole mod.
+            if (SyntheticEmbedder.hasRegisteredSyntheticReferences(tempDir, bytecodeTransformer)) {
+                LOGGER.warn("Keeping bundled JAR {} unchanged because its generated compatibility "
+                        + "classes could not be relocated", archiveKey);
+                return false;
+            }
+            // A bundled library loads as its own mod file, so it holds its own stand-ins.
+            int clientStandIns = addClientStandIns(tempDir, archiveKey);
+            boolean droppedModuleInfo = ModuleInfoRepair.dropInvalid(tempDir, archiveKey);
 
             boolean hasForgeToml      = Files.exists(tempDir.resolve("META-INF/mods.toml"));
             boolean hasNeoForgeToml   = Files.exists(tempDir.resolve("META-INF/neoforge.mods.toml"));
@@ -671,14 +767,17 @@ public class ForgeModTransformer {
             if (hasNeoForgeToml) {
                 updateModsToml(tempDir, "META-INF/neoforge.mods.toml");
             }
-            promoteToNeoForgeToml(tempDir);
+            boolean promotedToml = promoteToNeoForgeToml(tempDir, staleNeoForgeToml);
+            TomlMixinConfigs.listInDirectory(tempDir, targetMcVersion, promotedToml,
+                    nestedVersion != null ? nestedVersion : outerVersion);
 
             int nestedPatched = depth < MAX_JIJ_DEPTH
                     ? patchJarInJarMetadata(tempDir, depth + 1, budget, archiveKey)
                     : 0;
 
             boolean changed = classesTransformed > 0 || refmapsTransformed > 0
-                    || accessTransformerNormalized || synthetics > 0
+                    || accessTransformerNormalized || strippedSynthetic || synthetics > 0 || clientStandIns > 0
+                    || droppedModuleInfo
                     || hasForgeToml || hasNeoForgeToml
                     || dataMigrated > 0 || nestedPatched > 0;
             if (!changed) {
@@ -696,6 +795,23 @@ public class ForgeModTransformer {
                 });
             }
         }
+    }
+
+    /**
+     * Gives a NeoForge dedicated server's copy stand-ins for the client classes its server jar lacks,
+     * so shared classes that name them still verify. Returns how many it wrote.
+     */
+    private int addClientStandIns(Path dir, String key) throws IOException {
+        if (!com.retromod.shim.forge.ForgeDistCleaner.neoForgeDedicatedServer(com.retromod.util.McReflect.isNeoForge(),
+                EnvironmentDetector.isDedicatedServer(), System.getProperties())) {
+            return 0;
+        }
+        int written = com.retromod.shim.forge.ServerClientStandIns.embed(dir, key, targetMcVersion);
+        if (written > 0) {
+            strippedForServer.set(true);
+            LOGGER.debug(RetromodLog.DETAIL, "Added {} stand-in(s) for client classes this server lacks", written);
+        }
+        return written;
     }
 
     /**
@@ -764,7 +880,7 @@ public class ForgeModTransformer {
 
         Files.createDirectories(forgeToml.getParent());
         Files.writeString(forgeToml, toml.toString());
-        LOGGER.info("Generated META-INF/mods.toml from legacy mcmod.info ({} mod(s): {}, #79/#115)",
+        LOGGER.debug(RetromodLog.DETAIL, "Generated META-INF/mods.toml from legacy mcmod.info ({} mod(s): {}, #79/#115)",
                 ids.size(), String.join(", ", ids));
     }
 
@@ -816,7 +932,7 @@ public class ForgeModTransformer {
         for (String id : ids) appendDependencyBlocks(toml, id);
         Files.createDirectories(forgeToml.getParent());
         Files.writeString(forgeToml, toml.toString());
-        LOGGER.info("Generated META-INF/mods.toml from @Mod for a 1.12.2 mod without mcmod.info ({})",
+        LOGGER.debug(RetromodLog.DETAIL, "Generated META-INF/mods.toml from @Mod for a 1.12.2 mod without mcmod.info ({})",
                 String.join(", ", ids));
     }
 
@@ -1047,7 +1163,7 @@ public class ForgeModTransformer {
 
         if (!content.equals(original)) {
             Files.writeString(tomlFile, content);
-            LOGGER.info("Updated {}: minecraft versionRange -> [{}]", tomlPath, targetMcVersion);
+            LOGGER.debug(RetromodLog.DETAIL, "Updated {}: minecraft versionRange -> [{}]", tomlPath, targetMcVersion);
         }
     }
 
@@ -1056,22 +1172,25 @@ public class ForgeModTransformer {
      * {@code META-INF/neoforge.mods.toml}. NeoForge renamed the file in 1.20.2 and
      * skips a jar carrying only {@code mods.toml} at scan time, before any bytecode
      * runs, so a 1.20.1 (Neo)Forge mod never loads (#42). Gated to NeoForge.
+     * {@code staleNeoForgeToml} is {@link ForgeTomlChoice#hasStaleNeoForgeToml}, read from the
+     * original classes before the class pass. Returns whether it promoted the file.
      */
-    private void promoteToNeoForgeToml(Path tempDir) throws IOException {
-        if (!com.retromod.util.McReflect.isNeoForge()) return;
+    private boolean promoteToNeoForgeToml(Path tempDir, boolean staleNeoForgeToml) throws IOException {
+        if (!com.retromod.util.McReflect.isNeoForge()) return false;
         // 1.20.1 still wants mods.toml
-        if (RetromodVersion.mcVersionExceeds("1.20.2", targetMcVersion)) return;
+        if (RetromodVersion.mcVersionExceeds("1.20.2", targetMcVersion)) return false;
 
         Path forgeToml = tempDir.resolve("META-INF/mods.toml");
         Path neoToml = tempDir.resolve("META-INF/neoforge.mods.toml");
         // A leftover neoforge.mods.toml beside the Forge metadata is replaced by the real one.
-        if (!Files.exists(forgeToml) || (Files.exists(neoToml) && !ForgeTomlChoice.hasStaleNeoForgeToml(tempDir))) return;
+        if (!Files.exists(forgeToml) || (Files.exists(neoToml) && !staleNeoForgeToml)) return false;
 
         String content = promoteTomlContentForNeoForge(Files.readString(forgeToml));
         Files.writeString(neoToml, content);
         Files.delete(forgeToml); // NeoForge keys off the filename
-        LOGGER.info("Promoted META-INF/mods.toml -> neoforge.mods.toml for NeoForge {} (#42)",
+        LOGGER.debug(RetromodLog.DETAIL, "Promoted META-INF/mods.toml -> neoforge.mods.toml for NeoForge {} (#42)",
                 targetMcVersion);
+        return true;
     }
 
     /**
@@ -1093,13 +1212,25 @@ public class ForgeModTransformer {
      * Old Forge hosts still need the dummy.
      */
     private void stripMixinSyntheticPackage(Path tempDir) throws IOException {
-        if (!com.retromod.util.McReflect.isNeoForge()) return;
-        if (RetromodVersion.mcVersionExceeds("1.20.2", targetMcVersion)) return;
+        if (!stripsMixinSyntheticPackage(targetMcVersion)) return;
 
         if (stripMixinSyntheticEntries(tempDir)) {
-            LOGGER.info("Stripped org/spongepowered/asm/synthetic/ from mod jar - NeoForge's "
+            LOGGER.debug(RetromodLog.DETAIL, "Stripped org/spongepowered/asm/synthetic/ from mod jar - NeoForge's "
                     + "mixin_synthetic module owns that package (#87)");
         }
+    }
+
+    private static final String MIXIN_SYNTHETIC_PACKAGE = "org/spongepowered/asm/synthetic/";
+
+    /** Whether the target is a NeoForge host from 1.20.2 on, whose own module owns Mixin's synthetic package. */
+    static boolean stripsMixinSyntheticPackage(String targetMcVersion) {
+        return com.retromod.util.McReflect.isNeoForge()
+                && !RetromodVersion.mcVersionExceeds("1.20.2", targetMcVersion);
+    }
+
+    /** Whether a jar writer leaves out this entry: it is in Mixin's synthetic package on such a host (#87). */
+    public static boolean dropsMixinSyntheticEntry(String entryName, String targetMcVersion) {
+        return entryName.startsWith(MIXIN_SYNTHETIC_PACKAGE) && stripsMixinSyntheticPackage(targetMcVersion);
     }
 
     /**
@@ -1117,7 +1248,7 @@ public class ForgeModTransformer {
 
         int removed = stripJarInJarArtifact(tempDir, "io.github.llamalad7", "mixinextras-forge");
         if (removed > 0) {
-            LOGGER.info("Removed the bundled Forge MixinExtras; NeoForge provides its own (#308)");
+            LOGGER.debug(RetromodLog.DETAIL, "Removed the bundled Forge MixinExtras; NeoForge provides its own (#308)");
         }
     }
 
@@ -1201,6 +1332,115 @@ public class ForgeModTransformer {
      */
     public static String relaxLoaderVersion(String toml) {
         return toml.replaceAll("(?m)^(\\s*loaderVersion\\s*=\\s*)(\"[^\"]*\"|'[^']*')", "$1\"[1,)\"");
+    }
+
+    private static final Pattern VERSION_RANGE_VALUE =
+            Pattern.compile("(versionRange\\s*=\\s*\")([^\"]*)\"");
+    // One bracketed interval of a range: [1.21], [1.21,1.21.1), (,1.20] or [1.21,).
+    private static final Pattern RANGE_INTERVAL =
+            Pattern.compile("([\\[(])\\s*([^,\\[\\]()]*?)\\s*(?:,\\s*([^,\\[\\]()]*?)\\s*)?([\\])])");
+
+    /**
+     * A Maven version range opened above from its lowest version, or {@code spec} unchanged when it
+     * already accepts every newer version or cannot be read.
+     */
+    static String openFromLowest(String spec) {
+        String text = spec.trim();
+        if (text.isEmpty() || text.equals("*")) return spec;
+        // A bare version such as 1.21.8 means at least that version.
+        if (Character.isDigit(text.charAt(0)) && text.matches("[^\\[\\](),\\s]+")) return "[" + text + ",)";
+
+        Matcher interval = RANGE_INTERVAL.matcher(text);
+        String lowest = null;
+        String lowestBracket = "[";
+        boolean unbounded = false;
+        int end = 0;
+        while (interval.find()) {
+            // Only commas may sit between intervals, or this is not a range this method understands.
+            if (!text.substring(end, interval.start()).matches("\\s*,?\\s*")) return spec;
+            end = interval.end();
+            boolean single = interval.group(3) == null;
+            String lower = interval.group(2);
+            if (!single && interval.group(3).isEmpty()) return spec;
+            if (lower.isEmpty()) {
+                unbounded = true;
+            } else if (lowest == null || RetromodVersion.compareMcVersions(lower, lowest) < 0) {
+                lowest = lower;
+                lowestBracket = single ? "[" : interval.group(1);
+            }
+        }
+        // A trailing comma, as Better Clouds writes after its NeoForge ranges, ends the set.
+        if (end == 0 || !text.substring(end).matches("\\s*,?\\s*")) return spec;
+        // An interval with no lower bound already reaches the oldest version.
+        if (unbounded || lowest == null) return "[0,)";
+        return lowestBracket + lowest + ",)";
+    }
+
+    /** The offline paths' toml relaxation: open ranges, optional siblings, and loaderVersion [1,). */
+    public static String relaxDependencies(String toml) {
+        StringBuilder result = new StringBuilder();
+        String[] blocks = toml.split("(?=\\[\\[dependencies\\.)");
+
+        for (String block : blocks) {
+            // The preamble and other tables pass through.
+            if (!block.contains("modId")) {
+                result.append(block);
+                continue;
+            }
+
+            boolean isMinecraft = block.contains("\"minecraft\"");
+            boolean isNeoForge = block.contains("\"neoforge\"");
+            boolean isForge = block.contains("\"forge\"");
+            boolean isCoreDependent = isMinecraft || isNeoForge || isForge;
+            // An incompatible or discouraged dependency's range lists versions to avoid.
+            if (block.matches("(?s).*\\btype\\s*=\\s*[\"'](?i:incompatible|discouraged)[\"'].*")) {
+                result.append(block);
+                continue;
+            }
+
+            // Every range shape opens from its lowest version: [1.21,1.21.1), the exact [1.21.1]
+            // that rejected every newer host (#188, Caelum), a bare 1.21.8, and a set of ranges
+            // such as Distant Horizons' [1.21],[1.21.1].
+            Matcher range = VERSION_RANGE_VALUE.matcher(block);
+            StringBuilder opened = new StringBuilder();
+            while (range.find()) {
+                range.appendReplacement(opened, Matcher.quoteReplacement(
+                        range.group(1) + openFromLowest(range.group(2)) + "\""));
+            }
+            range.appendTail(opened);
+            block = opened.toString();
+
+            if (!isCoreDependent) {
+                // Matches the in-game path: an optional dependency is still range-checked
+                // when present, and a sibling built for the host rarely fits the old range.
+                block = block.replaceAll(
+                    "(versionRange\\s*=\\s*\")[^\"]*\"",
+                    "$1[0,)\""
+                );
+                block = block.replaceAll(
+                    "(type\\s*=\\s*\")required\"",
+                    "$1optional\""
+                );
+                // old mandatory=true format
+                block = block.replaceAll(
+                    "(mandatory\\s*=\\s*)true",
+                    "$1false"
+                );
+                // NeoForge from 1.20.2 ignores mandatory and treats a block without a type
+                // as required, so an optional old-format dependency must say so.
+                if (block.matches("(?s).*\\bmandatory\\s*=.*")
+                        && !block.matches("(?s).*\\btype\\s*=.*")) {
+                    block = block.replaceFirst("(?m)^(\\s*mandatory\\s*=[^\\n]*)$",
+                            "$1\ntype=\"optional\"");
+                }
+            }
+
+            result.append(block);
+        }
+
+        // The language provider checks loaderVersion against its own version, which moves
+        // with every Forge release, so a bounded range rejects the mod at discovery.
+        return relaxLoaderVersion(result.toString());
     }
 
     /**
@@ -1331,6 +1571,33 @@ public class ForgeModTransformer {
         return marked;
     }
 
+    /** The modId of the dependency block each line belongs to, or null outside such a block. */
+    static String[] dependencyModIds(String[] lines) {
+        String[] modIds = new String[lines.length];
+        int blockStart = -1;
+        for (int i = 0; i <= lines.length; i++) {
+            boolean header = i < lines.length && lines[i].trim().startsWith("[");
+            if (header || i == lines.length) {
+                if (blockStart >= 0) {
+                    java.util.Arrays.fill(modIds, blockStart, i, blockModId(lines, blockStart, i));
+                }
+                blockStart = i < lines.length && lines[i].trim().startsWith("[[dependencies")
+                        ? i : -1;
+            }
+        }
+        return modIds;
+    }
+
+    private static String blockModId(String[] lines, int start, int end) {
+        for (int j = start; j < end; j++) {
+            // lookingAt keeps a trailing inline comment working, but a commented-out #modId never
+            // counts: some mods leave a whole #[[dependencies]] block inside the one above it.
+            Matcher modId = MOD_ID_PATTERN.matcher(lines[j].trim());
+            if (modId.lookingAt()) return modId.group(1);
+        }
+        return null;
+    }
+
     /**
      * Update the minecraft versionRange in TOML content, and relax ranges for
      * third-party APIs Retromod shims (otherwise the loader blocks the mod even
@@ -1341,15 +1608,12 @@ public class ForgeModTransformer {
         String[] lines = toml.split("\n");
         boolean[] negativeRange = negativeDependencyLines(lines);
         boolean[] typed = typedDependencyLines(lines);
-        String currentDepModId = null;
+        // TOML keys have no order, so each line takes its block's modId, even one written last.
+        String[] blockModIds = dependencyModIds(lines);
 
         for (int lineIndex = 0; lineIndex < lines.length; lineIndex++) {
             String line = lines[lineIndex];
             String trimmed = line.trim();
-
-            if (trimmed.startsWith("[[dependencies")) {
-                currentDepModId = null;
-            }
 
             // An incompatible or discouraged dependency's range lists the versions to avoid, so
             // widening it would reject every version instead of none.
@@ -1358,32 +1622,22 @@ public class ForgeModTransformer {
                 continue;
             }
 
-            // find() not matches(): a trailing inline comment like modId="forge"
-            // #mandatory defeats a full-line match
-            Matcher modIdMatcher = MOD_ID_PATTERN.matcher(trimmed);
-            if (modIdMatcher.find()) {
-                currentDepModId = modIdMatcher.group(1);
-            }
-
+            String currentDepModId = blockModIds[lineIndex];
             if (currentDepModId != null && trimmed.startsWith("versionRange")) {
                 if ("minecraft".equals(currentDepModId)) {
                     result.append("versionRange = \"[").append(targetMcVersion).append(",)\"\n");
-                    LOGGER.info("  Updated minecraft versionRange -> [{},...)", targetMcVersion);
-                    currentDepModId = null;
+                    LOGGER.debug(RetromodLog.DETAIL, "  Updated minecraft versionRange -> [{},...)", targetMcVersion);
                 } else if (SHIMMED_API_MOD_IDS.contains(currentDepModId)) {
                     result.append("versionRange = \"[0,)\"\n");
-                    LOGGER.info("  Relaxed API dependency: {} -> [0,...) (Retromod has shims)", currentDepModId);
-                    currentDepModId = null;
+                    LOGGER.debug(RetromodLog.DETAIL, "  Relaxed API dependency: {} -> [0,...) (Retromod has shims)", currentDepModId);
                 } else if ("forge".equals(currentDepModId) || "neoforge".equals(currentDepModId)) {
                     result.append("versionRange = \"[0,)\"\n");
-                    currentDepModId = null;
                 } else {
                     // A sibling mod built for the host rarely satisfies a range written for the
                     // old version: Farmer's Delight 1.3.4 sorts below "1.20.1-1.2.4" (#273). An
                     // optional dependency is still range-checked when present, so the range goes.
                     result.append("versionRange = \"[0,)\"\n");
-                    LOGGER.info("  Relaxed dependency: {} -> [0,...)", currentDepModId);
-                    currentDepModId = null;
+                    LOGGER.debug(RetromodLog.DETAIL, "  Relaxed dependency: {} -> [0,...)", currentDepModId);
                 }
             } else if (currentDepModId != null &&
                        !("minecraft".equals(currentDepModId) || "neoforge".equals(currentDepModId) || "forge".equals(currentDepModId))
@@ -1457,7 +1711,7 @@ public class ForgeModTransformer {
             ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
             classNode.accept(writer);
             byte[] result = writer.toByteArray();
-            LOGGER.info("Injected missing extractContents() into {} (extends {})", className, superName);
+            LOGGER.debug(RetromodLog.DETAIL, "Injected missing extractContents() into {} (extends {})", className, superName);
             return result;
         } catch (Exception e) {
             LOGGER.debug("Could not inject abstract methods into {}: {}", className, e.getMessage());
@@ -1557,7 +1811,7 @@ public class ForgeModTransformer {
                             LOGGER.debug("Could not convert access widener {}: {}", name, e.getMessage());
                         }
                     }
-                    LOGGER.info("Removing Fabric access widener from Forge mod: {}", name);
+                    LOGGER.debug(RetromodLog.DETAIL, "Removing Fabric access widener from Forge mod: {}", name);
                     Files.delete(file);
                 }
             }
@@ -1569,7 +1823,7 @@ public class ForgeModTransformer {
             try {
                 Files.createDirectories(atFile.getParent());
                 Files.writeString(atFile, generatedAt.toString());
-                LOGGER.info("Emitted META-INF/accesstransformer.cfg from Fabric access widener(s)");
+                LOGGER.debug(RetromodLog.DETAIL, "Emitted META-INF/accesstransformer.cfg from Fabric access widener(s)");
             } catch (IOException e) {
                 LOGGER.warn("Failed to write generated accesstransformer.cfg: {}", e.getMessage());
             }
@@ -1590,10 +1844,11 @@ public class ForgeModTransformer {
 
         try {
             String original = Files.readString(atFile, java.nio.charset.StandardCharsets.UTF_8);
-            String normalized = prepareAccessTransformer(original, targetMcVersion);
+            // The class pass is over, so the jar's own classes are named for the class moves here.
+            String normalized = prepareAccessTransformer(original, targetMcVersion, classNamesIn(dir)::contains);
             if (!normalized.equals(original)) {
                 Files.writeString(atFile, normalized, java.nio.charset.StandardCharsets.UTF_8);
-                LOGGER.info("Normalized legacy class descriptors in META-INF/accesstransformer.cfg");
+                LOGGER.debug(RetromodLog.DETAIL, "Normalized legacy class descriptors in META-INF/accesstransformer.cfg");
                 return true;
             }
         } catch (IOException e) {
@@ -1602,12 +1857,58 @@ public class ForgeModTransformer {
         return false;
     }
 
-    /** An author's AT as the host reads it, for the runtime and offline paths alike. */
+    /** An author's AT as the host reads it, for a path that runs it while its jar's class pass is in scope. */
     public static String prepareAccessTransformer(String content, String targetMcVersion) {
+        return prepareAccessTransformer(content, targetMcVersion, null);
+    }
+
+    /** The same, where {@code jarDefines} names the jar's own classes, or null to read them from the class pass. */
+    public static String prepareAccessTransformer(String content, String targetMcVersion,
+            java.util.function.Predicate<String> jarDefines) {
         String normalized = normalizeAccessTransformer(content);
         // A host that runs Mojang member names ignores an entry that names an SRG id.
         if (!hostRunsMojangMemberNames(targetMcVersion)) return normalized;
-        return remapAccessTransformerToMojang(normalized, com.retromod.mapping.SrgToMojangMapper.getInstance());
+        String mojang = remapAccessTransformerToMojang(normalized, com.retromod.mapping.SrgToMojangMapper.getInstance());
+        // The host also ignores an entry on a class it moved, such as Villager into npc.villager in 26.1, whose
+        // FOOD_POINTS Farmer's Delight opens to add its foods.
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        return moveAccessTransformerClasses(mojang, jarDefines == null ? transformer::classRedirectForCurrentMod
+                : name -> transformer.classRedirectForJar(name, jarDefines));
+    }
+
+    /** The classes an extracted jar holds, by internal name. */
+    private static java.util.Set<String> classNamesIn(Path dir) throws IOException {
+        java.util.Set<String> names = new java.util.HashSet<>();
+        try (var files = Files.walk(dir)) {
+            for (Path file : files.filter(f -> f.toString().endsWith(".class")).toList()) {
+                String relative = dir.relativize(file).toString().replace(File.separatorChar, '/');
+                if (!relative.startsWith("META-INF/")) names.add(relative.substring(0, relative.length() - 6));
+            }
+        }
+        return names;
+    }
+
+    /** Each class an AT entry names, under the Minecraft name the class moves give it. */
+    public static String moveAccessTransformerClasses(String content, java.util.function.UnaryOperator<String> move) {
+        Pattern entry = Pattern.compile("(?m)^(\\s*(?:public|protected|private|default)(?:[+-]f)?\\s+)([\\w$.]+)");
+        Matcher matcher = entry.matcher(content);
+        StringBuilder out = new StringBuilder();
+        while (matcher.find()) {
+            String binary = matcher.group(2);
+            String internal = binary.replace('.', '/');
+            String moved = internal;
+            // A class can move more than once, as through 26.1 and then 26.2.
+            for (int hop = 0; hop < 8; hop++) {
+                String next = move.apply(moved);
+                if (next == null || next.equals(moved)) break;
+                moved = next;
+            }
+            // Only a move to another Minecraft class counts: a Retromod stand-in is not the host's to open.
+            String result = !moved.equals(internal) && moved.startsWith("net/minecraft/") ? moved.replace('/', '.') : binary;
+            matcher.appendReplacement(out, Matcher.quoteReplacement(matcher.group(1) + result));
+        }
+        matcher.appendTail(out);
+        return out.toString();
     }
 
     /** NeoForge runs Mojang member names from 1.20.2 and Forge from 1.20.6. */
@@ -1786,6 +2087,11 @@ public class ForgeModTransformer {
                 ZipSecurity.sanitizeManifestValue(targetMcVersion));
         manifest.getMainAttributes().putValue("Retromod-Original-Jar",
                 ZipSecurity.sanitizeManifestValue(originalName));
+        // A copy without its client-only code says so, so export and a client refuse it.
+        if (strippedForServer.get()) {
+            manifest.getMainAttributes().putValue(com.retromod.inplace.TranslatedJarMarkers.DIST,
+                    com.retromod.inplace.TranslatedJarMarkers.DEDICATED_SERVER);
+        }
         Files.createDirectories(manifestFile.getParent());
         try (OutputStream os = Files.newOutputStream(manifestFile)) {
             manifest.write(os);

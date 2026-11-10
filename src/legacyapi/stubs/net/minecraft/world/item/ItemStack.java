@@ -14,7 +14,13 @@ public final class ItemStack implements DataComponentHolder, MutableDataComponen
     public static final MapCodec<ItemStack> MAP_CODEC = null;
     public static final Codec<ItemStack> CODEC = null;
     public static final Codec<ItemStack> OPTIONAL_CODEC = null;
+    public ItemStack(ItemLike item) { throw new UnsupportedOperationException(); }
     public ItemStack(ItemLike item, int count) { throw new UnsupportedOperationException(); }
+    public ItemStack(net.minecraft.core.Holder<Item> item) { throw new UnsupportedOperationException(); }
+    public ItemStack(net.minecraft.core.Holder<Item> item, int count) { throw new UnsupportedOperationException(); }
+    public ItemStack(net.minecraft.core.Holder<Item> item, int count, net.minecraft.core.component.DataComponentPatch patch) {
+        throw new UnsupportedOperationException();
+    }
     public boolean isEmpty() { throw new UnsupportedOperationException(); }
     public int getCount() { throw new UnsupportedOperationException(); }
     public void setCount(int count) { throw new UnsupportedOperationException(); }
@@ -26,6 +32,8 @@ public final class ItemStack implements DataComponentHolder, MutableDataComponen
     public int getMaxStackSize() { throw new UnsupportedOperationException(); }
     public boolean isStackable() { throw new UnsupportedOperationException(); }
     public Item getItem() { throw new UnsupportedOperationException(); }
+    public net.minecraft.core.Holder<Item> typeHolder() { throw new UnsupportedOperationException(); }
+    public boolean hasFoil() { throw new UnsupportedOperationException(); }
     public static boolean isSameItem(ItemStack first, ItemStack second) { throw new UnsupportedOperationException(); }
     public static boolean isSameItemSameComponents(ItemStack first, ItemStack second) { throw new UnsupportedOperationException(); }
     public static boolean matches(ItemStack first, ItemStack second) { throw new UnsupportedOperationException(); }

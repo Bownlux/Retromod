@@ -4,6 +4,7 @@
  */
 package com.retromod.polyfill.minecraft;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
@@ -273,7 +274,7 @@ public final class LegacyVertexBuffer implements AutoCloseable {
         Method setColor = null;
         Method setNormal = null;
         Method setLineWidth = null;
-        for (Method method : consumer.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(consumer.getClass())) {
             Class<?>[] params = method.getParameterTypes();
             if (method.getName().equals("addVertex") && params.length == 4 && params[1] == float.class
                     && !params[0].isPrimitive() && params[0].isInstance(pose)) {
@@ -366,7 +367,7 @@ public final class LegacyVertexBuffer implements AutoCloseable {
 
     private static String firstMethod(Object target, String... names) {
         for (String name : names) {
-            for (Method method : target.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(target.getClass())) {
                 if (method.getName().equals(name) && method.getParameterCount() == 0) return name;
             }
         }
@@ -374,7 +375,7 @@ public final class LegacyVertexBuffer implements AutoCloseable {
     }
 
     private static Object call(Object target, String name, Object... args) throws Exception {
-        for (Method method : target.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(target.getClass())) {
             if (!method.getName().equals(name) || method.getParameterCount() != args.length) continue;
             Class<?>[] params = method.getParameterTypes();
             boolean fits = true;

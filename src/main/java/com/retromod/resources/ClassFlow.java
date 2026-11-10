@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import com.retromod.core.SyntheticEmbedder;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.Handle;
 import org.objectweb.asm.Opcodes;
@@ -59,7 +60,10 @@ final class ClassFlow {
 
     /** Whether a class name is one of Retromod's own, which the runtime embeds into mods. */
     static boolean isRetromodClass(String entryName) {
-        return entryName.startsWith("com/retromod/") || entryName.contains("/com/retromod/");
+        // A mod may live under com/retromod too, as the test mods do, so the package decides.
+        int nested = entryName.indexOf("/com/retromod/");
+        return SyntheticEmbedder.isRetromodClass(entryName)
+                || (nested >= 0 && SyntheticEmbedder.isRetromodClass(entryName.substring(nested + 1)));
     }
 
     /** The operand stack before each instruction, or null when the method cannot be analyzed. */

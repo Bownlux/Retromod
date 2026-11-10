@@ -107,8 +107,9 @@ class AotCompilerSecurityTest {
             assertTrue(jar.getJarEntry("META-INF/MANIFEST.MF") != null);
             assertTrue(jar.getJarEntry("META-INF/") != null);
             assertTrue(jar.getJarEntry("retromod_aot.properties") != null);
+            // Stand-ins are relocated into the mod by the embedder, never copied to a shared folder.
             assertTrue(jar.getJarEntry(
-                    "retromod_embedded/com/retromod/aot/AotCompiler.class") != null);
+                    "retromod_embedded/com/retromod/aot/AotCompiler.class") == null);
             assertTrue(jar.getJarEntry(potionPath).getSize() > legacyPotion.length,
                     "the migrated resource must expand for this budget regression");
         }
@@ -659,6 +660,71 @@ class AotCompilerSecurityTest {
         assertEquals("keep", Files.readString(sentinel));
         assertFalse(Files.exists(cache.resolve("source-aot.jar"),
                 java.nio.file.LinkOption.NOFOLLOW_LINKS));
+    }
+
+    @Test
+    @DisplayName("aot and batch --aot leave no backup folder beside the jar they were given")
+    void offlineInputGetsNoBackupFolderBesideIt(@TempDir Path directory) throws Exception {
+        Path in = Files.createDirectory(directory.toRealPath().resolve("in"));
+        Path input = in.resolve("x.jar");
+        writeFabricMod(input);
+        byte[] before = Files.readAllBytes(input);
+
+        Path output = AotCompiler.forOfflineInputs(new ShimRegistry(), "26.3",
+                directory.toRealPath().resolve("cache")).compileModAot(input, true);
+
+        assertNotEquals(input, output);
+        assertArrayEquals(before, Files.readAllBytes(input), "the input is never changed");
+        assertFalse(Files.exists(in.resolve("retromod-backups"), java.nio.file.LinkOption.NOFOLLOW_LINKS),
+                "the CLI writes only its requested output and its own folders");
+    }
+
+    @Test
+    @DisplayName("a jar picked in game leaves no backup folder beside it")
+    void pickedJarGetsNoBackupFolderBesideIt(@TempDir Path directory) throws Exception {
+        Path picked = Files.createDirectory(directory.toRealPath().resolve("picked"));
+        Path input = picked.resolve("x.jar");
+        writeFabricMod(input);
+        byte[] before = Files.readAllBytes(input);
+
+        Path output = new AotCompiler(new ShimRegistry(), "26.3",
+                directory.toRealPath().resolve("cache")).compileModAot(input, true);
+
+        assertNotEquals(input, output);
+        assertArrayEquals(before, Files.readAllBytes(input));
+        assertFalse(Files.exists(picked.resolve("retromod-backups"), java.nio.file.LinkOption.NOFOLLOW_LINKS),
+                "a picked jar can sit outside the game directory, such as in Downloads");
+    }
+
+    @Test
+    @DisplayName("aot pointed at a rewrite-mode mods folder keeps the original stored there")
+    void offlineAotLeavesAStoredOriginalAlone(@TempDir Path directory) throws Exception {
+        Path mods = Files.createDirectory(directory.toRealPath().resolve("mods"));
+        Path stored = Files.createDirectory(mods.resolve("retromod-backups")).resolve("x.jar");
+        Files.writeString(stored, "the true original");
+        Path input = mods.resolve("x.jar");
+        writeFabricMod(input);
+
+        AotCompiler.forOfflineInputs(new ShimRegistry(), "26.3",
+                directory.toRealPath().resolve("cache")).compileModAot(input, true);
+
+        assertEquals("the true original", Files.readString(stored),
+                "the translated jar in mods/ must not replace the original rewrite mode kept");
+    }
+
+    @Test
+    @DisplayName("the automatic scan of mods/ still keeps its documented backup")
+    void automaticScanStillBacksUpBesideTheJar(@TempDir Path directory) throws Exception {
+        Path mods = Files.createDirectory(directory.toRealPath().resolve("mods"));
+        Path input = mods.resolve("x.jar");
+        writeFabricMod(input);
+
+        new AotCompiler(new ShimRegistry(), "26.3", directory.toRealPath().resolve("cache"))
+                .compileModAot(input);
+
+        Path backup = mods.resolve("retromod-backups").resolve("x.jar");
+        assertTrue(Files.isRegularFile(backup, java.nio.file.LinkOption.NOFOLLOW_LINKS));
+        assertArrayEquals(Files.readAllBytes(input), Files.readAllBytes(backup));
     }
 
     private static void writeJar(Path path, String name, byte[] data) throws Exception {

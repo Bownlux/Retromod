@@ -52,7 +52,7 @@ public final class LegacyRecipeInternals {
             }
             // ItemStackTemplate.create() builds a new stack, which is what reading the old
             // mutable field and copying it amounted to.
-            Method create = value.getClass().getMethod("create");
+            Method create = LegacyPublicMethods.method(value.getClass(), "create");
             return create.invoke(value);
         } catch (ReflectiveOperationException | RuntimeException e) {
             throw new IllegalStateException("Retromod: could not read the result of "
@@ -80,6 +80,61 @@ public final class LegacyRecipeInternals {
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Retromod: could not read the result of "
                     + recipe.getClass().getName(), e);
+        }
+    }
+
+    /** Whether an ingredient is empty; one that names a tag is not, though recipes load before tags are bound. */
+    private static boolean isEmpty(Object ingredient) throws ReflectiveOperationException {
+        try {
+            Field values = ingredient.getClass().getDeclaredField("values");
+            values.setAccessible(true);
+            Object set = values.get(ingredient);
+            Class<?> named = Class.forName("net.minecraft.core.HolderSet$Named", true, LegacyRecipeInternals.class.getClassLoader());
+            if (named.isInstance(set) && !(boolean) named.getMethod("isBound").invoke(set)) return false;
+        } catch (NoSuchFieldException otherShape) {
+            // An ingredient without a holder set answers for itself.
+        }
+        return (Boolean) LegacyPublicMethods.method(ingredient.getClass(), "isEmpty").invoke(ingredient);
+    }
+
+    /**
+     * The 26.1 pattern for 1.20.1's {@code (width, height, ingredients)}: a grid in which an empty
+     * ingredient leaves its slot empty.
+     */
+    public static Object legacyPattern(int width, int height, Object ingredients) {
+        try {
+            ClassLoader loader = LegacyRecipeInternals.class.getClassLoader();
+            java.util.List<java.util.Optional<Object>> slots = new java.util.ArrayList<>();
+            for (Object ingredient : (Iterable<?>) ingredients) {
+                boolean empty = ingredient == null || isEmpty(ingredient);
+                slots.add(empty ? java.util.Optional.empty() : java.util.Optional.of(ingredient));
+            }
+            return Class.forName("net.minecraft.world.item.crafting.ShapedRecipePattern", true, loader)
+                    .getConstructor(int.class, int.class, java.util.List.class, java.util.Optional.class)
+                    .newInstance(width, height, slots, java.util.Optional.empty());
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            throw new IllegalStateException("Retromod: could not build a " + width + " by " + height + " recipe pattern", e);
+        }
+    }
+
+    /** The crafting grid a 1.20.1 recipe reads, holding the stacks of the input 26.1 hands it. */
+    public static Object craftingContainer(Object input) {
+        try {
+            ClassLoader loader = LegacyRecipeInternals.class.getClassLoader();
+            int width = (int) invoke(input, "width");
+            int height = (int) invoke(input, "height");
+            java.util.List<?> stacks = (java.util.List<?>) invoke(input, "items");
+            Class<?> grid = Class.forName("net.minecraft.world.inventory.TransientCraftingContainer", true, loader);
+            Class<?> list = Class.forName("net.minecraft.core.NonNullList", true, loader);
+            // The constructor that takes the stacks is private; setItem would tell a menu, and this grid has none.
+            java.lang.reflect.Constructor<?> withItems = grid.getDeclaredConstructor(
+                    Class.forName("net.minecraft.world.inventory.AbstractContainerMenu", true, loader), int.class, int.class, list);
+            withItems.setAccessible(true);
+            Object empty = Class.forName("net.minecraft.world.item.ItemStack", true, loader).getField("EMPTY").get(null);
+            Object items = list.getMethod("of", Object.class, Object[].class).invoke(null, empty, stacks.toArray());
+            return withItems.newInstance(null, width, height, items);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            throw new IllegalStateException("Retromod: could not hand a crafting grid to an old recipe", e);
         }
     }
 
@@ -134,7 +189,7 @@ public final class LegacyRecipeInternals {
 
     private static Object invoke(Object receiver, String method) {
         try {
-            return receiver.getClass().getMethod(method).invoke(receiver);
+            return LegacyPublicMethods.method(receiver.getClass(), method).invoke(receiver);
         } catch (ReflectiveOperationException | LinkageError | RuntimeException absent) {
             return null;
         }

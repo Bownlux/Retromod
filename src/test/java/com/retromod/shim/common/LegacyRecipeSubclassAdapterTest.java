@@ -39,6 +39,8 @@ class LegacyRecipeSubclassAdapterTest {
     private static final String PROVIDER = "Lnet/minecraft/core/HolderLookup$Provider;";
     private static final String LEGACY_ASSEMBLE = "(L" + CRAFTING_INPUT + ";" + PROVIDER + ")" + STACK;
     private static final String CURRENT_ASSEMBLE = "(L" + CRAFTING_INPUT + ";)" + STACK;
+    private static final String CONTAINER = "net/minecraft/world/inventory/CraftingContainer";
+    private static final String LEVEL = "net/minecraft/world/level/Level";
 
     @Test
     @DisplayName("a shaped recipe wrapper copies its vanilla recipe through the 26.1 constructor")
@@ -125,6 +127,29 @@ class LegacyRecipeSubclassAdapterTest {
                 "super.assemble must call the surviving vanilla method, not recurse");
         assertNotNull(find(fixed, "assemble", "(L" + CRAFTING + "RecipeInput;)" + STACK),
                 "vanilla calls the erased interface method");
+        verify(fixed);
+    }
+
+    @Test
+    @DisplayName("a 1.20.1 shaped wrapper, as Sophisticated Backpacks builds one, gets 26.1's constructor and crafting input methods")
+    void oldShapedWrapperGetsCurrentShapes() {
+        ClassNode fixed = adapt(oldShapedWrapper());
+        MethodNode ctor = method(fixed, "<init>", "(L" + SHAPED + ";)V");
+        MethodInsnNode superCall = calls(ctor).stream()
+                .filter(c -> c.owner.equals(SHAPED) && c.name.equals("<init>")).findFirst().orElseThrow();
+        assertTrue(superCall.desc.startsWith("(L" + CRAFTING + "Recipe$CommonInfo;"), superCall.desc);
+        assertTrue(calls(ctor).stream().anyMatch(c -> c.name.equals("legacyPattern")), "the grid becomes a pattern");
+        assertTrue(calls(ctor).stream().anyMatch(c -> c.name.equals("resultTemplate")), "the copied result stays a template");
+
+        // super.matches and super.assemble read a crafting input now.
+        String oldMatches = "(L" + CONTAINER + ";L" + LEVEL + ";)Z";
+        assertTrue(calls(method(fixed, "matches", oldMatches)).stream().anyMatch(c -> c.owner.equals(SHAPED)
+                && c.desc.equals("(L" + CRAFTING_INPUT + ";L" + LEVEL + ";)Z")), "the super call reads an input");
+        // 26.1 calls the input forms, which reach the old overrides.
+        assertTrue(calls(method(fixed, "matches", "(L" + CRAFTING_INPUT + ";L" + LEVEL + ";)Z")).stream()
+                .anyMatch(c -> c.name.equals("matches") && c.desc.equals(oldMatches)));
+        assertTrue(calls(method(fixed, "assemble", CURRENT_ASSEMBLE)).stream()
+                .anyMatch(c -> c.name.equals("craftingContainer")));
         verify(fixed);
     }
 
@@ -273,6 +298,54 @@ class LegacyRecipeSubclassAdapterTest {
         m.visitInsn(Opcodes.ARETURN);
         m.visitMaxs(0, 0);
         m.visitEnd();
+    }
+
+    /**
+     * Sophisticated Backpacks' 1.20.1 upgrade recipe after the 26.1 remap: it copies a shaped recipe through the
+     * 1.20.1 constructor with the recipe id and grid, and overrides matches and assemble for a crafting container.
+     */
+    private static byte[] oldShapedWrapper() {
+        String id = "Lnet/minecraft/resources/Identifier;";
+        String category = "L" + CRAFTING + "CraftingBookCategory;";
+        String grid = "(" + id + "Ljava/lang/String;" + category + "IILnet/minecraft/core/NonNullList;" + STACK + ")V";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "mod/UpgradeRecipe", null, SHAPED, null);
+        MethodVisitor init = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(L" + SHAPED + ";)V", null, null);
+        init.visitCode();
+        init.visitVarInsn(Opcodes.ALOAD, 0);
+        init.visitInsn(Opcodes.ACONST_NULL);
+        init.visitLdcInsn("");
+        init.visitInsn(Opcodes.ACONST_NULL);
+        init.visitInsn(Opcodes.ICONST_3);
+        init.visitInsn(Opcodes.ICONST_3);
+        init.visitInsn(Opcodes.ACONST_NULL);
+        init.visitVarInsn(Opcodes.ALOAD, 1);
+        init.visitFieldInsn(Opcodes.GETFIELD, SHAPED, "result", STACK);
+        init.visitMethodInsn(Opcodes.INVOKESPECIAL, SHAPED, "<init>", grid, false);
+        init.visitInsn(Opcodes.RETURN);
+        init.visitMaxs(0, 0);
+        init.visitEnd();
+        MethodVisitor matches = cw.visitMethod(Opcodes.ACC_PUBLIC, "matches", "(L" + CONTAINER + ";L" + LEVEL + ";)Z", null, null);
+        matches.visitCode();
+        matches.visitVarInsn(Opcodes.ALOAD, 0);
+        matches.visitVarInsn(Opcodes.ALOAD, 1);
+        matches.visitVarInsn(Opcodes.ALOAD, 2);
+        matches.visitMethodInsn(Opcodes.INVOKESPECIAL, SHAPED, "matches", "(L" + CONTAINER + ";L" + LEVEL + ";)Z", false);
+        matches.visitInsn(Opcodes.IRETURN);
+        matches.visitMaxs(0, 0);
+        matches.visitEnd();
+        String access = "Lnet/minecraft/core/RegistryAccess;";
+        MethodVisitor assemble = cw.visitMethod(Opcodes.ACC_PUBLIC, "assemble", "(L" + CONTAINER + ";" + access + ")" + STACK, null, null);
+        assemble.visitCode();
+        assemble.visitVarInsn(Opcodes.ALOAD, 0);
+        assemble.visitVarInsn(Opcodes.ALOAD, 1);
+        assemble.visitVarInsn(Opcodes.ALOAD, 2);
+        assemble.visitMethodInsn(Opcodes.INVOKESPECIAL, SHAPED, "assemble", "(L" + CONTAINER + ";" + access + ")" + STACK, false);
+        assemble.visitInsn(Opcodes.ARETURN);
+        assemble.visitMaxs(0, 0);
+        assemble.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     private static ClassNode adapt(byte[] original) {

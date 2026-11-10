@@ -100,6 +100,16 @@ class LegacyContentBridgesTest {
         assertEquals(1, handler.tryCatchBlocks.size());
         assertEquals("java/lang/Throwable", handler.tryCatchBlocks.get(0).type);
         new Analyzer<>(new BasicVerifier()).analyze(guarded.name, handler);
+        // The catch warns with the cause in the game log, which standard output never reaches on Forge or NeoForge.
+        String logger = com.retromod.util.HostLibraryNames.SLF4J_PACKAGE + "/Logger";
+        boolean warnsWithCause = false;
+        for (AbstractInsnNode insn : handler.instructions) {
+            assertFalse(insn instanceof org.objectweb.asm.tree.FieldInsnNode field && field.owner.equals("java/lang/System"),
+                    "the guard must not print to a standard stream");
+            warnsWithCause |= insn instanceof MethodInsnNode call && call.owner.equals(logger) && call.name.equals("warn")
+                    && call.desc.equals("(Ljava/lang/String;Ljava/lang/Throwable;)V");
+        }
+        assertTrue(warnsWithCause, "the guard must log the failure with its cause");
     }
 
     @Test

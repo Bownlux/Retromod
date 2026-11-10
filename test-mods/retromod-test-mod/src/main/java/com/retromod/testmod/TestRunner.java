@@ -44,6 +44,18 @@ import com.retromod.testmod.tests.Test23GlfwPolls;
 import com.retromod.testmod.tests.Test24JomlAxisWidening;
 import com.retromod.testmod.tests.Test25StateEntriesCopy;
 import com.retromod.testmod.tests.Test26LegacyItemModels;
+import com.retromod.testmod.tests.Test71ItemStringReader;
+import com.retromod.testmod.tests.Test72ChestShapes;
+import com.retromod.testmod.tests.Test74OldRendererShapes;
+import com.retromod.testmod.tests.Test76OldBakedModelCalls;
+import com.retromod.testmod.tests.Test79LegacyItemProperties;
+import com.retromod.testmod.tests.Test80OldCommandContext;
+import com.retromod.testmod.tests.Test81OwnLibraryCopy;
+import com.retromod.testmod.tests.Test82OldLootTableIds;
+import com.retromod.testmod.tests.Test83OldBlockElements;
+import com.retromod.testmod.tests.Test84RefmapFollowsHandler;
+import com.retromod.testmod.tests.Test85RenamedMixinTarget;
+import com.retromod.testmod.tests.Test86OldGuiDrawing;
 import com.retromod.testmod.tests.Test27OwnOverrideMob;
 import com.retromod.testmod.tests.Test28LegacyProcedureMembers;
 import com.retromod.testmod.tests.Test29OwnDamageOverride;
@@ -54,6 +66,8 @@ import com.retromod.testmod.tests.Test33EntityTypeBuildKey;
 import com.retromod.testmod.tests.Test19RemovedItemBase;
 import com.retromod.testmod.tests.Test43ClientHostTints;
 import com.retromod.testmod.tests.Test45ClientHudAndScreenEvents;
+import com.retromod.testmod.tests.Test60SmallClientMembers;
+import com.retromod.testmod.tests.Test67EarlyEntityModels;
 import com.retromod.testmod.tests.TextTests;
 
 import java.util.ArrayList;
@@ -111,10 +125,22 @@ public final class TestRunner {
         all.add(new Test24JomlAxisWidening());
         all.add(new Test25StateEntriesCopy());
         all.add(new Test26LegacyItemModels());
+        all.add(new Test71ItemStringReader());
+        all.add(new Test72ChestShapes());
+        all.add(new Test74OldRendererShapes());
+        all.add(new Test76OldBakedModelCalls());
+        all.add(new Test80OldCommandContext());
+        all.add(new Test82OldLootTableIds());
+        all.add(new Test83OldBlockElements());
         all.add(new Test27OwnOverrideMob());
         all.add(new Test28LegacyProcedureMembers());
         all.add(new Test29OwnDamageOverride());
         all.add(new Test30LegacySwinging());
+        all.add(new Test81OwnLibraryCopy());
+        all.add(new Test84RefmapFollowsHandler());
+        all.add(new Test85RenamedMixinTarget());
+        // Asked during client init, where a 26.x game has no model manager yet; baked again at world join.
+        all.add(new Test67EarlyEntityModels());
         // These register content, so they have to run before the registries freeze after initialization.
         all.add(new Test32CrossClassRegistryId());
         all.add(new Test33EntityTypeBuildKey());
@@ -129,8 +155,11 @@ public final class TestRunner {
         // With newer Fabric API, Retromod applies old block colors at CLIENT_STARTED through a
         // listener it registered when Test41 ran at common init, so ahead of this suite's.
         // The old HUD and screen callbacks need the client's screens, which exist once it has started.
+        // Retromod adds its item property type while client entry points run, so it is there once the client has started.
+        // Old key bindings and buttons need the started client too.
         return List.of(new Test13WindowHandleShim(), new Test23GlfwPolls(), new Test43ClientHostTints(),
-                new Test45ClientHudAndScreenEvents());
+                new Test45ClientHudAndScreenEvents(), new Test60SmallClientMembers(), new Test79LegacyItemProperties(),
+                new Test86OldGuiDrawing());
     }
 
     private static List<Test> buildWorldJoinSuite() {
@@ -143,6 +172,7 @@ public final class TestRunner {
         all.add(new Test19RemovedItemBase());
         // The rebuilt armor trim atlas is uploaded once the client has loaded its own atlases.
         all.add(new Test31LegacyTrimAtlas());
+        all.add(Test67EarlyEntityModels.bakesInWorld());
         return List.copyOf(all);
     }
 

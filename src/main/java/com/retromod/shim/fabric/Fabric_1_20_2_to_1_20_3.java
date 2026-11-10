@@ -27,11 +27,18 @@ public class Fabric_1_20_2_to_1_20_3 implements VersionShim {
             "net/minecraft/world/level/block/SandBlock",
             "net/minecraft/world/level/block/ColoredFallingBlock"
         );
+        // 1.21.5 brought SandBlock back, so a mod built for it keeps the host class.
+        transformer.limitClassRedirectToModsBefore("net/minecraft/world/level/block/SandBlock",
+            com.retromod.shim.common.LegacyFallingBlockBridge.SAND_RETURNED);
         // FernBlock renamed to ShortPlantBlock
         transformer.registerClassRedirect(
             "net/minecraft/world/level/block/FernBlock",
             "net/minecraft/world/level/block/ShortPlantBlock"
         );
+        // Entity.getTeam() returns PlayerTeam from 1.20.3. A 26.x host takes the Mojang-named bridge from the 26.1 shim.
+        if (!com.retromod.core.RetromodVersion.isUnobfuscatedTarget(com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            com.retromod.shim.common.LegacyEntityTeamBridge.registerIntermediary(transformer);
+        }
     }
 
     @Override

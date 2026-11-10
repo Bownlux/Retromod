@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.api.fabric;
 
+import com.retromod.util.GeneratedLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -14,8 +15,8 @@ import org.objectweb.asm.Type;
  * {@link #samInterface} (old-named interface extending the new one, old SAM kept abstract,
  * new SAM as a forwarding default) and {@link #eventHolder} (old-named holder copying the
  * new holder's renamed {@code Event} fields). When reflection fails (absent/incompatible
- * fabric-api) the field stays {@code null} and a line goes to stderr; only mods using that
- * event break.
+ * fabric-api) the field stays {@code null} and a warning goes to the game log; only mods using
+ * that event break.
  */
 final class SamBridgeSynthetics {
 
@@ -110,7 +111,7 @@ final class SamBridgeSynthetics {
                 "Lnet/fabricmc/fabric/api/event/Event;", null, null).visitEnd();
     }
 
-    // Emits: try { FIELD = (Event) Class.forName(owner).getField(srcField).get(null); } catch (Throwable t) { err... }
+    // Emits: try { FIELD = (Event) Class.forName(owner).getField(srcField).get(null); } catch (Throwable t) { warn... }
     private static void copyEventField(MethodVisitor mv, String synth, String field,
                                        String ownerDot, String srcField) {
         org.objectweb.asm.Label start = new org.objectweb.asm.Label();
@@ -139,17 +140,16 @@ final class SamBridgeSynthetics {
         // rather than COMPUTE_FRAMES so generation never loads fabric classes for
         // common-superclass computation.
         mv.visitFrame(Opcodes.F_SAME1, 0, null, 1, new Object[]{"java/lang/Throwable"});
-        mv.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;");
+        GeneratedLog.pushLogger(mv);
         mv.visitInsn(Opcodes.SWAP);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Throwable", "toString",
                 "()Ljava/lang/String;", false);
-        mv.visitLdcInsn("[Retromod] could not wire " + synth.substring(synth.lastIndexOf('/') + 1)
-                + "." + field + " to " + ownerDot + "#" + srcField + " (event inert): ");
+        mv.visitLdcInsn("[Retromod] Could not connect " + synth.substring(synth.lastIndexOf('/') + 1)
+                + "." + field + " to " + ownerDot + "." + srcField + "; mods using this event will not receive it: ");
         mv.visitInsn(Opcodes.SWAP);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "concat",
                 "(Ljava/lang/String;)Ljava/lang/String;", false);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println",
-                "(Ljava/lang/String;)V", false);
+        GeneratedLog.warn(mv);
         mv.visitLabel(after);
         mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
     }

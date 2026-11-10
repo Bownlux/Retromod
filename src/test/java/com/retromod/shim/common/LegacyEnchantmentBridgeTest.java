@@ -109,6 +109,23 @@ class LegacyEnchantmentBridgeTest {
     }
 
     @Test
+    @DisplayName("one class written against the old enchantment makes the whole jar legacy")
+    void oneMarkerClassMakesTheJarLegacy() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(V17, ACC_PUBLIC, "mod/Plain", null, "java/lang/Object", null);
+        cw.visitEnd();
+        List<byte[]> jar = List.of(cw.toByteArray(), archeology());
+
+        assertFalse(LegacyEnchantmentBridge.isLegacyJar(transformer, jar),
+                "without the generated class registered there is nothing to rename to");
+        LegacyEnchantmentBridge.registerRedirects(transformer);
+        assertTrue(LegacyEnchantmentBridge.isLegacyJar(transformer, jar));
+        assertFalse(LegacyEnchantmentBridge.isLegacyJar(transformer, List.of(cw.toByteArray())));
+    }
+
+    @Test
     @DisplayName("the generated enchantment and holder verify")
     void generatedClassesVerify() throws Exception {
         for (byte[] generated : List.of(LegacyEnchantmentBridge.generateEnchantment(), LegacyEnchantmentBridge.generateHolder())) {

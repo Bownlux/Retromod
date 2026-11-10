@@ -615,7 +615,7 @@ public final class LegacyArmorTrims {
                 && cause.getCause() != null) {
             cause = cause.getCause();
         }
-        System.err.println("[Retromod] Could not " + what + " for an old mod, so its armor trims may draw as "
+        LegacyLog.warn("Could not " + what + " for an old mod, so its armor trims may draw as "
                 + "the missing texture: " + cause);
     }
 }

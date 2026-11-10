@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class FabricRegistryIdSharedChannelTest {
 
     private static final String STUB = "com/retromod/shim/fabric/mcstub/";
-    private static final String COPY_A = "com/retromod/embedded/library/FabricRegistryIdBridge";
+    static final String COPY_A = "com/retromod/embedded/library/FabricRegistryIdBridge";
     private static final String COPY_B = "com/retromod/embedded/mod/FabricRegistryIdBridge";
 
     /** Stand-in sources and the Minecraft names the bridge links against. */
@@ -39,7 +39,8 @@ class FabricRegistryIdSharedChannelTest {
             STUB + "StubItemProperties", "net/minecraft/world/item/Item$Properties",
             STUB + "StubBlockBehaviour", "net/minecraft/world/level/block/state/BlockBehaviour",
             STUB + "StubBlockBehaviour$Properties",
-            "net/minecraft/world/level/block/state/BlockBehaviour$Properties");
+            "net/minecraft/world/level/block/state/BlockBehaviour$Properties",
+            STUB + "StubMapColor", "net/minecraft/world/level/material/MapColor");
 
     @Test
     void anIdPushedByOneCopyStampsPropertiesBuiltThroughAnother() throws Exception {
@@ -74,7 +75,7 @@ class FabricRegistryIdSharedChannelTest {
     }
 
     /** Two relocated bridge copies and the stand-in Minecraft classes in one loader. */
-    private static final class Fixture extends ClassLoader {
+    static final class Fixture extends ClassLoader {
         private final Map<String, byte[]> classes = new HashMap<>();
 
         Fixture() throws IOException {

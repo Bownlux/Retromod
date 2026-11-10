@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.common;
 
+import com.retromod.core.SyntheticEmbedder;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
@@ -33,8 +34,7 @@ public final class ConstructorIdStamper {
         ClassNode node = new ClassNode();
         new ClassReader(classBytes).accept(node, 0);
         // Retromod's own helpers pass properties through already; a mod may live under com/retromod too.
-        if (node.name.startsWith("net/minecraft/") || node.name.startsWith("com/retromod/generated/")
-                || node.name.startsWith("com/retromod/embedded/") || node.name.startsWith("com/retromod/shim/")) {
+        if (node.name.startsWith("net/minecraft/") || SyntheticEmbedder.isRetromodClass(node.name)) {
             return classBytes;
         }
         boolean changed = false;

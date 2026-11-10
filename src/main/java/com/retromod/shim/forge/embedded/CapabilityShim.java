@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.function.Supplier;
@@ -88,7 +89,7 @@ public final class CapabilityShim {
 
         if (blockCapabilityClass != null) {
             try {
-                Method getCapMethod = level.getClass().getMethod("getCapability",
+                Method getCapMethod = LegacyPublicMethods.method(level.getClass(), "getCapability",
                     blockCapabilityClass,
                     pos.getClass(),
                     Class.forName("net.minecraft.world.level.block.state.BlockState"),
@@ -100,7 +101,7 @@ public final class CapabilityShim {
 
             } catch (Exception e) {
                 try {
-                    Method getCapMethod = level.getClass().getMethod("getCapability",
+                    Method getCapMethod = LegacyPublicMethods.method(level.getClass(), "getCapability",
                         blockCapabilityClass, pos.getClass(), Object.class);
                     return getCapMethod.invoke(level, capability, pos, side);
                 } catch (Exception e2) {
@@ -121,7 +122,7 @@ public final class CapabilityShim {
 
         if (entityCapabilityClass != null) {
             try {
-                Method getCapMethod = entity.getClass().getMethod("getCapability",
+                Method getCapMethod = LegacyPublicMethods.method(entity.getClass(), "getCapability",
                     entityCapabilityClass,
                     Class.forName("net.minecraft.core.Direction")
                 );
@@ -130,7 +131,7 @@ public final class CapabilityShim {
 
             } catch (Exception e) {
                 try {
-                    Method getCapMethod = entity.getClass().getMethod("getCapability",
+                    Method getCapMethod = LegacyPublicMethods.method(entity.getClass(), "getCapability",
                         entityCapabilityClass);
                     return getCapMethod.invoke(entity, capability);
                 } catch (Exception e2) {
@@ -147,7 +148,7 @@ public final class CapabilityShim {
 
         if (itemCapabilityClass != null) {
             try {
-                Method getCapMethod = stack.getClass().getMethod("getCapability",
+                Method getCapMethod = LegacyPublicMethods.method(stack.getClass(), "getCapability",
                     itemCapabilityClass);
                 return getCapMethod.invoke(stack, capability);
             } catch (Exception e) {
@@ -161,12 +162,12 @@ public final class CapabilityShim {
     private static Object getCapabilityOldStyle(Object target, Object capability, Object side) {
         try {
             if (side != null) {
-                Method getCapMethod = target.getClass().getMethod("getCapability",
+                Method getCapMethod = LegacyPublicMethods.method(target.getClass(), "getCapability",
                     capability.getClass(), 
                     Class.forName("net.minecraft.core.Direction"));
                 return getCapMethod.invoke(target, capability, side);
             } else {
-                Method getCapMethod = target.getClass().getMethod("getCapability",
+                Method getCapMethod = LegacyPublicMethods.method(target.getClass(), "getCapability",
                     capability.getClass());
                 return getCapMethod.invoke(target, capability);
             }
@@ -180,7 +181,7 @@ public final class CapabilityShim {
         if (lazyOptional == null) return;
 
         try {
-            Method invalidateMethod = lazyOptional.getClass().getMethod("invalidate");
+            Method invalidateMethod = LegacyPublicMethods.method(lazyOptional.getClass(), "invalidate");
             invalidateMethod.invoke(lazyOptional);
         } catch (Exception e) {
             // wrapper needs none

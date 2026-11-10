@@ -62,6 +62,25 @@ public record InPlaceStatus(String mode, String loader, String minecraft, Path g
     /** In-place mode is configured, but the cache could not be used this launch. */
     public static final String MODE_UNAVAILABLE = "unavailable";
 
+    /**
+     * System property with the side the loader reported to the bootstrap, {@code CLIENT} or
+     * {@code DEDICATED_SERVER}. Unset when the loader does not say. The discovery pass folds it
+     * into the cache stamp, so a client never serves a copy a dedicated server made.
+     */
+    public static final String DIST_PROPERTY = "retromod.inplace.dist";
+
+    /** The {@link #DIST_PROPERTY} value of a dedicated server. */
+    public static final String DIST_DEDICATED_SERVER = "DEDICATED_SERVER";
+
+    /** The {@link #DIST_PROPERTY} value of a client. */
+    public static final String DIST_CLIENT = "CLIENT";
+
+    /** System property the bootstrap sets when its loader version runs no discovery pass. */
+    public static final String DISCOVERY_PROPERTY = "retromod.inplace.discovery";
+
+    /** {@link #DISCOVERY_PROPERTY} value: in-place loading is not available on this host. */
+    public static final String DISCOVERY_NONE = "none";
+
     static final int FORMAT = 1;
     private static final long MAX_STATUS_BYTES = 4L * 1024 * 1024;
 

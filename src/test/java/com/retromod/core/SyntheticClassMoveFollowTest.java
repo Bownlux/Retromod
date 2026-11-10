@@ -159,6 +159,144 @@ class SyntheticClassMoveFollowTest {
         assertFalse(all.contains(middle), "the stand-in stopped halfway along the chain");
     }
 
+    // A helper that builds a removed type, which this host redirects to another stand-in, as
+    // LegacyLootTypes builds LootItemFunctionType on 26.1 and newer.
+    private static final String FACTORY = "com/retromod/generated/TestTypeFactory";
+    private static final String REMOVED_TYPE = "net/minecraft/test/RemovedType";
+    private static final String TYPE_STAND_IN = "com/retromod/shim/common/embedded/TestRemovedType";
+
+    /** A transformer whose factory names a removed type that a class move sends to a stand-in. */
+    private static RetromodTransformer preparedWithStandInMove() {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        t.registerSyntheticClass(FACTORY, factoryBuildingRemovedType());
+        t.registerSyntheticClass(TYPE_STAND_IN, emptyClass(TYPE_STAND_IN));
+        t.registerClassRedirect(REMOVED_TYPE, TYPE_STAND_IN);
+        return t;
+    }
+
+    private static byte[] factoryBuildingRemovedType() {
+        ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        w.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, FACTORY, null, "java/lang/Object", null);
+        MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "create", "()Ljava/lang/Object;", null, null);
+        m.visitCode();
+        m.visitTypeInsn(Opcodes.NEW, REMOVED_TYPE);
+        m.visitInsn(Opcodes.DUP);
+        m.visitMethodInsn(Opcodes.INVOKESPECIAL, REMOVED_TYPE, "<init>", "()V", false);
+        m.visitInsn(Opcodes.ARETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    private static byte[] emptyClass(String name) {
+        ClassWriter w = new ClassWriter(0);
+        w.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null);
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** A mod class that calls only the factory and never names the stand-in. */
+    private static byte[] factoryCaller() {
+        ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        w.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, MOD_CLASS, null, "java/lang/Object", null);
+        MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC, "run", "()V", null, null);
+        m.visitCode();
+        m.visitMethodInsn(Opcodes.INVOKESTATIC, FACTORY, "create", "()Ljava/lang/Object;", false);
+        m.visitInsn(Opcodes.POP);
+        m.visitInsn(Opcodes.RETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    private static byte[] factoryCallerJar() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (JarOutputStream jar = new JarOutputStream(out)) {
+            jar.putNextEntry(new JarEntry(MOD_CLASS + ".class"));
+            jar.write(factoryCaller());
+            jar.closeEntry();
+        }
+        return out.toByteArray();
+    }
+
+    /** The stand-in travels with the factory, and nothing names its shared, undefined name. */
+    private static void assertCarriesStandIn(java.util.Map<String, byte[]> classes) {
+        String base = SyntheticEmbedder.embeddedBase("testmod");
+        assertTrue(classes.containsKey(base + TYPE_STAND_IN),
+                "the stand-in the factory builds must be embedded with it: " + classes.keySet());
+        assertTrue(SyntheticEmbedder.referencedClasses(classes.get(base + FACTORY))
+                .contains(base + TYPE_STAND_IN), "the factory copy must build the embedded stand-in");
+        for (var entry : classes.entrySet()) {
+            assertFalse(SyntheticEmbedder.referencedClasses(entry.getValue()).contains(TYPE_STAND_IN),
+                    entry.getKey() + " still names the shared stand-in, which no jar defines");
+        }
+    }
+
+    /** Class bytes by internal name. */
+    private static java.util.Map<String, byte[]> classesIn(byte[] jarBytes) throws IOException {
+        java.util.Map<String, byte[]> classes = new java.util.HashMap<>();
+        try (var in = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(jarBytes))) {
+            for (ZipEntry e; (e = in.getNextEntry()) != null; ) {
+                if (e.getName().endsWith(".class")) {
+                    classes.put(e.getName().substring(0, e.getName().length() - 6), in.readAllBytes());
+                }
+            }
+        }
+        return classes;
+    }
+
+    @Test
+    @DisplayName("Embedding into a jar path carries the stand-in a class move sends a stand-in's type to")
+    void jarPathCarriesMovedStandIn() throws Exception {
+        RetromodTransformer t = preparedWithStandInMove();
+        Path jar = tempDir.resolve("factory.jar");
+        Files.write(jar, factoryCallerJar());
+
+        SyntheticEmbedder.embedIntoJarOrDiscard(jar, "testmod", t, SyntheticLibraries.NONE);
+
+        assertCarriesStandIn(classesIn(Files.readAllBytes(jar)));
+    }
+
+    @Test
+    @DisplayName("Embedding into jar bytes carries the stand-in a class move sends a stand-in's type to")
+    void bytePathCarriesMovedStandIn() throws Exception {
+        RetromodTransformer t = preparedWithStandInMove();
+
+        SyntheticEmbedder.ByteEmbeddingResult result =
+                SyntheticEmbedder.embedIntoJarBytes(factoryCallerJar(), "testmod", t);
+
+        assertTrue(result.succeeded());
+        assertCarriesStandIn(classesIn(result.jarBytes()));
+    }
+
+    @Test
+    @DisplayName("Embedding into a directory carries the stand-in a class move sends a stand-in's type to")
+    void directoryPathCarriesMovedStandIn() throws Exception {
+        RetromodTransformer t = preparedWithStandInMove();
+        Path dir = tempDir.resolve("factory");
+        Path cls = dir.resolve(MOD_CLASS + ".class");
+        Files.createDirectories(cls.getParent());
+        Files.write(cls, factoryCaller());
+
+        SyntheticEmbedder.embed(dir, "testmod", t);
+
+        // ForgeModTransformer refuses the translation when this check finds a leftover.
+        assertFalse(SyntheticEmbedder.hasRegisteredSyntheticReferences(dir, t),
+                "a class still names a stand-in the jar does not carry");
+        java.util.Map<String, byte[]> classes = new java.util.HashMap<>();
+        try (var walk = Files.walk(dir)) {
+            for (Path p : walk.filter(x -> x.toString().endsWith(".class")).toList()) {
+                String name = dir.relativize(p).toString().replace('\\', '/');
+                classes.put(name.substring(0, name.length() - 6), Files.readAllBytes(p));
+            }
+        }
+        assertCarriesStandIn(classes);
+    }
+
     @Test
     @DisplayName("Embedding into an unpacked directory follows the move")
     void directoryPathFollowsTheMove() throws Exception {

@@ -4,6 +4,8 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
+
 /**
  * Applies a Forge {@code Event.Result} to NeoForge's {@code MobDespawnEvent}, which has its own
  * result enum with the same three names. Reflective because Retromod is not compiled against
@@ -21,7 +23,7 @@ public final class LegacyDespawnResults {
         try {
             Class<? extends Enum> type = (Class<? extends Enum>) Class.forName(RESULT, false,
                     event.getClass().getClassLoader());
-            event.getClass().getMethod("setResult", type).invoke(event, Enum.valueOf(type, name));
+            LegacyPublicMethods.method(event.getClass(), "setResult", type).invoke(event, Enum.valueOf(type, name));
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Cannot set the despawn result " + name + " on " + event, e);
         }

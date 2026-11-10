@@ -5,6 +5,7 @@
 package com.retromod.core;
 
 import com.retromod.mixin.MixinCompatibilityTransformer;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -93,7 +94,7 @@ public final class HybridTransformationEngine {
     /** Like {@link #initialize(Path, String)}, but skips jars the loader does not load this launch. */
     public void initialize(Path modsFolder, String targetVersion,
             java.util.function.Predicate<Path> notLoaded) {
-        LOGGER.info("Preparing the background transformation cache");
+        LOGGER.debug(RetromodLog.DETAIL, "Preparing the background transformation cache");
 
         scanModsFolder(modsFolder, targetVersion, notLoaded);
 
@@ -104,10 +105,10 @@ public final class HybridTransformationEngine {
             startBackgroundAotCompilation(targetVersion);
         } else {
             aotCompletedFlag.set(true);
-            LOGGER.info("No mods need background preparation");
+            LOGGER.debug(RetromodLog.DETAIL, "No mods need background preparation");
         }
 
-        LOGGER.info("Background transformation is ready with {} {} queued and {} cached {}",
+        LOGGER.debug(RetromodLog.DETAIL, "Background transformation is ready with {} {} queued and {} cached {}",
                 modsToTransform.size(), modsToTransform.size() == 1 ? "mod" : "mods",
                 aotCache.size(), aotCache.size() == 1 ? "class" : "classes");
     }
@@ -179,7 +180,8 @@ public final class HybridTransformationEngine {
             return result != null ? result : originalBytes;
 
         } catch (OutOfMemoryError e) {
-            LOGGER.error("OOM during transform: {}", className);
+            LOGGER.error("Ran out of memory while translating {}. It loads untranslated. "
+                    + "Raise Minecraft's memory limit and restart.", className);
             performanceMonitor.requestGarbageCollection();
             return originalBytes;
         } finally {
@@ -264,7 +266,7 @@ public final class HybridTransformationEngine {
                                 jitTransformer.addTransformablePackage(pkg);
                             }
 
-                            LOGGER.info("Queued {} for an update from Minecraft {} to {}",
+                            LOGGER.debug(RetromodLog.DETAIL, "Queued {} for an update from Minecraft {} to {}",
                                 info.modId(), info.targetMcVersion(), targetVersion);
                         }
                     } catch (Exception e) {
@@ -291,7 +293,7 @@ public final class HybridTransformationEngine {
     }
 
     private void startBackgroundAotCompilation(String targetVersion) {
-        LOGGER.info("Preparing {} {} in the background",
+        LOGGER.debug(RetromodLog.DETAIL, "Preparing {} {} in the background",
                 modsToTransform.size(), modsToTransform.size() == 1 ? "mod" : "mods");
 
         SharedByteBudget expandedInputBudget = new SharedByteBudget(MAX_EXPANDED_BYTES);
@@ -309,7 +311,7 @@ public final class HybridTransformationEngine {
 
         afterAllBackgroundTasks(compilationTasks, () -> {
             aotCompletedFlag.set(true);
-            LOGGER.info("Background precompilation finished: {} cache hits, {} launch-time fallbacks",
+            LOGGER.debug(RetromodLog.DETAIL, "Background precompilation finished: {} cache hits, {} launch-time fallbacks",
                 aotHits.get(), jitFallbacks.get());
         });
     }
@@ -322,7 +324,7 @@ public final class HybridTransformationEngine {
 
     private void compileModAot(ModTransformInfo mod, String targetVersion,
                                SharedByteBudget expandedInputBudget) throws IOException {
-        LOGGER.info("AOT compiling: {} ({})", mod.modId(), mod.jarPath().getFileName());
+        LOGGER.debug(RetromodLog.DETAIL, "AOT compiling: {} ({})", mod.modId(), mod.jarPath().getFileName());
 
         if (!Files.isRegularFile(mod.jarPath(), LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("Mod input is not a regular file: " + mod.jarPath());
@@ -350,42 +352,50 @@ public final class HybridTransformationEngine {
             com.retromod.shim.common.StaticFieldRegistryIds registryIds =
                     jitTransformer.indexJarRegistryIds(originalClasses.values());
             int compiled = 0;
-            for (Map.Entry<String, byte[]> classEntry : originalClasses.entrySet()) {
-                String className = classEntry.getKey();
+            // One provider for the whole jar, so the final-override pass keeps its shapes across classes.
+            // It also carries the jars it bundles, which a frame join can need.
+            java.util.function.Function<String, byte[]> jarClasses =
+                    BundledJarClasses.attach(originalClasses::get, BundledJarClasses.fromJar(jar));
+            // A final host method the jar's own access transformer or widener opens can still be overridden.
+            try (var openedFinals = jitTransformer.pushJarOpenedFinals(
+                    com.retromod.shim.common.OpenedFinalMethods.read(jar, RetromodVersion.TARGET_MC_VERSION))) {
+                for (Map.Entry<String, byte[]> classEntry : originalClasses.entrySet()) {
+                    String className = classEntry.getKey();
 
-                // An entry name is untrusted. One that climbs out of the cache directory would
-                // have Retromod write the mod's bytes to a path of the mod's choosing.
-                if (!isCacheableClassName(className)) {
-                    LOGGER.warn("Skipped a class with an unusable name in {}: {}",
-                            mod.jarPath().getFileName(), className);
-                    continue;
-                }
-
-                pendingAotClasses.add(className);
-
-                try {
-                    byte[] original = classEntry.getValue();
-
-                    if (cachedTransform(className, original) != null) {
+                    // An entry name is untrusted. One that climbs out of the cache directory would
+                    // have Retromod write the mod's bytes to a path of the mod's choosing.
+                    if (!isCacheableClassName(className)) {
+                        LOGGER.warn("Skipped a class with an unusable name in {}: {}",
+                                mod.jarPath().getFileName(), className);
                         continue;
                     }
-                    byte[] transformed = transformWithMixinRepairs(
-                            jitTransformer, mixinTransformer, original, className,
-                            originalClasses::get, registryIds);
 
-                    if (transformed != null) {
-                        cacheTransform(className, original, transformed);
-                        classToModMap.put(className, mod.modId());
-                        compiled++;
+                    pendingAotClasses.add(className);
+
+                    try {
+                        byte[] original = classEntry.getValue();
+
+                        if (cachedTransform(className, original) != null) {
+                            continue;
+                        }
+                        byte[] transformed = transformWithMixinRepairs(
+                                jitTransformer, mixinTransformer, original, className,
+                                jarClasses, registryIds);
+
+                        if (transformed != null) {
+                            cacheTransform(className, original, transformed);
+                            classToModMap.put(className, mod.modId());
+                            compiled++;
+                        }
+                    } finally {
+                        pendingAotClasses.remove(className);
                     }
-                } finally {
-                    pendingAotClasses.remove(className);
-                }
 
-                Thread.yield();
+                    Thread.yield();
+                }
             }
 
-            LOGGER.info("AOT compiled {} classes for {}", compiled, mod.modId());
+            LOGGER.debug(RetromodLog.DETAIL, "AOT compiled {} classes for {}", compiled, mod.modId());
         }
     }
 
@@ -401,8 +411,10 @@ public final class HybridTransformationEngine {
                 throw new IOException("Mod archive contains more than " + maxEntries + " entries");
             }
             String normalized = canonicalArchiveEntryName(entry.getName());
-            if (!normalizedNames.add(normalized)) {
-                throw new IOException("Mod archive contains a duplicate entry: " + normalized);
+            // A merged fat jar repeats folder entries, which carry no content.
+            if (!ZipSecurity.firstSighting(normalizedNames, normalized, entry.isDirectory(),
+                    () -> "Mod archive contains a duplicate entry: " + normalized)) {
+                continue;
             }
             if (!entry.isDirectory() && normalized.endsWith(".class")
                     && !normalized.startsWith("META-INF/")) {

@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import com.retromod.shim.ShimRegistry;
 import com.retromod.util.ArchivePublication;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -68,7 +69,8 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
     
     @Override
     public void onPreLaunch() {
-        LOGGER.info("Starting Retromod {} on Fabric", RetromodVersion.RETROMOD_VERSION);
+        LOGGER.info("Starting Retromod {} on Fabric for Minecraft {}", RetromodVersion.RETROMOD_VERSION,
+                getMinecraftVersion());
         RetromodVersion.logPresenceBanner(LOGGER);
 
         // Fabric already knows the logical side here. Publish it before any generic
@@ -76,18 +78,29 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
         boolean client = FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT;
         EnvironmentDetector.setLoaderEnvironment(client);
         
+        // Retromod runs on the loader's ASM. Fabric Loader before 0.16.14 and Quilt Loader before 0.29
+        // ship one that cannot read Java 25 class files, so stop here instead of failing partway.
+        String asmProblem = HostAsmSupport.problem(RetromodPreLaunch.class.getClassLoader(), getMinecraftVersion());
+        if (asmProblem != null) {
+            LOGGER.error("{} Retromod translated no mods this launch. Fabric Loader 0.16.14 and Quilt Loader 0.29.0 "
+                    + "ship ASM 9.8, which reads Java 25 class files.", asmProblem);
+            return;
+        }
+
         try {
             Path gameDir = FabricLoader.getInstance().getGameDir();
             if (gameDir == null) {
                 LOGGER.warn("Could not determine game directory, using current directory");
                 gameDir = Path.of(".");
             }
+            // Stage transforms in the game folder, not a temp folder a launcher sandbox may limit.
+            com.retromod.inplace.WorkFolder.useGameFolder(gameDir);
             // Fabric pre-launch transforms run before the normal mod initializer. Create the
             // default here so first-launch verification and every other config default apply.
             RetromodConfig.ensureDefaultConfig();
             String targetVersion = getMinecraftVersion();
 
-            LOGGER.info("Target Minecraft version: {}", targetVersion);
+            LOGGER.debug(RetromodLog.DETAIL, "Target Minecraft version: {}", targetVersion);
 
             // Publish the host before shims register: the API bridges gate on
             // RetromodVersion.isUnobfuscatedTarget(TARGET_MC_VERSION), which would
@@ -111,7 +124,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 int savedFixes = autoFixEngine.loadAndApplySavedFixes(
                     RetromodTransformer.getInstance());
                 if (savedFixes > 0) {
-                    LOGGER.info("AutoFix: loaded {} saved fix(es) from previous launch", savedFixes);
+                    LOGGER.debug(RetromodLog.DETAIL, "AutoFix: loaded {} saved fix(es) from previous launch", savedFixes);
                 }
             } catch (Exception e) {
                 LOGGER.debug("Could not load auto-fix saved fixes: {}", e.getMessage());
@@ -156,7 +169,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
             int fromCfFolder;
             Path cfFolder = gameDir.resolve(CF_EXPORT_FOLDER);
             if (fabricAddModsCovers(gameDir, cfFolder)) {
-                LOGGER.info("mods/Retromod/ is on -Dfabric.addMods - Fabric loaded it in-place "
+                LOGGER.debug(RetromodLog.DETAIL, "mods/Retromod/ is on -Dfabric.addMods - Fabric loaded it in-place "
                     + "this launch; skipping drain (#78 option 2, no restart needed)");
                 fromCfFolder = 0;
             } else {
@@ -174,10 +187,11 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 com.retromod.gui.RestartPrompt.markPending(totalTransformed);
             }
 
-            LOGGER.info("Retromod finished its Fabric pre-launch work");
+            LOGGER.debug(RetromodLog.DETAIL, "Retromod finished its Fabric pre-launch work");
             
         } catch (Exception e) {
-            LOGGER.error("Retromod pre-launch error: {}", e.getMessage());
+            // Nothing else reports this failure, so the log carries its type and stack trace.
+            LOGGER.error("Retromod pre-launch error: {}", e.toString(), e);
         }
     }
     
@@ -243,10 +257,10 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                     shim.registerRedirects(transformer);
                     shimCount++;
                 } catch (Exception e) {
-                    LOGGER.debug("Could not register shim: {}", e.getMessage());
+                    LOGGER.warn("Could not register the {} shim", shim.getShimName(), e);
                 }
             }
-            LOGGER.info("Registered {} version shims for transformation "
+            LOGGER.debug(RetromodLog.DETAIL, "Registered {} version shims for transformation "
                     + "({} skipped as newer than host MC {}, {} skipped as non-Fabric)",
                 shimCount, skippedNewer, hostVersion, skippedOtherLoader);
 
@@ -260,7 +274,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 // the name-keyed shims can't fix it.
                 try {
                     com.retromod.shim.fabric.Pre1_17ModelBridge.register(transformer);
-                    LOGGER.info("Registered pre-1.17 entity-model bridge (ModelPart construction layer)");
+                    LOGGER.debug(RetromodLog.DETAIL, "Registered pre-1.17 entity-model bridge (ModelPart construction layer)");
                 } catch (Exception e) {
                     LOGGER.warn("Could not register pre-1.17 model bridge: {}", e.getMessage());
                 }
@@ -333,9 +347,11 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 // 1.20.2 to 1.20.5 reshaped APIs a 1.20.1 mod calls while registering content:
                 // particle deserializers, block and FolderRepositorySource constructors, the
                 // Attribute and MobEffect overloads that now take a Holder, UUID-keyed attribute
-                // modifiers, ArmorMaterial, pack suppliers and resources, JSON text helpers, and
+                // modifiers, ArmorMaterial, pack suppliers and resources, JSON text helpers and the
+                // Gson text adapters 1.20.3 ended (to 1.21.11, where the serializer is gone), and
                 // Fabric API's screen handler, networking, resource condition and loot table event
-                // calls, the Gson loot serializers, the EntitySelector constructor, and item stack NBT.
+                // calls, loot table ids that became keys, the Gson loot serializers, the EntitySelector
+                // constructor, item stack NBT, and KeyDispatchDataCodec's codec and of(Codec).
                 // Each probes the host, so it no-ops where the old shape still exists. They are
                 // independent, so one failing to register must not cost the others.
                 java.util.List<java.util.function.Consumer<RetromodTransformer>> contentBridges = java.util.List.of(
@@ -349,12 +365,17 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                         com.retromod.shim.fabric.Pre1_20_5ScreenHandlerBridge::register,
                         com.retromod.shim.fabric.Pre1_20_5ServerNetworkingBridge::register,
                         com.retromod.shim.fabric.Pre1_20_5AttributeModifierBridge::register,
+                        // The text stand-in first: where it registers, the registry-passing helper stands aside.
+                        com.retromod.shim.common.LegacyComponentJsonBridge::registerIntermediary,
                         com.retromod.shim.fabric.Pre1_20_5ComponentJsonBridge::register,
                         com.retromod.shim.fabric.Pre1_20_5ResourceConditionBridge::register,
                         com.retromod.shim.fabric.Pre1_20_5LootTableEventsBridge::register,
+                        com.retromod.shim.common.LegacyLootTableKeyBridge::registerIntermediary,
+                        com.retromod.shim.common.LegacyMobLootBridge::registerIntermediary,
                         com.retromod.shim.fabric.Pre1_20_5LootDeserializersBridge::register,
                         com.retromod.shim.fabric.Pre1_20_5EntitySelectorBridge::register,
-                        com.retromod.shim.fabric.Pre1_20_5ItemStackTagBridge::register);
+                        com.retromod.shim.fabric.Pre1_20_5ItemStackTagBridge::register,
+                        com.retromod.shim.common.LegacyKeyDispatchCodecBridge::registerIntermediary);
                 for (java.util.function.Consumer<RetromodTransformer> bridge : contentBridges) {
                     try {
                         bridge.accept(transformer);
@@ -374,47 +395,25 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 if (!mapper.isLoaded()) {
                     LOGGER.warn("IntermediaryToMojangMapper not loaded - bytecode class remapping disabled");
                 } else if (!isUnobfuscatedTarget(hostVersion)) {
-                    LOGGER.info("Host MC {} is pre-26.1 (Fabric runtime uses intermediary "
+                    LOGGER.debug(RetromodLog.DETAIL, "Host MC {} is pre-26.1 (Fabric runtime uses intermediary "
                         + "names) - skipping intermediary→Mojang remap and 26.1 class moves "
                         + "so mods keep their working names (#21/#29)", hostVersion);
                 } else {
-                    // ASM ClassRemapper is single-pass, so compose intermediary→Mojang with
-                    // class moves to reach intermediary→final-26.1 in one step: otherwise
-                    // class_4064→CycleOption stops there and CycleOption→OptionInstance never
-                    // fires (the bytecode held class_4064, not CycleOption).
-                    java.util.Map<String, String> classMoveMap = mapper.getClassMoves();
-
-                    int classRedirects = 0;
-                    int composed = 0;
-                    for (java.util.Map.Entry<String, String> entry : mapper.getClassMap().entrySet()) {
-                        String intermediary = entry.getKey();
-                        String mojang = entry.getValue();
-                        // if the Mojang target was itself moved in 26.1, point at the final name
-                        String finalName = classMoveMap.getOrDefault(mojang, mojang);
-                        if (!finalName.equals(mojang)) composed++;
-                        transformer.registerClassRedirect(intermediary, finalName);
-                        classRedirects++;
-                    }
-                    transformer.registerIntermediaryNameMappings(
-                        mapper.getMethodMap(), mapper.getFieldMap());
-                    // class moves direct, for mods already on Mojang names (e.g. Jade on GuiGraphics)
-                    int classMoves = 0;
-                    for (java.util.Map.Entry<String, String> entry : classMoveMap.entrySet()) {
-                        transformer.registerClassRedirect(entry.getKey(), entry.getValue());
-                        classMoves++;
-                    }
-                    LOGGER.info("Composed {}/{} intermediary mappings with class moves", composed, classRedirects);
+                    // The call the offline paths make: the class map composed with the 26.1 moves
+                    // (ClassRemapper is single-pass), the member names with descriptor-resolved
+                    // ambiguous ids such as method_14452, and the moves for Mojang-named mods.
+                    int classRedirects = com.retromod.mapping.IntermediaryToMojangMapper.applyTo(transformer);
                     // 26.1 ctor→factory redirects: ResourceLocation(String) → Identifier.parse, etc.
                     com.retromod.mapping.IntermediaryToMojangMapper.registerIdentifierCtorRedirects(transformer);
-                    LOGGER.info("Registered {} intermediary→Mojang class redirects + {} class moves + 2 constructor redirects",
-                        classRedirects, classMoves);
+                    LOGGER.debug(RetromodLog.DETAIL, "Registered {} intermediary→Mojang class redirects + 2 constructor redirects",
+                        classRedirects);
                 }
             } catch (Exception e) {
                 LOGGER.warn("Could not register intermediary→Mojang mappings: {}", e.getMessage());
             }
 
             if (!RetromodConfig.getBoolean("polyfills_enabled", true)) {
-                LOGGER.info("Polyfills are disabled in config");
+                LOGGER.debug(RetromodLog.DETAIL, "Polyfills are disabled in config");
             } else try {
                 ServiceLoader<com.retromod.polyfill.PolyfillProvider> polyfills =
                     ServiceLoader.load(com.retromod.polyfill.PolyfillProvider.class);
@@ -432,11 +431,11 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                         provider.registerPolyfills(transformer);
                         polyfillCount++;
                     } catch (Exception e) {
-                        LOGGER.debug("Could not register polyfill: {}", e.getMessage());
+                        LOGGER.warn("Could not load the {} polyfill", provider.getName(), e);
                     }
                 }
                 if (polyfillCount > 0) {
-                    LOGGER.info("Registered {} polyfill providers for transformation", polyfillCount);
+                    LOGGER.debug(RetromodLog.DETAIL, "Registered {} polyfill providers for transformation", polyfillCount);
                 }
             } catch (Exception e) {
                 LOGGER.debug("No polyfill providers found");
@@ -507,7 +506,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
             // guide in mods/ points users at the input folders
             createModsFolderGuide(gameDir.resolve("mods"));
 
-            LOGGER.info("Created retromod-input/ folders");
+            LOGGER.debug(RetromodLog.DETAIL, "Created retromod-input/ folders");
             
         } catch (Exception e) {
             LOGGER.error("Could not create folders: {}", e.getMessage());
@@ -610,7 +609,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 return 0;
             }
 
-            LOGGER.info("Found {} mod(s) in {}", modsToTransform.size(), inputFolder.getFileName());
+            LOGGER.debug(RetromodLog.DETAIL, "Found {} mod(s) in {}", modsToTransform.size(), inputFolder.getFileName());
 
             Files.createDirectories(processedFolder);
             Files.createDirectories(outputFolder);
@@ -641,24 +640,18 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                         continue;
                     }
 
-                    String modVersion = extractModMinecraftVersion(modJar);
+                    List<String> declaredRanges = extractModMinecraftRanges(modJar);
 
-                    LOGGER.info("Checking {} (source {}, target {})",
-                        fileName, modVersion != null ? modVersion : "unknown", targetVersion);
+                    LOGGER.debug(RetromodLog.DETAIL, "Checking {} (source {}, target {})", fileName,
+                        declaredRanges.isEmpty() ? "unknown" : String.join(", ", declaredRanges),
+                        targetVersion);
 
-                    // Complexity is advisory here. Staged mods are transformed unless
-                    // they already target the host exactly.
-                    com.retromod.gui.ModComplexityAnalyzer analyzer =
-                        new com.retromod.gui.ModComplexityAnalyzer();
-                    com.retromod.gui.ModComplexityAnalyzer.ComplexityReport report =
-                        analyzer.analyze(modJar);
+                    // The scan only writes what it found to the debug log. Staged mods are
+                    // transformed unless they already target the host exactly.
+                    new com.retromod.gui.ModComplexityAnalyzer().analyze(modJar);
 
-                    if (report.isUnlikelyToWork()) {
-                        LOGGER.warn("{} has a high compatibility risk ({}/100): {}",
-                            fileName, report.score(), report.reason());
-                    }
-
-                    boolean needsTransform = !isExactVersionMatch(modVersion, targetVersion);
+                    boolean needsTransform = declaredRanges.stream()
+                        .noneMatch(range -> isExactVersionMatch(range, targetVersion));
                     boolean quiltMod = QuiltModTransformer.isQuiltMod(modJar);
                     boolean completed = false;
 
@@ -714,7 +707,8 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                     count++;
 
                 } catch (Exception e) {
-                    LOGGER.error("Failed to process {}: {}", modJar.getFileName(), e.getMessage());
+                    // A transform failure logged its trace already, and a file error needs only its type.
+                    LOGGER.error("Failed to process {}: {}", modJar.getFileName(), e.toString());
                 }
             }
             
@@ -810,7 +804,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
 
         LOGGER.info("Found {} ready jar(s) in mods/Retromod/ - moving into mods/ (CF-export folder, #78)",
             jars.size());
-        LOGGER.info("  (tip: launch with -Dfabric.addMods=<gamedir>/mods/Retromod to load them "
+        LOGGER.debug(RetromodLog.DETAIL, "  (tip: launch with -Dfabric.addMods=<gamedir>/mods/Retromod to load them "
             + "in-place and skip this restart)");
 
         int moved = 0;
@@ -885,7 +879,11 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
     /** True only when the declaration starts on the target version. */
     private boolean isExactVersionMatch(String modVersion, String targetVersion) {
         if (modVersion == null) return false;
+        // A trailing '-' (">=26.1-") is Fabric's "prereleases included" marker, not the version.
         String declared = modVersion.trim();
+        while (declared.endsWith("-")) {
+            declared = declared.substring(0, declared.length() - 1).trim();
+        }
         if (declared.equals(targetVersion) || declared.equals("=" + targetVersion)) {
             return true;
         }
@@ -898,25 +896,28 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
         return false;
     }
 
-    /** Read the mod's declared Minecraft version from its metadata. */
-    private String extractModMinecraftVersion(Path jarPath) throws java.io.IOException {
+    /** Read the mod's declared Minecraft ranges from its metadata, or an empty list. */
+    private List<String> extractModMinecraftRanges(Path jarPath) throws java.io.IOException {
         validateArchiveInput(jarPath);
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             // Quilt metadata owns the loader route when both descriptors are present.
             ZipEntry quiltJson = jar.getEntry("quilt.mod.json");
             if (quiltJson != null) {
                 try (InputStream input = jar.getInputStream(quiltJson)) {
-                    return QuiltMetadataCompat.readMinecraftVersion(input);
+                    String version = QuiltMetadataCompat.readMinecraftVersion(input);
+                    return version == null ? List.of() : List.of(version);
                 }
             }
 
-            // Fabric
+            // Fabric lists one range or an array of them, any of which it accepts.
             ZipEntry fabricJson = jar.getEntry("fabric.mod.json");
             if (fabricJson != null) {
-                String content = readUtf8Metadata(jar, fabricJson);
-                Pattern p = Pattern.compile("\"minecraft\"\\s*:\\s*\"([^\"]+)\"");
-                Matcher m = p.matcher(content);
-                if (m.find()) return m.group(1);
+                List<String> ranges;
+                try (InputStream input = jar.getInputStream(fabricJson)) {
+                    ranges = FabricMetadataCompat.readMinecraftRanges(
+                            ZipSecurity.safeReadAllBytes(input, MAX_METADATA_SIZE));
+                }
+                if (!ranges.isEmpty()) return ranges;
             }
 
             // Forge/NeoForge
@@ -926,11 +927,11 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                 String content = readUtf8Metadata(jar, modsToml);
                 Pattern p = Pattern.compile("versionRange\\s*=\\s*\"\\[([0-9.]+)");
                 Matcher m = p.matcher(content);
-                if (m.find()) return m.group(1);
+                if (m.find()) return List.of(m.group(1));
             }
             
         }
-        return null;
+        return List.of();
     }
 
     private static String readUtf8Metadata(JarFile jar, ZipEntry entry)
@@ -952,7 +953,7 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
         LOGGER.info("Retromod updated {} mod(s). Restart Minecraft to load them:",
             totalTransformed);
         for (String mod : transformedMods) {
-            LOGGER.info("  - {}", mod);
+            LOGGER.debug(RetromodLog.DETAIL, "  - {}", mod);
         }
         LOGGER.info("Fabric scans mods before Retromod runs, so this one restart is expected.");
     }

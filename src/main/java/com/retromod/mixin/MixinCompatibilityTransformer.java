@@ -5,6 +5,7 @@
 package com.retromod.mixin;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.*;
 import org.objectweb.asm.tree.*;
 import org.slf4j.Logger;
@@ -126,8 +127,8 @@ public final class MixinCompatibilityTransformer {
             if (neutralizeMixin(classNode)) {
                 ClassWriter w = new ClassWriter(0);
                 classNode.accept(w);
-                LOGGER.info("Disabled incompatible Mixin {}. Its feature will be unavailable.",
-                    classNode.name);
+                LOGGER.debug(RetromodLog.DETAIL, "Disabled Mixin {} because Retromod's mixin blocklist names it. Its "
+                    + "changes to the game are not applied.", classNode.name);
                 return w.toByteArray();
             }
         }
@@ -137,8 +138,8 @@ public final class MixinCompatibilityTransformer {
         if (removedTarget != null && neutralizeMixin(classNode)) {
             ClassWriter w = new ClassWriter(0);
             classNode.accept(w);
-            LOGGER.info("Disabled Mixin {} because target {} no longer exists. "
-                    + "Its feature will be unavailable.",
+            LOGGER.debug(RetromodLog.DETAIL, "Disabled Mixin {} because target {} no longer exists. "
+                    + "Its changes to the game are not applied.",
                     classNode.name, removedTarget);
             return w.toByteArray();
         }
@@ -151,13 +152,16 @@ public final class MixinCompatibilityTransformer {
                 // Keep constructors and helpers when only injector handlers are blocked.
                 classNode.methods.removeIf(MixinCompatibilityTransformer::hasInjectorAnnotation);
             } else {
-                classNode.methods.removeIf(m -> blockedMethods.contains(m.name));
+                // An entry is a bare name, or a name with its descriptor when a later version of
+                // the same mod reuses the name for a handler that still works.
+                classNode.methods.removeIf(m -> blockedMethods.contains(m.name)
+                        || blockedMethods.contains(m.name + m.desc));
             }
             int removed = before - classNode.methods.size();
             if (removed > 0) {
                 modified = true;
-                LOGGER.info("Removed {} incompatible handler(s) from {}. "
-                        + "The related feature will be unavailable.", removed, classNode.name);
+                LOGGER.debug(RetromodLog.DETAIL, "Removed {} handler(s) that Retromod's mixin blocklist names from {}. "
+                        + "Their changes to the game are not applied.", removed, classNode.name);
             }
         }
 
@@ -167,7 +171,7 @@ public final class MixinCompatibilityTransformer {
                 classNode.invisibleAnnotations != null ? classNode.invisibleAnnotations : List.<AnnotationNode>of())) {
             for (AnnotationNode annotation : annotations) {
                 if (MIXIN_DESC.equals(annotation.desc)) {
-                    modified |= transformMixinAnnotation(annotation);
+                    modified |= transformMixinAnnotation(annotation, classNode.name);
                 }
             }
         }
@@ -231,7 +235,7 @@ public final class MixinCompatibilityTransformer {
             ClassWriter cw = new com.retromod.util.SafeClassWriter(ClassWriter.COMPUTE_FRAMES);
             classNode.accept(cw);
             byte[] out = cw.toByteArray();
-            LOGGER.info("Repaired {} changed Mixin handler(s) or call site(s) in {}",
+            LOGGER.debug(RetromodLog.DETAIL, "Repaired {} changed Mixin handler(s) or call site(s) in {}",
                     applied, classNode.name);
             return out;
         } catch (Throwable t) {
@@ -251,10 +255,16 @@ public final class MixinCompatibilityTransformer {
                 com.retromod.core.RetromodVersion.TARGET_MC_VERSION);
     }
 
-    /** Returns whether the host includes the 1.21.5 entity and ValueIO refactor. */
+    /** Returns whether the host includes the 1.21.5 entity and method refactor. */
     private boolean has1215Refactor() {
         return com.retromod.core.RetromodVersion.compareMcVersions(
                 com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "1.21.5") >= 0;
+    }
+
+    /** Returns whether the host saves entities and block entities through ValueIO, which 1.21.6 introduced. */
+    private boolean hasValueIo() {
+        return com.retromod.core.RetromodVersion.compareMcVersions(
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "1.21.6") >= 0;
     }
 
     /**
@@ -263,7 +273,8 @@ public final class MixinCompatibilityTransformer {
      * leaving a class that fails during Mixin application.
      */
     public byte[] adaptValueIoHandlers(byte[] classBytes) {
-        if (!has1215Refactor()) return classBytes;
+        // 1.21.5 still passes a CompoundTag, so its handlers are valid as they are.
+        if (!hasValueIo()) return classBytes;
         ClassNode classNode = new ClassNode();
         new ClassReader(classBytes).accept(classNode, 0);
         if (!isMixinClass(classNode)) return classBytes;
@@ -286,7 +297,7 @@ public final class MixinCompatibilityTransformer {
             if (!unrepairable.isEmpty()) {
                 // Identity keeps newly generated adapters with the same name intact.
                 classNode.methods.removeIf(unrepairable::contains);
-                LOGGER.info("Removed {} save-data handler(s) from {} because they cannot use ValueIO",
+                LOGGER.debug(RetromodLog.DETAIL, "Removed {} save-data handler(s) from {} because they cannot use ValueIO",
                         unrepairable.size(), classNode.name);
             }
             if (applied == 0 && unrepairable.isEmpty()) return classBytes;
@@ -294,7 +305,7 @@ public final class MixinCompatibilityTransformer {
             classNode.accept(cw);
             byte[] out = cw.toByteArray();
             if (applied > 0) {
-                LOGGER.info("Adapted {} save-data Mixin handler(s) in {} for ValueIO",
+                LOGGER.debug(RetromodLog.DETAIL, "Adapted {} save-data Mixin handler(s) in {} for ValueIO",
                         applied, classNode.name);
             }
             return out;
@@ -318,7 +329,8 @@ public final class MixinCompatibilityTransformer {
      *
      * <p>The automatic translator first checks exact declarations in the current Minecraft JAR.
      * Curated legacy member bridges then handle refactors that cannot be inferred from signatures
-     * alone. The ValueIO adapter runs last because it also matches final Mojang descriptors.
+     * alone. The ValueIO adapter follows because it also matches final Mojang descriptors, and the
+     * static ItemStack deferral runs last because it only moves code the other repairs left in place.
      * Keeping this as one entry point prevents runtime, CLI, AOT, and nested-jar paths from quietly
      * gaining different Mixin coverage.
      */
@@ -331,15 +343,71 @@ public final class MixinCompatibilityTransformer {
             byte[] classBytes, MixinRefmapRepairIndex refmapRepairs) {
         AutomaticMixinTranslator automatic =
                 new AutomaticMixinTranslator(transformer.getFuzzyResolver());
-        byte[] migrated = migrateRemovedFieldAccessors(classBytes);
+        byte[] migrated = migrateRemovedFieldAccessors(declineTargetKindChanges(classBytes));
         byte[] translated = automatic.translate(migrated, refmapRepairs);
         // Curated bridges run before the generic host-drift repair, so an exact, verified repair
         // (such as the Double Hotbar HUD mixin) keeps its shape and the generic pass only fills in
         // what no curated bridge claims.
         byte[] bridged = applyLegacyMemberBridges(translated);
+        // The jar's own classes let a repair check what the mixin's code would load with it.
         bridged = new MixinHostDriftRepair(transformer.getFuzzyResolver(),
-                transformer.getMethodRedirects(), transformer.getClassRedirects()).apply(bridged);
-        return adaptValueIoHandlers(bridged);
+                transformer.getMethodRedirects(), transformer.getClassRedirects(),
+                RetromodTransformer::readCurrentJarClassForAdapter).apply(bridged);
+        return deferStaticItemStacks(adaptValueIoHandlers(bridged));
+    }
+
+    /** Drops the targets the host turned into an interface for a class mixin, or into a class for an interface mixin. */
+    public byte[] declineTargetKindChanges(byte[] classBytes) {
+        if (classBytes == null) return null;
+        // Mixin stops the game on such a target even in a config that is not required, so the
+        // target goes before any other repair spends work on it. Names are final here, after the remap.
+        ClassNode outline = new ClassNode();
+        new ClassReader(classBytes).accept(outline, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        if (!isMixinClass(outline)) return classBytes;
+        ClassNode classNode = new ClassNode();
+        new ClassReader(classBytes).accept(classNode, 0);
+        if (!MixinTargetKindRepair.apply(classNode, this::hostTargetKind)) return classBytes;
+        ClassWriter cw = new ClassWriter(0);
+        classNode.accept(cw);
+        return cw.toByteArray();
+    }
+
+    private MixinTargetKindRepair.Kind hostTargetKind(String target) {
+        Boolean isInterface = transformer.targetKindIsInterface(target);
+        if (isInterface == null) return MixinTargetKindRepair.Kind.UNKNOWN;
+        return isInterface ? MixinTargetKindRepair.Kind.INTERFACE : MixinTargetKindRepair.Kind.CLASS;
+    }
+
+    /** Moves a Mixin's static initializer that builds an ItemStack to the first use of its fields. */
+    public byte[] deferStaticItemStacks(byte[] classBytes) {
+        // Mixin merges the initializer into the target's, and a 26.1 or newer host can load the
+        // target before item components are bound, when building any stack throws.
+        if (classBytes == null || !MixinLazyStaticInitializer.sourceBindsComponentsEarly(
+                transformer.getModSourceVersion())) {
+            return classBytes;
+        }
+        // A cheap structural read first, since this runs on every class of a Forge mod.
+        ClassNode outline = new ClassNode();
+        new ClassReader(classBytes).accept(outline,
+                ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        if (!isMixinClass(outline)
+                || outline.methods.stream().noneMatch(m -> m.name.equals("<clinit>"))) {
+            return classBytes;
+        }
+        ClassNode classNode = new ClassNode();
+        new ClassReader(classBytes).accept(classNode, 0);
+        if (!MixinLazyStaticInitializer.handles(classNode)
+                || !MixinLazyStaticInitializer.hostBindsComponentsLate(
+                        com.retromod.core.RetromodVersion.TARGET_MC_VERSION, transformer.getFuzzyResolver())
+                || !MixinLazyStaticInitializer.apply(classNode)) {
+            return classBytes;
+        }
+        // The moved initializer keeps its stack maps and the added methods carry their own.
+        ClassWriter cw = new ClassWriter(0);
+        classNode.accept(cw);
+        LOGGER.debug(RetromodLog.DETAIL, "Moved the static ItemStack setup of Mixin {} to its first use, "
+                + "because this Minecraft version binds item components later", classNode.name);
+        return cw.toByteArray();
     }
 
     /**
@@ -383,9 +451,18 @@ public final class MixinCompatibilityTransformer {
         if (!isMixinClass(classNode)) return classBytes;
 
         boolean modified = MixinLegacyMemberBridge.apply(classNode);
-        modified |= MixinShadowRenames.apply(classNode,
-                com.retromod.shim.common.LegacyMemberRenames::hostRenamed);
+        // A class mixin must extend a class in its target's hierarchy, where a generated base in the
+        // mod jar is not unless the target is a mod class built on it.
+        modified |= MixinGeneratedBaseRebase.apply(classNode, transformer::generatedLegacyBaseParent);
+        modified |= MixinShadowRenames.apply(classNode, rename -> com.retromod.shim.common.LegacyMemberRenames
+                .hostRenamed(rename, transformer.getFuzzyResolver()));
         modified |= MixinCommandParserBridge.apply(classNode, transformer.getFuzzyResolver());
+        // 26.3 keeps the generator settings' surface rule in a holder under a new name. The repaired code
+        // must link on the host, so the repair needs the indexed host jar.
+        com.retromod.core.FuzzyMethodResolver host = transformer.getFuzzyResolver();
+        MixinLinkCheck linkCheck = host != null && host.isIndexed() ? new MixinLinkCheck(host,
+                transformer.getClassRedirects(), RetromodTransformer::readCurrentJarClassForAdapter) : null;
+        modified |= MixinMaterialRuleRepair.apply(classNode, linkCheck);
         if (MixinShadowFieldDemotion.handles(classNode.name)) {
             modified |= MixinShadowFieldDemotion.apply(classNode);
         }
@@ -398,13 +475,13 @@ public final class MixinCompatibilityTransformer {
         // The repairs carry their own stack maps, so the class is written back as-is.
         ClassWriter cw = new ClassWriter(0);
         classNode.accept(cw);
-        LOGGER.info("Repaired legacy Mixin member(s) in {} for their current descriptors",
+        LOGGER.debug(RetromodLog.DETAIL, "Repaired legacy Mixin member(s) in {} for their current descriptors",
                 classNode.name);
         return cw.toByteArray();
     }
 
     /** Points a Mixin at an absent placeholder so the framework skips it cleanly. */
-    private boolean neutralizeMixin(ClassNode classNode) {
+    static boolean neutralizeMixin(ClassNode classNode) {
         AnnotationNode mixinAnn = null;
         for (List<AnnotationNode> anns : List.of(
                 classNode.visibleAnnotations != null ? classNode.visibleAnnotations : List.<AnnotationNode>of(),
@@ -487,14 +564,6 @@ public final class MixinCompatibilityTransformer {
      * @param hostHasClass predicate: does this binary class name resolve on the host?
      */
     String mixinTargetsRemovedClass(ClassNode classNode, java.util.function.Predicate<String> hostHasClass) {
-        // If MC itself isn't resolvable through the probe, every "absent" is a false
-        // negative; don't strip. Keyed on a class present on every supported host (Blocks,
-        // or its intermediary alias pre-26.1).
-        if (!hostHasClass.test("net.minecraft.world.level.block.Blocks")
-                && !hostHasClass.test("net.minecraft.class_2246")) {
-            return null;
-        }
-
         AnnotationNode mixinAnn = null;
         for (List<AnnotationNode> anns : List.of(
                 classNode.visibleAnnotations != null ? classNode.visibleAnnotations : List.<AnnotationNode>of(),
@@ -525,6 +594,44 @@ public final class MixinCompatibilityTransformer {
                     }
                 }
             }
+        }
+
+        // A removed Forge overlay class Retromod rebuilt inside each mod: its mixin would land on the mod's own copy,
+        // and the methods it injects into exist in no form on the host. Decided by the redirect, so offline too.
+        String rebuiltForgeClass = com.retromod.shim.forge.LegacyGuiOverlayBridge.removedMixinTarget(
+                targets, transformer::classRedirectForCurrentMod);
+        if (rebuiltForgeClass != null) return rebuiltForgeClass;
+        // The same for the removed item renderer base, which Minecraft 26.x draws no item through.
+        String rebuiltRenderer = com.retromod.shim.common.LegacyItemRendererBridge.removedMixinTarget(
+                targets, transformer::classRedirectForCurrentMod);
+        if (rebuiltRenderer != null) return rebuiltRenderer;
+        // And for ItemRenderer, which 26.1 removed and Retromod rebuilds inside each mod with only its old draw calls.
+        String rebuiltItems = com.retromod.shim.common.LegacyItemDrawBridge.removedMixinTarget(
+                targets, transformer::classRedirectForCurrentMod);
+        if (rebuiltItems != null) return rebuiltItems;
+        // And for the model shapers, BlockRenderDispatcher and old BakedModel, which the same bridge rebuilds or repoints.
+        String rebuiltModels = com.retromod.shim.common.LegacyBakedItemBridge.removedMixinTarget(
+                targets, transformer::classRedirectForCurrentMod);
+        if (rebuiltModels != null) return rebuiltModels;
+        // And for the old block and item color classes, which Retromod rebuilds inside each mod on Forge and NeoForge.
+        String rebuiltColors = com.retromod.shim.common.LegacyColorClasses.removedMixinTarget(
+                targets, transformer::classRedirectForCurrentMod);
+        if (rebuiltColors != null) return rebuiltColors;
+        // And for NeoForge's dynamic model types, which NeoForge 26.x removed and Retromod rebuilds inside each mod.
+        String rebuiltNeoModels = com.retromod.shim.neoforge.LegacyNeoForgeBakedModelBridge.removedMixinTarget(
+                targets, transformer::classRedirectForCurrentMod);
+        if (rebuiltNeoModels != null) return rebuiltNeoModels;
+        // And for ItemProperties, which 1.21.4 removed and Retromod rebuilds inside each mod without its old maps.
+        String rebuiltProperties = com.retromod.shim.common.LegacyItemPropertiesBridge.removedMixinTarget(
+                targets, transformer::classRedirectForCurrentMod);
+        if (rebuiltProperties != null) return rebuiltProperties;
+
+        // If MC itself isn't resolvable through the probe, every "absent" is a false
+        // negative; don't strip. Keyed on a class present on every supported host (Blocks,
+        // or its intermediary alias pre-26.1).
+        if (!hostHasClass.test("net.minecraft.world.level.block.Blocks")
+                && !hostHasClass.test("net.minecraft.class_2246")) {
+            return null;
         }
 
         for (String target : targets) {
@@ -558,13 +665,13 @@ public final class MixinCompatibilityTransformer {
      * lookup did, so following further can only keep more mixins, never strip one it kept.
      */
     private List<String> redirectChain(String target) {
-        Map<String, String> redirects = transformer.getClassRedirects();
         List<String> chain = new ArrayList<>();
         chain.add(target);
         String resolved = target;
         for (int hop = 0; hop < 8; hop++) {
-            String next = redirects.get(resolved);
-            if (next == null || chain.contains(next)) break;
+            // A redirect limited to older mods stops the chain for a newer one, as in the bytecode pass.
+            String next = transformer.classRedirectForCurrentMod(resolved);
+            if (next.equals(resolved) || chain.contains(next)) break;
             chain.add(next);
             resolved = next;
         }
@@ -649,7 +756,7 @@ public final class MixinCompatibilityTransformer {
     /**
      * Transform @Mixin annotation targets.
      */
-    private boolean transformMixinAnnotation(AnnotationNode annotation) {
+    private boolean transformMixinAnnotation(AnnotationNode annotation, String mixinName) {
         boolean modified = false;
 
         if (annotation.values == null) return false;
@@ -663,7 +770,10 @@ public final class MixinCompatibilityTransformer {
                 List<String> newTargets = new ArrayList<>();
                 for (Object target : targets) {
                     if (target instanceof String s) {
-                        String redirected = redirectClassName(s);
+                        // A class the Minecraft rename table renamed was reworked too, so a mixin on it stays inert.
+                        boolean kept = transformer.isMojangClassRename(s.replace('.', '/'));
+                        if (kept) logKeptInert(mixinName, s);
+                        String redirected = kept ? s : redirectClassName(s);
                         newTargets.add(redirected);
                         currentTargetOwners.get().add(redirected.replace('.', '/'));
                         if (!s.equals(redirected)) {
@@ -681,7 +791,9 @@ public final class MixinCompatibilityTransformer {
                 for (Object v : values) {
                     if (v instanceof org.objectweb.asm.Type type) {
                         String internal = type.getInternalName();
-                        String redirected = finalRedirect(internal);
+                        boolean kept = transformer.isMojangClassRename(internal);
+                        if (kept) logKeptInert(mixinName, internal);
+                        String redirected = kept ? internal : finalRedirect(internal);
                         currentTargetOwners.get().add(redirected);
                         if (!internal.equals(redirected)) {
                             newValues.add(org.objectweb.asm.Type.getObjectType(redirected));
@@ -701,6 +813,11 @@ public final class MixinCompatibilityTransformer {
         return modified;
     }
     
+    private static void logKeptInert(String mixinName, String target) {
+        LOGGER.debug(RetromodLog.DETAIL, "Left Mixin {} on {}: this host renamed and reworked that class, "
+                + "so the Mixin does not apply, as before", mixinName, target);
+    }
+
     /**
      * Transform method annotations (@Inject, @Redirect, etc).
      */
@@ -1018,6 +1135,9 @@ public final class MixinCompatibilityTransformer {
                     if (!isInvoker && redirected.equals(s)) {
                         redirected = remapFieldName(s, accessorFieldDesc);
                     }
+                    if (isInvoker && redirected.equals(s)) {
+                        redirected = renamedInvokerTarget(s, method.desc);
+                    }
                     if (!s.equals(redirected)) {
                         annotation.values.set(i + 1, redirected);
                         modified = true;
@@ -1043,6 +1163,9 @@ public final class MixinCompatibilityTransformer {
                 String redirected = isInvoker
                         ? remapMethodName(target)
                         : remapFieldName(target, accessorFieldDesc);
+                if (isInvoker && redirected.equals(target)) {
+                    redirected = renamedInvokerTarget(target, method.desc);
+                }
                 if (!redirected.equals(target)) {
                     if (annotation.values == null) {
                         annotation.values = new ArrayList<>();
@@ -1057,6 +1180,16 @@ public final class MixinCompatibilityTransformer {
         }
 
         return modified;
+    }
+
+    /** An invoker's target on a single-target mixin, renamed when the host renamed that method. */
+    private String renamedInvokerTarget(String name, String descriptor) {
+        Set<String> targetOwners = currentTargetOwners.get();
+        if (targetOwners.size() != 1) return name;
+        // An invoker has its target's descriptor, after the class redirects.
+        String renamed = transformer.mojangSelectorRename(
+                targetOwners.iterator().next(), name, remapDescriptorClasses(descriptor));
+        return renamed != null ? renamed : name;
     }
 
     private static String accessorFieldDescriptor(MethodNode method) {
@@ -1126,7 +1259,7 @@ public final class MixinCompatibilityTransformer {
                 addVisibleAnnotation(method, MUTABLE_DESC);
             }
         }
-        LOGGER.info("Moved accessor mixin {} target {} -> {} for field {}",
+        LOGGER.debug(RetromodLog.DETAIL, "Moved accessor mixin {} target {} -> {} for field {}",
                 classNode.name, owner, move.owner(), move.name());
         return true;
     }
@@ -1425,10 +1558,31 @@ public final class MixinCompatibilityTransformer {
         String remapped = redirectMethodTarget(target);
         AutomaticMixinTranslator automatic =
                 new AutomaticMixinTranslator(transformer.getFuzzyResolver());
-        AutomaticMixinTranslator.ResourceSelectorRepair repair =
-                automatic.planResourceSelector(remapped).orElse(null);
+        // A target the host renamed resolves under its new name when its descriptor stayed, or when
+        // the parameter repair, which retypes the handler with it, proves the new one. Any other
+        // descriptor waits for the refmap repair after the class pass, which checks the handler.
+        String renamed = MixinSelectorRenames.renameResourceSelector(transformer.getFuzzyResolver(), remapped);
+        AutomaticMixinTranslator.ResourceSelectorRepair repair = renamed.equals(remapped)
+                ? automatic.planResourceSelector(remapped).orElse(null)
+                : automatic.planResourceSelector(renamed).orElse(null);
+        if (repair == null && !renamed.equals(remapped)
+                && transformer.getFuzzyResolver().hasMethod(ownerOf(renamed), memberName(renamed), memberDesc(renamed))) {
+            remapped = renamed;
+        }
         return new ResourceSelectorResult(
                 repair != null ? repair.replacement() : remapped, repair);
+    }
+
+    private static String ownerOf(String selector) {
+        return selector.substring(1, selector.indexOf(';'));
+    }
+
+    private static String memberName(String selector) {
+        return selector.substring(selector.indexOf(';') + 1, selector.indexOf('('));
+    }
+
+    private static String memberDesc(String selector) {
+        return selector.substring(selector.indexOf('('));
     }
 
     /**
@@ -1473,6 +1627,8 @@ public final class MixinCompatibilityTransformer {
             // would miss its entry and name a method the runtime does not have.
             renamed = transformer.registeredMethodRename(owner, name);
         }
+        // A Mojang-named mod's selector for a method its host renamed since the mod's version.
+        if (renamed == null) renamed = transformer.mojangSelectorRename(owner, name, null);
         return Optional.ofNullable(renamed);
     }
 
@@ -1658,11 +1814,11 @@ public final class MixinCompatibilityTransformer {
 
                 if (wasRelocated) {
                     relocated++;
-                    LOGGER.info("Relocated mixin '{}' targets to new API names", mixinClassName);
+                    LOGGER.debug(RetromodLog.DETAIL, "Relocated mixin '{}' targets to new API names", mixinClassName);
                 }
                 if (stripResult.strippedMethods > 0) {
                     partiallyStripped++;
-                    LOGGER.info("Partially stripped mixin '{}': removed {} broken method(s), kept {} working",
+                    LOGGER.debug(RetromodLog.DETAIL, "Partially stripped mixin '{}': removed {} broken method(s), kept {} working",
                         mixinClassName, stripResult.strippedMethods, stripResult.keptMethods);
                 }
             }
@@ -1673,14 +1829,14 @@ public final class MixinCompatibilityTransformer {
         }
 
         if (relocated > 0) {
-            LOGGER.info("Relocated {} mixin(s) in '{}' array to use updated targets", relocated, arrayKey);
+            LOGGER.debug(RetromodLog.DETAIL, "Relocated {} mixin(s) in '{}' array to use updated targets", relocated, arrayKey);
         }
         if (partiallyStripped > 0) {
-            LOGGER.info("Partially stripped {} mixin(s) in '{}' array (removed broken methods, kept working ones)",
+            LOGGER.debug(RetromodLog.DETAIL, "Partially stripped {} mixin(s) in '{}' array (removed broken methods, kept working ones)",
                 partiallyStripped, arrayKey);
         }
         if (!removedEntries.isEmpty()) {
-            LOGGER.info("Fully stripped {} mixin(s) from '{}' array: {}", removedEntries.size(), arrayKey, removedEntries);
+            LOGGER.debug(RetromodLog.DETAIL, "Fully stripped {} mixin(s) from '{}' array: {}", removedEntries.size(), arrayKey, removedEntries);
         }
 
         StringBuilder newArray = new StringBuilder("\"" + arrayKey + "\": [");

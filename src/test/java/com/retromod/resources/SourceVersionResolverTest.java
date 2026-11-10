@@ -37,6 +37,17 @@ class SourceVersionResolverTest {
     }
 
     @Test
+    @DisplayName("A Fabric jar that lists several minecraft versions resolves to the first")
+    void fabricArrayResolvesToFirstAlternative(@TempDir Path directory) throws Exception {
+        // The Fabric runtime reads its bytecode source version here, so arrays must resolve.
+        Path jar = writeJar(directory.resolve("fabric.jar"), entries("fabric.mod.json",
+                "{\"schemaVersion\":1,\"id\":\"arrayfab\",\"version\":\"1.0\","
+                        + "\"depends\":{\"minecraft\":[\"1.21\",\"1.21.1\"]}}"));
+
+        assertEquals("1.21", SourceVersionResolver.resolve(jar));
+    }
+
+    @Test
     @DisplayName("A Fabric jar that accepts any minecraft version is unknown, never old")
     void fabricWildcardIsUnknown(@TempDir Path directory) throws Exception {
         Path jar = writeJar(directory.resolve("fabric.jar"), entries(
@@ -155,7 +166,8 @@ class SourceVersionResolverTest {
                 "META-INF/mods.toml", forgeToml("modern", "${minecraft_version_range}"),
                 "mcmod.info", "[{\"modid\":\"modern\",\"mcversion\":\"1.12.2\"}]"));
 
-        assertNull(SourceVersionResolver.resolve(jar));
+        // The placeholder names nothing, so the javafml [47,) floor decides, never mcmod.info.
+        assertEquals("1.20.1", SourceVersionResolver.resolve(jar));
     }
 
     @Test

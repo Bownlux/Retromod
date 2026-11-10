@@ -9,6 +9,7 @@ import com.google.gson.JsonParser;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.tree.ClassNode;
@@ -130,6 +131,54 @@ class LegacyRarityBridgeTest {
         assertFalse(LegacyRarityBridge.hostDroppedCreate(rarityNode(true, false)), "NeoForge declares extensions instead");
     }
 
+    @Test
+    @DisplayName("on Forge 26.x's plain Rarity the call gets the vanilla rarity of its color, or COMMON")
+    void plainRarityFallsBackByColor() throws Exception {
+        // Forge 26.2's shape: four vanilla rarities with their colors, no create, no IExtensibleEnum.
+        byte[] rarityClass = enumClass(RARITY, new String[] {"COMMON", "UNCOMMON", "RARE", "EPIC"}, true,
+                new String[] {"WHITE", "YELLOW", "AQUA", "LIGHT_PURPLE"});
+        ClassNode shape = new ClassNode();
+        new ClassReader(rarityClass).accept(shape, ClassReader.SKIP_CODE);
+        assertTrue(LegacyRarityBridge.hostDroppedCreate(shape), "the bridge must treat this shape as Forge 26.x");
+
+        Isolated host = new Isolated();
+        host.add(FORMATTING, enumClass(FORMATTING, new String[] {"WHITE", "YELLOW", "AQUA", "BLUE", "LIGHT_PURPLE"}, false));
+        host.add(RARITY, rarityClass);
+        host.add(LegacyRarityBridge.HELPER, resource(LegacyRarityBridge.HELPER));
+        host.add(LegacyRarityBridge.CALLS, LegacyRarityBridge.generateCalls());
+        Class<?> formatting = host.load(FORMATTING);
+        Method create = host.load(LegacyRarityBridge.CALLS).getMethod("create", String.class, formatting);
+
+        Object aqua = create.invoke(null, "scguns.oceanic", formatting.getField("AQUA").get(null));
+        Object blue = create.invoke(null, "retromod_test_mod_forge.test", formatting.getField("BLUE").get(null));
+
+        assertEquals("RARE", ((Enum<?>) aqua).name(), "RARE is the vanilla rarity colored AQUA");
+        assertEquals("COMMON", ((Enum<?>) blue).name(), "no vanilla rarity is BLUE, so the first one comes back");
+    }
+
+    @Test
+    @DisplayName("an undeclared rarity warns once, naming the rarity and its stand-in")
+    void undeclaredRarityWarnsOnce() throws Exception {
+        Isolated host = new Isolated();
+        host.add(FORMATTING, enumClass(FORMATTING, new String[] {"WHITE", "AQUA"}, false));
+        host.add(RARITY, enumClass(RARITY, new String[] {"COMMON", "RARE"}, true, new String[] {"WHITE", "AQUA"}));
+        host.add(LegacyRarityBridge.HELPER, resource(LegacyRarityBridge.HELPER));
+        host.add(LegacyRarityBridge.CALLS, LegacyRarityBridge.generateCalls());
+        Class<?> formatting = host.load(FORMATTING);
+        Method create = host.load(LegacyRarityBridge.CALLS).getMethod("create", String.class, formatting);
+        Object aqua = formatting.getField("AQUA").get(null);
+
+        // A name no other test uses, because the warning is remembered for the whole run.
+        String output = captureErr(() -> {
+            create.invoke(null, "scguns.warned_once", aqua);
+            create.invoke(null, "scguns.warned_once", aqua);
+        });
+
+        assertEquals(1, output.split(java.util.regex.Pattern.quote("Rarity scguns.warned_once "), -1).length - 1,
+                "a mod builds the same rarity for many items, so it warns once: " + output);
+        assertTrue(output.contains("it uses RARE"), "the warning names the same-color stand-in: " + output);
+    }
+
     // --- fixtures -----------------------------------------------------------------------------
 
     /** {@code Constants.<clinit>}: two constant rarities, as Scorched Guns declares them. */
@@ -169,6 +218,11 @@ class LegacyRarityBridgeTest {
      * as {@code "minecraft:" + lower name}, or {@code "scguns:scguns.oceanic"} for the mod's one.
      */
     private static byte[] enumClass(String name, String[] constants, boolean rarity) {
+        return enumClass(name, constants, rarity, null);
+    }
+
+    /** The same enum, where each constant also answers {@code color()} with the ChatFormatting at its index. */
+    private static byte[] enumClass(String name, String[] constants, boolean rarity, String[] colors) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER | ACC_ENUM, name, null, "java/lang/Enum", null);
         String self = "L" + name + ";";
@@ -177,6 +231,9 @@ class LegacyRarityBridgeTest {
         }
         cw.visitField(ACC_PRIVATE | ACC_STATIC | ACC_FINAL | ACC_SYNTHETIC, "$VALUES", "[" + self, null, null).visitEnd();
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "serialized", "Ljava/lang/String;", null, null).visitEnd();
+        String colorType = "L" + FORMATTING + ";";
+        // Not final, because the static initializer sets it after the constructor.
+        if (colors != null) cw.visitField(ACC_PRIVATE, "color", colorType, null, null).visitEnd();
         MethodVisitor init = cw.visitMethod(ACC_PRIVATE, "<init>", "(Ljava/lang/String;ILjava/lang/String;)V", null, null);
         init.visitCode();
         init.visitVarInsn(ALOAD, 0);
@@ -203,6 +260,11 @@ class LegacyRarityBridgeTest {
             clinit.visitLdcInsn(constants[i].startsWith("SCGUNS_") ? "scguns:scguns.oceanic"
                     : "minecraft:" + constants[i].toLowerCase(java.util.Locale.ROOT));
             clinit.visitMethodInsn(INVOKESPECIAL, name, "<init>", "(Ljava/lang/String;ILjava/lang/String;)V", false);
+            if (colors != null) {
+                clinit.visitInsn(DUP);
+                clinit.visitFieldInsn(GETSTATIC, FORMATTING, colors[i], colorType);
+                clinit.visitFieldInsn(PUTFIELD, name, "color", colorType);
+            }
             clinit.visitInsn(DUP);
             clinit.visitFieldInsn(PUTSTATIC, name, constants[i], self);
             clinit.visitInsn(AASTORE);
@@ -228,8 +290,33 @@ class LegacyRarityBridgeTest {
             serialized.visitMaxs(0, 0);
             serialized.visitEnd();
         }
+        if (colors != null) {
+            MethodVisitor color = cw.visitMethod(ACC_PUBLIC, "color", "()" + colorType, null, null);
+            color.visitCode();
+            color.visitVarInsn(ALOAD, 0);
+            color.visitFieldInsn(GETFIELD, name, "color", colorType);
+            color.visitInsn(ARETURN);
+            color.visitMaxs(0, 0);
+            color.visitEnd();
+        }
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    private interface ThrowingRunnable {
+        void run() throws Exception;
+    }
+
+    private static String captureErr(ThrowingRunnable action) throws Exception {
+        java.io.PrintStream original = System.err;
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        System.setErr(new java.io.PrintStream(captured, true, StandardCharsets.UTF_8));
+        try {
+            action.run();
+        } finally {
+            System.setErr(original);
+        }
+        return captured.toString(StandardCharsets.UTF_8);
     }
 
     private static byte[] resource(String internalName) {

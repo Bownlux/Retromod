@@ -4,6 +4,7 @@
  */
 package com.retromod.legacyapi.forge.event;
 
+import net.minecraft.client.DeltaTracker;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
@@ -21,6 +22,16 @@ public final class TickEvents {
                 || event instanceof TickEvent.LevelTickEvent.Pre || event instanceof TickEvent.PlayerTickEvent.Pre
                 || event instanceof TickEvent.RenderTickEvent.Pre;
         return start ? TickPhase.START : TickPhase.END;
+    }
+
+    /** {@code event.type}: the old tick event a Pre or Post event stands for. */
+    public static TickType type(Object event) {
+        if (event instanceof TickEvent.LevelTickEvent) return TickType.LEVEL;
+        if (event instanceof TickEvent.PlayerTickEvent) return TickType.PLAYER;
+        if (event instanceof TickEvent.ServerTickEvent) return TickType.SERVER;
+        if (event instanceof TickEvent.RenderTickEvent) return TickType.RENDER;
+        // The client tick is the one left; its records carry no data.
+        return TickType.CLIENT;
     }
 
     /** {@code event.side}: level and player ticks carry theirs, and the server tick runs on the server. */
@@ -49,5 +60,13 @@ public final class TickEvents {
     public static boolean haveTime(Object event) {
         return event instanceof TickEvent.ServerTickEvent server ? server.haveTime()
                 : ((TickEvent.LevelTickEvent) event).haveTime();
+    }
+
+    /** {@code RenderTickEvent.renderTickTime}: the paused or running partial tick, as Forge 1.20.1 passed it. */
+    public static float renderTickTime(Object event) {
+        DeltaTracker timer = event instanceof TickEvent.RenderTickEvent.Pre pre ? pre.timer()
+                : ((TickEvent.RenderTickEvent.Post) event).timer();
+        // False matches what the 26.2 game and level renderers pass.
+        return timer.getGameTimeDeltaPartialTick(false);
     }
 }

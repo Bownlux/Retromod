@@ -4,6 +4,7 @@
  */
 package com.retromod.mixin;
 
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AnnotationNode;
@@ -126,7 +127,7 @@ public final class MixinShadowFieldDemotion {
             handler.maxStack = Math.max(handler.maxStack, 1 + ft.getSize());
 
             modified = true;
-            LOGGER.info("Mixin shadow-demotion: {}.{} demoted to @Unique and seeded from {}() "
+            LOGGER.debug(RetromodLog.DETAIL, "Mixin shadow-demotion: {}.{} demoted to @Unique and seeded from {}() "
                     + "(the shadowed vanilla field was removed on this MC; worldgen would "
                     + "otherwise crash)", cn.name, d.fieldName(), d.handlerName());
         }

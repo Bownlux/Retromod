@@ -18,6 +18,10 @@ import java.util.Set;
 final class LegacyLootConditionMigrator {
 
     private static final String ALL_OF = "minecraft:all_of";
+    // 26.3 split value_check into int and float checks. The old one compared the value as a whole
+    // number, so it is the int check.
+    private static final Map<String, String> RENAMED_CONDITIONS = Map.of(
+            "minecraft:value_check", "minecraft:int_value_check");
     private static final Set<String> LOOT_ENTRY_TYPES = Set.of(
             "item", "tag", "loot_table", "empty", "dynamic", "alternatives", "sequence", "group");
 
@@ -67,8 +71,10 @@ final class LegacyLootConditionMigrator {
                     && isOldConditionList(original.getAsJsonObject().get("conditions"))) {
                 JsonObject modifier = original.getAsJsonObject().deepCopy();
                 JsonArray converted = new JsonArray();
+                // Forge reads this list as direct conditions only (checked in Forge 26.2's
+                // IGlobalLootModifier), so a reference keeps its object form here.
                 for (JsonElement condition : modifier.getAsJsonArray("conditions")) {
-                    converted.add(convertCondition(condition.getAsJsonObject(), lootFile));
+                    converted.add(convertCondition(condition.getAsJsonObject(), lootFile, false));
                 }
                 modifier.add("conditions", converted);
                 migrated = convert(modifier, lootFile);
@@ -77,6 +83,9 @@ final class LegacyLootConditionMigrator {
             } else {
                 migrated = convert(original, lootFile);
             }
+            // A file that held only a reference names that predicate or item modifier in a one-term
+            // all_of or sequence, since the file itself must be an object.
+            if (isString(migrated)) migrated = isOldFunction(original) ? sequence(migrated) : allOf(migrated);
             return migrated.equals(original) ? json : migrated.toString().getBytes(StandardCharsets.UTF_8);
         } catch (RuntimeException malformed) {
             return json;
@@ -134,18 +143,37 @@ final class LegacyLootConditionMigrator {
         return out;
     }
 
-    private static JsonObject convertCondition(JsonObject condition, boolean lootFile) {
+    private static JsonElement convertCondition(JsonObject condition, boolean lootFile) {
+        return convertCondition(condition, lootFile, true);
+    }
+
+    private static JsonElement convertCondition(JsonObject condition, boolean lootFile, boolean referenceById) {
         // A condition names its kind in "type" instead of "condition", and block_state_property
         // became match_block with "blocks" and "state".
-        String type = condition.get("condition").getAsString();
+        String type = namespaced(condition.get("condition").getAsString());
+        // 26.3 removed the reference condition: a condition slot names the predicate file by id instead.
+        if (referenceById && type.equals("minecraft:reference") && condition.size() == 2
+                && isString(condition.get("name"))) {
+            return condition.get("name");
+        }
         boolean matchBlock = type.equals("minecraft:block_state_property");
+        boolean valueCheck = type.equals("minecraft:value_check");
         JsonObject out = new JsonObject();
-        out.addProperty("type", matchBlock ? "minecraft:match_block" : type);
+        out.addProperty("type", matchBlock ? "minecraft:match_block" : RENAMED_CONDITIONS.getOrDefault(type, type));
         for (Map.Entry<String, JsonElement> field : condition.entrySet()) {
             String key = field.getKey();
             if (key.equals("condition")) continue;
             if (matchBlock && key.equals("block")) key = "blocks";
             if (matchBlock && key.equals("properties")) key = "state";
+            // The int check names its range "test", and reads its value only as a typed provider.
+            if (valueCheck && key.equals("range")) key = "test";
+            if (valueCheck && key.equals("value") && field.getValue() instanceof JsonObject value
+                    && !value.has("type") && value.size() == 2 && value.has("min") && value.has("max")) {
+                JsonObject typed = value.deepCopy();
+                typed.addProperty("type", "minecraft:uniform");
+                out.add(key, typed);
+                continue;
+            }
             JsonElement value = field.getValue();
             if (field.getKey().equals("terms") && value.isJsonArray()) {
                 out.add(key, convert(value, lootFile));
@@ -158,14 +186,25 @@ final class LegacyLootConditionMigrator {
         return out;
     }
 
-    private static JsonObject convertFunction(JsonObject function, boolean lootFile) {
+    private static JsonElement convertFunction(JsonObject function, boolean lootFile) {
+        // 26.3 removed the reference function too: a function slot names the item modifier by id.
+        if (namespaced(function.get("function").getAsString()).equals("minecraft:reference")
+                && function.size() == 2 && isString(function.get("name"))) {
+            return function.get("name");
+        }
         // A loot function names its kind in "type"; convert moves a "functions" list to "modifier".
         JsonObject out = new JsonObject();
         out.addProperty("type", function.get("function").getAsString());
+        // 26.3 reads an exploration map's destination as a tag with its #, and no longer defaults it.
+        if (namespaced(function.get("function").getAsString()).equals("minecraft:exploration_map")) {
+            String destination = isString(function.get("destination"))
+                    ? function.get("destination").getAsString() : "minecraft:on_treasure_maps";
+            out.addProperty("destination", destination.startsWith("#") ? destination : "#" + destination);
+        }
         for (Map.Entry<String, JsonElement> field : function.entrySet()) {
             String key = field.getKey();
             JsonElement value = field.getValue();
-            if (key.equals("function")) continue;
+            if (key.equals("function") || key.equals("destination") && out.has("destination")) continue;
             if (key.equals("conditions") && value.isJsonArray()
                     && (value.getAsJsonArray().isEmpty() || isOldConditionList(value))) {
                 if (!value.getAsJsonArray().isEmpty()) {
@@ -189,6 +228,28 @@ final class LegacyLootConditionMigrator {
         allOf.addProperty("type", ALL_OF);
         allOf.add("terms", converted);
         return allOf;
+    }
+
+    private static JsonObject allOf(JsonElement term) {
+        JsonArray terms = new JsonArray();
+        terms.add(term);
+        JsonObject allOf = new JsonObject();
+        allOf.addProperty("type", ALL_OF);
+        allOf.add("terms", terms);
+        return allOf;
+    }
+
+    private static JsonObject sequence(JsonElement function) {
+        JsonArray functions = new JsonArray();
+        functions.add(function);
+        JsonObject sequence = new JsonObject();
+        sequence.addProperty("type", "minecraft:sequence");
+        sequence.add("functions", functions);
+        return sequence;
+    }
+
+    private static String namespaced(String id) {
+        return id.indexOf(':') >= 0 ? id : "minecraft:" + id;
     }
 
     /** Damage type tag predicates ({@code id} and {@code expected}) now name the tag with a #. */
@@ -223,6 +284,10 @@ final class LegacyLootConditionMigrator {
             if (!isOldCondition(item)) return false;
         }
         return true;
+    }
+
+    private static boolean isOldFunction(JsonElement element) {
+        return element instanceof JsonObject object && isOldFunction(object);
     }
 
     private static boolean isOldFunction(JsonObject object) {

@@ -22,6 +22,7 @@ import org.objectweb.asm.tree.TypeInsnNode;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.objectweb.asm.Opcodes.*;
@@ -395,6 +396,61 @@ public class Corpus26xDescriptorAdaptationTest {
         assertEquals("parseCompoundFully", firstCall(insns, "net/minecraft/nbt/TagParser").name);
     }
 
+    private static final String NBT_LOOKUP = "com/retromod/polyfill/registry/NbtCompatLookup";
+
+    @Test
+    @DisplayName("NBT: CompoundTag.getInt(String)I -> NbtCompatLookup.compoundGetInt, receiver first")
+    void nbtCompoundGetIntBridged() {
+        List<AbstractInsnNode> insns = transformBody("(Lnet/minecraft/nbt/CompoundTag;)V", mv -> {
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitLdcInsn("count");
+            mv.visitMethodInsn(INVOKEVIRTUAL, "net/minecraft/nbt/CompoundTag", "getInt", "(Ljava/lang/String;)I", false);
+            mv.visitInsn(POP);
+        });
+        MethodInsnNode c = firstCall(insns, NBT_LOOKUP);
+        assertNotNull(c, "getInt returns Optional from 1.21.5, so the int form must be bridged");
+        assertEquals(INVOKESTATIC, c.getOpcode());
+        assertEquals("compoundGetInt", c.name);
+        assertEquals("(Ljava/lang/Object;Ljava/lang/String;)I", c.desc);
+    }
+
+    @Test
+    @DisplayName("NBT: ListTag.getString(I) -> NbtCompatLookup.listGetString")
+    void nbtListGetStringBridged() {
+        List<AbstractInsnNode> insns = transformBody("(Lnet/minecraft/nbt/ListTag;)V", mv -> {
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitInsn(ICONST_0);
+            mv.visitMethodInsn(INVOKEVIRTUAL, "net/minecraft/nbt/ListTag", "getString", "(I)Ljava/lang/String;", false);
+            mv.visitInsn(POP);
+        });
+        MethodInsnNode c = firstCall(insns, NBT_LOOKUP);
+        assertNotNull(c);
+        assertEquals("listGetString", c.name);
+        assertEquals("(Ljava/lang/Object;I)Ljava/lang/String;", c.desc);
+    }
+
+    @Test
+    @DisplayName("NBT: a current getInt(String)Optional call is left alone")
+    void nbtModernGetIntUntouched() {
+        List<AbstractInsnNode> insns = transformBody("(Lnet/minecraft/nbt/CompoundTag;)V", mv -> {
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitLdcInsn("count");
+            mv.visitMethodInsn(INVOKEVIRTUAL, "net/minecraft/nbt/CompoundTag", "getInt",
+                    "(Ljava/lang/String;)Ljava/util/Optional;", false);
+            mv.visitInsn(POP);
+        });
+        assertNull(firstCall(insns, NBT_LOOKUP), "a mod built for 1.21.5 or newer already calls the host form");
+        assertEquals("(Ljava/lang/String;)Ljava/util/Optional;",
+                firstCall(insns, "net/minecraft/nbt/CompoundTag").desc);
+    }
+
+    @Test
+    @DisplayName("NBT: NbtCompatLookup is embeddable, so Forge-family and offline output carry it")
+    void nbtLookupIsSynthetic() {
+        assertTrue(transformer.getSyntheticClasses().containsKey(NBT_LOOKUP),
+                "without an embedded copy a Forge-family mod cannot load the lookup");
+    }
+
     @Test
     @DisplayName("new ClickEvent(Action,String) -> RetroTextEvents.clickEvent factory + CHECKCAST (ctor bridge)")
     void clickEventCtorBridged() {
@@ -453,5 +509,76 @@ public class Corpus26xDescriptorAdaptationTest {
             assertEquals(m, mc.get(1).name);
             assertEquals(INVOKEVIRTUAL, mc.get(1).getOpcode());
         }
+    }
+
+    private static final String ITEM = "net/minecraft/world/item/Item";
+    private static final String ITEM_NAMES = "com/retromod/generated/LegacyItemNames26x";
+    private static final String NAME_DESC = "()Lnet/minecraft/network/chat/Component;";
+
+    @Test
+    @DisplayName("Item.getName() and getDescription() -> LegacyItemNames26x.name(Item), which 26.x still answers")
+    void itemNameAndDescriptionBridged() {
+        for (String name : List.of("getName", "getDescription")) {
+            MethodInsnNode c = firstCall(itemNameCall(ITEM, name), ITEM_NAMES);
+            assertNotNull(c, "26.x Item has only getName(ItemStack), so " + name + "() must be bridged");
+            assertEquals(INVOKESTATIC, c.getOpcode());
+            assertEquals("name", c.name);
+            assertEquals("(L" + ITEM + ";)Lnet/minecraft/network/chat/Component;", c.desc);
+        }
+    }
+
+    @Test
+    @DisplayName("Item.getDescription() on a mod's item class is bridged unless that class declares it")
+    void itemDescriptionOnAModSubclass() {
+        Map<String, byte[]> jar = Map.of(
+                "mod/PlainItem", itemSubclass("mod/PlainItem", false),
+                "mod/OwnItem", itemSubclass("mod/OwnItem", true));
+        try (var scope = transformer.pushJarClassBytesProvider(jar::get)) {
+            assertNotNull(firstCall(itemNameCall("mod/PlainItem", "getDescription"), ITEM_NAMES),
+                    "an item that only inherits the method reaches the helper");
+            List<AbstractInsnNode> own = itemNameCall("mod/OwnItem", "getDescription");
+            assertNull(firstCall(own, ITEM_NAMES), "an item's own getDescription() must still run");
+            assertEquals("getDescription", firstCall(own, "mod/OwnItem").name);
+        }
+    }
+
+    @Test
+    @DisplayName("LegacyItemNames26x reads the item_name component only once components are bound")
+    void itemNameHelperChecksBindingFirst() {
+        ClassNode helper = new ClassNode();
+        new ClassReader(transformer.getSyntheticClasses().get(ITEM_NAMES)).accept(helper, 0);
+        List<String> calls = new ArrayList<>();
+        for (MethodNode m : helper.methods) {
+            for (AbstractInsnNode i : m.instructions.toArray()) {
+                if (i instanceof MethodInsnNode mi) calls.add(mi.name);
+            }
+        }
+        assertEquals(List.of("builtInRegistryHolder", "areComponentsBound", "components", "getOrDefault",
+                "getDescriptionId", "translatable"), calls);
+    }
+
+    /** A call to {@code owner.name()} returning a Component, transformed. */
+    private List<AbstractInsnNode> itemNameCall(String owner, String name) {
+        return transformBody("(L" + owner + ";)V", mv -> {
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitMethodInsn(INVOKEVIRTUAL, owner, name, NAME_DESC, false);
+            mv.visitInsn(POP);
+        });
+    }
+
+    /** A mod item class, optionally with its own 1.21.1 getDescription(). */
+    private static byte[] itemSubclass(String name, boolean declaresDescription) {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(Opcodes.V17, ACC_PUBLIC, name, null, ITEM, null);
+        if (declaresDescription) {
+            MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, "getDescription", NAME_DESC, null, null);
+            mv.visitCode();
+            mv.visitInsn(ACONST_NULL);
+            mv.visitInsn(ARETURN);
+            mv.visitMaxs(1, 1);
+            mv.visitEnd();
+        }
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 }

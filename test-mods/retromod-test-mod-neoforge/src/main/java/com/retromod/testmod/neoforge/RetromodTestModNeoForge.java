@@ -55,7 +55,7 @@ public class RetromodTestModNeoForge {
     private static final Logger LOG = LoggerFactory.getLogger("Retromod-Test-NeoForge");
     private static final String PREFIX = "[Retromod-Test-NeoForge]";
 
-    public RetromodTestModNeoForge(IEventBus modBus) {
+    public RetromodTestModNeoForge(IEventBus modBus, net.neoforged.fml.ModContainer container) {
         // #188: 26.1 renamed this event and changed its registration method from one argument to
         // an id plus listener. Keeping a real old-signature listener in the test mod proves the
         // handler descriptor and call site both survive the transform. The callback log proves the
@@ -68,7 +68,55 @@ public class RetromodTestModNeoForge {
         EntityTypeKeys.register(modBus);
         // #366: bedrock gets an old item handler, tank, and energy storage through the old capabilities.
         modBus.addListener(LegacyHandlerCase::register);
+        // #366: attachment types that serialize with a Codec, built during registration.
+        LegacyAttachmentCase.register(modBus);
+        // An item drawn by an old BlockEntityWithoutLevelRenderer, which Minecraft 1.21.4 removed.
+        ItemRendererCase.register(modBus);
         net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(this::checkLegacyExplosion);
+        // A render event's entity and a typed character's modifiers, which NeoForge 1.21.2 and 26.2 dropped. Client only.
+        if (FMLEnvironment.dist.isClient()) EventMembersCase.registerClient();
+        // An old block entity renderer and entity renderer driven through 26.x's state and submit, as Farmer's Delight's are. Client only.
+        if (FMLEnvironment.dist.isClient()) OldRendererDrawCase.register();
+        // An old screen's pose stack, render type fills, lines, list row, button and key checks on the 26.x GUI. Client only.
+        if (FMLEnvironment.dist.isClient()) OldGuiDrawCase.register();
+        // Old model calls through ItemRenderer and BlockRenderDispatcher, as Sophisticated Backpacks, Farmer's Delight and Carry On make them.
+        if (FMLEnvironment.dist.isClient()) BakedItemModelCase.register(modBus);
+        // A dynamic model, a wrapper and NeoForge's model data calls, which NeoForge 26.x removed with BakedModel. Client only.
+        if (FMLEnvironment.dist.isClient()) DynamicModelCase.register(modBus);
+        // Item properties registered in client setup's queued work, which 1.21.4 replaced with item definitions. Client only.
+        if (FMLEnvironment.dist.isClient()) ItemPropertyCase.register(modBus);
+        // A mixin on a method 26.1 renamed, as many client mods hook resizeDisplay(). Client only.
+        if (FMLEnvironment.dist.isClient()) RenamedMixinTargetCase.register();
+        // Lootr's trigger shape: it implements CriterionTrigger and keeps its own listeners, which 26.2 removed.
+        ListenerTriggerCase.register(modBus);
+        // A loot function and condition type and a structure processor type, which 26.1 and 26.2 turned into map codec
+        // registries, named by a data loot table and processor list. A failure is this case's result.
+        try {
+            LegacyLootTypeCase.register(modBus);
+        } catch (Throwable t) {
+            LOG.info("{} 1.21.1 loot and processor types registered while the mod constructs: fail: {}: {}", PREFIX,
+                    t.getClass().getSimpleName(), t.getMessage());
+        }
+        // Placement modifier and block state provider types and subclasses, whose bases 26.3 turned into interfaces.
+        try {
+            PlacementTypesCase.register(modBus);
+        } catch (Throwable t) {
+            LOG.info("{} 1.21.1 placement modifier and block state provider types registered while the mod constructs: "
+                    + "fail: {}: {}", PREFIX, t.getClass().getSimpleName(), t.getMessage());
+        }
+        // A loot entry of the mod's own on LootPoolSingletonContainer, which 26.3 removed, named by a data loot table.
+        try {
+            LegacySingletonEntryCase.register(modBus);
+        } catch (Throwable t) {
+            LOG.info("{} a 1.21.1 single loot entry type registered while the mod constructs: fail: {}: {}", PREFIX,
+                    t.getClass().getSimpleName(), t.getMessage());
+        }
+        // Old block and item color events, which NeoForge 26.1 replaced with tint sources. Client only.
+        if (FMLEnvironment.dist.isClient()) ColorHandlersCase.register(modBus);
+        // A COMMON and a SERVER config, which FancyModLoader 12.0.8 renamed to LOCAL and SYNCED.
+        LegacyConfigCase.register(container, modBus);
+        // A two-way payload handler, a chorus fruit teleport listener and a color command argument, all removed after 1.21.1.
+        LegacyLoaderApiCase.register(modBus);
         runTests();
     }
 
@@ -83,6 +131,42 @@ public class RetromodTestModNeoForge {
                 serverResult(() -> LegacyHandlerCase.run(level)));
         LOG.info("{} #366 server.potionBrewing() brews water into awkward: {}", PREFIX,
                 serverResult(() -> LegacyBrewingCase.run(event.getServer())));
+        LOG.info("{} #366 attachments that serialize with a Codec keep their values: {}", PREFIX,
+                serverResult(() -> LegacyAttachmentCase.run(level)));
+        LOG.info("{} 1.21.1 block entity and entity save overrides keep their data: {}", PREFIX,
+                serverResult(() -> LegacySaveDataCase.run(level)));
+        LOG.info("{} a 1.21.1 effect's tick override runs from the 1.21.2 tick that takes the level: {}", PREFIX,
+                serverResult(() -> LegacyEffectTickCase.run(level)));
+        LOG.info("{} registry(key) and an entity's getServer() on a running server: {}", PREFIX,
+                serverResult(() -> SmallMembersCase.server(event.getServer())));
+        LOG.info("{} level height getters renamed in 1.21.2, called and overridden: {}", PREFIX,
+                serverResult(() -> LevelHeightCase.run(level)));
+        LOG.info("{} a 1.21.1 CommandBuildContext of the mod's own builds an item argument and keeps only its items: {}",
+                PREFIX, serverResult(() -> CommandContextCase.run(event.getServer())));
+        LOG.info("{} Registry.getTags() streams (tag key, named set) pairs to a mod built before 1.21.2 (server started): {}",
+                PREFIX, serverResult(EventMembersCase::tagPairs));
+        LOG.info("{} the overworld's surface rule through the old accessor, wrapped in a rule source of the mod's own: {}",
+                PREFIX, serverResult(() -> SurfaceRuleCase.wrapsTheWorldRule(event.getServer())));
+        // Item stacks read and write against the server's registries.
+        LOG.info("{} 1.21.6 ItemStack and ContainerHelper saves that take a CompoundTag: {}", PREFIX,
+                serverResult(() -> LegacyItemNbtCase.run(event.getServer().registryAccess())));
+        LOG.info("{} Item stacks built while constructing stack with and save as new ones: {}", PREFIX,
+                serverResult(() -> EarlyStackCase.matchOnServer(event.getServer().registryAccess())));
+        // Component.Serializer's JSON text statics, which 1.21.6 removed.
+        LOG.info("{} Component.Serializer reads and writes styled JSON text with the server's registries: {}", PREFIX,
+                serverResult(() -> TextJsonCase.run(event.getServer().registryAccess())));
+        LOG.info("{} a loot table naming 1.21.1 loot function and condition types rolls, beside a processor list naming a "
+                + "1.21.1 processor type (server started): {}", PREFIX,
+                serverResult(() -> LegacyLootTypeCase.run(event.getServer())));
+        LOG.info("{} a 1.21.1 SERVER config reads once the world loads, and the COMMON file keeps its old name: {}",
+                PREFIX, serverResult(LegacyConfigCase::serverStarted));
+        LOG.info("{} a loot table naming a 1.21.1 entry on LootPoolSingletonContainer rolls it by weight with its condition "
+                + "and function (server started): {}", PREFIX,
+                serverResult(() -> LegacySingletonEntryCase.run(event.getServer())));
+        LOG.info("{} 1.21.1 loot reads: entry type constants, context parameters, a table named by key and the schedule "
+                + "registry (server started): {}", PREFIX, serverResult(() -> LegacyLootReadsCase.run(event.getServer())));
+        LOG.info("{} 1.21.1 placement modifiers and a block state provider on the bases 26.3 made interfaces register "
+                + "their types, place and pick (server started): {}", PREFIX, serverResult(PlacementTypesCase::run));
     }
 
     private static String serverResult(java.util.concurrent.Callable<String> check) {
@@ -133,6 +217,10 @@ public class RetromodTestModNeoForge {
     private void registerClientReloadListener(RegisterClientReloadListenersEvent event) {
         event.registerReloadListener((ResourceManagerReloadListener) resourceManager -> {
             LOG.info("{} #188 client reload-listener bridge fired", PREFIX);
+            LOG.info("{} I18n.exists, a chat line, a filtered edit box, and a resize override (client reload): {}",
+                    PREFIX, serverResult(SmallClientMembersCase::run));
+            LOG.info("{} An old block model element, face, UVs and rotation build and read back (client reload): {}",
+                    PREFIX, serverResult(BlockElementCase::run));
             LOG.info("{} #349 armor trim atlas, its sprites and render types (client reload): {}",
                     PREFIX, trimAtlasResult());
         });
@@ -271,18 +359,50 @@ public class RetromodTestModNeoForge {
         });
 
         // NBT
-        n++; passed += check(n, "CompoundTag putString round-trip", () -> {
+        // 1.21.5 made getString, getInt and getBoolean return Optional, so these calls compiled
+        // against 1.21.1 reach the host only through Retromod's NBT getter bridge.
+        n++; passed += check(n, "CompoundTag getString round-trip", () -> {
             CompoundTag c = new CompoundTag();
             c.putString("k", "v");
-            // 1.21.5+ getString returns Optional<String>; 1.21.4 returns String.
-            // Use contains() instead so the test is signature-agnostic.
-            return c.contains("k");
+            return "v".equals(c.getString("k")) && "".equals(c.getString("missing"));
         });
-        n++; passed += check(n, "CompoundTag putInt round-trip (via contains)", () -> {
+        n++; passed += check(n, "CompoundTag getInt round-trip", () -> {
             CompoundTag c = new CompoundTag();
             c.putInt("n", 42);
-            return c.contains("n");
+            return c.getInt("n") == 42 && c.getInt("missing") == 0;
         });
+        n++; passed += check(n, "CompoundTag getBoolean round-trip", () -> {
+            CompoundTag c = new CompoundTag();
+            c.putBoolean("b", true);
+            return c.getBoolean("b") && !c.getBoolean("missing");
+        });
+        // 1.21.5 made the number and array getters Optional, removed the UUID helpers, and kept
+        // Tag.getAsString only as asString(), which is empty for anything but a string.
+        n++; passed += check(n, "CompoundTag getByte, getIntArray and getByteArray keep their defaults", () -> {
+            CompoundTag c = new CompoundTag();
+            c.putInt("wide", 300);
+            c.putIntArray("ints", new int[]{1, 2, 3});
+            c.putByteArray("bytes", new byte[]{4, 5});
+            return c.getByte("wide") == (byte) 300 && c.getByte("missing") == 0
+                    && java.util.Arrays.equals(c.getIntArray("ints"), new int[]{1, 2, 3}) && c.getIntArray("missing").length == 0
+                    && java.util.Arrays.equals(c.getByteArray("bytes"), new byte[]{4, 5}) && c.getByteArray("ints").length == 0;
+        });
+        n++; passed += check(n, "CompoundTag putUUID writes four ints that getUUID and hasUUID read", () -> {
+            java.util.UUID owner = java.util.UUID.fromString("12345678-9abc-def0-fedc-ba9876543210");
+            CompoundTag c = new CompoundTag();
+            c.putUUID("Owner", owner);
+            return owner.equals(c.getUUID("Owner")) && c.hasUUID("Owner") && !c.hasUUID("missing")
+                    && c.getIntArray("Owner").length == 4;
+        });
+        n++; passed += check(n, "CompoundTag getTagType and NumericTag getAsInt", () -> {
+            CompoundTag c = new CompoundTag();
+            c.putFloat("f", -2.5f);
+            return c.getTagType("f") == net.minecraft.nbt.Tag.TAG_FLOAT && c.getTagType("missing") == 0
+                    && ((net.minecraft.nbt.NumericTag) c.get("f")).getAsInt() == -3;
+        });
+        n++; passed += check(n, "Tag.getAsString keeps a string raw and a number plain", () ->
+                StringTag.valueOf("a\"b").getAsString().equals("a\"b")
+                        && net.minecraft.nbt.IntTag.valueOf(5).getAsString().equals("5"));
         n++; passed += check(n, "ListTag.add + size", () -> {
             ListTag list = new ListTag();
             list.add(StringTag.valueOf("a"));
@@ -408,6 +528,10 @@ public class RetromodTestModNeoForge {
                 || "retromod".equals(net.minecraft.client.renderer.Sheets.ARMOR_TRIMS_SHEET.getNamespace())
                     && linksWithoutInheritanceError(() -> net.minecraft.client.renderer.Sheets.armorTrimsSheet(false)));
 
+        // FancyModLoader 12.0.8 renamed the config types; config libraries read their names.
+        n++; passed += check(n, "COMMON and SERVER configs keep their 1.21.1 file names", LegacyConfigCase::fileNamesKept);
+        n++; passed += check(n, "ModConfig.Type extension, name and valueOf answer COMMON and SERVER", LegacyConfigCase::typeNamesKept);
+
         n++; passed += check(n, "In-place loading runs the cached copy and leaves the original unchanged",
             () -> inPlaceCopyAndUntouchedOriginal(RetromodTestModNeoForge.class));
 
@@ -422,6 +546,10 @@ public class RetromodTestModNeoForge {
         n++; passed += check(n, "#358 a library versioned only by its manifest is translated with this mod",
             () -> LibraryCalls.manifestVersionedLibraryTranslatedLike(RetromodTestModNeoForge.class,
                     "retromod-test-mod-neoforge"));
+        // A move for a library's users never applies to the jar that defines the class, as GeckoLib 4's own
+        // jar was moved onto com.geckolib and its classes could not load.
+        n++; passed += check(n, "A class this mod ships under a library name Retromod moves stays its own",
+            OwnLibraryCopy::staysTheModsOwn);
 
         // #340: 26.3 removed NumberProvider, ConstantValue and UniformGenerator, and its loot pools
         // and count functions take int or float providers.
@@ -457,6 +585,50 @@ public class RetromodTestModNeoForge {
         // 26.3 turned ContextAwarePredicate into a holder of a loot condition.
         n++; passed += check(n, "26.3 trigger player predicate", LegacyTriggerCase::run);
         n++; passed += check(n, "1.21.1 loot modifier from a condition array", LegacyLootModifierCase::run);
+        // 26.3 removed the buffer's collection, map, id list, time, and hit result helpers.
+        n++; passed += check(n, "26.3 FriendlyByteBuf collection, map, and hit result helpers", () -> {
+            String result = LegacyBufferCase.run();
+            if (!result.equals("success")) LOG.warn("{} buffer helpers: {}", PREFIX, result);
+            return result.equals("success");
+        });
+        // Positions, a style's font, held-item results, and calls that lost arguments from 1.21.2 to 26.3.
+        n++; passed += check(n, "small vanilla members removed or reshaped after 1.21.1", () -> {
+            String result = SmallMembersCase.common();
+            if (!result.equals("success")) LOG.warn("{} small vanilla members: {}", PREFIX, result);
+            return result.equals("success");
+        });
+        // Farmer's Delight and JEI: a field typed as Tiers, and an override of a method newer hosts made final.
+        n++; passed += check(n, "A static field typed as Tiers holds IRON, and Tiers.values() and valueOf name it IRON", OldShapeCases::tierField);
+        n++; passed += check(n, "A recipe that overrides ShapedRecipe.showNotification loads", OldShapeCases::finalOverrideLoads);
+
+        // DataFixerUpper 9 moved Codec.unit to MapCodec.unitCodec; 1.21.1 mods still call it.
+        n++; passed += check(n, "Codec.unit(value) and Codec.unit(supplier) parse to their values", UnitCodecCase::run);
+        // 1.21.11 renamed the buffer's id members after Identifier, and 26.2 removed ChatFormatting.getByName.
+        n++; passed += check(n, "FriendlyByteBuf.writeResourceLocation and readResourceLocation, by call and reference",
+            IdentifierBufferCase::bufferRoundTrip);
+        n++; passed += check(n, "ChatFormatting.getByName finds a color by name", IdentifierBufferCase::formattingByName);
+        // TerraBlender and Farmer's Delight: chunk keys, weighted region picks and villager professions.
+        n++; passed += check(n, "ChunkPos.asLong packs region keys on 26.1 and newer", WorldLoadMembersCase::chunkKeys);
+        n++; passed += check(n, "WeightedEntry and WeightedRandom pick by weight after 1.21.5", WorldLoadMembersCase::weightedPick);
+        n++; passed += check(n, "VillagerData.getProfession() after 1.21.5", WorldLoadMembersCase::profession);
+        // Biomes O' Plenty builds its surface rules while it constructs; 26.3 replaced them with material rules.
+        n++; passed += check(n, "SurfaceRules factories, constants and isBiome with no server", SurfaceRuleCase::buildsWithoutServer);
+        // Tectonic and Lithostitched compute and walk old density functions; 26.3 compiles them into samplers.
+        n++; passed += check(n, "an old density function computes, and mapAll swaps a marker under a reference", DensityFunctionCase::computesAndSwaps);
+        // 26.2 moved Minecraft.screen behind Minecraft.gui, which is still null while mods construct,
+        // so the read gives null as the old field did. Clients only.
+        n++; passed += check(n, "Minecraft.screen reads null while the game constructs", () ->
+            !FMLEnvironment.dist.isClient() || net.minecraft.client.Minecraft.getInstance().screen == null);
+        // Lootr reads ChestBlock.AABB through its chest class; 1.21.5 rebuilt block shapes without it.
+        n++; passed += check(n, "ChestBlock.AABB read through a chest subclass is the single chest box", ChestShapeCase::singleChestShape);
+        // Farmer's Delight 1.21.1 writes Villager.WANTED_ITEMS, which 1.21.2 replaced with the villager_picks_up tag.
+        n++; passed += check(n, "Villager.WANTED_ITEMS is read, written back with a stick, and then holds the stick", VillagerItemsCase::addsAnItem);
+        // 26.x binds item components only when a world's data loads; the stacks are matched once a server starts.
+        n++; passed += check(n, "new ItemStack in a static field and from a holder, and getDefaultInstance, while constructing",
+            EarlyStackCase::buildWhileConstructing);
+        // Old mods get loot table ids back from BuiltInLootTables; this 1.21.1 mod keeps the keys it was built for.
+        n++; passed += check(n, "BuiltInLootTables constants and all() stay registry keys for a 1.21.1 mod",
+            LootTableKeysCase::constantsStayKeys);
 
         LOG.info("{} SUMMARY: {}/{} passed", PREFIX, passed, n);
     }

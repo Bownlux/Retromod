@@ -4,11 +4,15 @@
  */
 package com.retromod.gui;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import com.retromod.util.McReflect;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.util.function.Consumer;
 
@@ -35,14 +39,15 @@ public final class TitleScreenButtonInjector {
 
     /**
      * Registers the title screen button injector. Auto-detects the mod loader and uses its
-     * event system. Idempotent: only registers once.
+     * event system. Idempotent: returns true when the button is registered now or was earlier.
      */
-    public static synchronized void register() {
-        if (registered) return;
+    public static synchronized boolean register() {
+        if (registered) return true;
 
         if (!resolveMcClasses()) {
-            LOGGER.warn("Could not resolve Minecraft GUI classes - title screen button unavailable");
-            return;
+            LOGGER.warn("Retromod could not find Minecraft's title screen classes, so its title "
+                    + "screen button is unavailable.");
+            return false;
         }
 
         boolean success = false;
@@ -61,10 +66,16 @@ public final class TitleScreenButtonInjector {
 
         if (success) {
             registered = true;
-            LOGGER.info("Title screen button injector registered");
+            LOGGER.debug(RetromodLog.DETAIL, "Title screen button injector registered");
+        } else if (McReflect.isFabric()
+                && !McReflect.classExists("net.fabricmc.fabric.api.client.screen.v1.ScreenEvents")) {
+            // Fabric and Quilt add the button through Fabric API's screen events.
+            LOGGER.warn("Retromod's title screen button needs Fabric API, which is not installed. "
+                    + "Install Fabric API to get the button.");
         } else {
             LOGGER.info("Title screen button not available (no supported event system found)");
         }
+        return success;
     }
 
     /**
@@ -75,22 +86,26 @@ public final class TitleScreenButtonInjector {
         try {
             titleScreenClass = McReflect.findClass(
                 "net.minecraft.client.gui.screen.TitleScreen",   // yarn
-                "net.minecraft.client.gui.screens.TitleScreen"   // mojang
+                "net.minecraft.client.gui.screens.TitleScreen",  // mojang
+                "net.minecraft.class_442"                        // intermediary, pre-26.1 Fabric
             );
 
             screenClass = McReflect.findClass(
                 "net.minecraft.client.gui.screen.Screen",   // yarn
-                "net.minecraft.client.gui.screens.Screen"   // mojang
+                "net.minecraft.client.gui.screens.Screen",  // mojang
+                "net.minecraft.class_437"                   // intermediary
             );
 
             textClass = McReflect.findClass(
                 "net.minecraft.text.Text",                    // yarn
-                "net.minecraft.network.chat.Component"        // mojang
+                "net.minecraft.network.chat.Component",       // mojang
+                "net.minecraft.class_2561"                    // intermediary
             );
 
             buttonWidgetClass = McReflect.findClass(
                 "net.minecraft.client.gui.widget.ButtonWidget",  // yarn
-                "net.minecraft.client.gui.components.Button"     // mojang
+                "net.minecraft.client.gui.components.Button",    // mojang
+                "net.minecraft.class_4185"                       // intermediary
             );
 
             return titleScreenClass != null && screenClass != null
@@ -195,7 +210,7 @@ public final class TitleScreenButtonInjector {
                 addListener.invoke(eventBus, normalPriority, false, screenEventClass, consumer);
             } else {
                 // fall back to the simpler addListener(Class, Consumer) overload
-                Method simpleAdd = eventBus.getClass().getMethod("addListener", Class.class, Consumer.class);
+                Method simpleAdd = LegacyPublicMethods.method(eventBus.getClass(), "addListener", Class.class, Consumer.class);
                 simpleAdd.invoke(eventBus, screenEventClass, consumer);
             }
 
@@ -237,16 +252,22 @@ public final class TitleScreenButtonInjector {
                 return false;
             }
 
+            Consumer<Object> consumer = event -> handleForgeScreenEvent(event);
+
+            // EventBus 7 has no EventPriority: each event carries its own static BUS.
+            if (addToStaticBus(screenEventClass, consumer)) {
+                LOGGER.debug("Registered via Forge ScreenEvent.Init.Post.BUS");
+                return true;
+            }
+
             Class<?> priorityClass = Class.forName("net.minecraftforge.eventbus.api.EventPriority");
             Object normalPriority = priorityClass.getField("NORMAL").get(null);
-
-            Consumer<Object> consumer = event -> handleForgeScreenEvent(event);
 
             Method addListener = findAddListenerMethod(eventBus.getClass(), priorityClass);
             if (addListener != null) {
                 addListener.invoke(eventBus, normalPriority, false, screenEventClass, consumer);
             } else {
-                Method simpleAdd = eventBus.getClass().getMethod("addListener", Class.class, Consumer.class);
+                Method simpleAdd = LegacyPublicMethods.method(eventBus.getClass(), "addListener", Class.class, Consumer.class);
                 simpleAdd.invoke(eventBus, screenEventClass, consumer);
             }
 
@@ -267,7 +288,7 @@ public final class TitleScreenButtonInjector {
      */
     private static void handleForgeScreenEvent(Object event) {
         try {
-            Method getScreen = event.getClass().getMethod("getScreen");
+            Method getScreen = LegacyPublicMethods.method(event.getClass(), "getScreen");
             Object screen = getScreen.invoke(event);
 
             if (titleScreenClass.isInstance(screen)) {
@@ -285,7 +306,7 @@ public final class TitleScreenButtonInjector {
      */
     private static void addRetromodButton(Object screen) {
         try {
-            int width = McReflect.getIntField(screen, screenClass, 854, "width");
+            int width = McReflect.getIntField(screen, screenClass, 854, "width", "field_22789");
 
             // Keep the button clear of the title screen's centered controls.
             int buttonX = width - 82;
@@ -324,7 +345,7 @@ public final class TitleScreenButtonInjector {
             // Prefer addRenderableWidget because some Yarn versions only render children added
             // through addDrawableChild and do not give them click handling.
             Method addMethod = McReflect.findMethod(screenClass,
-                "addRenderableWidget", "addDrawableChild", "addWidget");
+                "addRenderableWidget", "method_37063", "addDrawableChild", "addWidget");
             if (addMethod != null) {
                 addMethod.setAccessible(true);
                 addMethod.invoke(screen, button);
@@ -347,7 +368,7 @@ public final class TitleScreenButtonInjector {
                                                  Class<?> pressActionClass) {
         try {
             Method literal = McReflect.findMethod(textClass,
-                new Class[]{String.class}, "literal");
+                new Class[]{String.class}, "literal", "method_43470");
             if (literal == null) {
                 LOGGER.warn("Could not create the Retromod button label because "
                         + "Component.literal was not found");
@@ -356,7 +377,7 @@ public final class TitleScreenButtonInjector {
             Object text = literal.invoke(null, "Retromod");
 
             Method builder = McReflect.findMethod(buttonWidgetClass,
-                new Class[]{textClass, pressActionClass}, "builder");
+                new Class[]{textClass, pressActionClass}, "builder", "method_46430");
             if (builder == null) {
                 LOGGER.warn("Could not create the Retromod button because Button.builder was not found");
                 return null;
@@ -366,10 +387,10 @@ public final class TitleScreenButtonInjector {
             // width 80 fits "Retromod", height 20 is standard
             Method dim = McReflect.findMethod(b.getClass(),
                 new Class[]{int.class, int.class, int.class, int.class},
-                "dimensions", "bounds", "pos");
+                "dimensions", "bounds", "method_46434", "pos");
             if (dim != null) b = dim.invoke(b, x, y, 80, 20);
 
-            Method build = McReflect.findMethod(b.getClass(), "build");
+            Method build = McReflect.findMethod(b.getClass(), "build", "method_46431");
             return build != null ? build.invoke(b) : null;
         } catch (Exception e) {
             LOGGER.warn("Could not build the Retromod title screen button: {}", e.getMessage(), e);
@@ -569,9 +590,11 @@ public final class TitleScreenButtonInjector {
      * Finds the PressAction / OnPress inner class of ButtonWidget / Button.
      */
     private static Class<?> findPressActionClass() {
+        // Named explicitly, because Button's other one-method interface is CreateNarration.
         Class<?> c = McReflect.findClass(
             "net.minecraft.client.gui.widget.ButtonWidget$PressAction",  // yarn
-            "net.minecraft.client.gui.components.Button$OnPress"         // mojang
+            "net.minecraft.client.gui.components.Button$OnPress",        // mojang
+            "net.minecraft.class_4185$class_4241"                        // intermediary
         );
         if (c != null) return c;
 
@@ -586,11 +609,28 @@ public final class TitleScreenButtonInjector {
         return null;
     }
 
+    /** Adds the listener to the event's static EventBus 7 BUS, or returns false when it has none. */
+    static boolean addToStaticBus(Class<?> eventClass, Consumer<Object> listener)
+            throws ReflectiveOperationException {
+        Field bus;
+        try {
+            bus = eventClass.getField("BUS");
+        } catch (NoSuchFieldException eventBus6) {
+            return false;
+        }
+        if (!Modifier.isStatic(bus.getModifiers())) return false;
+        // Resolve on the declared API type: the runtime class sits in EventBus 7's internal
+        // package, which is not exported to Retromod, so its Method cannot be invoked.
+        Method addListener = bus.getType().getMethod("addListener", Consumer.class);
+        addListener.invoke(bus.get(null), listener);
+        return true;
+    }
+
     /**
      * Finds addListener(EventPriority, boolean, Class, Consumer).
      */
     private static Method findAddListenerMethod(Class<?> busClass, Class<?> priorityClass) {
-        for (Method m : busClass.getMethods()) {
+        for (Method m : LegacyPublicMethods.methods(busClass)) {
             if ("addListener".equals(m.getName())) {
                 Class<?>[] params = m.getParameterTypes();
                 if (params.length == 4

@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.capability;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,12 +48,13 @@ public final class ForgeCapabilityStorage {
             Class<?> loadingContext = Class.forName("net.neoforged.fml.ModLoadingContext", false, loader);
             Object context = loadingContext.getMethod("get").invoke(null);
             Object container = loadingContext.getMethod("getActiveContainer").invoke(context);
-            Object bus = container.getClass().getMethod("getEventBus").invoke(container);
+            Object bus = LegacyPublicMethods.method(container.getClass(), "getEventBus").invoke(container);
             Method addListener = Class.forName("net.neoforged.bus.api.IEventBus", false, loader)
                     .getMethod("addListener", Class.class, Consumer.class);
             Consumer<Object> listener = ForgeCapabilityStorage::onRegister;
             addListener.invoke(bus, registerEvent, listener);
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException | LinkageError e) {
+            // A host whose loader classes cannot be linked here has no mod bus to listen on either.
             LOGGER.debug("No NeoForge registry events here; Forge capability data is not saved");
         } catch (ReflectiveOperationException | RuntimeException e) {
             LOGGER.warn("Retromod could not register Forge capability storage, so data that migrated "
@@ -65,7 +67,7 @@ public final class ForgeCapabilityStorage {
             ClassLoader loader = event.getClass().getClassLoader();
             Class<?> keys = Class.forName("net.neoforged.neoforge.registries.NeoForgeRegistries$Keys", true, loader);
             Object attachmentKey = keys.getField("ATTACHMENT_TYPES").get(null);
-            Object registryKey = event.getClass().getMethod("getRegistryKey").invoke(event);
+            Object registryKey = LegacyPublicMethods.method(event.getClass(), "getRegistryKey").invoke(event);
             if (!attachmentKey.equals(registryKey)) return;
             Class<?> serializerType = Class.forName("net.neoforged.neoforge.attachment.IAttachmentSerializer", false, loader);
             if (!usesTagSerializer(serializerType)) {
@@ -76,7 +78,7 @@ public final class ForgeCapabilityStorage {
 
             Object id = resourceLocation(loader, NAMESPACE, PATH);
             Supplier<Object> type = () -> buildType(loader);
-            for (Method register : event.getClass().getMethods()) {
+            for (Method register : LegacyPublicMethods.methods(event.getClass())) {
                 if (register.getName().equals("register") && register.getParameterCount() == 3) {
                     register.invoke(event, attachmentKey, id, type);
                     return;
@@ -118,8 +120,8 @@ public final class ForgeCapabilityStorage {
                         case "equals" -> proxy == args[0];
                         default -> "ForgeCapabilityStorage";
                     });
-            builder = builder.getClass().getMethod("serialize", serializerType).invoke(builder, serializer);
-            return builder.getClass().getMethod("build").invoke(builder);
+            builder = LegacyPublicMethods.method(builder.getClass(), "serialize", serializerType).invoke(builder, serializer);
+            return LegacyPublicMethods.method(builder.getClass(), "build").invoke(builder);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Retromod could not build the Forge capability attachment", e);
         }
@@ -128,7 +130,7 @@ public final class ForgeCapabilityStorage {
     static Map<String, Object> read(Object compound, ClassLoader loader) throws ReflectiveOperationException {
         Map<String, Object> stored = new ConcurrentHashMap<>();
         Iterable<?> keys = (Iterable<?>) firstMethod(compound, "getAllKeys", "keySet").invoke(compound);
-        Method get = compound.getClass().getMethod("get", String.class);
+        Method get = LegacyPublicMethods.method(compound.getClass(), "get", String.class);
         for (Object key : keys) {
             Object tag = get.invoke(compound, key);
             if (tag != null) stored.put((String) key, tag);
@@ -141,7 +143,7 @@ public final class ForgeCapabilityStorage {
         if (stored.isEmpty()) return null;
         Class<?> tagType = Class.forName("net.minecraft.nbt.Tag", false, loader);
         Object compound = Class.forName("net.minecraft.nbt.CompoundTag", true, loader).getConstructor().newInstance();
-        Method put = compound.getClass().getMethod("put", String.class, tagType);
+        Method put = LegacyPublicMethods.method(compound.getClass(), "put", String.class, tagType);
         for (Map.Entry<?, ?> entry : stored.entrySet()) {
             Object tag = savedForm(entry.getValue(), tagType);
             if (tag != null) put.invoke(compound, entry.getKey(), tag);
@@ -154,7 +156,7 @@ public final class ForgeCapabilityStorage {
         if (tagType.isInstance(value)) return value;
         Method serialize;
         try {
-            serialize = value.getClass().getMethod("serializeNBT");
+            serialize = LegacyPublicMethods.method(value.getClass(), "serializeNBT");
         } catch (NoSuchMethodException notSerializable) {
             return null;
         }
@@ -179,7 +181,7 @@ public final class ForgeCapabilityStorage {
     private static Method firstMethod(Object target, String... names) throws NoSuchMethodException {
         for (String name : names) {
             try {
-                return target.getClass().getMethod(name);
+                return LegacyPublicMethods.method(target.getClass(), name);
             } catch (NoSuchMethodException tryNext) {
                 // Renamed between Minecraft versions.
             }

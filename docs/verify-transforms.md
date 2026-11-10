@@ -24,11 +24,13 @@ A missing reference usually means:
 - Readable method or field: missing version redirect
 - Removed class: missing or disabled polyfill
 
+The console summary, the CLI listing, and each section of the report list Minecraft gaps first. A class from another mod or library that is not installed is labeled as belonging to that mod or library, not as missing from Minecraft. That is expected when the mod supports an optional integration, such as a recipe viewer you do not use. On a dedicated server, a missing client class is reported as not checked, because the server has no client classes to check it against. Fabric servers before 26.1 use intermediary names, so a missing client class there still reads as missing from Minecraft.
+
 Attach the report when filing a compatibility issue.
 
 ## Nested Libraries
 
-With an exact target jar, verification also scans class bytecode in recursively bundled libraries. It checks `net.minecraft` plus the game-owned `com.mojang.blaze3d`, `com.mojang.math`, and `com.mojang.realmsclient` class and member links from nested code, using exact method, field, and constructor descriptors. Other `com.mojang` packages are separate runtime libraries and are not treated as client-jar classes. This catches a bundled library that still calls an old Minecraft API without reporting DataFixerUpper, Authlib, Brigadier, or logging as missing game code.
+With an exact target jar, verification also scans class bytecode in recursively bundled libraries. It checks `net.minecraft` plus the game-owned `com.mojang.blaze3d`, `com.mojang.math`, `com.mojang.realmsclient`, and `com.mojang.renderpearl` class and member links from nested code, using exact method, field, and constructor descriptors. Other `com.mojang` packages are separate runtime libraries and are not treated as client-jar classes. This catches a bundled library that still calls an old Minecraft API without reporting DataFixerUpper, Authlib, Brigadier, or logging as missing game code.
 
 Other unresolved references used only by a nested library are intentionally ignored. Libraries often include optional support for loaders, platforms, or mods that are not installed, so reporting every third-party link would turn valid optional integrations into false warnings. References made by the outer mod still receive the normal checks.
 

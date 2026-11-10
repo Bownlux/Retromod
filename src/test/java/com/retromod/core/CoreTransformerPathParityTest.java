@@ -131,6 +131,69 @@ class CoreTransformerPathParityTest {
     }
 
     @Test
+    void forgeAndCliWriteTheOneHandlerSubscriberCompanion(@TempDir Path directory) throws Exception {
+        com.retromod.shim.forge.ForgeEventBusSynthetics.register(transformer);
+        Path source = directory.resolve("one-handler.jar");
+        String metadata = "modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\n"
+                + "[[mods]]\nmodId=\"tooltips\"\nversion=\"1.0\"\n"
+                + "[[dependencies.tooltips]]\nmodId=\"minecraft\"\n"
+                + "versionRange=\"[1.20.1,1.20.2)\"\n";
+        writeJar(source, List.of(
+                new Entry("META-INF/mods.toml", metadata.getBytes(StandardCharsets.UTF_8)),
+                new Entry(SUBSCRIBER_CLASS + ".class", oneHandlerSubscriber())));
+
+        Path runtime = new ForgeModTransformer("26.2")
+                .transformMod(source, Files.createDirectory(directory.resolve("runtime")));
+        assertNotNull(runtime);
+        assertCompanionHooksThroughEmbeddedBridge(runtime);
+
+        // The CLI embeds after transformJar, as transformCommand does.
+        java.lang.reflect.Field cliTarget = com.retromod.cli.RetromodCli.class.getDeclaredField("TARGET_MC_VERSION");
+        cliTarget.setAccessible(true);
+        Object savedCliTarget = cliTarget.get(null);
+        try {
+            cliTarget.set(null, "26.2");
+            Path cli = directory.resolve("cli.jar");
+            Method transformJar = com.retromod.cli.RetromodCli.class.getDeclaredMethod("transformJar",
+                    Path.class, Path.class, RetromodTransformer.class, com.retromod.embedder.ModVersionInfo.class);
+            transformJar.setAccessible(true);
+            transformJar.invoke(null, source, cli, transformer, new ModVersionDetector().detectVersion(source));
+            SyntheticEmbedder.embedIntoJarOrDiscard(cli, "one-handler.jar", transformer, SyntheticLibraries.NONE);
+            assertCompanionHooksThroughEmbeddedBridge(cli);
+        } finally {
+            cliTarget.set(null, savedCliTarget);
+        }
+    }
+
+    private static final String SUBSCRIBER_CLASS = "fixture/Tooltips";
+
+    /** The companion exists, and its one call goes to the bridge copy embedded in the same jar. */
+    private static void assertCompanionHooksThroughEmbeddedBridge(Path jar) throws Exception {
+        String companion = SUBSCRIBER_CLASS + "$RetromodSubscriber.class";
+        MethodInsnNode call = onlyMethodCall(readEntry(jar, companion), "hook");
+        assertEquals("hookStatic", call.name);
+        assertTrue(call.owner.startsWith(SyntheticEmbedder.PREFIX) && call.owner.endsWith("/LegacyEventBusImpl"),
+                jar.getFileName() + ": the companion must call the embedded bridge, not " + call.owner);
+        assertNotNull(readEntry(jar, call.owner + ".class"));
+    }
+
+    /** {@code @Mod.EventBusSubscriber class Tooltips { @SubscribeEvent static void onTooltip(TooltipEvent e) {} }}. */
+    private static byte[] oneHandlerSubscriber() {
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, SUBSCRIBER_CLASS, null, "java/lang/Object", null);
+        writer.visitAnnotation("Lnet/minecraftforge/fml/common/Mod$EventBusSubscriber;", true).visitEnd();
+        MethodVisitor handler = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "onTooltip",
+                "(Lfixture/TooltipEvent;)V", null, null);
+        handler.visitAnnotation("Lnet/minecraftforge/eventbus/api/SubscribeEvent;", true).visitEnd();
+        handler.visitCode();
+        handler.visitInsn(Opcodes.RETURN);
+        handler.visitMaxs(0, 1);
+        handler.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
+    @Test
     void loaderTransformsUseCheckedDataMigration() throws IOException {
         // Fabric: the outer mod, remapNestedJar (26.x hosts) and processNestedJiJJar (older hosts).
         assertCheckedDataMigration(FabricModTransformer.class, 3);

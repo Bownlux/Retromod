@@ -11,6 +11,7 @@ import com.retromod.shim.ShimRegistry;
 import com.retromod.util.ArchivePublication;
 import com.retromod.util.JarSignatureSanitizer;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.*;
 import org.slf4j.Logger;
@@ -44,6 +45,8 @@ public class AotCompiler {
 
     private static final String AOT_MANIFEST_KEY = "Retromod-AOT-Version";
     private static final String AOT_CONTEXT_KEY = "Retromod-AOT-Context";
+    /** The libraries the jar being compiled on this thread references, as {@link SyntheticLibraries#fingerprint}. */
+    private final ThreadLocal<String> libraryContext = ThreadLocal.withInitial(() -> "");
 
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     private static final long MAX_MANIFEST_BYTES = 2L * 1024 * 1024;
@@ -116,9 +119,34 @@ public class AotCompiler {
      * unknown-source or same-Minecraft-version mod through an auxiliary API provider.
      */
     public Path compileModAot(Path modJar, boolean explicitTransform) throws IOException {
+        return compileModAot(modJar, explicitTransform, SyntheticLibraries.NONE);
+    }
+
+    /**
+     * As above, for a jar that builds on {@code libraries}, the jars a batch translated before it.
+     * Their classes answer the addon's frame joins, so the libraries the jar references are part
+     * of its cache entry: it is served only to a compile with the same library files.
+     */
+    public Path compileModAot(Path modJar, boolean explicitTransform, SyntheticLibraries libraries)
+            throws IOException {
+        // The cache is checked first, as before, so a cache that cannot be used fails before any input is read.
+        requireCacheReady();
+        Path input = ZipSecurity.requireRegularFileNoFollow(modJar, "AOT mod input");
+        String fingerprint = libraries == null ? "" : libraries.fingerprint(input);
+        libraryContext.set(fingerprint);
+        try {
+            return compileWithLibraries(modJar, explicitTransform,
+                    fingerprint.isEmpty() ? SyntheticLibraries.NONE : libraries);
+        } finally {
+            libraryContext.remove();
+        }
+    }
+
+    private Path compileWithLibraries(Path modJar, boolean explicitTransform, SyntheticLibraries libraries)
+            throws IOException {
         requireCacheReady();
         Path validatedModJar = ZipSecurity.requireRegularFileNoFollow(modJar, "AOT mod input");
-        LOGGER.info("AOT compiling: {}", validatedModJar.getFileName());
+        LOGGER.debug(RetromodLog.DETAIL, "AOT compiling: {}", validatedModJar.getFileName());
 
         ModVersionInfo modInfo = versionDetector.detectVersion(validatedModJar);
         if (modInfo == null) {
@@ -133,7 +161,7 @@ public class AotCompiler {
         if (!modInfo.needsTransformation(targetMcVersion)
                 && !(explicitTransform && sourceVersionUnknown)
                 && !explicitApiTransform) {
-            LOGGER.info("Mod {} is already compatible, skipping AOT", modInfo.modId());
+            LOGGER.debug(RetromodLog.DETAIL, "Mod {} is already compatible, skipping AOT", modInfo.modId());
             return modJar;
         }
 
@@ -142,38 +170,36 @@ public class AotCompiler {
         if (cachedJar != null
                 && isValidCache(cachedJar, validatedModJar, explicitTransform,
                         loaderApiIdentity(modInfo))) {
-            LOGGER.info("Using cached AOT compilation for: {}", validatedModJar.getFileName());
+            LOGGER.debug(RetromodLog.DETAIL, "Using cached AOT compilation for: {}", validatedModJar.getFileName());
             return cachedJar;
         }
 
-        backupOriginalMod(validatedModJar);
+        // Only the automatic scan of mods/ keeps a copy. The input is never changed, and a jar a
+        // user named (aot, batch --aot, the file picker) can sit outside the game directory.
+        if (!explicitTransform && !isolateOfflineInputs) {
+            backupOriginalMod(validatedModJar);
+        }
 
         if (isolateOfflineInputs) {
             transformer.resetOfflineRegistrations();
-            new com.retromod.polyfill.PolyfillRegistry().loadAndRegister(transformer);
-            if (RetromodVersion.isUnobfuscatedTarget(targetMcVersion)
-                    && ("forge".equalsIgnoreCase(modInfo.modLoaderType())
-                        || "neoforge".equalsIgnoreCase(modInfo.modLoaderType()))) {
-                com.retromod.shim.forge.ForgeNeoForgeSynthetics.registerAll(transformer);
-            }
         }
 
         // Set after the offline reset above, which clears both. A Forge mod's SRG ids mean what
         // they meant in its own version.
         transformer.setSrgSourceVersion(sourceVersionUnknown ? null : modInfo.targetMcVersion());
         transformer.setModSourceVersion(sourceVersionUnknown ? null : modInfo.targetMcVersion());
-        configureLoaderMappingsFor(modInfo);
+        transformer.setModSourceJar(validatedModJar);
 
         List<VersionShim> shimChain;
         if (sourceVersionUnknown) {
             shimChain = shimRegistry.findShimsForUnknownSource(
                     modInfo.modLoaderType(), targetMcVersion);
-            LOGGER.info("Source Minecraft version is unknown for {}; applying {} "
+            LOGGER.debug(RetromodLog.DETAIL, "Source Minecraft version is unknown for {}; applying {} "
                     + "loader-compatible shim(s) through {}",
                     modInfo.modId(), shimChain.size(), targetMcVersion);
         } else {
-            shimChain = shimRegistry.findShimChain(
-                    modInfo.modLoaderType(), modInfo.targetMcVersion(), targetMcVersion);
+            shimChain = shimRegistry.findTranslationShims(modInfo.modLoaderType(),
+                    modInfo.targetMcVersion(), targetMcVersion, com.retromod.util.McReflect.isNeoForge());
         }
 
         // For 26.x targets the vanilla class-move table below is needed even when the chain is empty,
@@ -185,58 +211,32 @@ public class AotCompiler {
             return modJar;
         }
 
-        List<VersionShim> shimsToApply = withApiShims(
-                modInfo.modLoaderType(), targetMcVersion, shimChain);
-        for (VersionShim shim : shimsToApply) {
-            LOGGER.debug("Applying shim: {}", shim.getShimName());
-            shim.registerRedirects(transformer);
+        // As in the game and the CLI batch, an addon's frames read the libraries translated before it.
+        // They are set before registration, where the GeckoLib moves read which GeckoLib a library holds.
+        transformer.setLinkedLibraries(libraries);
+        try {
+            // The CLI's registration, in the game's order, so an AOT jar matches a transformed one.
+            com.retromod.shim.OfflineRegistration.register(
+                    transformer, shimRegistry, modInfo, targetMcVersion, shimChain);
+            compileJar(validatedModJar, outputJar, modInfo, explicitTransform);
+        } finally {
+            transformer.clearLinkedLibraries();
         }
-
-        // Layer the vanilla 26.1 class moves on top of the chain, matching the in-game boot and CLI
-        // `transform` paths. Without these, AOT-prepped mods kept pre-26.x class names (EndDragonFight
-        // vs EnderDragonFight) and a 1.21.x mod's mixin @Shadow/@Inject failed to apply. Class moves are
-        // loader-agnostic; the intermediary->Mojang MEMBER mappings are Fabric-only, since
-        // NeoForge/Forge are already Mojang-named and applying them clobbers correct fields.
-        if (RetromodVersion.isUnobfuscatedTarget(targetMcVersion)) {
-            try {
-                var moves = com.retromod.mapping.IntermediaryToMojangMapper
-                        .getInstance().getClassMoves();
-                for (var e : moves.entrySet()) {
-                    transformer.registerClassRedirect(e.getKey(), e.getValue());
-                }
-            } catch (Exception e) {
-                LOGGER.warn("Could not register vanilla class moves for AOT", e);
-            }
-            // ResourceLocation/Identifier ctor -> factory, matching an in-game boot (AOT == runtime).
-            com.retromod.mapping.IntermediaryToMojangMapper.registerIdentifierCtorRedirects(transformer);
-            // Same empty-chain gap as the CLI transform/batch paths: the version-graph BFS returns
-            // an empty chain for 1.21.x sources. Register the loader-agnostic 26.1 common shim,
-            // and for 26.2+ targets the 26.2 core moves, or an AOT jar misses the 26.x
-            // signature/API skews and the screen/hideGui bridges a plain transform applies.
-            // Idempotent when the chain already includes them.
-            try {
-                com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
-            } catch (Exception e) {
-                LOGGER.warn("Could not register 26.1 common adaptations for AOT", e);
-            }
-            if (!RetromodVersion.mcVersionExceeds("26.2", targetMcVersion)) {
-                try {
-                    com.retromod.shim.common.Mc26_1To26_2CoreMoves.register(transformer);
-                } catch (Exception e) {
-                    LOGGER.warn("Could not register 26.2 core moves for AOT", e);
-                }
-            }
+        // Runtime and GUI callers embed nothing themselves, so their stand-ins are relocated here.
+        // Offline inputs come from the CLI, which embeds after this call with its batch's libraries.
+        String loaderApiIdentity = loaderApiIdentity(modInfo);
+        // A jar left naming a stand-in is deleted, so a later cache hit cannot serve it.
+        if (!isolateOfflineInputs || loaderApiIdentity != null) {
+            SyntheticEmbedder.embedIntoJarOrDiscard(outputJar,
+                    validatedModJar.getFileName().toString(), transformer, SyntheticLibraries.NONE);
         }
-        
-        compileJar(validatedModJar, outputJar, modInfo, explicitTransform);
-        // Runtime and GUI callers embed nothing themselves, so runtime synthetics are relocated here.
-        if (loaderApiIdentity(modInfo) != null) {
-            SyntheticEmbedder.embedIntoJar(outputJar, validatedModJar.getFileName().toString(),
-                    transformer);
+        // A shaded library's stale descriptor left at the root makes Forge refuse the whole jar.
+        com.retromod.core.ModuleInfoRepair.dropInvalid(outputJar);
+        if (loaderApiIdentity != null) {
             reportMissingFabricApi(outputJar, validatedModJar);
         }
         
-        LOGGER.info("AOT compilation complete: {} classes transformed, {} skipped, {} obfuscated (JIT fallback)",
+        LOGGER.debug(RetromodLog.DETAIL, "AOT compilation complete: {} classes transformed, {} skipped, {} obfuscated (JIT fallback)",
             classesTransformed, classesSkipped, classesObfuscated);
         
         return outputJar;
@@ -275,24 +275,6 @@ public class AotCompiler {
         }
         return false;
     }
-
-    private List<VersionShim> withApiShims(
-            String modLoader, String targetVersion, List<VersionShim> versionShims) {
-        LinkedHashSet<VersionShim> combined = new LinkedHashSet<>(versionShims);
-        combined.addAll(shimRegistry.findApiShimsForLoader(modLoader, targetVersion));
-        return List.copyOf(combined);
-    }
-
-    /** Selects the member namespace for this mod before an offline AOT transform. */
-    void configureLoaderMappingsFor(ModVersionInfo modInfo) {
-        var mappings = com.retromod.mapping.OfflineLoaderNameMappings.configure(
-                transformer, modInfo.modLoaderType(), targetMcVersion,
-                com.retromod.util.McReflect.isNeoForge());
-        if (mappings.intermediaryMappings() > 0 || mappings.srgMappings() > 0) {
-            LOGGER.info("Configured AOT member mappings: {} intermediary, {} SRG",
-                    mappings.intermediaryMappings(), mappings.srgMappings());
-        }
-    }
     
     /** Backs up the original mod JAR to mods/retromod-backups/ before transformation. */
     private void backupOriginalMod(Path modJar) throws IOException {
@@ -317,7 +299,7 @@ public class AotCompiler {
         if (!Files.isRegularFile(backupPath, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("AOT backup is not a regular file: " + backupPath);
         }
-        LOGGER.info("Created backup: {}", backupPath);
+        LOGGER.debug(RetromodLog.DETAIL, "Created backup: {}", backupPath);
     }
     
     /** Compiles all mods in a folder in the background, returning immediately. */
@@ -446,10 +428,22 @@ public class AotCompiler {
         boolean forgeRefmaps = "forge".equalsIgnoreCase(modInfo.modLoaderType())
                 || "neoforge".equalsIgnoreCase(modInfo.modLoaderType());
         ArchiveRefmapPlan refmapPlan;
+        boolean promoteForgeToml;
+        com.retromod.core.TomlMixinConfigs.ManifestConfigs manifestMixinConfigs;
+        Set<String> inputEntryNamesForConfigs;
 
         try (JarFile jar = new JarFile(inputJar.toFile())) {
             refmapPlan = prepareRefmapPlan(jar, mixinTransformer, forgeRefmaps,
                     RetromodVersion.isUnobfuscatedTarget(targetMcVersion));
+            // Decided on the input jar, before the class pass can rename Forge's @Mod.
+            promoteForgeToml = promotesForgeToml(jar, forgeRefmaps);
+            // The manifest's mixin configs, which the written neoforge.mods.toml lists where the host ignores the manifest.
+            manifestMixinConfigs = com.retromod.core.TomlMixinConfigs.fromManifest(jar.getManifest());
+            inputEntryNamesForConfigs = new HashSet<>();
+            for (var scan = jar.entries(); scan.hasMoreElements(); ) {
+                JarEntry scanned = scan.nextElement();
+                if (!scanned.isDirectory()) inputEntryNamesForConfigs.add(scanned.getName());
+            }
             // Rebuilding a frame needs the mod's own class hierarchy, and those classes are not on
             // the transform classpath. Reading them back out of the jar keeps a branch between two
             // of the mod's own types from being typed as Object, which the JVM rejects as soon as
@@ -475,16 +469,23 @@ public class AotCompiler {
                     if (bytes != null) classBytesForEquipment.add(bytes);
                 }
             }
-            try (var hierarchyScope = transformer
-                    .pushJarClassBytesProvider(hierarchyProvider);
+            // The hierarchy serves renamed classes, as the runtime renames before its class pass.
+            var typeRenames = LegacyJarTypeRenames.forJar(transformer, classBytesForEquipment);
+            // The hierarchy also reads the jars it bundles, as the runtime class pass does.
+            try (var hierarchyScope = transformer.pushJarClassBytesProvider(com.retromod.core.BundledJarClasses
+                    .attach(typeRenames.over(hierarchyProvider), com.retromod.core.BundledJarClasses.fromJar(jar)));
                  // A block filled into a static field of one class can be registered by another.
                  var registryIdScope = transformer.pushJarRegistryIds(
-                         transformer.indexJarRegistryIds(classBytesForEquipment))) {
-                Map<String, String> equipmentRenames = com.retromod.shim.common.LegacyEquipmentBridge
-                        .legacyRenames(transformer, classBytesForEquipment);
+                         transformer.indexJarRegistryIds(classBytesForEquipment));
+                 // A final host method the jar's own access transformer or widener opens can still be overridden.
+                 var openedFinals = transformer.pushJarOpenedFinals(
+                         com.retromod.shim.common.OpenedFinalMethods.read(jar, targetMcVersion))) {
                 // A pre-1.19 mod that listens for BiomeLoadingEvent gets a biome modifier that posts the
                 // event again.
                 var biomeWiring = com.retromod.shim.forge.LegacyBiomeLoadingBridge
+                        .forJar(transformer, classBytesForEquipment);
+                // Calls that bridges add to the @Mod constructors, decided from the whole jar as on the runtime path.
+                var constructorHooks = com.retromod.shim.forge.ModConstructorHooks
                         .forJar(transformer, classBytesForEquipment);
                 classBytesForEquipment = null;
                 Enumeration<JarEntry> entries = jar.entries();
@@ -494,11 +495,17 @@ public class AotCompiler {
 
                     String entryName = ZipSecurity.safeEntryName(entry.getName());
                     String canonicalName = ZipSecurity.canonicalEntryName(entryName);
-                    if (!inputEntryNames.add(canonicalName)) {
-                        throw new IOException("duplicate JAR entry: " + entryName);
+                    // A merged fat jar repeats folder entries, which carry no content.
+                    if (!ZipSecurity.firstSighting(inputEntryNames, canonicalName, entry.isDirectory(),
+                            () -> "duplicate JAR entry: " + entryName)) {
+                        continue;
                     }
                     if (entry.isDirectory()) {
                         inputBudget.reserve(0, entryName);
+                        continue;
+                    }
+                    // NeoForge's own module owns Mixin's synthetic package, so a copy here stops the game at boot.
+                    if (com.retromod.core.ForgeModTransformer.dropsMixinSyntheticEntry(entryName, targetMcVersion)) {
                         continue;
                     }
 
@@ -511,8 +518,7 @@ public class AotCompiler {
                                     0, entryName.length() - ".class".length());
 
                             byte[] preparedMixin = AotMixinRepair.applyPreRemap(mixinTransformer,
-                                    com.retromod.shim.common.LegacyEquipmentBridge.rename(data, equipmentRenames),
-                                    className);
+                                    typeRenames.apply(data), className);
                             byte[] out = preparedMixin;
                             if (shouldTransformClass(className, modInfo)) {
                                 // An obfuscated class cannot be analyzed statically, so it is
@@ -530,6 +536,7 @@ public class AotCompiler {
                             // A class whose own bytecode was left alone can still hold a Mixin.
                             byte[] repaired = AotMixinRepair.apply(
                                     mixinTransformer, out, className, refmapPlan.repairs());
+                            if (constructorHooks != null) repaired = constructorHooks.apply(repaired);
                             // Last, as on the Forge runtime path, so the registration call is
                             // added to the finished constructor.
                             if (biomeWiring != null) repaired = biomeWiring.wireClass(repaired);
@@ -557,7 +564,6 @@ public class AotCompiler {
         // Resources are converted once the classes are final, since some converters read them.
         migrateResources(inputJar, modInfo, transformedClasses, originalResources);
 
-        Map<String, byte[]> embeddedShims = collectEmbeddedShims(modInfo);
         RetromodTransformer.NestedArchiveBudget nestedArchiveBudget =
                 RetromodTransformer.NestedArchiveBudget.defaults();
 
@@ -574,8 +580,9 @@ public class AotCompiler {
                     new BufferedOutputStream(Files.newOutputStream(stagedOutput)))) {
             Set<String> outputEntryNames = new HashSet<>();
 
-            Manifest manifest = new Manifest();
-            manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+            // Start from the mod's own manifest, as the transform and runtime paths do. Forge reads
+            // MixinConfigs, Implementation-Version, FMLModType and Automatic-Module-Name from it.
+            Manifest manifest = inputManifest(inputJar, originalResources.get(JarFile.MANIFEST_NAME));
             manifest.getMainAttributes().putValue(AOT_MANIFEST_KEY, AOT_VERSION);
             manifest.getMainAttributes().putValue(AOT_CONTEXT_KEY,
                     cacheContext(explicitTransform, loaderApiIdentity));
@@ -611,9 +618,6 @@ public class AotCompiler {
             // Listed after the resource migration, so moved and added folders get entries too.
             java.util.List<String> allNames = new java.util.ArrayList<>(transformedClasses.keySet());
             allNames.addAll(originalResources.keySet());
-            for (String shimName : embeddedShims.keySet()) {
-                allNames.add("retromod_embedded/" + shimName + ".class");
-            }
             allNames.add("META-INF/MANIFEST.MF");
             allNames.add("retromod_aot.properties");
             for (String directoryName : outputDirectoryEntries(allNames)) {
@@ -629,6 +633,9 @@ public class AotCompiler {
                         entry.getKey(), entry.getValue());
             }
             
+            // Fabric applies the wideners its metadata declares under any name, so those are remapped too.
+            Set<String> declaredWideners = com.retromod.core.AccessWidenerRemapper.declaredWideners(
+                    originalResources.get("fabric.mod.json"));
             for (Map.Entry<String, byte[]> entry : originalResources.entrySet()) {
                 if (entry.getKey().equals("META-INF/MANIFEST.MF")) continue;
 
@@ -641,7 +648,7 @@ public class AotCompiler {
                         String json = new String(data, java.nio.charset.StandardCharsets.UTF_8);
                         String transformed = mixinTransformer.transformMixinConfig(json, transformedClasses);
                         if (!transformed.equals(json)) {
-                            LOGGER.info("Processed mixin config: {} (stripped broken entries)", entry.getKey());
+                            LOGGER.debug(RetromodLog.DETAIL, "Processed mixin config: {} (stripped broken entries)", entry.getKey());
                             data = transformed.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                         }
                     } catch (Exception e) {
@@ -653,20 +660,22 @@ public class AotCompiler {
                 // applied here. On a 26.x host, Fabric resources additionally need the official
                 // namespace pass before any mod code can run.
                 String resourceName = entry.getKey();
-                String resourceNameLower = resourceName.toLowerCase();
                 try {
                     if (isRefmapEntry(resourceName)) {
-                        data = refmapPlan.resources().getOrDefault(resourceName, data);
+                        // The class pass is over, so an entry can follow the handler a repair retyped.
+                        data = retargetRefmap(refmapPlan.resources().getOrDefault(resourceName, data),
+                                transformedClasses);
                     } else if (RetromodVersion.isUnobfuscatedTarget(targetMcVersion)
-                            && (resourceNameLower.endsWith(".accesswidener")
-                                    || resourceNameLower.endsWith(".classtweaker"))) {
+                            && com.retromod.core.AccessWidenerRemapper.isWidener(resourceName, declaredWideners)) {
                         data = com.retromod.core.AccessWidenerRemapper.remapToOfficial(
                                 new String(data, java.nio.charset.StandardCharsets.UTF_8),
                                 com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
                                 .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                     } else if (resourceName.equals("META-INF/accesstransformer.cfg")) {
+                        // The class pass is over, so the jar's own classes are named for the class moves here.
                         data = com.retromod.core.ForgeModTransformer.prepareAccessTransformer(
-                                new String(data, java.nio.charset.StandardCharsets.UTF_8), targetMcVersion)
+                                new String(data, java.nio.charset.StandardCharsets.UTF_8), targetMcVersion,
+                                name -> transformedClasses.containsKey(name + ".class"))
                                 .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                     }
                 } catch (Exception e) {
@@ -674,19 +683,38 @@ public class AotCompiler {
                             resourceName, e.toString());
                 }
 
-                // Relax version constraints in mod metadata for 26.1+
-                if (targetMcVersion != null && targetMcVersion.startsWith("26.")) {
+                // The loader checks these ranges before any class loads, so every target needs
+                // them relaxed, as the nested jars below and the CLI transform already are.
+                String outputName = entry.getKey();
+                if (relaxesLoaderMetadata()) {
                     if (entry.getKey().equals("fabric.mod.json")) {
                         data = relaxFabricModDependencies(data);
-                        LOGGER.info("Patched Fabric metadata: {}", entry.getKey());
+                        LOGGER.debug(RetromodLog.DETAIL, "Patched Fabric metadata: {}", entry.getKey());
                     } else if (entry.getKey().equals("quilt.mod.json")) {
                         data = com.retromod.core.QuiltMetadataCompat.updateMinecraftVersion(
                                 data, targetMcVersion);
-                        LOGGER.info("Patched Quilt metadata: {}", entry.getKey());
+                        LOGGER.debug(RetromodLog.DETAIL, "Patched Quilt metadata: {}", entry.getKey());
+                    } else if (promoteForgeToml && entry.getKey().equals(ForgeTomlChoice.NEOFORGE_TOML)) {
+                        // A leftover from an earlier NeoForge export; the promoted mods.toml replaces it.
+                        LOGGER.debug(RetromodLog.DETAIL, "Dropped the stale {} beside the Forge metadata", entry.getKey());
+                        continue;
                     } else if (entry.getKey().equals("META-INF/mods.toml") ||
                                entry.getKey().equals("META-INF/neoforge.mods.toml")) {
                         data = relaxNeoForgeDependencies(data);
-                        LOGGER.info("Patched NeoForge/Forge metadata: {}", entry.getKey());
+                        // NeoForge 1.20.2 and newer read only neoforge.mods.toml, with a neoforge dependency.
+                        if (promoteForgeToml) {
+                            data = ForgeModTransformer.promoteTomlContentForNeoForge(
+                                    new String(data, java.nio.charset.StandardCharsets.UTF_8))
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                            outputName = ForgeTomlChoice.NEOFORGE_TOML;
+                        }
+                        if (outputName.equals(ForgeTomlChoice.NEOFORGE_TOML)) {
+                            // Only configs this jar ships: FML stops on a config another mod lists too.
+                            data = com.retromod.core.TomlMixinConfigs.withConfigs(data, manifestMixinConfigs,
+                                    inputEntryNamesForConfigs::contains, targetMcVersion, promoteForgeToml,
+                                    transformer.getModSourceVersion());
+                        }
+                        LOGGER.debug(RetromodLog.DETAIL, "Patched NeoForge/Forge metadata: {}", outputName);
                     }
                 }
 
@@ -703,14 +731,7 @@ public class AotCompiler {
                 }
 
                 writeOutputEntry(jos, outputBudget, outputEntryNames,
-                        entry.getKey(), data);
-            }
-
-            // Keys come from Retromod's own shim collection, not user input, but safeEntryName guards
-            // against a future refactor letting an attacker-controlled string land here.
-            for (Map.Entry<String, byte[]> entry : embeddedShims.entrySet()) {
-                writeOutputEntry(jos, outputBudget, outputEntryNames,
-                        "retromod_embedded/" + entry.getKey() + ".class", entry.getValue());
+                        outputName, data);
             }
 
                 writeOutputEntry(jos, outputBudget, outputEntryNames,
@@ -827,6 +848,14 @@ public class AotCompiler {
     private record RemappedRefmap(byte[] bytes,
             com.retromod.mixin.MixinRefmapRepairIndex repairs) {}
 
+    /** A planned refmap whose stale handler targets follow the classes as written, by entry name. */
+    private byte[] retargetRefmap(byte[] refmap, Map<String, byte[]> writtenClasses) {
+        String json = new String(refmap, java.nio.charset.StandardCharsets.UTF_8);
+        String retargeted = com.retromod.mixin.MixinRefmapTargetRepair.apply(json,
+                name -> writtenClasses.get(name + ".class"), transformer.getFuzzyResolver());
+        return retargeted.equals(json) ? refmap : retargeted.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     private static boolean isRefmapEntry(String name) {
         if (name == null) return false;
         String lower = name.toLowerCase(Locale.ROOT);
@@ -846,8 +875,10 @@ public class AotCompiler {
             JarEntry entry = entries.nextElement();
             String name = ZipSecurity.safeEntryName(entry.getName());
             String canonicalName = ZipSecurity.canonicalEntryName(name);
-            if (!entryNames.add(canonicalName)) {
-                throw new IOException("duplicate mod JAR entry: " + name);
+            // A merged fat jar repeats folder entries, which carry no content.
+            if (!ZipSecurity.firstSighting(entryNames, canonicalName, entry.isDirectory(),
+                    () -> "duplicate mod JAR entry: " + name)) {
+                continue;
             }
             if (entry.isDirectory() || !isRefmapEntry(name)) continue;
             if (++files > MAX_REFMAP_FILES) {
@@ -886,8 +917,10 @@ public class AotCompiler {
             while ((entry = input.getNextEntry()) != null) {
                 String name = ZipSecurity.safeEntryName(entry.getName());
                 String canonicalName = ZipSecurity.canonicalEntryName(name);
-                if (!entryNames.add(canonicalName)) {
-                    throw new IOException("duplicate nested JAR entry: " + name);
+                // A repeated folder entry carries no content, so it is skipped.
+                if (!ZipSecurity.firstSighting(entryNames, canonicalName, entry.isDirectory(),
+                        () -> "duplicate nested JAR entry: " + name)) {
+                    continue;
                 }
                 if (entry.isDirectory() || !isRefmapEntry(name)) continue;
                 if (++files > MAX_REFMAP_FILES) {
@@ -992,19 +1025,28 @@ public class AotCompiler {
                     nestedBudget, syntheticKey);
             Set<String> entryNames = new HashSet<>();
             Set<String> streamedNames = new HashSet<>();
-            Map<String, String> equipmentRenames = com.retromod.shim.common.LegacyEquipmentBridge
-                    .legacyRenames(transformer, classBytes.values());
+            Set<String> nestedWideners = com.retromod.core.AccessWidenerRemapper.declaredWidenersInJar(jarData);
+            var nestedMixinConfigs = com.retromod.core.TomlMixinConfigs.fromJarBytes(jarData);
+            Set<String> nestedEntryNames = com.retromod.core.TomlMixinConfigs.entryNames(jarData);
+            // The bundled jar gets its own rename decision, and its hierarchy is served renamed.
+            var typeRenames = LegacyJarTypeRenames.forJar(transformer, classBytes.values());
             // A bundled mod loads its own @Mod class and data, so it gets its own biome modifier.
             var biomeWiring = com.retromod.shim.forge.LegacyBiomeLoadingBridge
+                    .forJar(transformer, classBytes.values());
+            // And its own constructor calls, decided from its own classes.
+            var constructorHooks = com.retromod.shim.forge.ModConstructorHooks
                     .forJar(transformer, classBytes.values());
             // Plain resources are held back and migrated after the loop, with the classes as
             // written, like the outer jar's.
             var resources = new com.retromod.resources.MapResourceTree();
             Map<String, byte[]> writtenClasses = new LinkedHashMap<>();
-            try (var hierarchyScope = transformer.pushJarClassBytesProvider(classBytes::get);
+            Map<String, byte[]> heldRefmaps = new LinkedHashMap<>();
+            try (var hierarchyScope = transformer.pushJarClassBytesProvider(typeRenames.over(classBytes::get));
                  // A block filled into a static field of one class can be registered by another.
                  var registryIdScope = transformer.pushJarRegistryIds(
                          transformer.indexJarRegistryIds(classBytes.values()));
+                 var openedFinals = transformer.pushJarOpenedFinals(
+                         com.retromod.shim.common.OpenedFinalMethods.read(jarData, targetMcVersion));
                  var jis = new java.util.zip.ZipInputStream(bais);
                  var jos = new JarOutputStream(boundedOutput)) {
                 java.util.zip.ZipEntry e;
@@ -1012,8 +1054,15 @@ public class AotCompiler {
                     String name = ZipSecurity.safeEntryName(e.getName());
                     String qualifiedName = syntheticKey + "!/" + name;
                     String canonicalName = ZipSecurity.canonicalEntryName(name);
-                    if (!entryNames.add(canonicalName)) {
-                        throw new IOException("duplicate nested JAR entry: " + qualifiedName);
+                    // A repeated folder entry carries no content, so it is skipped.
+                    if (!ZipSecurity.firstSighting(entryNames, canonicalName, e.isDirectory(),
+                            () -> "duplicate nested JAR entry: " + qualifiedName)) {
+                        continue;
+                    }
+                    // A bundled library is its own module, so it cannot keep Mixin's synthetic package either.
+                    if (com.retromod.core.ForgeModTransformer.dropsMixinSyntheticEntry(name, targetMcVersion)) {
+                        modified = true;
+                        continue;
                     }
                     if (e.isDirectory()) {
                         nestedBudget.reserve(0, qualifiedName);
@@ -1025,8 +1074,14 @@ public class AotCompiler {
                             ZipSecurity.DEFAULT_MAX_ENTRY_SIZE, qualifiedName);
                     byte[] d = ZipSecurity.safeReadAllBytes(jis, allowance);
                     nestedBudget.completeRead(allowance, d.length);
+                    // Held back until every class is written, so an entry can follow its repaired handler.
+                    if (isRefmapEntry(name)) {
+                        heldRefmaps.put(name, d);
+                        continue;
+                    }
                     // Held back for the resource migration after the loop.
-                    if (com.retromod.resources.ModResourceMigrations.isMigratedResource(name)) {
+                    if (com.retromod.resources.ModResourceMigrations.isMigratedResource(name)
+                            && !nestedWideners.contains(name)) {
                         resources.write(name, d);
                         continue;
                     }
@@ -1034,10 +1089,11 @@ public class AotCompiler {
                     // cannot duplicate it later.
                     jos.putNextEntry(new JarEntry(name));
                     streamedNames.add(canonicalName);
-                    String lower = name.toLowerCase(Locale.ROOT);
                     if (name.endsWith(".class")) {
                         String cn = name.substring(0, name.length() - ".class".length());
-                        d = com.retromod.shim.common.LegacyEquipmentBridge.rename(d, equipmentRenames);
+                        // A rename alone still changes the jar.
+                        byte[] renamed = typeRenames.apply(d);
+                        if (renamed != d) { d = renamed; modified = true; }
                         byte[] preparedMixin = AotMixinRepair.applyPreRemap(
                                 mixinTransformer, d, cn);
                         if (preparedMixin != d) {
@@ -1047,13 +1103,21 @@ public class AotCompiler {
                         try {
                             byte[] t = transformer.transformClass(d, cn);
                             if (t != null && t != d) { d = t; modified = true; }
-                        } catch (Exception ignored) {
+                        } catch (Exception failure) {
+                            // Written untranslated, so the warning names it and its library for a later crash.
+                            LOGGER.warn("Could not translate {} in bundled library {} ({}). It is written "
+                                    + "untranslated and may fail when the library loads.",
+                                    cn, syntheticKey, failure.toString());
                         }
                         // A bundled library ships its own Mixins, which need the same
                         // repairs as the mod's, or they cannot resolve their targets.
                         byte[] repaired = AotMixinRepair.apply(
                                 mixinTransformer, d, cn, refmapPlan.repairs());
                         if (repaired != d) { d = repaired; modified = true; }
+                        if (constructorHooks != null) {
+                            byte[] hooked = constructorHooks.apply(d);
+                            if (hooked != d) { d = hooked; modified = true; }
+                        }
                         // Wired last, so the registration call lands in the finished constructor.
                         if (biomeWiring != null) {
                             byte[] wired = biomeWiring.wireClass(d);
@@ -1071,8 +1135,11 @@ public class AotCompiler {
                         }
                     } else if (name.equals("META-INF/mods.toml") || name.equals("META-INF/neoforge.mods.toml")) {
                         d = relaxNeoForgeDependencies(d); modified = true;
-                    } else if (official && (lower.endsWith(".accesswidener")
-                            || lower.endsWith(".classtweaker"))) {
+                        if (name.equals(ForgeTomlChoice.NEOFORGE_TOML)) {
+                            d = com.retromod.core.TomlMixinConfigs.withConfigs(d, nestedMixinConfigs,
+                                    nestedEntryNames::contains, targetMcVersion, false, transformer.getModSourceVersion());
+                        }
+                    } else if (official && com.retromod.core.AccessWidenerRemapper.isWidener(name, nestedWideners)) {
                         byte[] t = com.retromod.core.AccessWidenerRemapper.remapToOfficial(
                                 new String(d, java.nio.charset.StandardCharsets.UTF_8),
                                 com.retromod.mapping.IntermediaryToMojangMapper.getInstance())
@@ -1084,12 +1151,6 @@ public class AotCompiler {
                                         d, java.nio.charset.StandardCharsets.UTF_8), targetMcVersion)
                                 .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                         if (!java.util.Arrays.equals(t, d)) { d = t; modified = true; }
-                    } else if (isRefmapEntry(name)) {
-                        byte[] t = refmapPlan.resources().getOrDefault(name, d);
-                        if (!java.util.Arrays.equals(t, d)) {
-                            d = t;
-                            modified = true;
-                        }
                     } else if (depth < MAX_JIJ_DEPTH_AOT
                             && (name.startsWith("META-INF/jars/") || name.startsWith("META-INF/jarjar/"))
                             && name.endsWith(".jar")) {
@@ -1100,6 +1161,16 @@ public class AotCompiler {
                     }
                     jos.write(d);
                     jos.closeEntry();
+                }
+
+                for (Map.Entry<String, byte[]> refmap : heldRefmaps.entrySet()) {
+                    byte[] written = retargetRefmap(
+                            refmapPlan.resources().getOrDefault(refmap.getKey(), refmap.getValue()), writtenClasses);
+                    if (!java.util.Arrays.equals(written, refmap.getValue())) modified = true;
+                    jos.putNextEntry(new JarEntry(refmap.getKey()));
+                    jos.write(written);
+                    jos.closeEntry();
+                    streamedNames.add(ZipSecurity.canonicalEntryName(refmap.getKey()));
                 }
 
                 // The biome modifier entry is data, so it goes through the migration with the rest.
@@ -1337,38 +1408,6 @@ public class AotCompiler {
         return true;
     }
 
-    private Map<String, byte[]> collectEmbeddedShims(ModVersionInfo modInfo) throws IOException {
-        Map<String, byte[]> shims = new HashMap<>();
-
-        List<VersionShim> shimChain = isUnknownSourceVersion(modInfo.targetMcVersion())
-                ? shimRegistry.findShimsForUnknownSource(
-                        modInfo.modLoaderType(), targetMcVersion)
-                : shimRegistry.findShimChain(
-                        modInfo.modLoaderType(), modInfo.targetMcVersion(), targetMcVersion);
-
-        for (VersionShim shim : withApiShims(
-                modInfo.modLoaderType(), targetMcVersion, shimChain)) {
-            for (String shimClass : shim.getShimClasses()) {
-                try {
-                    String resourcePath = shimClass.replace('.', '/') + ".class";
-                    try (InputStream is = getClass().getClassLoader().getResourceAsStream(resourcePath)) {
-                        if (is != null) {
-                            shims.put(shimClass.replace('.', '/'),
-                                    ZipSecurity.safeReadAllBytes(is));
-                        }
-                    }
-                } catch (Exception e) {
-                    LOGGER.warn("Could not load shim class: {}", shimClass);
-                }
-            }
-        }
-
-        // ASM-generated polyfills with MC-typed fields
-        shims.putAll(transformer.getSyntheticClasses());
-
-        return shims;
-    }
-
     private byte[] createAotMetadata(ModVersionInfo modInfo,
             Set<String> obfuscatedClasses) {
 
@@ -1503,13 +1542,55 @@ public class AotCompiler {
         String requestMode = explicitTransform ? "explicit" : "automatic";
         // A jar built with the loader API runtime is a different translation from one without.
         String loaderApi = loaderApiIdentity == null ? "" : "|loaderApi=" + loaderApiIdentity;
-        return registrationMode + ":" + requestMode + loaderApi;
+        // A NeoForge target renames a Forge mod's toml, so its jar is not the Forge one. A Forge
+        // target keeps classes that a compile with no target loader replaces.
+        String loader = com.retromod.util.McReflect.isNeoForge() ? "|neoforge"
+                : com.retromod.util.McReflect.isForgeTarget() ? "|forge" : "";
+        // The library files a compile read for the jar's frames; empty for a jar that uses none.
+        String linked = libraryContext.get().isEmpty() ? "" : "|libraries=" + libraryContext.get();
+        return registrationMode + ":" + requestMode + loaderApi + loader + linked;
+    }
+
+    /** Whether the outer jar's loader metadata is relaxed, which every known target needs. */
+    private boolean relaxesLoaderMetadata() {
+        // QuiltMetadataCompat throws on a null target, which would abort the whole compile.
+        return targetMcVersion != null;
+    }
+
+    /** Whether this compile writes a Forge mod's mods.toml as neoforge.mods.toml. */
+    private boolean promotesForgeToml(JarFile jar, boolean forgeFamily) throws IOException {
+        // NeoForge 1.20.2 and newer skip a jar with only mods.toml, as the CLI and runtime know.
+        return forgeFamily && relaxesLoaderMetadata()
+                && com.retromod.util.McReflect.isNeoForge()
+                && !RetromodVersion.mcVersionExceeds("1.20.2", targetMcVersion)
+                && ForgeTomlChoice.FORGE_TOML.equals(ForgeTomlChoice.metadataEntry(jar));
     }
 
     /** The loader API runtime identity for {@code modInfo} on this target, or null while it is off. */
     private String loaderApiIdentity(ModVersionInfo modInfo) {
         return com.retromod.loaderapi.LoaderApiRuntime.translationIdentity(
                 modInfo.modLoaderType(), targetMcVersion);
+    }
+
+    /** The mod's manifest without signing digests or older Retromod keys, or a new one. */
+    private static Manifest inputManifest(Path inputJar, byte[] bytes) {
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        if (bytes != null) {
+            try {
+                manifest = new Manifest(new ByteArrayInputStream(
+                        JarSignatureSanitizer.sanitizeManifest(bytes)));
+            } catch (IOException unreadable) {
+                // A manifest too large or broken to parse is replaced, as before.
+                LOGGER.warn("Could not read the manifest of {} ({}). The AOT jar gets a new one.",
+                        inputJar.getFileName(), unreadable.getMessage());
+            }
+        }
+        // Every Retromod key in an AOT jar must describe this compile. The cache check and
+        // FabricTranslationIdentity read them.
+        manifest.getMainAttributes().keySet().removeIf(name -> name.toString()
+                .regionMatches(true, 0, "Retromod-", 0, "Retromod-".length()));
+        return manifest;
     }
 
     private static Manifest readBoundedManifest(JarFile jar) throws IOException {
@@ -1696,10 +1777,12 @@ public class AotCompiler {
         }
     }
 
-    /** Relax Fabric mod version constraints for 26.1+ compatibility. */
+    /** Relax Fabric mod version constraints so the target loader accepts the jar. */
     private static byte[] relaxFabricModDependencies(byte[] jsonData) {
         try {
             jsonData = FabricMetadataCompat.migrateLegacyFabricApiDependency(jsonData);
+            // A Java pin such as "21" refuses the newer Java the target needs.
+            jsonData = FabricMetadataCompat.openJavaDependency(jsonData);
             String json = new String(jsonData, java.nio.charset.StandardCharsets.UTF_8);
             json = json.replaceAll(
                 "(\"minecraft\"\\s*:\\s*)(?:\"[^\"]*\"|\\[[^\\]]*\\]|\\{[^}]*\\})",
@@ -1719,46 +1802,12 @@ public class AotCompiler {
         }
     }
 
-    /** Relax NeoForge/Forge mod version constraints for 26.1+ compatibility. */
+    /** The toml with the shared offline relaxation, so the target loader accepts the jar. */
     private static byte[] relaxNeoForgeDependencies(byte[] tomlData) {
         try {
-            String toml = new String(tomlData, java.nio.charset.StandardCharsets.UTF_8);
-            StringBuilder result = new StringBuilder();
-            String[] blocks = toml.split("(?=\\[\\[dependencies\\.)");
-
-            for (String block : blocks) {
-                if (!block.contains("modId")) {
-                    result.append(block);
-                    continue;
-                }
-
-                boolean isCoreDependent = block.contains("\"minecraft\"") ||
-                    block.contains("\"neoforge\"") || block.contains("\"forge\"");
-
-                // Widen Maven version ranges: [1.21,1.21.1) -> [1.21,)
-                block = block.replaceAll(
-                    "(versionRange\\s*=\\s*\")\\[([^,\\]\"]+)\\]\"",
-                    "$1[$2,)\""
-                );
-                block = block.replaceAll(
-                    "(versionRange\\s*=\\s*\")\\[([^,\"]+),[^\"]*\"",
-                    "$1[$2,)\""
-                );
-                // Handle bare version: "1.21.8" -> "[1.21.8,)"
-                block = block.replaceAll(
-                    "(versionRange\\s*=\\s*\")([0-9][^\"\\[\\]]*)\"",
-                    "$1[$2,)\""
-                );
-
-                if (!isCoreDependent) {
-                    block = block.replaceAll("(type\\s*=\\s*\")required\"", "$1optional\"");
-                    block = block.replaceAll("(mandatory\\s*=\\s*)true", "$1false");
-                }
-
-                result.append(block);
-            }
-
-            return result.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            return ForgeModTransformer.relaxDependencies(
+                    new String(tomlData, java.nio.charset.StandardCharsets.UTF_8))
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
         } catch (Exception e) {
             return tomlData;
         }

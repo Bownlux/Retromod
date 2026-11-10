@@ -4,6 +4,7 @@
  */
 package com.retromod.polyfill.minecraft.rendering.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
@@ -136,7 +137,7 @@ public class GuiComponentShim {
             Object minecraft = minecraftClass.getMethod("getInstance").invoke(null);
 
             Object bufferSource = minecraftClass.getMethod("renderBuffers").invoke(minecraft);
-            Object bufSource = bufferSource.getClass().getMethod("bufferSource").invoke(bufferSource);
+            Object bufSource = LegacyPublicMethods.method(bufferSource.getClass(), "bufferSource").invoke(bufferSource);
 
             return GUI_GRAPHICS_CLASS
                 .getConstructor(minecraftClass, Class.forName("net.minecraft.client.renderer.MultiBufferSource$BufferSource"))

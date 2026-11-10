@@ -85,12 +85,6 @@ public class Forge_1_19_4_to_1_20 implements VersionShim {
         String damageType = "Lnet/minecraft/resources/ResourceKey;";
         transformer.registerFieldRedirect("net/minecraft/world/damagesource/DamageTypes", "OUT_OF_WORLD", damageType,
                 "net/minecraft/world/damagesource/DamageTypes", "FELL_OUT_OF_WORLD", damageType);
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/level/block/entity/SignBlockEntity", "getMessage",
-            "(I)Lnet/minecraft/network/chat/Component;",
-            "com/retromod/shim/forge/embedded/SignShim", "getMessage",
-            "(Ljava/lang/Object;I)Ljava/lang/Object;"
-        );
     }
 
     @Override

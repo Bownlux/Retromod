@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -66,14 +67,14 @@ public final class FontBridge {
                 Object mc = minecraftGetInstance.invoke(null);
                 renderBuffers = minecraftClass.getMethod("renderBuffers");
                 Object rb = renderBuffers.invoke(mc);
-                bufferSource = rb.getClass().getMethod("bufferSource");
+                bufferSource = LegacyPublicMethods.method(rb.getClass(), "bufferSource");
 
                 Object bs = bufferSource.invoke(rb);
                 try {
-                    bufferSourceEndBatch = bs.getClass().getMethod("endBatch");
+                    bufferSourceEndBatch = LegacyPublicMethods.method(bs.getClass(), "endBatch");
                 } catch (NoSuchMethodException e) {
                     try {
-                        bufferSourceEndBatch = bs.getClass().getMethod("endLastBatch");
+                        bufferSourceEndBatch = LegacyPublicMethods.method(bs.getClass(), "endLastBatch");
                     } catch (NoSuchMethodException e2) {
                         // no flush method; text still renders, just not flushed immediately
                     }

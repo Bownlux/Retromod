@@ -433,6 +433,28 @@ class ResourceMigrationPathParityTest {
         }
     }
 
+    @ParameterizedTest(name = "Forge 1.20.1 item models on {0}")
+    @ValueSource(strings = {"1.21.11", "26.3"})
+    @DisplayName("An item model that mixes block and item textures gets the same blocks atlas copy on every path")
+    void mixedAtlasItemModelsOnEveryPath(String target, @TempDir Path directory) throws Exception {
+        // From 1.21.11 an item model fails to bake when its textures come from both atlases.
+        Map<String, byte[]> mod = new LinkedHashMap<>();
+        mod.put("META-INF/mods.toml", bytes("modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\n"
+                + "license=\"MIT\"\n[[mods]]\nmodId=\"stones\"\nversion=\"1.0\"\n"
+                + "[[dependencies.stones]]\nmodId=\"minecraft\"\nmandatory=true\n"
+                + "versionRange=\"[1.20.1,1.20.2)\"\nordering=\"NONE\"\nside=\"BOTH\"\n"));
+        mod.put("assets/stones/models/item/portstone.json", bytes("{\"textures\":{\"1\":\"stones:item/warp_stone\","
+                + "\"texture\":\"stones:block/andesite\"},\"elements\":[]}"));
+        Map<String, Map<String, byte[]>> outputs = assertEveryPathAgrees(target, mod, mod,
+                "META-INF/jarjar/nested.jar", MigrationContext.Loader.FORGE, directory, Runtime.FORGE, Map.of());
+
+        for (Map.Entry<String, Map<String, byte[]>> output : outputs.entrySet()) {
+            String model = new String(output.getValue().get("assets/stones/models/item/portstone.json"), StandardCharsets.UTF_8);
+            assertTrue(model.contains("stones:retromod/blocks_atlas/stones/item/warp_stone"),
+                    output.getKey() + " points the item texture at its blocks atlas copy: " + model);
+        }
+    }
+
     @ParameterizedTest(name = "Forge 1.18.2 texture constants on {0}")
     @CsvSource({"1.21.1, textures/entity/bat.png", "26.3, textures/entity/bat/bat.png"})
     @DisplayName("A vanilla texture path in a mod's code follows the host's moves on every path, outer and nested")

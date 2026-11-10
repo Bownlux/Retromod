@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.api.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
@@ -339,7 +340,7 @@ public final class ClientPlayNetworkingV1Bridge {
     }
 
     private static Method firstByNameAndArity(Class<?> c, String name, int arity) {
-        for (Method m : c.getMethods()) {
+        for (Method m : LegacyPublicMethods.methods(c)) {
             if (m.getName().equals(name) && m.getParameterCount() == arity) return m;
         }
         for (Method m : c.getDeclaredMethods()) {

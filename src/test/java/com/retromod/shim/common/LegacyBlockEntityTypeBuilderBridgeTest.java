@@ -40,6 +40,27 @@ class LegacyBlockEntityTypeBuilderBridgeTest {
     }
 
     @Test
+    @DisplayName("build() calls the Set constructor that Forge, NeoForge and vanilla 26.x all keep public")
+    void buildUsesTheSetConstructor() {
+        java.util.List<String> constructors = new java.util.ArrayList<>();
+        new ClassReader(LegacyBlockEntityTypeBuilderBridge.generate()).accept(new org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM9) {
+            @Override
+            public org.objectweb.asm.MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
+                return new org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                    @Override
+                    public void visitMethodInsn(int op, String owner, String member, String descriptor, boolean itf) {
+                        if (owner.equals("net/minecraft/world/level/block/entity/BlockEntityType") && member.equals("<init>")) {
+                            constructors.add(descriptor);
+                        }
+                    }
+                };
+            }
+        }, 0);
+        // Forge 26.2 has no Block... constructor; only NeoForge adds one.
+        assertEquals(java.util.List.of(LegacyBlockEntityTypeBuilderBridge.TYPE_CONSTRUCTOR), constructors);
+    }
+
+    @Test
     @DisplayName("A host that still has the builder is left alone")
     void olderHostsKeepTheBuilder() {
         RetromodVersion.TARGET_MC_VERSION = "1.21.11";

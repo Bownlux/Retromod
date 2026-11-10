@@ -5,6 +5,7 @@
 package com.retromod.mixin;
 
 import com.retromod.core.FuzzyMethodResolver;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
@@ -211,7 +212,7 @@ public final class AutomaticMixinTranslator {
             }
             ClassWriter writer = new com.retromod.util.SafeClassWriter(ClassWriter.COMPUTE_FRAMES);
             classNode.accept(writer);
-            LOGGER.info("Automatically repaired {} refmap-linked Mixin handler(s) in {}",
+            LOGGER.debug(RetromodLog.DETAIL, "Automatically repaired {} refmap-linked Mixin handler(s) in {}",
                     pending.size(), classNode.name);
             return writer.toByteArray();
         } catch (Throwable t) {
@@ -271,7 +272,7 @@ public final class AutomaticMixinTranslator {
         classNode.accept(fallbackWriter);
         byte[] selectorOnlyFallback = fallbackWriter.toByteArray();
         if (pending.isEmpty()) {
-            LOGGER.info("Automatically translated {} Mixin selector(s) in {}",
+            LOGGER.debug(RetromodLog.DETAIL, "Automatically translated {} Mixin selector(s) in {}",
                     selectorRepairs, classNode.name);
             return selectorOnlyFallback;
         }
@@ -287,7 +288,7 @@ public final class AutomaticMixinTranslator {
             }
             ClassWriter writer = new com.retromod.util.SafeClassWriter(ClassWriter.COMPUTE_FRAMES);
             classNode.accept(writer);
-            LOGGER.info("Automatically translated {} Mixin selector(s) and {} handler(s) in {}",
+            LOGGER.debug(RetromodLog.DETAIL, "Automatically translated {} Mixin selector(s) and {} handler(s) in {}",
                     selectorRepairs, handlerRepairs, classNode.name);
             return writer.toByteArray();
         } catch (Throwable t) {

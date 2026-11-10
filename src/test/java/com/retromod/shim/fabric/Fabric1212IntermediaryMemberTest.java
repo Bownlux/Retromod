@@ -59,6 +59,9 @@ class Fabric1212IntermediaryMemberTest {
     private static final String CALLS = "mod/Calls";
     private static final String OWN_MOB = "mod/OwnDamageMob";
     private static final String HELPER = "com/retromod/generated/Legacy1212IntermediaryMembers";
+    private static final String ITEM = "net/minecraft/class_1792";
+    private static final String COMPONENT_RETURN = "()Lnet/minecraft/class_2561;";
+    private static final String ITEM_CALLS = "mod/ItemCalls";
 
     @TempDir
     static Path stubDir;
@@ -153,6 +156,14 @@ class Fabric1212IntermediaryMemberTest {
                 transform("26.3", CALLS, "calls"));
     }
 
+    @Test
+    @DisplayName("a 1.21.1 mod's Item.getDescription() calls the getName() a 1.21.11 Fabric host has")
+    void itemDescriptionReachesGetName() {
+        assertEquals(List.of(ITEM + ".method_63680" + COMPONENT_RETURN), transform("1.21.11", ITEM_CALLS, "describe"));
+        // On 26.x the Mojang-named LegacyItemNameBridge owns the call after the remap.
+        assertEquals(List.of(ITEM + ".method_7848" + COMPONENT_RETURN), transform("26.3", ITEM_CALLS, "describe"));
+    }
+
     private static List<String> transform(String target, String owner, String method) {
         return callsIn(transformAll(target).get(owner), method);
     }
@@ -163,7 +174,7 @@ class Fabric1212IntermediaryMemberTest {
         RetromodTransformer transformer = RetromodTransformer.getInstance();
         transformer.clearRedirectsForTesting();
         new Fabric_1_21_1_to_1_21_2().registerRedirects(transformer);
-        Map<String, byte[]> mod = Map.of(CALLS, calls(), OWN_MOB, ownDamageMob());
+        Map<String, byte[]> mod = Map.of(CALLS, calls(), OWN_MOB, ownDamageMob(), ITEM_CALLS, itemCalls());
         Map<String, byte[]> classes = new HashMap<>(host);
         classes.putAll(mod);
         Map<String, byte[]> transformed = new HashMap<>();
@@ -204,6 +215,22 @@ class Fabric1212IntermediaryMemberTest {
         hit.visitInsn(IRETURN);
         hit.visitMaxs(0, 0);
         hit.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** {@code item.getDescription()}, as a 1.21.1 Fabric mod compiled it. */
+    private static byte[] itemCalls() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, ITEM_CALLS, null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "describe", "(L" + ITEM + ";)V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEVIRTUAL, ITEM, "method_7848", COMPONENT_RETURN, false);
+        mv.visitInsn(POP);
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
     }

@@ -12,9 +12,17 @@ import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.ServiceLoader;
+import java.util.Set;
 import java.util.TreeSet;
 
+import com.retromod.mapping.IntermediaryToMojangMapper;
+import com.retromod.shim.ShimRegistration;
+import com.retromod.shim.ShimRegistry;
+import com.retromod.util.McReflect;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -107,5 +115,42 @@ class PhantomBaselineTest {
         msg.append("\nbaseline=").append(baseline.size())
            .append(" actual=").append(actual.size());
         fail(msg.toString());
+    }
+
+    @Test
+    @DisplayName("Forge and NeoForge 26.3 launches register no redirect to a Retromod class that was never written")
+    void forgeFamilyHostsLeaveNoPhantoms() {
+        String savedTarget = RetromodVersion.TARGET_MC_VERSION;
+        boolean savedNeoForge = McReflect.isForceNeoForge();
+        try {
+            assertNoForgeFamilyPhantoms("NeoForge 26.3", true, Set.of("neoforge", "forge", "common"));
+            assertNoForgeFamilyPhantoms("Forge 26.3", false, Set.of("forge", "common"));
+        } finally {
+            RetromodVersion.TARGET_MC_VERSION = savedTarget;
+            McReflect.setForceNeoForge(savedNeoForge);
+        }
+    }
+
+    /** Registers what the entry point registers on a 26.3 host and checks for dead Forge-family targets. */
+    private static void assertNoForgeFamilyPhantoms(String host, boolean neoForge, Set<String> loaders) {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        McReflect.setForceNeoForge(neoForge);
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        // The shims RetromodNeoForge.loadNeoForgeShims or RetromodForge.loadForgeShims takes.
+        for (VersionShim shim : ServiceLoader.load(VersionShim.class)) {
+            if (loaders.contains(shim.getModLoaderType()) && ShimRegistry.isAvailableOnHost(shim, "26.3")) {
+                ShimRegistration.register(shim, t);
+            }
+        }
+        IntermediaryToMojangMapper.applyClassMovesOnly(t);
+
+        List<String> dead = t.collectPhantomComRetromodTargets().stream()
+                .filter(name -> name.startsWith("com/retromod/shim/forge/")
+                        || name.startsWith("com/retromod/shim/neoforge/")
+                        || name.startsWith("com/retromod/generated/legacyfabric/"))
+                .toList();
+        assertEquals(List.of(), dead,
+                host + " must not register redirects that the launch sweep drops with a crash warning");
     }
 }

@@ -112,6 +112,10 @@ public final class LegacyEnchantmentBridge {
                 SUPPORT, "level", helper);
         transformer.registerMethodRedirect(helperOwner, "getEnchantmentLevel", "(" + L_LEGACY + "L" + LIVING + ";)I",
                 SUPPORT, "levelOn", helper);
+        // Before 1.20.5 the level read from the stack's tag had a name of its own. Farmer's Delight's
+        // skillet reads its fire aspect level that way whenever it loads.
+        transformer.registerMethodRedirect(helperOwner, "getTagEnchantmentLevel", "(" + L_LEGACY + L_STACK + ")I",
+                SUPPORT, "level", helper);
         transformer.registerMethodRedirect(ITEM_STACK, "getEnchantmentLevel", "(" + L_LEGACY + ")I",
                 SUPPORT, "stackLevel", helper, true);
         transformer.registerMethodRedirect(ITEM_STACK, "enchant", "(" + L_LEGACY + "I)V",
@@ -158,39 +162,117 @@ public final class LegacyEnchantmentBridge {
         try (var stream = Files.walk(root)) {
             classFiles = stream.filter(p -> p.toString().endsWith(".class")).toList();
         }
-        boolean legacy = false;
-        for (Path file : classFiles) {
-            if (usesOldEnchantment(Files.readAllBytes(file))) {
-                legacy = true;
-                break;
-            }
-        }
-        if (!legacy) return 0;
+        Map<Path, byte[]> bytes = new java.util.LinkedHashMap<>();
+        for (Path file : classFiles) bytes.put(file, Files.readAllBytes(file));
+        if (!isLegacyJar(transformer, bytes.values())) return 0;
         int renamed = 0;
-        for (Path file : classFiles) {
-            byte[] original = Files.readAllBytes(file);
-            byte[] updated = rename(original);
-            if (updated != original) {
-                Files.write(file, updated);
+        for (Map.Entry<Path, byte[]> entry : bytes.entrySet()) {
+            byte[] updated = rename(entry.getValue());
+            if (updated != entry.getValue()) {
+                Files.write(entry.getKey(), updated);
                 renamed++;
             }
         }
         return renamed;
     }
 
-    /** Extends the old class, or names a type only the old enchantment API had. */
+    /** Whether this bridge is registered and some class of the jar was written against the old class. */
+    public static boolean isLegacyJar(RetromodTransformer transformer, Iterable<byte[]> classes) {
+        if (!transformer.getSyntheticClasses().containsKey(LEGACY)) return false;
+        for (byte[] classBytes : classes) {
+            if (usesOldEnchantment(classBytes)) return true;
+        }
+        return false;
+    }
+
+    /** Extends the old class, names a type only the old enchantment API had, or reads a level the old way. */
     static boolean usesOldEnchantment(byte[] classBytes) {
         String text = new String(classBytes, StandardCharsets.ISO_8859_1);
         if (OLD_MARKERS.stream().anyMatch(text::contains)) return true;
-        return OLD.equals(new ClassReader(classBytes).getSuperName());
+        if (OLD.equals(new ClassReader(classBytes).getSuperName())) return true;
+        // Curios and Biomes O' Plenty only read levels; 1.21 made those lookups take a holder, so the old one is proof.
+        return OLD_LOOKUP_NAMES.stream().anyMatch(text::contains) && callsOldLookup(classBytes);
     }
 
-    static byte[] rename(byte[] classBytes) {
+    /**
+     * The level lookups that took the old class, as owner, name and descriptor. The jar is read before the SRG remap, so a
+     * Forge 1.20.1 jar names the vanilla ones by their SRG names; the Forge additions keep their own names. An old
+     * {@code ItemStack.enchant} alone does not mark the jar: LegacyEnchantmentRegistryShim answers it from the world.
+     */
+    private static final java.util.Set<String> OLD_LOOKUPS = java.util.Set.of(
+            "net/minecraft/world/item/enchantment/EnchantmentHelper.getItemEnchantmentLevel(L" + OLD + ";" + L_STACK + ")I",
+            "net/minecraft/world/item/enchantment/EnchantmentHelper.m_44843_(L" + OLD + ";" + L_STACK + ")I",
+            "net/minecraft/world/item/enchantment/EnchantmentHelper.getTagEnchantmentLevel(L" + OLD + ";" + L_STACK + ")I",
+            "net/minecraft/world/item/enchantment/EnchantmentHelper.getEnchantmentLevel(L" + OLD + ";L" + LIVING + ";)I",
+            "net/minecraft/world/item/enchantment/EnchantmentHelper.m_44836_(L" + OLD + ";L" + LIVING + ";)I",
+            ITEM_STACK + ".getEnchantmentLevel(L" + OLD + ";)I");
+    private static final List<String> OLD_LOOKUP_NAMES = List.of("getItemEnchantmentLevel", "getTagEnchantmentLevel",
+            "getEnchantmentLevel", "m_44843_", "m_44836_");
+
+    private static boolean callsOldLookup(byte[] classBytes) {
+        boolean[] found = {false};
+        new ClassReader(classBytes).accept(new ClassVisitor(ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                return new MethodVisitor(ASM9) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String method, String methodDesc, boolean itf) {
+                        if (OLD_LOOKUPS.contains(owner + "." + method + methodDesc)) found[0] = true;
+                    }
+                };
+            }
+        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return found[0];
+    }
+
+    /** One class with {@code Enchantment} renamed to the generated class, or the same array. */
+    public static byte[] rename(byte[] classBytes) {
         if (!new String(classBytes, StandardCharsets.ISO_8859_1).contains(OLD)) return classBytes;
+        // A mixin that targets the host's Enchantment, or shadows or injects through it, has to keep naming it.
+        if (mixinNamesHostEnchantment(classBytes)) return classBytes;
         ClassWriter writer = new ClassWriter(0);
         ClassVisitor remapper = new ClassRemapper(writer, new SimpleRemapper(Map.of(OLD, LEGACY)));
         new ClassReader(classBytes).accept(remapper, 0);
         return writer.toByteArray();
+    }
+
+    private static final String MIXIN = "Lorg/spongepowered/asm/mixin/Mixin;";
+
+    /** A mixin class whose targets or declared members name the old class, which is the host's record there. */
+    static boolean mixinNamesHostEnchantment(byte[] classBytes) {
+        if (!new String(classBytes, StandardCharsets.ISO_8859_1).contains(MIXIN.substring(1, MIXIN.length() - 1))) {
+            return false;
+        }
+        org.objectweb.asm.tree.ClassNode node = new org.objectweb.asm.tree.ClassNode();
+        new ClassReader(classBytes).accept(node, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        org.objectweb.asm.tree.AnnotationNode mixin = null;
+        for (List<org.objectweb.asm.tree.AnnotationNode> annotations
+                : java.util.Arrays.asList(node.invisibleAnnotations, node.visibleAnnotations)) {
+            if (annotations == null) continue;
+            for (org.objectweb.asm.tree.AnnotationNode annotation : annotations) {
+                if (annotation.desc.equals(MIXIN)) mixin = annotation;
+            }
+        }
+        if (mixin == null) return false;
+        // The targets, as classes or as names.
+        if (mixin.values != null) {
+            for (Object value : mixin.values) {
+                if (!(value instanceof List<?> targets)) continue;
+                for (Object target : targets) {
+                    String name = target instanceof Type type ? type.getInternalName() : String.valueOf(target).replace('.', '/');
+                    if (name.equals(OLD)) return true;
+                }
+            }
+        }
+        // A shadow, an injection handler or a field of the mixin that takes or returns the class.
+        String old = "L" + OLD + ";";
+        for (org.objectweb.asm.tree.MethodNode method : node.methods) {
+            if (method.desc.contains(old)) return true;
+        }
+        for (org.objectweb.asm.tree.FieldNode field : node.fields) {
+            if (field.desc.contains(old)) return true;
+        }
+        return false;
     }
 
     // ---- generated classes -------------------------------------------------------------------

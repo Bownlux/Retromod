@@ -6,6 +6,7 @@ package com.retromod.shim.common;
 
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
@@ -164,8 +165,54 @@ public final class EntityTypeBuildKeyAdapter {
                 return new Site(call, null, idProducer, namespace);
             }
         }
+        // So does a RegisterEvent helper taking the type, since only the entity type registry's helper can.
+        if (consumer instanceof MethodInsnNode helper && StaticFieldRegistryIds.isHelperRegistration(helper)) {
+            Frame<SourceValue> atHelper = frames[m.instructions.indexOf(helper)];
+            int top = atHelper == null ? -1 : atHelper.getStackSize();
+            if (top >= 2 && throughCasts(m, frames, single(atHelper.getStack(top - 1))) == call) {
+                AbstractInsnNode idProducer = single(atHelper.getStack(top - 2));
+                String[] id = context.jar.provenId(m, frames, idProducer);
+                if (id != null) return new Site(call, id[0] + ":" + id[1], null, id[0]);
+                // Another id is captured where it is complete; a key prints as more than its id.
+                boolean plainId = !Type.getArgumentTypes(helper.desc)[0].getInternalName().endsWith("/ResourceKey");
+                if (plainId && idProducer != null && idProducer.getOpcode() != Opcodes.DUP
+                        && idProducer.getOpcode() != Opcodes.NEW) {
+                    return new Site(call, null, idProducer, context.namespace());
+                }
+            }
+        }
+        // A type kept in a local that a helper registers later under a literal id.
+        if (consumer instanceof VarInsnNode store && store.getOpcode() == Opcodes.ASTORE) {
+            String[] id = registeredByHelper(m, frames, store, context);
+            if (id != null) return new Site(call, id[0] + ":" + id[1], null, id[0]);
+        }
         // With no registration in sight, only the namespace is known.
         return new Site(call, null, null, context.namespace());
+    }
+
+    /** The literal id the one helper registration of the type in {@code store}'s local gives it, or null. */
+    private static String[] registeredByHelper(MethodNode m, Frame<SourceValue>[] frames, VarInsnNode store,
+                                               Context context) {
+        String[] found = null;
+        for (AbstractInsnNode insn : m.instructions) {
+            if (!(insn instanceof MethodInsnNode helper) || !StaticFieldRegistryIds.isHelperRegistration(helper)) {
+                continue;
+            }
+            Frame<SourceValue> atHelper = frames[m.instructions.indexOf(helper)];
+            if (atHelper == null) continue;
+            int top = atHelper.getStackSize();
+            AbstractInsnNode value = throughCasts(m, frames, single(atHelper.getStack(top - 1)));
+            if (!(value instanceof VarInsnNode load) || load.getOpcode() != Opcodes.ALOAD || load.var != store.var) {
+                continue;
+            }
+            Frame<SourceValue> atLoad = frames[m.instructions.indexOf(load)];
+            if (atLoad == null || single(atLoad.getLocal(load.var)) != store) continue;
+            // Registered twice, or once under an id that is not literal, the type gets none of them.
+            String[] id = context.jar.provenId(m, frames, single(atHelper.getStack(top - 2)));
+            if (id == null || found != null) return null;
+            found = id;
+        }
+        return found;
     }
 
     /** Switches each call to the keyed bridge; returns whether an id was captured into a new local. */

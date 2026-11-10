@@ -267,6 +267,28 @@ class Forge1122ServiceStubsTest {
         assertNotNull(log.getMethod("getLogger").invoke(null), "FMLLog.log must be initialized");
     }
 
+    /** A mod block class only this test registers, so the once-per-class warning is still unused. */
+    public static final class OldBlock {}
+
+    @Test
+    void gameRegistryRegisterSaysNothingWasRegisteredOnce() throws Exception {
+        java.io.PrintStream original = System.err;
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        System.setErr(new java.io.PrintStream(captured, true, java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            com.retromod.polyfill.forge.embedded.GameRegistryShim.register(new OldBlock());
+            com.retromod.polyfill.forge.embedded.GameRegistryShim.register(new OldBlock(), "old_block");
+        } finally {
+            System.setErr(original);
+        }
+        String output = captured.toString(java.nio.charset.StandardCharsets.UTF_8);
+
+        assertFalse(output.contains("intercepted"), "the call registers nothing, so it must not claim to: " + output);
+        assertEquals(1, output.split(java.util.regex.Pattern.quote("GameRegistry.register for " + OldBlock.class.getName()), -1).length - 1,
+                "a mod registers many objects of one class, so it warns once: " + output);
+        assertTrue(output.contains("nothing was registered"), output);
+    }
+
     /** MCreator 1.12 element discovery: {@code event.getAsmData().getAll(tag)} then each class name. */
     private static byte[] elementDiscovery() {
         String table = "net/minecraftforge/fml/common/discovery/ASMDataTable";

@@ -221,7 +221,7 @@ public final class StaticFieldIdStamper {
         return false;
     }
 
-    private static boolean isMixin(ClassNode cn) {
+    static boolean isMixin(ClassNode cn) {
         return hasMixinAnnotation(cn.invisibleAnnotations) || hasMixinAnnotation(cn.visibleAnnotations);
     }
 

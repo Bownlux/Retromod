@@ -9,6 +9,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -42,5 +44,22 @@ class LoaderHooksTest {
     void emptyListIsANoOp() throws Exception {
         LoaderHooks.hideFromModsFolder("no.such.package", List.of());
         assertEquals(List.of(), ModDirTransformerDiscoverer.allExcluded());
+    }
+
+    @Test
+    @DisplayName("a failure report names the inner failure, its cause, and where it happened")
+    void describeNamesTheInnerFailureAndWhereItHappened() {
+        Throwable failure = new InvocationTargetException(
+                new IllegalStateException("outer", new IOException("inner")));
+
+        String text = LoaderHooks.describe(failure);
+
+        assertTrue(text.startsWith("java.lang.IllegalStateException: outer"), text);
+        assertTrue(text.contains("Caused by: java.io.IOException: inner"),
+                "the cause chain must survive: " + text);
+        assertTrue(text.contains("at com.retromod.boot.LoaderHooksTest"),
+                "the frames must name the class and line that failed: " + text);
+        assertFalse(text.contains("InvocationTargetException"),
+                "the reflective wrapper says nothing useful: " + text);
     }
 }

@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.function.Predicate;
@@ -55,7 +56,7 @@ public final class LegacyForgeChannelBuilder {
 
     public Object eventNetworkChannel() {
         try {
-            return delegate.getClass().getMethod("eventNetworkChannel").invoke(delegate);
+            return LegacyPublicMethods.method(delegate.getClass(), "eventNetworkChannel").invoke(delegate);
         } catch (ReflectiveOperationException e) {
             throw bridgeFailure("create event network channel", e);
         }
@@ -63,7 +64,7 @@ public final class LegacyForgeChannelBuilder {
 
     public Object simpleChannel() {
         try {
-            return delegate.getClass().getMethod("simpleChannel").invoke(delegate);
+            return LegacyPublicMethods.method(delegate.getClass(), "simpleChannel").invoke(delegate);
         } catch (ReflectiveOperationException e) {
             throw bridgeFailure("create simple network channel", e);
         }
@@ -109,7 +110,7 @@ public final class LegacyForgeChannelBuilder {
 
     private void invokeFluent(String name, Class<?> parameterType, Object value) {
         try {
-            Object next = delegate.getClass().getMethod(name, parameterType).invoke(delegate, value);
+            Object next = LegacyPublicMethods.method(delegate.getClass(), name, parameterType).invoke(delegate, value);
             if (next != null) {
                 delegate = next;
             }

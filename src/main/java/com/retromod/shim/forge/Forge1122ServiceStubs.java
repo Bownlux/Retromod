@@ -221,7 +221,7 @@ public final class Forge1122ServiceStubs {
      */
     private static boolean inheritedFromConfigStandIn(MethodInsnNode mi) {
         String owner = mi.owner;
-        if (mi.name.equals("<init>") || owner.startsWith("net/minecraft") || owner.startsWith("com/retromod/")
+        if (mi.name.equals("<init>") || owner.startsWith("net/minecraft") || SyntheticEmbedder.isRetromodClass(owner)
                 || owner.startsWith("java/")) {
             return false;
         }
@@ -233,7 +233,7 @@ public final class Forge1122ServiceStubs {
         if (!extendsStandIn) return false;
         // A method the mod's own class declares keeps its own descriptor.
         for (String current = owner; current != null && !current.startsWith("net/minecraftforge/")
-                && !current.startsWith("com/retromod/"); ) {
+                && !SyntheticEmbedder.isRetromodClass(current); ) {
             byte[] bytes = RetromodTransformer.readCurrentJarClassForAdapter(current);
             if (bytes == null) return false;
             org.objectweb.asm.tree.ClassNode node = new org.objectweb.asm.tree.ClassNode();

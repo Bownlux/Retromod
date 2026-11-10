@@ -6,6 +6,7 @@ package com.retromod.shim.fabric;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.ClassResourceInspector;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -90,7 +91,7 @@ public final class Pre1_19TextBridge {
         // MutableText so the factory's return value verifies at its use sites.
         transformer.registerClassRedirect(TRANSLATABLE, MUTABLE);
         transformer.registerClassRedirect(LITERAL, MUTABLE);
-        LOGGER.info("Registered pre-1.19 Text bridge "
+        LOGGER.debug(RetromodLog.DETAIL, "Registered pre-1.19 Text bridge "
                 + "(TranslatableText/LiteralText -> Text factories + MutableText retype)");
     }
 }

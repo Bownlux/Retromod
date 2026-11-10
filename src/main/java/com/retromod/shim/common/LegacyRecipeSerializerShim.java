@@ -6,6 +6,7 @@ package com.retromod.shim.common;
 
 import com.retromod.core.MinecraftVersionedApiShim;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.GeneratedLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -139,7 +140,8 @@ public class LegacyRecipeSerializerShim implements MinecraftVersionedApiShim {
                 "()Lnet/minecraft/network/codec/StreamCodec;", BRIDGE, "streamCodec",
                 "(Ljava/lang/Object;)Lnet/minecraft/network/codec/StreamCodec;", true);
         String serializerDesc = "L" + RECIPE_SERIALIZER + ";";
-        MOVED_CONSTANTS.forEach((field, recipe) -> transformer.registerFieldRedirect(
+        // A mod serializer reads an inherited constant through its own class, as Sophisticated Core's do.
+        MOVED_CONSTANTS.forEach((field, recipe) -> transformer.registerInheritedStaticFieldRedirect(
                 RECIPE_SERIALIZER, field, serializerDesc, CRAFTING + recipe, "SERIALIZER",
                 serializerDesc));
         transformer.registerClassRedirect(OLD_SIMPLE_SERIALIZER, SIMPLE_SERIALIZER);
@@ -247,7 +249,29 @@ public class LegacyRecipeSerializerShim implements MinecraftVersionedApiShim {
         m.visitJumpInsn(GOTO, build);
         m.visitLabel(handler);
         m.visitVarInsn(ASTORE, 4);
-        m.visitFieldInsn(GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;");
+        // A serializer built before 1.20.5 reads JSON itself and has no codec(), so that case is a detail line.
+        Label failed = new Label();
+        m.visitVarInsn(ALOAD, 4);
+        m.visitTypeInsn(INSTANCEOF, "java/lang/NoSuchMethodException");
+        m.visitJumpInsn(IFEQ, failed);
+        GeneratedLog.pushLogger(m);
+        GeneratedLog.pushDetailMarker(m);
+        m.visitLdcInsn("[Retromod] Registered the legacy recipe serializer ");
+        m.visitVarInsn(ALOAD, 0);
+        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Object", "getClass", "()Ljava/lang/Class;",
+                false);
+        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Class", "getName", "()Ljava/lang/String;",
+                false);
+        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
+                "(Ljava/lang/String;)Ljava/lang/String;", false);
+        m.visitLdcInsn(" without codecs, since it has no codec() method");
+        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
+                "(Ljava/lang/String;)Ljava/lang/String;", false);
+        GeneratedLog.detail(m);
+        m.visitJumpInsn(GOTO, build);
+        // Any other failure means a codec() that exists did not answer, which changes what loads.
+        m.visitLabel(failed);
+        GeneratedLog.pushLogger(m);
         m.visitLdcInsn("[Retromod] Could not read the codecs of the legacy recipe serializer ");
         m.visitVarInsn(ALOAD, 0);
         m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Object", "getClass", "()Ljava/lang/Class;",
@@ -256,16 +280,11 @@ public class LegacyRecipeSerializerShim implements MinecraftVersionedApiShim {
                 false);
         m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
                 "(Ljava/lang/String;)Ljava/lang/String;", false);
-        m.visitLdcInsn(", so its recipes will not load: ");
+        m.visitLdcInsn(", so Retromod registered it without them");
         m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
                 "(Ljava/lang/String;)Ljava/lang/String;", false);
         m.visitVarInsn(ALOAD, 4);
-        m.visitMethodInsn(INVOKESTATIC, "java/lang/String", "valueOf",
-                "(Ljava/lang/Object;)Ljava/lang/String;", false);
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
-                "(Ljava/lang/String;)Ljava/lang/String;", false);
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V",
-                false);
+        GeneratedLog.warnWithCause(m);
         m.visitLabel(build);
         m.visitTypeInsn(NEW, RECIPE_SERIALIZER);
         m.visitInsn(DUP);
@@ -381,8 +400,7 @@ public class LegacyRecipeSerializerShim implements MinecraftVersionedApiShim {
         get.visitFieldInsn(GETFIELD, SAFE_CODEC, "serializer", "Ljava/lang/String;");
         get.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
                 "(Ljava/lang/String;)Ljava/lang/String;", false);
-        get.visitLdcInsn(" builds recipes with the pre-26.1 recipe API, so this recipe cannot"
-                + " load on this Minecraft version until the mod is updated");
+        get.visitLdcInsn(" could not read this recipe, so Retromod left it out");
         get.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
                 "(Ljava/lang/String;)Ljava/lang/String;", false);
         get.visitInsn(ARETURN);
@@ -522,23 +540,18 @@ public class LegacyRecipeSerializerShim implements MinecraftVersionedApiShim {
         m.visitVarInsn(ALOAD, 0);
         m.visitInsn(ICONST_1);
         m.visitFieldInsn(PUTFIELD, SAFE_CODEC, "reported", "Z");
-        m.visitFieldInsn(GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;");
+        GeneratedLog.pushLogger(m);
         m.visitLdcInsn("[Retromod] ");
         m.visitVarInsn(ALOAD, 0);
         m.visitMethodInsn(INVOKEVIRTUAL, SAFE_CODEC, "get", "()Ljava/lang/Object;", false);
         m.visitTypeInsn(CHECKCAST, "java/lang/String");
         m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
                 "(Ljava/lang/String;)Ljava/lang/String;", false);
-        m.visitLdcInsn(". First failure: ");
+        m.visitLdcInsn(". The first failure follows.");
         m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
                 "(Ljava/lang/String;)Ljava/lang/String;", false);
         m.visitVarInsn(ALOAD, 1);
-        m.visitMethodInsn(INVOKESTATIC, "java/lang/String", "valueOf",
-                "(Ljava/lang/Object;)Ljava/lang/String;", false);
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
-                "(Ljava/lang/String;)Ljava/lang/String;", false);
-        m.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V",
-                false);
+        GeneratedLog.warnWithCause(m);
         m.visitLabel(done);
         m.visitInsn(RETURN);
         m.visitMaxs(0, 0);

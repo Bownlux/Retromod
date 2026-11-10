@@ -67,7 +67,7 @@ class LegacyFoodPropertiesBridgeTest {
     void theGeneratedHelperIsStructurallyValid() throws Exception {
         ClassNode helper = node(generateHelper(candidates()));
 
-        assertEquals(7, helper.methods.size(), "one helper per member without a host replacement");
+        assertEquals(8, helper.methods.size(), "one helper per member without a host replacement");
         for (MethodNode method : helper.methods) {
             new Analyzer<>(new BasicVerifier()).analyze(helper.name, method);
         }

@@ -72,9 +72,12 @@ public final class BootEngine {
             }
             return Optional.of(copy);
         } catch (Throwable failure) {
+            // The trace goes in as text: the engine loader is already closed here, and a logger
+            // that renders a Throwable itself may try to load classes from it.
             log.error("Retromod's in-place pass could not start: "
                     + LoaderHooks.unwrap(failure) + ". Old mods load as if Retromod's "
-                    + "in-place mode were off. Please report this with logs/latest.log.");
+                    + "in-place mode were off. Please report this with logs/latest.log."
+                    + System.lineSeparator() + LoaderHooks.describe(failure));
             return Optional.empty();
         } finally {
             thread.setContextClassLoader(previous);

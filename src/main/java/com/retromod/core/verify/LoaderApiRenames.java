@@ -4,6 +4,7 @@
  */
 package com.retromod.core.verify;
 
+import com.retromod.util.RetromodLog;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -183,7 +184,7 @@ public final class LoaderApiRenames {
             }
         }
 
-        LOGGER.info("Loaded loader-API rename table: {} classes, {} methods, {} removed",
+        LOGGER.debug(RetromodLog.DETAIL, "Loaded loader-API rename table: {} classes, {} methods, {} removed",
                 classes.size(), methods.size(), removed.size());
 
         return new LoaderApiRenames(

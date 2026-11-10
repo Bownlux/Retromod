@@ -128,6 +128,9 @@ public final class ReflectionStringRemapper {
     /** Curated loader-API renames, consulted alongside the MC class redirects. */
     private final LoaderApiRenames loaderRenames;
 
+    /** Classes the mod being transformed keeps under their old name, in slash form. */
+    private final java.util.function.Predicate<String> keepsOldName;
+
     private final AtomicInteger stringsRemapped = new AtomicInteger();
     private final AtomicInteger suspiciousUnmapped = new AtomicInteger();
     private final AtomicInteger dynamicStringsSkipped = new AtomicInteger();
@@ -147,6 +150,17 @@ public final class ReflectionStringRemapper {
                                     Map<String, String> intermediaryMethodNames,
                                     Map<String, String> intermediaryFieldNames,
                                     LoaderApiRenames loaderRenames) {
+        this(slashedClassRedirects, intermediaryMethodNames, intermediaryFieldNames, loaderRenames,
+                name -> false);
+    }
+
+    /** Like the constructor above, but leaves alone a class redirect {@code keepsOldName} says the mod keeps. */
+    public ReflectionStringRemapper(Map<String, String> slashedClassRedirects,
+                                    Map<String, String> intermediaryMethodNames,
+                                    Map<String, String> intermediaryFieldNames,
+                                    LoaderApiRenames loaderRenames,
+                                    java.util.function.Predicate<String> keepsOldName) {
+        this.keepsOldName = keepsOldName;
         // Loader-API renames stay in their native slash form and are looked up
         // per-call in tryRewriteClassFqn; the dotted map carries only shim renames.
         this.classRedirectsDotted = buildDottedMap(slashedClassRedirects);
@@ -338,8 +352,10 @@ public final class ReflectionStringRemapper {
     private boolean tryRewriteClassFqn(LdcInsnNode ldc) {
         String original = (String) ldc.cst;
 
+        // A redirect limited to older mods, such as Forge 1.20.1's PacketDistributor, skips a newer one, and a
+        // jar keeps the classes it defines.
         String direct = classRedirectsDotted.get(original);
-        if (direct != null) {
+        if (direct != null && !keepsOldName.test(dotToSlash(original))) {
             ldc.cst = direct;
             stringsRemapped.incrementAndGet();
             return true;
@@ -350,7 +366,7 @@ public final class ReflectionStringRemapper {
         if (dollar > 0) {
             String outer = original.substring(0, dollar);
             String remapped = classRedirectsDotted.get(outer);
-            if (remapped != null) {
+            if (remapped != null && !keepsOldName.test(dotToSlash(outer))) {
                 ldc.cst = remapped + original.substring(dollar);
                 stringsRemapped.incrementAndGet();
                 return true;

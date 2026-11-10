@@ -57,6 +57,25 @@ public final class CrossClassRegistration {
             LOG.info("[Retromod-Test-Forge] an item built around another class's block gets its own id (register event): {}",
                     result);
         });
+        event.register(ForgeRegistries.Keys.ITEMS, helper -> {
+            String result;
+            try {
+                String key = registerLocalItem(helper).getDescriptionId();
+                result = key.equals("item.retromod_test_mod_forge.consumer_local_item")
+                        ? "success" : "fail: built under another id: " + key;
+            } catch (Throwable t) {
+                result = "fail: " + describe(t);
+            }
+            LOG.info("[Retromod-Test-Forge] an item a consumer builds into a local and registers by literal id gets that id (register event): {}",
+                    result);
+        });
+    }
+
+    /** The first #302 shape: a method the consumer calls builds the item into a local, then registers it by literal id. */
+    static Item registerLocalItem(RegisterEvent.RegisterHelper<Item> helper) {
+        Item local = new Item(new Item.Properties());
+        helper.register(new ResourceLocation("retromod_test_mod_forge", "consumer_local_item"), local);
+        return local;
     }
 
     /** The failure and its causes, so a class initializer's real error reaches the log. */

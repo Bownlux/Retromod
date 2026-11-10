@@ -2,7 +2,9 @@
 # The base below is Fabric intermediary 1.21.4 + Mojang 1.21.4 ProGuard with descriptor matching.
 # Later sections add older ids (1.16.5 to 1.21.1) and the ids 1.21.5 to 1.21.11 introduced.
 # An entry changes only per id: when its value is absent on the 26.x host jars and the new value
-# exists there (scripts/harvest-intermediary-skew.py --stale, and the 1.4.0-snapshot.3 pass).
+# exists there (scripts/harvest-intermediary-skew.py --stale, and the 1.4.0-snapshot.3 pass), or
+# when its value is an unrelated host class with the same simple name. class_4730 is the atlas and
+# texture pair, which 26.1 calls SpriteId. 26.1's sprite/Material is a different record.
 # Never merge an older version's compose wholesale: it gives names as they were at that version.
 # Format: TYPE\tINTERMEDIARY\tMOJANG
 CLASS	net/minecraft/class_10	net/minecraft/world/level/pathfinder/PathComputationType
@@ -4389,7 +4391,7 @@ CLASS	net/minecraft/class_473	net/minecraft/client/gui/screens/inventory/BookEdi
 CLASS	net/minecraft/class_473$class_475	net/minecraft/client/gui/screens/inventory/BookEditScreen$LineInfo
 CLASS	net/minecraft/class_473$class_5233	net/minecraft/client/gui/screens/inventory/BookEditScreen$DisplayCache
 CLASS	net/minecraft/class_473$class_5234	net/minecraft/client/gui/screens/inventory/BookEditScreen$Pos2i
-CLASS	net/minecraft/class_4730	net/minecraft/client/resources/model/sprite/Material
+CLASS	net/minecraft/class_4730	net/minecraft/client/resources/model/sprite/SpriteId
 CLASS	net/minecraft/class_4731	net/minecraft/util/datafix/fixes/ForcePoiRebuild
 CLASS	net/minecraft/class_4732	net/minecraft/world/level/block/DoubleBlockCombiner
 CLASS	net/minecraft/class_4732$class_3923	net/minecraft/world/level/block/DoubleBlockCombiner$Combiner

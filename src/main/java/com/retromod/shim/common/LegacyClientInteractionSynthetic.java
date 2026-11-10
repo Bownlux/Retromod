@@ -12,7 +12,8 @@ import org.objectweb.asm.MethodVisitor;
 import static org.objectweb.asm.Opcodes.*;
 
 /**
- * Exact 26.x replacements for the small client interaction methods removed after 1.21.1.
+ * Exact replacements for the small client interaction methods removed after 1.21.1: one in
+ * 1.21.2, one in 1.21.5 and two in 26.1, each registered from the shim of the version that removed it.
  *
  * <p>The generated class uses the current Minecraft types directly. It is registered as a
  * synthetic so each transformed mod receives a private relocated copy when needed. Generating it
@@ -27,6 +28,7 @@ public final class LegacyClientInteractionSynthetic {
 
     private static final String PLAYER = "net/minecraft/world/entity/player/Player";
     private static final String LOCAL_PLAYER = "net/minecraft/client/player/LocalPlayer";
+    private static final String SERVER_PLAYER = "net/minecraft/server/level/ServerPlayer";
     private static final String COMPONENT = "net/minecraft/network/chat/Component";
     private static final String GAME_MODE = "net/minecraft/client/multiplayer/MultiPlayerGameMode";
     private static final String MINECRAFT = "net/minecraft/client/Minecraft";
@@ -46,15 +48,14 @@ public final class LegacyClientInteractionSynthetic {
             "(L" + GAME_MODE + ";L" + PLAYER + ";L" + ENTITY + ";L" + HAND
                     + ";)L" + RESULT + ";";
 
-    /** Registers the generated helper and the exact removed-call redirects. */
+    /** Registers the generated helper and the exact removed-call redirects for a 26.1 or newer host. */
     public static void register(RetromodTransformer transformer) {
-        if (!transformer.getSyntheticClasses().containsKey(INTERNAL)) {
-            transformer.registerSyntheticClass(INTERNAL, generate());
-        }
+        registerSyntheticOnce(transformer);
 
         // The old boolean chose action bar (true) or ordinary system text (false). The split
         // methods still preserve both behaviors, so keep the flag instead of guessing one path.
-        for (String owner : new String[]{PLAYER, LOCAL_PLAYER}) {
+        // Server code names ServerPlayer as the owner, since that is the type it holds.
+        for (String owner : new String[]{PLAYER, LOCAL_PLAYER, SERVER_PLAYER}) {
             transformer.registerMethodRedirect(owner, "displayClientMessage", DISPLAY_OLD,
                     INTERNAL, "displayClientMessage", DISPLAY_BRIDGE, true);
         }
@@ -65,14 +66,33 @@ public final class LegacyClientInteractionSynthetic {
         transformer.registerMethodRedirect(GAME_MODE, "interact", INTERACT_OLD,
                 INTERNAL, "interact", INTERACT_BRIDGE, true);
 
+        registerInfiniteItemsCheck(transformer);
+        registerSwingDecision(transformer);
+    }
+
+    /** Bridges {@code MultiPlayerGameMode.hasInfiniteItems()}, removed in 1.21.5. The 1.21.5 shims call this. */
+    public static void registerInfiniteItemsCheck(RetromodTransformer transformer) {
+        registerSyntheticOnce(transformer);
         // canHurtPlayer() is not a creative-mode test. Read the surviving player ability instead.
         transformer.registerMethodRedirect(GAME_MODE, "hasInfiniteItems", "()Z",
                 INTERNAL, "hasInfiniteItems", "(L" + GAME_MODE + ";)Z", true);
+    }
 
+    /** Bridges {@code InteractionResult.shouldSwing()}, removed in 1.21.2. The 1.21.2 shims call this too. */
+    public static void registerSwingDecision(RetromodTransformer transformer) {
+        registerSyntheticOnce(transformer);
         // consumesAction() is broader than the removed shouldSwing() contract. Only a client-side
-        // Success requests the local hand swing on 26.x.
+        // Success requests the local hand swing, as it has since 1.21.2.
         transformer.registerMethodRedirect(RESULT, "shouldSwing", "()Z",
                 INTERNAL, "shouldSwing", "(L" + RESULT + ";)Z", true);
+    }
+
+    private static void registerSyntheticOnce(RetromodTransformer transformer) {
+        // One helper holds every bridge. A method whose host members are missing is never linked,
+        // because only the redirects registered for this host call into it.
+        if (!transformer.getSyntheticClasses().containsKey(INTERNAL)) {
+            transformer.registerSyntheticClass(INTERNAL, generate());
+        }
     }
 
     public static byte[] generate() {
@@ -156,6 +176,9 @@ public final class LegacyClientInteractionSynthetic {
         method.visitFieldInsn(GETFIELD, MINECRAFT, "player", "L" + LOCAL_PLAYER + ";");
         method.visitInsn(DUP);
         method.visitJumpInsn(IFNULL, unavailable);
+        // Without the cast the verifier loads LocalPlayer to check it against Player, and a
+        // dedicated server has no LocalPlayer, so the whole helper failed to load there.
+        method.visitTypeInsn(CHECKCAST, PLAYER);
         method.visitMethodInsn(INVOKEVIRTUAL, PLAYER, "hasInfiniteMaterials", "()Z", false);
         method.visitInsn(IRETURN);
         method.visitLabel(unavailable);

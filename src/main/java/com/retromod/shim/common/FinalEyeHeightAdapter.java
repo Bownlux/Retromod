@@ -6,6 +6,7 @@ package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
@@ -75,7 +76,7 @@ public final class FinalEyeHeightAdapter {
                 // New code with branches and a handler, so every frame is recomputed.
                 ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
                 node.accept(writer);
-                LOGGER.info("Kept the old eye height override of {} through its dimensions", node.name);
+                LOGGER.debug(RetromodLog.DETAIL, "Kept the old eye height override of {} through its dimensions", node.name);
                 return writer.toByteArray();
             }
             return classBytes;

@@ -4,6 +4,8 @@
  */
 package com.retromod.core;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
+
 /** Shares version state without linking one loader's entry point to another loader API. */
 public final class RetromodVersion {
 
@@ -11,7 +13,7 @@ public final class RetromodVersion {
     public static volatile String TARGET_MC_VERSION = "1.21.4";
 
     /** Retromod version used by loader metadata and transform cache keys. */
-    public static final String RETROMOD_VERSION = "1.4.0-snapshot.3.1";
+    public static final String RETROMOD_VERSION = "1.4.0-snapshot.4";
 
     private RetromodVersion() {}
 
@@ -149,7 +151,7 @@ public final class RetromodVersion {
     private static String mcVersionOf(Object versionInfo) {
         if (versionInfo == null) return null;
         try {
-            Object mc = versionInfo.getClass().getMethod("mcVersion").invoke(versionInfo);
+            Object mc = LegacyPublicMethods.method(versionInfo.getClass(), "mcVersion").invoke(versionInfo);
             if (mc instanceof String s && !s.isBlank()) return s;
         } catch (Throwable ignored) {}
         return null;

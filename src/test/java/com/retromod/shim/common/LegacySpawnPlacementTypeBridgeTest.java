@@ -99,6 +99,59 @@ class LegacySpawnPlacementTypeBridgeTest {
         assertEquals("isSpawnPositionOk", call.name);
     }
 
+    @Test
+    void forgeCreateAnswersAPlacementTypeThatAsksTheModsTest(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
+            throws Throwable {
+        // Alex's Mobs 1.20.1 builds its own placement type this way while its entities register.
+        java.util.Map<String, String> old = new java.util.HashMap<>(placementTypes());
+        old.put("net/minecraft/world/entity/SpawnPlacements.java", """
+                package net.minecraft.world.entity;
+                public class SpawnPlacements {
+                    public enum Type {
+                        ON_GROUND;
+                        public static Type create(String name,
+                                net.minecraftforge.common.util.TriPredicate<net.minecraft.world.level.LevelReader, net.minecraft.core.BlockPos, EntityType<?>> test) {
+                            throw new IllegalStateException();
+                        }
+                    }
+                }""");
+        old.put("mod/Placements.java", """
+                package mod;
+                import net.minecraft.world.entity.SpawnPlacements;
+                public final class Placements {
+                    public static Object build() {
+                        return SpawnPlacements.Type.create("UNDERWATER_ROCK", (level, pos, type) -> pos == null);
+                    }
+                }""");
+        java.util.Map<String, String> host = new java.util.HashMap<>(placementTypes());
+        host.put("net/minecraft/world/entity/SpawnPlacementType.java", """
+                package net.minecraft.world.entity;
+                public interface SpawnPlacementType {
+                    boolean isSpawnPositionOk(net.minecraft.world.level.LevelReader level, net.minecraft.core.BlockPos pos, EntityType<?> type);
+                }""");
+        java.util.Map<String, byte[]> mod = BridgeHarness.transform("26.2", LegacySpawnPlacementTypeBridge::register,
+                BridgeHarness.only(BridgeHarness.compile(dir.resolve("old"), old), "mod/"));
+        BridgeHarness.Run run = new BridgeHarness.Run(BridgeHarness.compile(dir.resolve("host"), host), mod);
+
+        Object type = run.call("mod/Placements", "build");
+        Class<?> placement = run.loadClass("net.minecraft.world.entity.SpawnPlacementType");
+        assertTrue(placement.isInstance(type), "the old create answers the interface 1.20.5 put in the enum's place");
+        java.lang.reflect.Method check = placement.getMethods()[0];
+        Object pos = run.loadClass("net.minecraft.core.BlockPos").getConstructor().newInstance();
+        assertEquals(Boolean.TRUE, check.invoke(type, null, null, null), "the mod's test decides");
+        assertEquals(Boolean.FALSE, check.invoke(type, null, pos, null));
+    }
+
+    /** Classes the old and new spawn placement shapes share. */
+    private static java.util.Map<String, String> placementTypes() {
+        return java.util.Map.of(
+                "net/minecraft/world/level/LevelReader.java", "package net.minecraft.world.level; public interface LevelReader {}",
+                "net/minecraft/core/BlockPos.java", "package net.minecraft.core; public class BlockPos {}",
+                "net/minecraft/world/entity/EntityType.java", "package net.minecraft.world.entity; public class EntityType<T> {}",
+                "net/minecraftforge/common/util/TriPredicate.java",
+                "package net.minecraftforge.common.util; public interface TriPredicate<T, U, V> { boolean test(T t, U u, V v); }");
+    }
+
     /** {@code boolean check(level, pos, type) { return NaturalSpawner.isSpawnPositionOk(Type.ON_GROUND, ...); }} */
     private static byte[] spawnRules() {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);

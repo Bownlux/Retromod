@@ -82,6 +82,9 @@ public final class LegacyBlockMethodBridge {
                     INTERNAL, "getOffset", OFFSET_HELPER_DESC);
             transformer.registerArgDropMethodRedirect(owner, "getLightBlock",
                     "(L" + GETTER + ";L" + POS + ";)I", owner, lightAccessor, "()I");
+            // isSolidRender lost the same two arguments; the state's shape cache answers alone.
+            transformer.registerArgDropMethodRedirect(owner, "isSolidRender",
+                    "(L" + GETTER + ";L" + POS + ";)Z", owner, "isSolidRender", "()Z");
         }
         transformer.registerMethodRedirect(DIRECTION, "getNormal", VEC3I_DESC,
                 DIRECTION, "getUnitVec3i", VEC3I_DESC);

@@ -71,9 +71,16 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             com.retromod.shim.fabric.FabricRegistryIdSynthetic.INTERNAL, "blockOfFullCopy",
             "(Lnet/minecraft/world/level/block/state/BlockBehaviour;)"
                 + "Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;");
+        // blockOfFullCopy runs the copy through this map color guard, so it is embedded beside it.
+        com.retromod.core.SyntheticEmbedder.registerClassResource(
+                transformer,
+                com.retromod.shim.common.LegacyBlockPropertiesBridge.SUPPORT,
+                com.retromod.shim.common.embedded.LegacyBlockProperties.class);
 
         // Vanilla class moves shared with the NeoForge 26.1 shim (#64).
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
+        // Fabric names the old item property function by intermediary and registered it through Fabric API too.
+        com.retromod.shim.common.LegacyItemPropertiesBridge.registerFabric(transformer);
 
         // Legacy Block.randomTicks accessors now land on the inherited
         // BlockBehaviour.isRandomlyTicking field. The target field is final and every
@@ -419,14 +426,15 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             "()V"
         );
 
-        // VertexConsumer.endVertex() removed (26.1 auto-ends) -> no-op
-        transformer.registerMethodRedirect(
-            "com/mojang/blaze3d/vertex/VertexConsumer", "endVertex",
-            "()V",
-            "com/retromod/shim/fabric/embedded/ItemSafetyShim", "noOpVoid",
-            "(Ljava/lang/Object;)V",
-            true  // devirtualize
-        );
+        // The 1.20.x VertexConsumer builder chain (vertex, endVertex and the rest), rebuilt on 1.21's builder. Its
+        // endVertex reaches a mod's own old consumer, which a plain no-op would skip.
+        com.retromod.shim.common.LegacyVertexApiBridge.register(transformer);
+        // Entity.getTeam() returns PlayerTeam from 1.20.3; LevelTimeAccess left in 1.21.11.
+        com.retromod.shim.common.LegacyEntityTeamBridge.register(transformer);
+        com.retromod.shim.common.LegacyLevelTimeBridge.register(transformer);
+        // Members removed after 1.21.1 (render calls, ABGR colors, GUI lighting, armor slots, owner ids), and GeckoLib 4's textures rebuilt on 1.21.11's.
+        com.retromod.shim.common.LegacyRemovedMemberBridge.register(transformer);
+        com.retromod.shim.api.common.LegacyGeckoLib4Bridge.register(transformer);
 
         // SoundEvent ctor removed -> SoundEvent.createVariableRangeEvent(Identifier)
         transformer.registerConstructorRedirect(
@@ -499,21 +507,21 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             "()Lnet/minecraft/resources/ResourceLocation;"
         );
 
-        // SoundEvent.getId() -> getLocation() (record since 1.21). The intermediary
-        // method_14833 has no intermediary-to-mojang entry (removed, not renamed), so it
-        // survives the remap and needs an explicit redirect (test-mod Test 14,
-        // NoSuchMethodError on method_14833). Source class is the post-remap Mojang name.
+        // SoundEvent.getId() -> location(), the record accessor since 1.21.2 (26.x has no
+        // getLocation). The name map turns method_14833 into getLocation, which Common's
+        // registerSoundEventLocation sends on; this key covers a call the map leaves alone
+        // (test-mod Test 14, NoSuchMethodError on method_14833). Post-remap Mojang owner.
         transformer.registerMethodRedirect(
             "net/minecraft/sounds/SoundEvent", "method_14833",
             "()Lnet/minecraft/resources/Identifier;",
-            "net/minecraft/sounds/SoundEvent", "getLocation",
+            "net/minecraft/sounds/SoundEvent", "location",
             "()Lnet/minecraft/resources/Identifier;"
         );
         // Also the yarn-style getId() name, in case the bytecode arrives that way.
         transformer.registerMethodRedirect(
             "net/minecraft/sounds/SoundEvent", "getId",
             "()Lnet/minecraft/resources/Identifier;",
-            "net/minecraft/sounds/SoundEvent", "getLocation",
+            "net/minecraft/sounds/SoundEvent", "location",
             "()Lnet/minecraft/resources/Identifier;"
         );
 
@@ -736,14 +744,9 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             "(DD)Lnet/minecraft/world/inventory/Slot;"
         );
 
-        // GameNarrator.sayNow(Component) renamed to saySystemNow in 26.1 (verified absent in
-        // 26.1-snapshot-10, present in 1.21.11; corpus scan: Revamped Phantoms ClientPacketListenerMixin).
-        transformer.registerMethodRedirect(
-            "net/minecraft/client/GameNarrator", "sayNow",
-            "(Lnet/minecraft/network/chat/Component;)V",
-            "net/minecraft/client/GameNarrator", "saySystemNow",
-            "(Lnet/minecraft/network/chat/Component;)V"
-        );
+        // GameNarrator.sayNow(Component) is saySystemNow from 1.21.6 (corpus scan: Revamped
+        // Phantoms ClientPacketListenerMixin).
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerNarratorSayNowRename(transformer);
 
         // FriendlyByteBuf.readJsonWithCodec renamed to readLenientJsonWithCodec in 26.1 (same
         // descriptor; writeJsonWithCodec unchanged; corpus scan: NoChatReports MixinFriendlyByteBuf).
@@ -768,17 +771,6 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             "(Lnet/minecraft/world/entity/Pose;)Lnet/minecraft/world/entity/EntityDimensions;"
         );
 
-        // Item.getDefaultInstance() -> safe wrapper. 26.1 binds item components during
-        // data pack loading, so mods creating ItemStacks at class init crash; the wrapper
-        // catches the NPE and returns EMPTY.
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/item/Item", "getDefaultInstance",
-            "()Lnet/minecraft/world/item/ItemStack;",
-            "com/retromod/shim/fabric/embedded/ItemSafetyShim", "safeGetDefaultInstance",
-            "(Ljava/lang/Object;)Ljava/lang/Object;",
-            true  // devirtualize: instance method -> static method
-        );
-
         // CommandSourceStack.hasPermission(int) removed in 26.1 (permission rework).
         // Old int levels 0-4 map to the PermissionLevel enum; bridge checks the new
         // PermissionSet system via reflection.
@@ -790,15 +782,9 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             true  // devirtualize
         );
 
-        // Listener.setGain(float) removed in 26.1 (volume moved to per-source). Dynamic
-        // FPS calls this to mute/unmute; no-op redirect.
-        transformer.registerMethodRedirect(
-            "com/mojang/blaze3d/audio/Listener", "setGain",
-            "(F)V",
-            "com/retromod/shim/fabric/embedded/ItemSafetyShim", "noOp",
-            "(Ljava/lang/Object;F)V",
-            true  // devirtualize: instance method -> static method
-        );
+        // Listener.setGain(float) is gone from 1.21.9. Dynamic FPS calls this to mute/unmute;
+        // no-op redirect. Fabric before 26.1 runs intermediary names, so only 26.x reaches it.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerListenerSetGainNoOp(transformer);
 
         // EntityType.BOAT/CHEST_BOAT split into per-wood types in 26.1; default to OAK_*.
         transformer.registerFieldRedirect(
@@ -946,17 +932,6 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             "net/fabricmc/fabric/api/client/rendering/v1/world/WorldRenderContext",
             "net/fabricmc/fabric/api/client/rendering/v1/level/LevelRenderContext"
         );
-
-        // Chunk force-loading: 26.1 renamed ServerChunkCache.addRegionTicket(TicketType,ChunkPos,int,T)
-        // to addTicketWithRadius(TicketType,ChunkPos,int) AND dropped the value arg. A plain rename
-        // can't (the arity changed); the arg-dropping redirect pops the dropped value then calls the
-        // 3-arg method. 1.18-era chunk-loading mods (Chunky) hit this, crashing worlds on load.
-        transformer.registerArgDropMethodRedirect(
-            "net/minecraft/server/level/ServerChunkCache", "addRegionTicket",
-            "(Lnet/minecraft/server/level/TicketType;Lnet/minecraft/world/level/ChunkPos;ILjava/lang/Object;)V",
-            "net/minecraft/server/level/ServerChunkCache", "addTicketWithRadius",
-            "(Lnet/minecraft/server/level/TicketType;Lnet/minecraft/world/level/ChunkPos;I)V"
-        );
     }
 
     @Override
@@ -1034,72 +1009,6 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
     private void registerRegistryRefRedirects(RetromodTransformer transformer) {
         registerEnchantmentRedirects(transformer);
         registerMobEffectRedirects(transformer);
-        registerNbtCompatRedirects(transformer);
-    }
-
-    /**
-     * NBT getters changed in MC 1.21.5+: {@code CompoundTag.getString(String)} etc. now
-     * return {@code Optional<X>}, so the old {@code ()String}-shaped INVOKEVIRTUAL throws
-     * NoSuchMethodError. Redirect each to a {@link com.retromod.polyfill.registry.NbtCompatLookup}
-     * helper (devirtualized, receiver-first) that resolves whichever signature the runtime
-     * has, unwraps the Optional, and returns the primitive/string the caller expects (NbtTests).
-     */
-    private void registerNbtCompatRedirects(RetromodTransformer transformer) {
-        String compoundTag = "net/minecraft/nbt/CompoundTag";
-        String listTag     = "net/minecraft/nbt/ListTag";
-        String lookup      = "com/retromod/polyfill/registry/NbtCompatLookup";
-
-        // CompoundTag.getX(String): receiver-first static descriptors.
-        transformer.registerMethodRedirect(
-            compoundTag, "getString", "(Ljava/lang/String;)Ljava/lang/String;",
-            lookup, "compoundGetString",
-            "(Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/String;",
-            true
-        );
-        transformer.registerMethodRedirect(
-            compoundTag, "getInt", "(Ljava/lang/String;)I",
-            lookup, "compoundGetInt",
-            "(Ljava/lang/Object;Ljava/lang/String;)I",
-            true
-        );
-        transformer.registerMethodRedirect(
-            compoundTag, "getLong", "(Ljava/lang/String;)J",
-            lookup, "compoundGetLong",
-            "(Ljava/lang/Object;Ljava/lang/String;)J",
-            true
-        );
-        transformer.registerMethodRedirect(
-            compoundTag, "getFloat", "(Ljava/lang/String;)F",
-            lookup, "compoundGetFloat",
-            "(Ljava/lang/Object;Ljava/lang/String;)F",
-            true
-        );
-        transformer.registerMethodRedirect(
-            compoundTag, "getDouble", "(Ljava/lang/String;)D",
-            lookup, "compoundGetDouble",
-            "(Ljava/lang/Object;Ljava/lang/String;)D",
-            true
-        );
-        transformer.registerMethodRedirect(
-            compoundTag, "getBoolean", "(Ljava/lang/String;)Z",
-            lookup, "compoundGetBoolean",
-            "(Ljava/lang/Object;Ljava/lang/String;)Z",
-            true
-        );
-
-        // ListTag.getX(int)
-        transformer.registerMethodRedirect(
-            listTag, "getString", "(I)Ljava/lang/String;",
-            lookup, "listGetString",
-            "(Ljava/lang/Object;I)Ljava/lang/String;",
-            true
-        );
-        transformer.registerMethodRedirect(
-            listTag, "getInt", "(I)I",
-            lookup, "listGetInt",
-            "(Ljava/lang/Object;I)I",
-            true
-        );
     }
 
     private void registerEnchantmentRedirects(RetromodTransformer transformer) {

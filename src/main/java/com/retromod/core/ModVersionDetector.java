@@ -6,6 +6,7 @@ package com.retromod.core;
 
 import com.retromod.embedder.ModVersionInfo;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import com.google.gson.*;
 
@@ -55,18 +56,43 @@ public class ModVersionDetector {
 
     /** Whether to scan class bytes for packages and loader APIs, which only the shim choice needs. */
     private final boolean scanClasses;
+    /** The loader whose metadata wins in a jar built for several loaders, or null for the default. */
+    private final String preferredLoader;
+    /** The preference of detectors built without one: the running loader, or the CLI's --target-loader. */
+    private static volatile String defaultPreferredLoader;
 
     public ModVersionDetector() {
-        this(true);
+        this(true, null);
     }
 
-    private ModVersionDetector(boolean scanClasses) {
+    private ModVersionDetector(boolean scanClasses, String preferredLoader) {
         this.scanClasses = scanClasses;
+        this.preferredLoader = preferredLoader;
     }
 
     /** A detector that reads only the declared version and mod id, skipping the scan of every class. */
     public static ModVersionDetector metadataOnly() {
-        return new ModVersionDetector(false);
+        return new ModVersionDetector(false, null);
+    }
+
+    /** This detector, reading {@code loader}'s metadata first when a jar carries several loaders'. */
+    public ModVersionDetector preferring(String loader) {
+        return new ModVersionDetector(scanClasses, loaderName(loader));
+    }
+
+    /** Sets the preference of every detector built without one; null restores the usual order. */
+    public static void setDefaultPreferredLoader(String loader) {
+        defaultPreferredLoader = loaderName(loader);
+    }
+
+    /** A known loader name in lower case, or null. */
+    private static String loaderName(String loader) {
+        if (loader == null) return null;
+        String name = loader.trim().toLowerCase(Locale.ROOT);
+        return switch (name) {
+            case "fabric", "quilt", "forge", "neoforge" -> name;
+            default -> null;
+        };
     }
 
     public ModVersionInfo detectVersion(Path modJarPath) throws IOException {
@@ -75,34 +101,61 @@ public class ModVersionDetector {
                 throw new IOException("Mod archive has too many entries: " + jar.size());
             }
             validateArchiveEntries(jar);
-            JarEntry quiltEntry = jar.getJarEntry("quilt.mod.json");
-            if (quiltEntry != null) {
-                return parseQuiltMod(jar, quiltEntry);
-            }
-
-            JarEntry fabricEntry = jar.getJarEntry("fabric.mod.json");
-            if (fabricEntry != null) {
-                return parseFabricMod(jar, fabricEntry);
-            }
-
-            JarEntry neoEntry = jar.getJarEntry("META-INF/neoforge.mods.toml");
-            if (neoEntry != null && ForgeTomlChoice.NEOFORGE_TOML.equals(ForgeTomlChoice.metadataEntry(jar))) {
-                return parseNeoForgeMod(jar, neoEntry);
-            }
-
-            JarEntry forgeEntry = jar.getJarEntry("META-INF/mods.toml");
-            if (forgeEntry != null) {
-                return parseForgeMod(jar, forgeEntry);
-            }
-
-            JarEntry legacyForgeEntry = jar.getJarEntry("mcmod.info");
-            if (legacyForgeEntry != null) {
-                return parseLegacyForgeMod(jar, legacyForgeEntry);
-            }
-
+            // A jar built for several loaders carries each one's metadata, and the loader that
+            // runs it reads only its own, so translation follows that file.
+            String metadata = chosenMetadata(jar);
             // 1.12 Forge did not require mcmod.info: FML read the id from @Mod and the mod filled
             // its metadata in code.
-            return parseLegacyModAnnotation(jar);
+            if (metadata == null) return parseLegacyModAnnotation(jar);
+            JarEntry entry = jar.getJarEntry(metadata);
+            return switch (metadata) {
+                case QUILT_JSON -> parseQuiltMod(jar, entry);
+                case FABRIC_JSON -> parseFabricMod(jar, entry);
+                case ForgeTomlChoice.NEOFORGE_TOML -> parseNeoForgeMod(jar, entry);
+                case ForgeTomlChoice.FORGE_TOML -> parseForgeMod(jar, entry);
+                default -> parseLegacyForgeMod(jar, entry);
+            };
+        }
+    }
+
+    private static final String QUILT_JSON = "quilt.mod.json";
+    private static final String FABRIC_JSON = "fabric.mod.json";
+    private static final String LEGACY_FORGE_INFO = "mcmod.info";
+
+    /** The metadata file this detector reads in a jar: the preferred loader's when the jar has it, else the usual order's. */
+    private String chosenMetadata(JarFile jar) throws IOException {
+        String preferred = preferredMetadata(jar);
+        if (preferred != null) return preferred;
+        if (jar.getJarEntry(QUILT_JSON) != null) return QUILT_JSON;
+        if (jar.getJarEntry(FABRIC_JSON) != null) return FABRIC_JSON;
+        if (jar.getJarEntry(ForgeTomlChoice.NEOFORGE_TOML) != null
+                && ForgeTomlChoice.NEOFORGE_TOML.equals(ForgeTomlChoice.metadataEntry(jar))) {
+            return ForgeTomlChoice.NEOFORGE_TOML;
+        }
+        if (jar.getJarEntry(ForgeTomlChoice.FORGE_TOML) != null) return ForgeTomlChoice.FORGE_TOML;
+        return jar.getJarEntry(LEGACY_FORGE_INFO) != null ? LEGACY_FORGE_INFO : null;
+    }
+
+    /** The preferred loader's metadata file when the jar carries it, or null to use the usual order. */
+    private String preferredMetadata(JarFile jar) throws IOException {
+        String loader = preferredLoader != null ? preferredLoader : defaultPreferredLoader;
+        if (loader == null) return null;
+        switch (loader) {
+            case "quilt":
+                return jar.getJarEntry(QUILT_JSON) != null ? QUILT_JSON : null;
+            case "fabric":
+                return jar.getJarEntry(FABRIC_JSON) != null ? FABRIC_JSON : null;
+            default: {
+                // Forge and NeoForge: a jar with both tomls is read the way the usual order reads
+                // it, by its code; Forge itself reads only mods.toml.
+                boolean neo = jar.getJarEntry(ForgeTomlChoice.NEOFORGE_TOML) != null;
+                boolean forge = jar.getJarEntry(ForgeTomlChoice.FORGE_TOML) != null;
+                boolean readNeo = neo && (!forge || ("neoforge".equals(loader)
+                        && ForgeTomlChoice.NEOFORGE_TOML.equals(ForgeTomlChoice.metadataEntry(jar))));
+                if (readNeo) return ForgeTomlChoice.NEOFORGE_TOML;
+                if (forge) return ForgeTomlChoice.FORGE_TOML;
+                return jar.getJarEntry(LEGACY_FORGE_INFO) != null ? LEGACY_FORGE_INFO : null;
+            }
         }
     }
 
@@ -267,6 +320,9 @@ public class ModVersionDetector {
         if (mcVersion == null) {
             mcVersion = inferMcVersionFromManifest(jar);
         }
+        if (mcVersion == null) {
+            mcVersion = inferMcVersionFromNameOrForgeFloor(jar.getName(), tomlContent);
+        }
         String forgeVersion = toml.get("forge");
 
         Set<String> packages = scanModPackages(jar, modId);
@@ -411,6 +467,10 @@ public class ModVersionDetector {
         if (mcVersion == null) {
             mcVersion = inferMcVersionFromNeoForgeRange(tomlContent);
         }
+        if (mcVersion == null) {
+            // NeoForge's loaderVersion counts FML releases, so only the file name is left.
+            mcVersion = inferMcVersionFromFileName(jar.getName(), null);
+        }
         String neoforgeVersion = toml.get("neoforge");
 
         Set<String> packages = scanModPackages(jar, modId);
@@ -447,11 +507,11 @@ public class ModVersionDetector {
         Set<String> names = new HashSet<>();
         Enumeration<JarEntry> entries = jar.entries();
         while (entries.hasMoreElements()) {
-            String name = ZipSecurity.canonicalEntryName(entries.nextElement().getName());
-            if (!names.add(name)) {
-                throw new IOException("Mod archive contains a duplicate normalized entry: "
-                        + name);
-            }
+            JarEntry entry = entries.nextElement();
+            String name = ZipSecurity.canonicalEntryName(entry.getName());
+            // A merged fat jar repeats folder entries, which carry no content.
+            ZipSecurity.firstSighting(names, name, entry.isDirectory(),
+                    () -> "Mod archive contains a duplicate normalized entry: " + name);
         }
     }
 
@@ -578,6 +638,7 @@ public class ModVersionDetector {
         if (range == null) return null;
         String lowerBound = parseMavenVersionRange(range);
         if (lowerBound == null) return null;
+        lowerBound = withoutPreReleaseOnUnprefixedHost(lowerBound);
 
         String[] parts = lowerBound.split("\\.");
         if (parts.length < 2) return null;
@@ -603,6 +664,39 @@ public class ModVersionDetector {
                     : number[0] + "." + number[1];
         }
         return null;
+    }
+
+    /** On a 26.x host, a 1.x-line NeoForge bound without its qualifier; otherwise the bound as is. */
+    private static String withoutPreReleaseOnUnprefixedHost(String bound) {
+        int qualifier = qualifierStart(bound);
+        if (qualifier <= 0 || !hostIsUnprefixed()) return bound;
+        String digits = bound.substring(0, qualifier);
+        int major = parseVersionComponent(digits.split("\\.", 2)[0]);
+        // NeoForge's 20.x and 21.0 builds were betas, so a 1.21 library such as Cloth Config
+        // declares only [21.0.110-beta,). No jar from that line runs as it is on 26.x. On a 1.x
+        // host the bound can belong to a jar that runs there: EMI for 1.21.1 declares only
+        // [20.4.72-beta,), which would read as 1.20.4, the trap TerraBlender's [20.4,) was.
+        return major >= FIRST_NEOFORGE_MAJOR && major < FIRST_UNPREFIXED_MC_MAJOR ? digits : bound;
+    }
+
+    /** Where a pre-release or build qualifier such as -beta starts, or -1. */
+    private static int qualifierStart(String bound) {
+        for (int i = 0; i < bound.length(); i++) {
+            if (bound.charAt(i) == '-' || bound.charAt(i) == '+') return i;
+        }
+        return -1;
+    }
+
+    /** Whether the host is 26 or newer, the line where Minecraft dropped its 1. prefix. */
+    private static boolean hostIsUnprefixed() {
+        String host = RetromodVersion.TARGET_MC_VERSION;
+        try {
+            return host != null && RetromodVersion.compareMcVersions(host,
+                    String.valueOf(FIRST_UNPREFIXED_MC_MAJOR)) >= 0;
+        } catch (NumberFormatException unreadable) {
+            // A host version too odd to compare keeps every bound as it is.
+            return false;
+        }
     }
 
     /**
@@ -665,7 +759,7 @@ public class ModVersionDetector {
     private String inferMcVersionFromModVersion(String modVersion) {
         String inferred = leadingMcVersion(modVersion);
         if (inferred != null) {
-            LOGGER.info("Inferred Minecraft {} from mod version {} because its metadata has no "
+            LOGGER.debug(RetromodLog.DETAIL, "Inferred Minecraft {} from mod version {} because its metadata has no "
                     + "minecraft dependency", inferred, modVersion);
         }
         return inferred;
@@ -676,8 +770,8 @@ public class ModVersionDetector {
      * many mods name that {@code <minecraft>-<mod>} while their toml version leaves the Minecraft
      * version out or is {@code ${file.jarVersion}}. It is read through the same pattern as the
      * toml version, so a plain {@code 1.0.0} still names no Minecraft version. The loader range
-     * is not used instead: a 1.18.2 mod can still declare the {@code [36,)} floor it was
-     * generated with on 1.16.5.
+     * comes only after the file name, as the last fallback: a 1.18.2 mod can still declare the
+     * {@code [36,)} floor it was generated with on 1.16.5.
      *
      * <p>The manifest is read with the same size bound as the toml. An unreadable or oversized
      * manifest names no version instead of failing detection, because the jar was detectable
@@ -702,16 +796,177 @@ public class ModVersionDetector {
         // Some builds name the version outright. TerraBlender 1.21.1 does, and declares only an
         // open neoforge [20.4,) range, which otherwise read as a 1.20.4 mod to translate.
         if (builtOn != null && EXACT_MC_VERSION.matcher(builtOn.trim()).matches()) {
-            LOGGER.info("Read Minecraft {} from the jar manifest's Build-On-Minecraft because its "
+            LOGGER.debug(RetromodLog.DETAIL, "Read Minecraft {} from the jar manifest's Build-On-Minecraft because its "
                     + "metadata has no minecraft dependency", builtOn.trim());
             return builtOn.trim();
         }
         String inferred = leadingMcVersion(implementationVersion);
         if (inferred != null) {
-            LOGGER.info("Inferred Minecraft {} from the jar manifest's Implementation-Version "
+            LOGGER.debug(RetromodLog.DETAIL, "Inferred Minecraft {} from the jar manifest's Implementation-Version "
                     + "because its metadata has no minecraft dependency", inferred);
         }
         return inferred;
+    }
+
+    /** Each Forge major and the one Minecraft version it was released for, from Forge's maven-metadata.xml. */
+    private static final Map<Integer, String> FORGE_MAJOR_MC = Map.ofEntries(
+            Map.entry(25, "1.13.2"), Map.entry(26, "1.14.2"), Map.entry(27, "1.14.3"),
+            Map.entry(28, "1.14.4"), Map.entry(29, "1.15"), Map.entry(30, "1.15.1"),
+            Map.entry(31, "1.15.2"), Map.entry(32, "1.16.1"), Map.entry(33, "1.16.2"),
+            Map.entry(34, "1.16.3"), Map.entry(35, "1.16.4"), Map.entry(36, "1.16.5"),
+            Map.entry(37, "1.17.1"), Map.entry(38, "1.18"), Map.entry(39, "1.18.1"),
+            Map.entry(40, "1.18.2"), Map.entry(41, "1.19"), Map.entry(42, "1.19.1"),
+            Map.entry(43, "1.19.2"), Map.entry(44, "1.19.3"), Map.entry(45, "1.19.4"),
+            Map.entry(46, "1.20"), Map.entry(47, "1.20.1"), Map.entry(48, "1.20.2"),
+            Map.entry(49, "1.20.3"), Map.entry(50, "1.20.6"), Map.entry(51, "1.21"),
+            Map.entry(52, "1.21.1"), Map.entry(53, "1.21.3"), Map.entry(54, "1.21.4"),
+            Map.entry(55, "1.21.5"), Map.entry(56, "1.21.6"), Map.entry(57, "1.21.7"),
+            Map.entry(58, "1.21.8"), Map.entry(59, "1.21.9"), Map.entry(60, "1.21.10"),
+            Map.entry(61, "1.21.11"), Map.entry(62, "26.1"), Map.entry(63, "26.1.1"),
+            Map.entry(64, "26.1.2"), Map.entry(65, "26.2"), Map.entry(66, "26.3"));
+
+    private static final java.util.regex.Pattern JAVAFML_LOADER_FLOOR = java.util.regex.Pattern.compile(
+            "(?m)^\\s*loaderVersion\\s*=\\s*[\"']\\s*[\\[(]\\s*(\\d{1,3})");
+    private static final java.util.regex.Pattern FORGE_LANGUAGE = java.util.regex.Pattern.compile(
+            "(?m)^\\s*modLoader\\s*=\\s*[\"'](?:javafml|lowcodefml)[\"']");
+    private static final java.util.regex.Pattern LEADING_MAJOR = java.util.regex.Pattern.compile(
+            "^\\s*[\\[(]?\\s*(\\d{1,3})");
+
+    // A toml means Minecraft 1.13 or newer, and the lookarounds keep the token whole, so mod
+    // versions such as 1.1.24 or 2.5.1 and suffixes such as forge+ never count.
+    private static final java.util.regex.Pattern NAMED_MC_VERSION = java.util.regex.Pattern.compile(
+            "(?<![0-9.])(1\\.(?:1[3-9]|2[01])(?:\\.\\d{1,2})?|2[6-9]\\.\\d{1,2}(?:\\.\\d{1,2})?)(?![0-9]|\\.[0-9])");
+
+    /**
+     * The last fallbacks for a Forge toml with no minecraft dependency: the version its file name
+     * names, else the floor its Forge requirements set. A floor can lag, since a mod may keep the
+     * one its template had, but an unknown version leaves the mod untranslated on every path, and
+     * on a host with new member names that always fails. An older floor costs only older shims,
+     * which find nothing of theirs in newer code, the same as an open minecraft range.
+     */
+    private String inferMcVersionFromNameOrForgeFloor(String jarPath, String tomlContent) {
+        String floor = forgeFloorMcVersion(tomlContent);
+        String named = inferMcVersionFromFileName(jarPath, floor);
+        if (named != null) return named;
+        if (floor != null) {
+            LOGGER.debug(RetromodLog.DETAIL, "Read Minecraft {} as the floor of the Forge version {} requires, because "
+                    + "its metadata has no minecraft dependency", floor, fileName(jarPath));
+        }
+        return floor;
+    }
+
+    /** The Minecraft version of the highest Forge major the toml requires, or null. */
+    private String forgeFloorMcVersion(String tomlContent) {
+        int major = -1;
+        // javafml's loaderVersion is the Forge major on Forge and NeoForge 1.20.1 alike.
+        if (FORGE_LANGUAGE.matcher(tomlContent).find()) {
+            java.util.regex.Matcher loader = JAVAFML_LOADER_FLOOR.matcher(tomlContent);
+            if (loader.find()) major = Integer.parseInt(loader.group(1));
+        }
+        String forgeRange = extractLoaderVersionRange(tomlContent, "forge");
+        if (forgeRange != null) {
+            java.util.regex.Matcher forge = LEADING_MAJOR.matcher(forgeRange);
+            if (forge.find()) major = Math.max(major, Integer.parseInt(forge.group(1)));
+        }
+        return FORGE_MAJOR_MC.get(major);
+    }
+
+    /** The one Minecraft version a jar's file name names, at or above the floor when there is one. */
+    private String inferMcVersionFromFileName(String jarPath, String floor) {
+        String name = fileName(jarPath);
+        Set<String> named = new LinkedHashSet<>();
+        java.util.regex.Matcher matcher = NAMED_MC_VERSION.matcher(name);
+        while (matcher.find()) named.add(matcher.group(1));
+        // Two versions, as in forge+1.17-1.20.4, name the range a mod supports, not its build.
+        if (named.size() != 1) return null;
+        String version = named.iterator().next();
+        if (floor != null && RetromodVersion.compareMcVersions(version, floor) < 0) return null;
+        LOGGER.debug(RetromodLog.DETAIL, "Read Minecraft {} from the file name {} because its metadata has no "
+                + "minecraft dependency", version, name);
+        return version;
+    }
+
+    /**
+     * The newest Minecraft version a mod jar shows it was built for, never older than {@code declared}. A declared floor
+     * can lag far behind the build, such as {@code [1,)} on a 1.20.1 jar, and data read as older than it is gets fixes
+     * it already had, so the version the loader requirement implies and the one version the file name names count too.
+     * Null when nothing names a version.
+     */
+    public String buildVersion(Path jar, String declared) {
+        List<String> evidence = new ArrayList<>();
+        addVersion(evidence, firstVersionNumber(declared));
+        String oldest = null;
+        try (JarFile file = new JarFile(jar.toFile())) {
+            // The same metadata file the declared version came from, since a jar built for several loaders carries
+            // each one's, often for different Minecraft versions.
+            String metadata = chosenMetadata(file);
+            boolean neoToml = ForgeTomlChoice.NEOFORGE_TOML.equals(metadata);
+            if (neoToml || ForgeTomlChoice.FORGE_TOML.equals(metadata)) {
+                // Every toml mod is 1.13 or newer, NeoForge reads neoforge.mods.toml from 1.20.5, and a Forge or
+                // NeoForge requirement names the builds the mod runs on.
+                oldest = neoToml ? "1.20.5" : "1.13";
+                String content = readMetadata(file, file.getJarEntry(metadata));
+                addVersion(evidence, forgeFloorMcVersion(content));
+                // A mods.toml can serve Forge and NeoForge 1.20.2 to 1.20.4 at once, and Forge ignores the neoforge lines.
+                if (!"forge".equals(preferredLoader != null ? preferredLoader : defaultPreferredLoader)) {
+                    addVersion(evidence, inferMcVersionFromNeoForgeRange(content));
+                    addVersion(evidence, fmlFloorMcVersion(content, neoToml));
+                }
+            } else if (FABRIC_JSON.equals(metadata) || QUILT_JSON.equals(metadata)) {
+                // Fabric's metadata starts with 1.14.
+                oldest = "1.14";
+            }
+        } catch (IOException | RuntimeException unreadable) {
+            // An unreadable jar leaves only the declared version and the file name.
+        }
+        addVersion(evidence, onlyNamedVersion(jar.toString()));
+        if (evidence.isEmpty()) return null;
+        String newest = oldest;
+        for (String version : evidence) {
+            if (newest == null || RetromodVersion.compareMcVersions(version, newest) > 0) newest = version;
+        }
+        return newest;
+    }
+
+    /** NeoForge's javafml version for each Minecraft line it started, as its own FML numbering counts. */
+    private static final Map<Integer, String> NEOFORGE_FML_MC = Map.of(1, "1.20.2", 2, "1.20.3");
+    private static final java.util.regex.Pattern FIRST_VERSION_NUMBER =
+            java.util.regex.Pattern.compile("\\d+(?:\\.\\d+)+");
+
+    /**
+     * The Minecraft version a NeoForge toml's own FML floor implies, or null. NeoForge numbers javafml from 1 for
+     * 1.20.2, below Forge's majors, so a small floor counts only beside a neoforge dependency or in neoforge.mods.toml.
+     */
+    private String fmlFloorMcVersion(String tomlContent, boolean neoForgeToml) {
+        if (!neoForgeToml && extractLoaderVersionRange(tomlContent, "neoforge") == null) return null;
+        java.util.regex.Matcher loader = JAVAFML_LOADER_FLOOR.matcher(tomlContent);
+        if (!FORGE_LANGUAGE.matcher(tomlContent).find() || !loader.find()) return null;
+        int major = Integer.parseInt(loader.group(1));
+        if (major < 1 || FORGE_MAJOR_MC.containsKey(major)) return null;
+        // From FML 3 NeoForge runs 1.20.5 and newer, where no save has the old shape left.
+        return major >= 3 ? "1.20.5" : NEOFORGE_FML_MC.get(major);
+    }
+
+    /** The one Minecraft version a jar's file name names, or null when it names none or several. */
+    private static String onlyNamedVersion(String jarPath) {
+        Set<String> named = new LinkedHashSet<>();
+        java.util.regex.Matcher matcher = NAMED_MC_VERSION.matcher(fileName(jarPath));
+        while (matcher.find()) named.add(matcher.group(1));
+        return named.size() == 1 ? named.iterator().next() : null;
+    }
+
+    private static String firstVersionNumber(String declared) {
+        java.util.regex.Matcher version = declared == null ? null : FIRST_VERSION_NUMBER.matcher(declared);
+        return version != null && version.find() ? version.group() : null;
+    }
+
+    private static void addVersion(List<String> evidence, String version) {
+        if (version != null) evidence.add(version);
+    }
+
+    private static String fileName(String jarPath) {
+        Path name = Path.of(jarPath).getFileName();
+        return name == null ? jarPath : name.toString();
     }
 
     private static final java.util.regex.Pattern EXACT_MC_VERSION = java.util.regex.Pattern
@@ -761,7 +1016,7 @@ public class ModVersionDetector {
                         ? RetromodVersion.compareMcVersions(host, upper) < 0
                         : RetromodVersion.compareMcVersions(host, upper) <= 0;
                 if (lowerOk && upperOk) {
-                    LOGGER.info("Mod range {} includes host {}; treating it as "
+                    LOGGER.debug(RetromodLog.DETAIL, "Mod range {} includes host {}; treating it as "
                             + "native, no transform (#174)", range, host);
                     return host;
                 }

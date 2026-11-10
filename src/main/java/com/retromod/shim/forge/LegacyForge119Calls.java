@@ -9,6 +9,7 @@ import com.retromod.core.RetromodVersion;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Type;
 
 import static org.objectweb.asm.Opcodes.*;
 
@@ -34,7 +35,7 @@ public final class LegacyForge119Calls {
     private static final String RANDOM_SOURCE = "net/minecraft/util/RandomSource";
     private static final String LOOT_BUILDER = "net/minecraft/world/level/storage/loot/LootParams$Builder";
     private static final String EVENT_FACTORY = "net/minecraftforge/event/ForgeEventFactory";
-    private static final String RESULT = "Lnet/minecraftforge/eventbus/api/Event$Result;";
+    private static final String OLD_RESULT = "Lnet/minecraftforge/eventbus/api/Event$Result;";
     private static final String SERVER_LEVEL_ACCESSOR = "net/minecraft/world/level/ServerLevelAccessor";
     private static final String RANDOM = "Ljava/util/Random;";
 
@@ -42,7 +43,8 @@ public final class LegacyForge119Calls {
     }
 
     public static void register(RetromodTransformer transformer) {
-        transformer.registerSyntheticClass(SYNTH, generate());
+        String result = "L" + LegacyEventBaseBridge.resultEnum() + ";";
+        transformer.registerSyntheticClass(SYNTH, generate(result));
 
         // 1.20.5 gave the spawn packet a ServerEntity argument, so the factory stops there.
         if (RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20.5") < 0) {
@@ -60,8 +62,8 @@ public final class LegacyForge119Calls {
             transformer.registerMethodRedirect(hooks, "openGui", desc, hooks, "openScreen", desc);
         }
 
-        transformer.registerMethodRedirect(EVENT_FACTORY, "canEntityDespawn", "(L" + MOB + ";)" + RESULT,
-                SYNTH, "canEntityDespawn", "(L" + MOB + ";)" + RESULT);
+        transformer.registerMethodRedirect(EVENT_FACTORY, "canEntityDespawn", "(L" + MOB + ";)" + OLD_RESULT,
+                SYNTH, "canEntityDespawn", "(L" + MOB + ";)" + result);
 
         // UniformInt, ConstantInt and the rest are called through their own class name.
         String sampleDesc = "(L" + INT_PROVIDER + ";" + RANDOM + ")I";
@@ -76,6 +78,11 @@ public final class LegacyForge119Calls {
     }
 
     static byte[] generate() {
+        return generate("L" + LegacyEventBaseBridge.resultEnum() + ";");
+    }
+
+    /** The helpers, with despawn answers typed on {@code result}: Forge 26.2 replaced the old result enum. */
+    static byte[] generate(String result) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
             @Override
             protected String getCommonSuperClass(String first, String second) {
@@ -98,7 +105,7 @@ public final class LegacyForge119Calls {
 
         // Despawn checks only run on the server, where the level is always a ServerLevelAccessor.
         MethodVisitor despawn = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "canEntityDespawn",
-                "(L" + MOB + ";)" + RESULT, null, null);
+                "(L" + MOB + ";)" + result, null, null);
         despawn.visitCode();
         Label notServer = new Label();
         despawn.visitVarInsn(ALOAD, 0);
@@ -112,11 +119,11 @@ public final class LegacyForge119Calls {
         despawn.visitVarInsn(ALOAD, 0);
         despawn.visitVarInsn(ALOAD, 1);
         despawn.visitMethodInsn(INVOKESTATIC, EVENT_FACTORY, "canEntityDespawn",
-                "(L" + MOB + ";L" + SERVER_LEVEL_ACCESSOR + ";)" + RESULT, false);
+                "(L" + MOB + ";L" + SERVER_LEVEL_ACCESSOR + ";)" + result, false);
         despawn.visitInsn(ARETURN);
         despawn.visitLabel(notServer);
         despawn.visitInsn(POP);
-        despawn.visitFieldInsn(GETSTATIC, "net/minecraftforge/eventbus/api/Event$Result", "DEFAULT", RESULT);
+        despawn.visitFieldInsn(GETSTATIC, Type.getType(result).getInternalName(), "DEFAULT", result);
         despawn.visitInsn(ARETURN);
         despawn.visitMaxs(0, 0);
         despawn.visitEnd();

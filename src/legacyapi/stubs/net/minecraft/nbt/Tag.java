@@ -5,4 +5,5 @@ import java.util.Optional;
 
 public interface Tag {
     default Optional<Integer> asInt() { throw new UnsupportedOperationException(); }
+    Tag copy();
 }

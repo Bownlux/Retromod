@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -64,6 +65,11 @@ public class EnvironmentDetector {
             isDedicatedServer = detectDedicatedServer();
         }
         return isDedicatedServer;
+    }
+
+    /** True only when the side is already known to be a dedicated server. It never runs detection. */
+    static boolean knownDedicatedServer() {
+        return Boolean.TRUE.equals(isDedicatedServer);
     }
 
     /** True when no display is available. */
@@ -279,16 +285,16 @@ public class EnvironmentDetector {
 
     /** Log the detected environment. */
     public static void logEnvironment() {
-        LOGGER.info("Environment: {} (headless: {})",
+        LOGGER.debug(RetromodLog.DETAIL, "Environment: {} (headless: {})",
             isDedicatedServer() ? "Dedicated Server" : "Client",
             isHeadless());
-        LOGGER.info("  OS: {} ({})", getOsFamily(), getOsString());
-        LOGGER.info("  CPU: {} ({})", getCpuArch(), getCpuArchString());
+        LOGGER.debug(RetromodLog.DETAIL, "  OS: {} ({})", getOsFamily(), getOsString());
+        LOGGER.debug(RetromodLog.DETAIL, "  CPU: {} ({})", getCpuArch(), getCpuArchString());
         if (isAppleSilicon()) {
-            LOGGER.info("  Apple Silicon detected");
+            LOGGER.debug(RetromodLog.DETAIL, "  Apple Silicon detected");
         }
         if (!isDedicatedServer()) {
-            LOGGER.info("  Rendering: {}", getRenderingBackend());
+            LOGGER.debug(RetromodLog.DETAIL, "  Rendering: {}", getRenderingBackend());
         }
     }
 

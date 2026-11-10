@@ -40,13 +40,11 @@ class PickerInPlaceTest {
     }
 
     @Test
-    @DisplayName("The setup text and result lines describe what in-place mode does")
+    @DisplayName("The result lines describe what in-place mode does")
     void inPlaceTextMatchesBehavior() {
-        assertTrue(RetromodGui.firstRunText(true).contains("unchanged"));
-        assertTrue(RetromodGui.firstRunText(false).contains("installs updated copies"));
-        assertTrue(RetromodGui.inPlaceResultLine("a.jar",
+        assertTrue(RetromodScreen.inPlaceResultLine("a.jar",
                 InPlaceLaunch.ChosenOutcome.NEXT_LAUNCH).contains("one more restart"));
-        assertTrue(RetromodGui.inPlaceResultLine("a.jar",
+        assertTrue(RetromodScreen.inPlaceResultLine("a.jar",
                 InPlaceLaunch.ChosenOutcome.FAILED).contains("logs/latest.log"));
     }
 }

@@ -4,6 +4,9 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyLog;
+
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -18,20 +21,19 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
-/**
- * Runtime half of {@link com.retromod.shim.forge.LegacyBrewingBridge}: turns the brewing recipes
- * an older Forge mod registered in code into the brewing recipe files 26.3 reads. Embedded into
- * each mod and reflective, because Retromod is not compiled against Minecraft or NeoForge.
- *
- * <p>An old recipe answered three questions in code: is this the input, is this the reagent, and
- * what comes out. Once the server has started, when items can be built, every potion in every
- * bottle and every item is put to the first two questions, and each match becomes a
- * {@code minecraft:brewing} recipe with the output the third one gives. Like trades, recipes load
- * before items can be built and stay for the session, so they apply from the next start.
- */
+/** Turns the brewing recipes an old mod registers in code into the brewing recipe files 26.3 reads, on Forge and NeoForge. */
 public final class LegacyBrewingStore {
 
+    // Forge 26.x and NeoForge keep the same mod list and scan data, each under its own packages.
+    private static final String FORGE_FML = "net.minecraftforge.fml";
+    private static final String FORGE_SPI = "net.minecraftforge.forgespi";
+    private static final String NEOFORGE_FML = "net.neoforged.fml";
+    private static final String NEOFORGE_SPI = "net.neoforged.neoforgespi";
+
+    // Embedded into each mod and reflective, because Retromod is not compiled against Minecraft or the loader.
     private static final List<Object> RECIPES = java.util.Collections.synchronizedList(new ArrayList<>());
+    // The old brewing event runs again on every server start, so its recipes replace the last post's.
+    private static final List<Object> EVENT_RECIPES = java.util.Collections.synchronizedList(new ArrayList<>());
     private static String namespace;
     private static boolean listening;
     private static Path root;
@@ -42,7 +44,7 @@ public final class LegacyBrewingStore {
     public static boolean addRecipe(Object recipe) {
         if (recipe == null) return false;
         RECIPES.add(recipe);
-        watch(recipe instanceof Object[] triple ? triple[2] : recipe);
+        watch();
         return true;
     }
 
@@ -51,52 +53,118 @@ public final class LegacyBrewingStore {
         return addRecipe(new Object[] {input, ingredient, output});
     }
 
-    /** Starts the pack listeners on the mod that registered {@code owner}'s recipe. */
-    private static synchronized void watch(Object owner) {
+    /** Starts the pack listeners now, for a mod whose recipes arrive later through the old brewing event. */
+    public static void listen() {
+        watch();
+    }
+
+    /** Forgets the recipes the old brewing event added last time, before it is posted again. */
+    public static void beginEvent() {
+        EVENT_RECIPES.clear();
+    }
+
+    /** A recipe the old brewing event's builder added in this post. */
+    public static void addEventRecipe(Object recipe) {
+        if (recipe == null) return;
+        EVENT_RECIPES.add(recipe);
+        watch();
+    }
+
+    /** The builder's {@code addRecipe(input, ingredient, output)} with ingredients. */
+    public static void addEventRecipe(Object input, Object ingredient, Object output) {
+        addEventRecipe(new Object[] {input, ingredient, output});
+    }
+
+    /** The registry's recipes, then the last event post's. */
+    static List<Object> recorded() {
+        List<Object> recipes;
+        synchronized (RECIPES) {
+            recipes = new ArrayList<>(RECIPES);
+        }
+        synchronized (EVENT_RECIPES) {
+            recipes.addAll(EVENT_RECIPES);
+        }
+        return recipes;
+    }
+
+    /** Starts the pack listeners on the mod whose jar holds this copy of the store. */
+    private static synchronized void watch() {
         if (listening) return;
         listening = true;
         try {
-            Object mods = Class.forName("net.neoforged.fml.ModList").getMethod("get").invoke(null);
-            Object mod = owningMod(mods, owner);
-            if (mod == null) {
-                Object context = Class.forName("net.neoforged.fml.ModLoadingContext").getMethod("get").invoke(null);
-                Object active = context.getClass().getMethod("getActiveNamespace").invoke(context);
-                Object byId = active == null ? null
-                        : mods.getClass().getMethod("getModContainerById", String.class).invoke(mods, active.toString());
-                mod = byId instanceof Optional<?> optional ? optional.orElse(null) : null;
-            }
-            if (mod == null) {
-                log("could not tell which mod added a brewing recipe, so its recipes are not added");
+            boolean forge = exists(FORGE_FML + ".ModList");
+            Object mod = forge ? forgeMod() : neoForgeMod();
+            String id = mod == null ? null : String.valueOf(LegacyPublicMethods.method(mod.getClass(), "getNamespace").invoke(mod));
+            // The pack writes under the mod's namespace, and nothing may write under Minecraft's.
+            if (id == null || id.equals("minecraft")) {
+                log("found no mod jar that holds this brewing store, so its brewing recipes are not added");
                 return;
             }
-            namespace = String.valueOf(mod.getClass().getMethod("getNamespace").invoke(mod));
-            root = gameDirectory().resolve("config").resolve("retromod").resolve("legacy-brewing")
-                    .resolve("retromod_legacy_brewing_" + namespace);
-            Object gameBus = Class.forName("net.neoforged.neoforge.common.NeoForge").getField("EVENT_BUS").get(null);
+            namespace = id;
+            root = gameDirectory(forge ? FORGE_FML : NEOFORGE_FML).resolve("config").resolve("retromod")
+                    .resolve("legacy-brewing").resolve("retromod_legacy_brewing_" + namespace);
             Consumer<Object> offer = LegacyBrewingStore::onAddPackFinders;
             Consumer<Object> fill = LegacyBrewingStore::onServerStarted;
-            addListener(mod.getClass().getMethod("getEventBus").invoke(mod), "net.neoforged.neoforge.event.AddPackFindersEvent", offer);
-            addListener(gameBus, "net.neoforged.neoforge.event.server.ServerStartedEvent", fill);
+            if (forge) {
+                // Forge 26.x posts both events on their own buses rather than on a mod or game bus.
+                addBusListener("net.minecraftforge.event.AddPackFindersEvent", offer);
+                addBusListener("net.minecraftforge.event.server.ServerStartedEvent", fill);
+            } else {
+                Object gameBus = Class.forName("net.neoforged.neoforge.common.NeoForge").getField("EVENT_BUS").get(null);
+                addListener(LegacyPublicMethods.method(mod.getClass(), "getEventBus").invoke(mod), "net.neoforged.neoforge.event.AddPackFindersEvent", offer);
+                addListener(gameBus, "net.neoforged.neoforge.event.server.ServerStartedEvent", fill);
+            }
         } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
             log("cannot offer brewing recipes as a data pack on this loader: " + e);
         }
     }
 
+    private static Object neoForgeMod() throws ReflectiveOperationException {
+        Object mods = Class.forName(NEOFORGE_FML + ".ModList").getMethod("get").invoke(null);
+        List<?> sorted = (List<?>) LegacyPublicMethods.method(mods.getClass(), "getSortedMods").invoke(mods);
+        Object mod = owningMod(sorted, NEOFORGE_FML, NEOFORGE_SPI);
+        String active = mod == null ? activeNamespace(NEOFORGE_FML) : null;
+        if (active == null) return mod;
+        return orNull(LegacyPublicMethods.method(mods.getClass(), "getModContainerById", String.class).invoke(mods, active));
+    }
+
+    /** Forge 26.x keeps its mod list behind static methods. */
+    private static Object forgeMod() throws ReflectiveOperationException {
+        Class<?> mods = Class.forName(FORGE_FML + ".ModList");
+        Object mod = owningMod((List<?>) mods.getMethod("getLoadedMods").invoke(null), FORGE_FML, FORGE_SPI);
+        String active = mod == null ? activeNamespace(FORGE_FML) : null;
+        if (active == null) return mod;
+        return orNull(mods.getMethod("getModContainerById", String.class).invoke(null, active));
+    }
+
+    private static String activeNamespace(String fml) throws ReflectiveOperationException {
+        Object context = Class.forName(fml + ".ModLoadingContext").getMethod("get").invoke(null);
+        Object active = LegacyPublicMethods.method(context.getClass(), "getActiveNamespace").invoke(context);
+        // With no mod active both loaders answer minecraft, which is no mod's pack.
+        return active == null || active.toString().equals("minecraft") ? null : active.toString();
+    }
+
+    private static Object orNull(Object optional) {
+        return optional instanceof Optional<?> present ? present.orElse(null) : null;
+    }
+
     /**
-     * The mod whose jar holds the recipe's class. A mod usually adds recipes from a deferred
-     * setup task, where no mod is active, so the jar's scan of its classes answers instead.
+     * The mod whose jar holds this class. A mod usually adds recipes from a deferred setup task,
+     * where no mod is active, so the jar's scan of its classes answers instead.
      */
-    private static Object owningMod(Object mods, Object owner) throws ReflectiveOperationException {
+    private static Object owningMod(List<?> containers, String fml, String spi) throws ReflectiveOperationException {
         // Members are read through the public interfaces: the implementations sit in packages a
         // mod's module may not reflect into.
-        // A scanned class prints as its descriptor, such as clazz=Lmod/Recipe;
-        String descriptor = "L" + owner.getClass().getName().replace('.', '/') + ";";
-        Method modInfo = Class.forName("net.neoforged.fml.ModContainer").getMethod("getModInfo");
-        Method owningFile = Class.forName("net.neoforged.neoforgespi.language.IModInfo").getMethod("getOwningFile");
-        Method file = Class.forName("net.neoforged.neoforgespi.language.IModFileInfo").getMethod("getFile");
-        Method scan = Class.forName("net.neoforged.neoforgespi.locating.IModFile").getMethod("getScanResult");
-        Method classes = Class.forName("net.neoforged.neoforgespi.language.ModFileScanData").getMethod("getClasses");
-        for (Object container : (List<?>) mods.getClass().getMethod("getSortedMods").invoke(mods)) {
+        // Each mod carries its own renamed copy of this store, so its jar is the one that added the
+        // recipe. A recipe's own class can be Minecraft's, such as the output stack of the
+        // three-argument add. A scanned class prints as its descriptor, such as clazz=Lmod/Store;
+        String descriptor = "L" + LegacyBrewingStore.class.getName().replace('.', '/') + ";";
+        Method modInfo = Class.forName(fml + ".ModContainer").getMethod("getModInfo");
+        Method owningFile = Class.forName(spi + ".language.IModInfo").getMethod("getOwningFile");
+        Method file = Class.forName(spi + ".language.IModFileInfo").getMethod("getFile");
+        Method scan = Class.forName(spi + ".locating.IModFile").getMethod("getScanResult");
+        Method classes = Class.forName(spi + ".language.ModFileScanData").getMethod("getClasses");
+        for (Object container : containers) {
             Object scanData = scan.invoke(file.invoke(owningFile.invoke(modInfo.invoke(container))));
             for (Object classData : (Collection<?>) classes.invoke(scanData)) {
                 if (String.valueOf(classData).contains("clazz=" + descriptor)) return container;
@@ -112,16 +180,31 @@ public final class LegacyBrewingStore {
                 .invoke(bus, priority.getField("NORMAL").get(null), false, Class.forName(eventClass), listener);
     }
 
+    private static void addBusListener(String eventClass, Consumer<Object> listener) throws ReflectiveOperationException {
+        Object bus = Class.forName(eventClass).getField("BUS").get(null);
+        Class.forName("net.minecraftforge.eventbus.api.bus.EventBus").getMethod("addListener", Consumer.class)
+                .invoke(bus, listener);
+    }
+
+    private static boolean exists(String className) {
+        try {
+            Class.forName(className, false, LegacyBrewingStore.class.getClassLoader());
+            return true;
+        } catch (ClassNotFoundException | LinkageError absent) {
+            return false;
+        }
+    }
+
     private static void onAddPackFinders(Object event) {
         try {
-            Object packType = event.getClass().getMethod("getPackType").invoke(event);
+            Object packType = LegacyPublicMethods.method(event.getClass(), "getPackType").invoke(event);
             if (!(packType instanceof Enum<?> type) || !type.name().equals("SERVER_DATA")) return;
             int format = LegacyDataPackSource.packFormat();
             write(root.resolve("pack.mcmeta"), "{\"pack\":{\"pack_format\":" + format + ",\"min_format\":" + format
                     + ",\"max_format\":" + format + ",\"description\":\"Retromod legacy brewing\"}}");
             Object source = LegacyDataPackSource.create(root.getFileName().toString(), root);
             if (source == null) return;
-            for (Method method : event.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(event.getClass())) {
                 if (method.getName().equals("addRepositorySource") && method.getParameterCount() == 1) {
                     method.invoke(event, source);
                     return;
@@ -134,11 +217,11 @@ public final class LegacyBrewingStore {
 
     private static void onServerStarted(Object event) {
         try {
-            Object server = event.getClass().getMethod("getServer").invoke(event);
+            Object server = LegacyPublicMethods.method(event.getClass(), "getServer").invoke(event);
             String before = snapshot();
             int written = writeRecipes(server);
             if (before.equals(snapshot())) return;
-            log("wrote " + written + " brewing recipes from " + namespace + "; they apply from the next start,"
+            info("wrote " + written + " brewing recipes from " + namespace + "; they apply from the next start,"
                     + " because this Minecraft version loads recipes before a mod can build the items they use");
         } catch (IOException | ReflectiveOperationException | LinkageError | RuntimeException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
@@ -153,11 +236,9 @@ public final class LegacyBrewingStore {
         ClassLoader loader = server.getClass().getClassLoader();
         Object ops = serializationOps(server, loader);
         List<Object> candidates = candidateStacks(loader);
-        List<Object> recipes;
-        synchronized (RECIPES) {
-            recipes = new ArrayList<>(RECIPES);
-        }
+        List<Object> recipes = recorded();
         int written = 0;
+        // An old recipe answered in code whether a stack is its input or reagent, so every candidate is asked.
         for (Object recipe : recipes) {
             List<Object> inputs = new ArrayList<>();
             List<Object> reagents = new ArrayList<>();
@@ -273,7 +354,7 @@ public final class LegacyBrewingStore {
     }
 
     private static Method findMethod(Class<?> type, String name, int arity) {
-        for (Method method : type.getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(type)) {
             if (method.getName().equals(name) && method.getParameterCount() == arity) return method;
         }
         for (Class<?> c = type; c != null; c = c.getSuperclass()) {
@@ -299,10 +380,10 @@ public final class LegacyBrewingStore {
         return out.toString();
     }
 
-    private static Path gameDirectory() {
+    private static Path gameDirectory(String fml) {
         try {
-            Object gameDir = Class.forName("net.neoforged.fml.loading.FMLPaths").getField("GAMEDIR").get(null);
-            if (gameDir.getClass().getMethod("get").invoke(gameDir) instanceof Path path) return path;
+            Object gameDir = Class.forName(fml + ".loading.FMLPaths").getField("GAMEDIR").get(null);
+            if (LegacyPublicMethods.method(gameDir.getClass(), "get").invoke(gameDir) instanceof Path path) return path;
         } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
             // The working directory is the game directory on every launcher.
         }
@@ -322,6 +403,10 @@ public final class LegacyBrewingStore {
     }
 
     private static void log(String message) {
-        System.out.println("[Retromod] Legacy brewing: " + message);
+        LegacyLog.warn("Legacy brewing: " + message);
+    }
+
+    private static void info(String message) {
+        LegacyLog.info("Legacy brewing: " + message);
     }
 }

@@ -4,6 +4,7 @@
  */
 package com.retromod.polyfill.minecraft;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 
 /**
@@ -13,7 +14,7 @@ import java.lang.reflect.Method;
  *   <li>{@code blitSprite(Function, Identifier, x, y, w, h)} took a render-type factory; 1.21.6
  *       replaced it with a {@code RenderPipeline}. Every 1.21.4 caller passed the textured GUI
  *       type, so the sprite is drawn with {@code RenderPipelines.GUI_TEXTURED}.</li>
- *   <li>{@code InputConstants.isKeyDown(long, int)} took the raw window handle; 26.1 takes the
+ *   <li>{@code InputConstants.isKeyDown(long, int)} took the raw window handle; 1.21.9 takes the
  *       {@code Window} and 26.3 takes only the key.</li>
  * </ul>
  *
@@ -38,7 +39,7 @@ public final class LegacyGuiCalls {
                 ClassLoader loader = LegacyGuiCalls.class.getClassLoader();
                 pipeline = Class.forName("net.minecraft.client.renderer.RenderPipelines", false, loader)
                         .getField("GUI_TEXTURED").get(null);
-                for (Method candidate : graphics.getClass().getMethods()) {
+                for (Method candidate : LegacyPublicMethods.methods(graphics.getClass())) {
                     Class<?>[] params = candidate.getParameterTypes();
                     if (candidate.getName().equals("blitSprite") && params.length == 6
                             && params[0].isInstance(pipeline) && params[1].isInstance(sprite)

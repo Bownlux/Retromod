@@ -33,19 +33,90 @@ public final class CliHarness {
         }
     }
 
-    /** Runs {@code aot <input> --output <output>} for {@code target}, without a stale cache. */
-    public static void aot(Path input, Path output, String target) throws Exception {
+    /**
+     * Runs {@code aot <input> --output <output>} plus {@code extraArgs} for {@code target}, without
+     * a stale cache.
+     */
+    public static void aot(Path input, Path output, String target, String... extraArgs)
+            throws Exception {
         Object[] saved = save();
         Path cached = Path.of("config", "retromod", "aot-cache",
                 input.getFileName().toString().replace(".jar", "-aot.jar"));
         Files.deleteIfExists(cached);
         try {
             prepare(target);
-            invoke("aotCommand", new String[]{"aot", input.toString(), "--output", output.toString()});
+            java.util.List<String> args = new java.util.ArrayList<>(java.util.List.of(
+                    "aot", input.toString(), "--output", output.toString()));
+            args.addAll(java.util.List.of(extraArgs));
+            invoke("aotCommand", args.toArray(String[]::new));
         } finally {
             Files.deleteIfExists(cached);
             restore(saved);
         }
+    }
+
+    /** Runs {@code batch <inputDir> --output <outputDir>} plus {@code flags} for {@code target}. */
+    public static void batch(Path inputDir, Path outputDir, String target, String... flags)
+            throws Exception {
+        Object[] saved = save();
+        // An --aot batch compiles into the shared cache, so a stale jar there must not be served.
+        java.util.List<Path> cached = new java.util.ArrayList<>();
+        try (var jars = Files.list(inputDir)) {
+            for (Path jar : jars.filter(path -> path.toString().endsWith(".jar")).toList()) {
+                cached.add(Path.of("config", "retromod", "aot-cache",
+                        jar.getFileName().toString().replace(".jar", "-aot.jar")));
+            }
+        }
+        for (Path jar : cached) Files.deleteIfExists(jar);
+        try {
+            prepare(target);
+            java.util.List<String> args = new java.util.ArrayList<>(java.util.List.of(
+                    "batch", inputDir.toString(), "--output", outputDir.toString()));
+            args.addAll(java.util.List.of(flags));
+            invoke("batchCommand", args.toArray(String[]::new));
+        } finally {
+            for (Path jar : cached) Files.deleteIfExists(jar);
+            restore(saved);
+        }
+    }
+
+    /**
+     * Runs {@code prepare <gameDir>} plus {@code flags} and returns what it printed. A null
+     * {@code target} runs it as if {@code --target} were left out. A {@code --target-loader} flag
+     * takes effect as {@code main} applies it.
+     */
+    public static String prepareGame(Path gameDir, String target, String... flags) throws Exception {
+        Object[] saved = save();
+        java.io.PrintStream out = System.out;
+        java.io.PrintStream err = System.err;
+        var printed = new java.io.ByteArrayOutputStream();
+        var console = new java.io.PrintStream(printed, true, java.nio.charset.StandardCharsets.UTF_8);
+        try {
+            prepare(target == null ? get("DEFAULT_TARGET_MC_VERSION") : target);
+            set("targetMcVersionExplicit", target != null);
+            java.util.List<String> args = new java.util.ArrayList<>(java.util.List.of("prepare",
+                    gameDir.toString()));
+            args.addAll(java.util.List.of(flags));
+            int loader = args.indexOf("--target-loader");
+            if (loader >= 0) {
+                ModVersionDetector.setDefaultPreferredLoader(args.get(loader + 1));
+                com.retromod.util.McReflect.setForceNeoForge("neoforge".equals(args.get(loader + 1)));
+                com.retromod.util.McReflect.setForceForge("forge".equals(args.get(loader + 1)));
+            }
+            System.setOut(console);
+            System.setErr(console);
+            invoke("prepareCommand", args.toArray(String[]::new));
+        } finally {
+            System.setOut(out);
+            System.setErr(err);
+            ModVersionDetector.setDefaultPreferredLoader(null);
+            com.retromod.util.McReflect.setForceNeoForge(false);
+            com.retromod.util.McReflect.setForceForge(false);
+            restore(saved);
+        }
+        String text = printed.toString(java.nio.charset.StandardCharsets.UTF_8);
+        out.print(text);
+        return text;
     }
 
     /** The CLI's static state, so later tests see the defaults main would set. */
@@ -82,6 +153,12 @@ public final class CliHarness {
         Method register = RetromodCli.class.getDeclaredMethod("registerAllShims");
         register.setAccessible(true);
         register.invoke(null);
+    }
+
+    private static String get(String name) throws ReflectiveOperationException {
+        Field field = RetromodCli.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return (String) field.get(null);
     }
 
     private static void set(String name, Object value) throws ReflectiveOperationException {

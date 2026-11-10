@@ -6,7 +6,9 @@ package com.retromod.shim.api.fabric;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.AuxiliaryVersionShim;
+import com.retromod.util.GeneratedLog;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.slf4j.Logger;
@@ -98,7 +100,8 @@ public class FabricRendererMaterialBridge implements AuxiliaryVersionShim {
         transformer.registerClassRedirect(OLD_SPRITE_FINDER,    NEW_SPRITE_FINDER);
         transformer.registerClassRedirect(OLD_FORWARDING_BAKED, NEW_FORWARDING_BAKED);
 
-        LOGGER.warn("Loaded support for the removed Fabric renderer material API. Mods can start, "
+        // Every Fabric launch registers this bridge, so getRenderer warns when a mod uses it instead.
+        LOGGER.debug("Loaded support for the removed Fabric renderer material API. Mods can start, "
                 + "but custom rendering through that API will be inactive.");
     }
 
@@ -310,8 +313,20 @@ public class FabricRendererMaterialBridge implements AuxiliaryVersionShim {
         clinit.visitMaxs(0, 0);
         clinit.visitEnd();
 
+        // getRenderer warns once: only this bridge redirects RendererAccess, so the call means a mod uses it.
+        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "warned", "Z", null, null).visitEnd();
         MethodVisitor gr = cw.visitMethod(Opcodes.ACC_PUBLIC, "getRenderer", "()" + L_RENDERER, null, null);
         gr.visitCode();
+        Label done = new Label();
+        gr.visitFieldInsn(Opcodes.GETSTATIC, IMPL_ACCESS, "warned", "Z");
+        gr.visitJumpInsn(Opcodes.IFNE, done);
+        gr.visitInsn(Opcodes.ICONST_1);
+        gr.visitFieldInsn(Opcodes.PUTSTATIC, IMPL_ACCESS, "warned", "Z");
+        GeneratedLog.pushLogger(gr);
+        gr.visitLdcInsn("[Retromod] An old mod asked for the Fabric renderer through RendererAccess. Retromod "
+                + "gives it an inactive stand-in, so that mod's custom rendering will not show.");
+        GeneratedLog.warn(gr);
+        gr.visitLabel(done);
         gr.visitFieldInsn(Opcodes.GETSTATIC, IMPL_ACCESS, "STUB_RENDERER", L_RENDERER);
         gr.visitInsn(Opcodes.ARETURN);
         gr.visitMaxs(0, 0);

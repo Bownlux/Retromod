@@ -2,9 +2,9 @@
 #
 # Format: OLD_INTERNAL_NAME<TAB>NEW_INTERNAL_NAME
 #
-# GeckoLib 5 moved the whole library from software.bernie.geckolib to com.geckolib and
-# reorganised it at the same time, so a mod built against 4.x dies on its first touch with
-# NoClassDefFoundError: software/bernie/geckolib/animatable/GeoItem (#223).
+# GeckoLib 5 reorganised the library and 5.5 moved it from software.bernie.geckolib to
+# com.geckolib, so on a host with 5.5 or newer a mod built against 4.x dies on its first touch
+# with NoClassDefFoundError: software/bernie/geckolib/animatable/GeoItem (#223).
 #
 # Derived from the geckolib-forge-1.20.1-4.8.4 and geckolib-neoforge-26.1.2-5.5.2 jars. A pair
 # is taken when the plain package swap lands on a class 5.5.2 ships, or when exactly one class
@@ -12,9 +12,10 @@
 # have no counterpart at all: those are internals such as the texture cache, and a mod that
 # reaches them needs a real port rather than a rename.
 #
-# GeckoLib 4.x tops out at Minecraft 1.21.4 and 5.x starts at 1.21.5, so the shim that reads
-# this table is gated on the host being 1.21.5 or newer. Applying it on an older host would
-# rewrite a mod onto packages that host's GeckoLib does not have.
+# GeckoLib 5.0 to 5.4.5 (Minecraft 1.21.5 to 1.21.11) still use software.bernie.geckolib; the
+# package moved in 5.5 (Minecraft 26.1). So the shim that reads this table registers it only where
+# the installed GeckoLib has com.geckolib and lacks the old package, and only for mods built before
+# 1.21.5, which are the ones compiled against GeckoLib 4.
 # 111 class moves.
 software/bernie/geckolib/GeckoLib	com/geckolib/GeckoLib
 software/bernie/geckolib/animatable/GeoBlockEntity	com/geckolib/animatable/GeoBlockEntity

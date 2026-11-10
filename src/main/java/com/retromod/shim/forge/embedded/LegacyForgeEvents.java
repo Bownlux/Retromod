@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -152,14 +153,14 @@ public final class LegacyForgeEvents {
         if (server == null) return null;
         try {
             Object commands = null;
-            for (Method m : server.getClass().getMethods()) {
+            for (Method m : LegacyPublicMethods.methods(server.getClass())) {
                 if (m.getParameterCount() == 0 && m.getReturnType().getName().equals("net.minecraft.commands.Commands")) {
                     commands = m.invoke(server);
                     break;
                 }
             }
             if (commands == null) return null;
-            for (Method m : commands.getClass().getMethods()) {
+            for (Method m : LegacyPublicMethods.methods(commands.getClass())) {
                 if (m.getParameterCount() == 0
                         && m.getReturnType().getName().equals("com.mojang.brigadier.CommandDispatcher")) {
                     return m.invoke(commands);
@@ -173,7 +174,7 @@ public final class LegacyForgeEvents {
 
     private static Object invokeNoArgs(Object target, String name) {
         try {
-            return target.getClass().getMethod(name).invoke(target);
+            return LegacyPublicMethods.method(target.getClass(), name).invoke(target);
         } catch (Throwable t) {
             return null;
         }
@@ -237,7 +238,7 @@ public final class LegacyForgeEvents {
             };
             try {
                 // Common setup runs on worker threads; 1.12 init code expects the main thread.
-                event.getClass().getMethod("enqueueWork", Runnable.class).invoke(event, work);
+                LegacyPublicMethods.method(event.getClass(), "enqueueWork", Runnable.class).invoke(event, work);
             } catch (Throwable t) {
                 work.run();
             }
@@ -533,7 +534,7 @@ public final class LegacyForgeEvents {
         runPendingPreInit();
         Object key;
         try {
-            key = registerEvent.getClass().getMethod("getRegistryKey").invoke(registerEvent);
+            key = LegacyPublicMethods.method(registerEvent.getClass(), "getRegistryKey").invoke(registerEvent);
         } catch (Throwable t) {
             return;
         }
@@ -719,7 +720,7 @@ public final class LegacyForgeEvents {
         }
         try {
             Method register = null;
-            for (Method m : registerEvent.getClass().getMethods()) {
+            for (Method m : LegacyPublicMethods.methods(registerEvent.getClass())) {
                 if (m.getName().equals("register") && m.getParameterCount() == 3
                         && m.getParameterTypes()[2] == Supplier.class) {
                     register = m;
@@ -874,7 +875,7 @@ public final class LegacyForgeEvents {
 
     /** The one-argument public method of this name whose parameter accepts the argument, or null. */
     private static Object invokeByName(Object target, String name, Object argument) throws ReflectiveOperationException {
-        for (Method method : target.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(target.getClass())) {
             if (method.getName().equals(name) && method.getParameterCount() == 1
                     && !method.getParameterTypes()[0].isPrimitive()
                     && method.getParameterTypes()[0].isInstance(argument)) {
@@ -895,7 +896,7 @@ public final class LegacyForgeEvents {
     private static Object callOwn(Object target, String name, Class<?>[] params, Object... args) {
         if (target == null) return NOT_DECLARED;
         try {
-            Method m = target.getClass().getMethod(name, params);
+            Method m = LegacyPublicMethods.method(target.getClass(), name, params);
             try {
                 return m.invoke(target, args);
             } catch (IllegalAccessException e) {
@@ -1005,7 +1006,7 @@ public final class LegacyForgeEvents {
      */
     static Object withProvisionalBlockId(Object properties) {
         Method setId = null;
-        for (Method m : properties.getClass().getMethods()) {
+        for (Method m : LegacyPublicMethods.methods(properties.getClass())) {
             if (m.getName().equals("setId") && m.getParameterCount() == 1
                     && m.getParameterTypes()[0].getName().equals("net.minecraft.resources.ResourceKey")) {
                 setId = m;
@@ -1092,7 +1093,7 @@ public final class LegacyForgeEvents {
         }
         Method add = builderAdd;
         if (add == null) {
-            for (Method m : builder.getClass().getMethods()) {
+            for (Method m : LegacyPublicMethods.methods(builder.getClass())) {
                 if (m.getParameterCount() == 1 && m.getParameterTypes()[0].isArray()
                         && m.getReturnType() == builder.getClass()) {
                     add = m;
@@ -1122,7 +1123,7 @@ public final class LegacyForgeEvents {
      */
     public static Object effectAttribute(Object effect, Object attribute, String uuid, double amount,
                                          int operation) {
-        for (Method m : effect.getClass().getMethods()) {
+        for (Method m : LegacyPublicMethods.methods(effect.getClass())) {
             Class<?>[] p = m.getParameterTypes();
             if (p.length != 4 || p[2] != double.class || !p[3].isEnum()
                     || Modifier.isStatic(m.getModifiers()) || !p[0].isInstance(attribute)) continue;
@@ -1152,7 +1153,7 @@ public final class LegacyForgeEvents {
     public static Object baseState(Object definition) {
         Method read = baseStateRead;
         if (read == null) {
-            for (Method candidate : definition.getClass().getMethods()) {
+            for (Method candidate : LegacyPublicMethods.methods(definition.getClass())) {
                 if (candidate.getParameterCount() == 0 && !Modifier.isStatic(candidate.getModifiers())
                         && candidate.getReturnType().getName()
                                 .equals("net.minecraft.world.level.block.state.StateHolder")) {

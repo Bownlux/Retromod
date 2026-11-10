@@ -4,12 +4,16 @@
  */
 package com.retromod.core;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Keeps repeated non-fatal mod errors from flooding the log and freezing the game. */
 public final class RetromodErrorHandler {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger("Retromod");
     private static final int MAX_SEEN_ERRORS = 500;
     private static final Set<String> seenErrors = ConcurrentHashMap.newKeySet();
 
@@ -24,11 +28,11 @@ public final class RetromodErrorHandler {
             return;
         }
 
+        // Through the logger, so the line and its stack trace reach latest.log at ERROR.
         if (seenErrors.add(key)) {
-            System.err.println("[Retromod] A mod entry point failed in " + className
-                    + ". Minecraft can continue, but the rest of that entry point did not run, so features"
-                    + " it sets up, such as key handlers, may be missing: " + t);
-            t.printStackTrace();
+            LOGGER.error("A mod entry point failed in {}. Minecraft can continue, but the rest of"
+                    + " that entry point did not run, so features it sets up, such as key handlers,"
+                    + " may be missing: {}", className, t.toString(), t);
         }
     }
 

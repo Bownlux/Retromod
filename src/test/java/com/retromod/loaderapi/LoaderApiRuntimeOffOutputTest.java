@@ -46,7 +46,9 @@ class LoaderApiRuntimeOffOutputTest {
         RetromodTransformer.getInstance().clearRedirectsForTesting();
     }
 
-    // The golden digests come from the 1.4.0-snapshot.2 CLI jar run on LoaderApiFixtures.
+    // The golden digests come from the 1.4.0-snapshot.2 CLI jar run on LoaderApiFixtures. Its AOT
+    // rows for fixture/Calls.class and the nested jar now hold the transform rows' digests, since
+    // AOT registers redirects in the game's order as transform does.
     @ParameterizedTest(name = "{0} {1}")
     @CsvSource({"transform, fabric", "transform, quilt", "aot, fabric", "aot, quilt"})
     @DisplayName("Output matches the pre-runtime CLI entry for entry")
@@ -69,8 +71,8 @@ class LoaderApiRuntimeOffOutputTest {
         Map<String, String> actual = LoaderApiGolden.digests(Files.readAllBytes(output));
         Map<String, String> expected = golden().get(command + "-" + loader);
         assertNotNull(expected, "no golden digests for " + command + "-" + loader);
-        // AOT copies in every helper the shims register, and each snapshot adds and edits helpers,
-        // so its comparison covers the mod's own entries only.
+        // The 1.4.0-snapshot.2 AOT jar copied in every helper the shims registered, and each snapshot
+        // adds and edits helpers, so its comparison covers the mod's own entries only.
         if ("aot".equals(command)) {
             actual.keySet().removeIf(LoaderApiRuntimeOffOutputTest::isEmbeddedHelper);
             expected = new java.util.TreeMap<>(expected);
@@ -88,9 +90,10 @@ class LoaderApiRuntimeOffOutputTest {
                 "an off-path jar must not carry the runtime identity");
     }
 
-    /** A copy of a Retromod helper class, in AOT's shared folder or relocated into the mod. */
+    /** A copy of a Retromod stand-in, in AOT's old shared folder or relocated into the mod. */
     private static boolean isEmbeddedHelper(String entry) {
-        return entry.startsWith("retromod_embedded/") || entry.matches("com/retromod/embedded/[^/]+/com/retromod/.*");
+        // Stand-ins for removed Fabric API classes keep their Fabric names inside the mod's package.
+        return entry.startsWith("retromod_embedded/") || entry.matches("com/retromod/embedded/[^/]+/.*");
     }
 
     private static Map<String, Map<String, String>> golden() throws Exception {

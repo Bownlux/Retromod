@@ -8,6 +8,7 @@ import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import com.retromod.util.McReflect;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
@@ -86,7 +87,10 @@ public final class LegacyItemAttributeOverrideAdapter {
     public static void register(RetromodTransformer transformer) {
         if (!hostNeedsRepair()) return;
         transformer.registerSyntheticClass(HELPER, generateHelper());
-        LOGGER.info("Bridged pre-1.20.5 item attribute modifier overrides onto NeoForge's stack hook");
+        // NeoForge's chain and the Forge chain both register this, so the notice prints once.
+        if (transformer.firstRegistrationNotice(LegacyItemAttributeOverrideAdapter.class.getName())) {
+            LOGGER.debug(RetromodLog.DETAIL, "Bridged pre-1.20.5 item attribute modifier overrides onto NeoForge's stack hook");
+        }
     }
 
     /** Whether {@link #register} added the helper, which is what turns the class repair on. */

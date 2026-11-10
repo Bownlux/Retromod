@@ -4,6 +4,7 @@
  */
 package com.retromod.loaderapi.fabric.v26.synth;
 
+import com.retromod.util.GeneratedLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -67,7 +68,7 @@ public record EventHolderSpec(String name, List<EventField> fields) {
     }
 
     // Emits: try { FIELD = (Event) Class.forName(owner).getField(src).get(null); }
-    //        catch (Throwable t) { System.err.println(...); }
+    //        catch (Throwable t) { warn(...) through the game log; }
     private void copyEventField(MethodVisitor mv, EventField field) {
         Label start = new Label();
         Label end = new Label();
@@ -93,7 +94,7 @@ public record EventHolderSpec(String name, List<EventField> fields) {
         // Frames are written by hand so generating never loads Fabric API for type merging.
         mv.visitLabel(handler);
         mv.visitFrame(Opcodes.F_SAME1, 0, null, 1, new Object[]{"java/lang/Throwable"});
-        mv.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;");
+        GeneratedLog.pushLogger(mv);
         mv.visitInsn(Opcodes.SWAP);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Throwable", "toString",
                 "()Ljava/lang/String;", false);
@@ -103,8 +104,7 @@ public record EventHolderSpec(String name, List<EventField> fields) {
         mv.visitInsn(Opcodes.SWAP);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "concat",
                 "(Ljava/lang/String;)Ljava/lang/String;", false);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println",
-                "(Ljava/lang/String;)V", false);
+        GeneratedLog.warn(mv);
         mv.visitLabel(after);
         mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
     }

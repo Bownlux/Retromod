@@ -5,10 +5,12 @@
 package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.SyntheticLibraries;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
@@ -18,10 +20,15 @@ import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.objectweb.asm.Opcodes.*;
@@ -49,6 +56,7 @@ class InheritedRedirectOwnMethodTest {
     private static final String BUILDER = "net/minecraft/world/entity/ai/attributes/AttributeSupplier$Builder";
     private static final String COMMAND = "test/mod/SpawnCommand";
     private static final String SWINGER = "test/mod/SwingingMob";
+    private static final String LIBRARY_BASE = "test/library/LibraryMob";
 
     private RetromodTransformer transformer;
     private final Map<String, byte[]> jar = new HashMap<>();
@@ -62,6 +70,7 @@ class InheritedRedirectOwnMethodTest {
     @AfterEach
     void tearDown() {
         transformer.clearRedirectsForTesting();
+        transformer.clearLinkedLibraries();
     }
 
     @Test
@@ -269,12 +278,52 @@ class InheritedRedirectOwnMethodTest {
         assertEquals(List.of(), LegacySwingBridge.removedForms(living, swingAnimation()));
     }
 
+    @Test
+    @DisplayName("a super call through a linked library's base class takes the bridge, as it does when the class loader shows it")
+    void superCallThroughALinkedLibraryBase(@TempDir Path dir) throws IOException {
+        String oldDesc = finalizeSpawnDesc(SPAWN_REASON);
+        registerFinalizeSpawnBridge();
+        // The library's translated base declares no finalizeSpawn, so the addon's super call reached Mob's.
+        transformer.setLinkedLibraries(library(dir, mobCalling(LIBRARY_BASE, MOB, "other", "()V")));
+        jar.put(SPAWN_MOB, overridingWithSuperCall(SPAWN_MOB, LIBRARY_BASE, "finalizeSpawn", oldDesc));
+
+        assertTrue(calls(transform(SPAWN_MOB), "finalizeSpawn").contains(Legacy1205MemberBridge.HELPER
+                + ".super$finalizeSpawn(L" + MOB + ";" + oldDesc.substring(1)), "Mob's old method is gone on the host");
+    }
+
+    @Test
+    @DisplayName("a linked library's base class that declares the old method keeps the calls that reach it")
+    void linkedLibraryDeclarationKeepsTheCalls(@TempDir Path dir) throws IOException {
+        String oldDesc = finalizeSpawnDesc(SPAWN_REASON);
+        registerFinalizeSpawnBridge();
+        transformer.setLinkedLibraries(library(dir, mobOverridingFinalizeSpawn(LIBRARY_BASE, MOB, "finalizeSpawn", oldDesc)));
+        jar.put(SPAWN_MOB, overridingWithSuperCall(SPAWN_MOB, LIBRARY_BASE, "finalizeSpawn", oldDesc));
+        jar.put(BABY_MOB, mobCalling(BABY_MOB, LIBRARY_BASE, "finalizeSpawn", oldDesc));
+
+        assertTrue(calls(transform(SPAWN_MOB), "finalizeSpawn").contains(LIBRARY_BASE + ".finalizeSpawn" + oldDesc),
+                "the super call runs the library's own method");
+        assertTrue(calls(transform(BABY_MOB), "breed").contains(BABY_MOB + ".finalizeSpawn" + oldDesc),
+                "a call on the addon's mob links to the library's override, which the bridge would skip");
+    }
+
     // --- registrations and classes under test ---------------------------------------------------
 
     private void registerFinalizeSpawnBridge() {
         Legacy1205MemberBridge.registerRedirects(transformer,
                 List.of(Legacy1205MemberBridge.finalizeSpawn(SPAWN_REASON)), List.of(), false,
                 Legacy1205MemberBridge.HostShape.AT_26_3);
+    }
+
+    private static SyntheticLibraries library(Path dir, byte[] base) throws IOException {
+        Path jar = dir.resolve("library-translated.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            out.putNextEntry(new JarEntry(LIBRARY_BASE + ".class"));
+            out.write(base);
+            out.closeEntry();
+        }
+        SyntheticLibraries libraries = SyntheticLibraries.create();
+        libraries.add(jar);
+        return libraries;
     }
 
     private byte[] transform(String name) {

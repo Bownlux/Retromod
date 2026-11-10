@@ -71,6 +71,17 @@ class TickEventSplitTest {
         p.visitInsn(Opcodes.RETURN);
         p.visitMaxs(0, 0);
         p.visitEnd();
+
+        // #392: Meulti's Backrooms reads event.side on a player tick to skip the client.
+        MethodVisitor side = cw.visitMethod(Opcodes.ACC_PUBLIC, "onPlayerSide",
+                "(L" + PLAYER_TICK + ";)V", null, null);
+        side.visitCode();
+        side.visitVarInsn(Opcodes.ALOAD, 1);
+        side.visitFieldInsn(Opcodes.GETFIELD, PLAYER_TICK, "side", "Lnet/minecraftforge/fml/LogicalSide;");
+        side.visitInsn(Opcodes.POP);
+        side.visitInsn(Opcodes.RETURN);
+        side.visitMaxs(0, 0);
+        side.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
     }
@@ -125,6 +136,20 @@ class TickEventSplitTest {
         assertTrue(readsEnd, "Phase.END should resolve to the synthetic's END constant");
         assertFalse(tick.desc.contains("minecraftforge"),
                 "no Forge name may survive in the listener signature");
+    }
+
+    @Test
+    @DisplayName("#392: a tick event's removed side field reads the logical side the tick runs on")
+    void sideFieldReadsTheRunningSide() {
+        savedForce = McReflect.isForceNeoForge();
+        McReflect.setForceNeoForge(true);
+
+        MethodNode onSide = method(transform(), "onPlayerSide");
+        assertTrue(calls(onSide, TickEventPhaseSynthetic.SIDE_INTERNAL, TickEventPhaseSynthetic.SIDE_OF_NAME),
+                "the side read must go to the helper, since NeoForge's tick events have no side field");
+        for (var insn : onSide.instructions.toArray()) {
+            assertFalse(insn instanceof FieldInsnNode f && f.name.equals("side"), "no side field read may remain");
+        }
     }
 
     @Test

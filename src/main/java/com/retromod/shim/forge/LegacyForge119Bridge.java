@@ -229,7 +229,9 @@ public final class LegacyForge119Bridge {
     }
 
     private static void registerBiomeLoadingStandIn(RetromodTransformer transformer) {
-        transformer.registerSyntheticClass(BIOME_LOADING_STAND_IN, generateBiomeLoadingStandIn());
+        // On a Forge 26.2 host the stand-in extends Retromod's rebuilt event base, as a mod's own event would.
+        transformer.registerSyntheticClass(BIOME_LOADING_STAND_IN,
+                LegacyEventBaseBridge.adaptGenerated(generateBiomeLoadingStandIn()));
         transformer.registerClassRedirect(BIOME_LOADING_EVENT, BIOME_LOADING_STAND_IN);
         LegacyBiomeLoadingBridge.register(transformer);
     }

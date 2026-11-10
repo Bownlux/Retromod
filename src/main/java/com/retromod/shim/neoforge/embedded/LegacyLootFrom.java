@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.neoforge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.InvocationTargetException;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -21,16 +22,16 @@ public final class LegacyLootFrom {
             Optional<?> table;
             try {
                 // A deferred holder knows its id before the block is built; lootFrom read the block lazily.
-                Object id = block.getClass().getMethod("getId").invoke(block);
-                Object path = id.getClass().getMethod("withPrefix", String.class).invoke(id, "blocks/");
+                Object id = LegacyPublicMethods.method(block.getClass(), "getId").invoke(block);
+                Object path = LegacyPublicMethods.method(id.getClass(), "withPrefix", String.class).invoke(id, "blocks/");
                 Object lootTables = Class.forName("net.minecraft.core.registries.Registries", true, loader)
                         .getField("LOOT_TABLE").get(null);
                 table = Optional.of(keyClass.getMethod("create", keyClass, id.getClass()).invoke(null, lootTables, path));
             } catch (NoSuchMethodException plainSupplier) {
                 Object built = block.get();
-                table = (Optional<?>) built.getClass().getMethod("getLootTable").invoke(built);
+                table = (Optional<?>) LegacyPublicMethods.method(built.getClass(), "getLootTable").invoke(built);
             }
-            return properties.getClass().getMethod("overrideLootTable", Optional.class).invoke(properties, table);
+            return LegacyPublicMethods.method(properties.getClass(), "overrideLootTable", Optional.class).invoke(properties, table);
         } catch (InvocationTargetException e) {
             Throwable cause = e.getCause();
             if (cause instanceof RuntimeException runtime) throw runtime;

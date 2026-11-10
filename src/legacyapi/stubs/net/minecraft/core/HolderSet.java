@@ -11,4 +11,7 @@ public interface HolderSet<T> {
 
     abstract class Direct<T> implements HolderSet<T> {
     }
+
+    abstract class Named<T> implements HolderSet<T> {
+    }
 }

@@ -5,6 +5,7 @@
 package com.retromod.gui;
 
 import com.retromod.core.RetromodConfig;
+import com.retromod.util.McI18n;
 import com.retromod.util.McReflect;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,6 +24,10 @@ public final class RestartPrompt {
     // Forge and NeoForge in-place mode translates into Retromod's cache and leaves mods/ untouched.
     private static volatile boolean translatedIntoCache = false;
     private static volatile boolean shownThisSession = false;
+
+    // On intermediary hosts (Fabric before 26.1) close() keeps its plain name, because
+    // AutoCloseable declares it. It tears the game down mid-frame, so stop()'s id comes first.
+    static final String[] STOP_NAMES = {"scheduleStop", "stop", "method_1592", "close"};
 
     private RestartPrompt() {}
 
@@ -51,67 +56,77 @@ public final class RestartPrompt {
     /**
      * Show the restart prompt once, if appropriate. Called from the title-screen
      * injector with the live title-screen object (used as the parent to return to
-     * if the user declines).
+     * if the user declines). Returns true only when the prompt opened.
      */
-    public static void maybeShow(Object titleScreen) {
-        if (!shouldShow()) return;
-        shownThisSession = true; // once per session, even if the show below no-ops
+    public static boolean maybeShow(Object titleScreen) {
+        if (!shouldShow()) return false;
+        // Once per session, even when it fails: a resize re-inits the title screen every time.
+        shownThisSession = true;
+        int n = pendingCount;
+        boolean shown;
         try {
-            int n = pendingCount;
-            String msg = message(n, translatedIntoCache);
-            InGameScreenFactory.showRestartConfirm(titleScreen, "Retromod", msg, RestartPrompt::stopClient);
-            LOGGER.info("Showed in-game restart prompt for {} converted mod(s)", n);
+            // The text comes from the player's language, with the count in its %s slot.
+            Object msg = McI18n.translatable(messageKey(translatedIntoCache), n);
+            shown = InGameScreenFactory.showRestartConfirm(titleScreen, "Retromod", msg,
+                    RestartPrompt::stopClient);
         } catch (Throwable t) {
             LOGGER.warn("Could not show restart prompt: {}", t.getMessage());
+            shown = false;
         }
+        if (shown) {
+            LOGGER.info("Showed in-game restart prompt for {} converted mod(s)", n);
+        } else {
+            LOGGER.warn("Retromod could not open its restart prompt. Restart Minecraft to load "
+                    + "the {} mod(s) it prepared.", n);
+        }
+        return shown;
     }
 
-    /** The prompt text for {@code n} mods. */
-    static String message(int n, boolean intoCache) {
-        String mods = n + " mod" + (n == 1 ? "" : "s");
-        String them = n == 1 ? "it" : "them";
+    /** The lang key of the prompt text; the cache text says mods/ was not changed. */
+    static String messageKey(boolean intoCache) {
+        return intoCache ? "retromod.restart.cache" : "retromod.restart.converted";
+    }
+
+    /** The console line for {@code count} mods that load after a restart, or null for none. */
+    public static String consoleText(boolean dedicatedServer, int count, boolean intoCache) {
+        if (count <= 0) return null;
+        String mods = count + (count == 1 ? " mod" : " mods");
+        // A client player restarts Minecraft; only a server admin restarts a server.
+        String restart = (dedicatedServer ? "Restart the server" : "Restart Minecraft")
+                + " to load " + (count == 1 ? "it" : "them") + ".";
         if (intoCache) {
-            return "Retromod translated " + mods + " for this Minecraft version.\n"
-                    + "The game needs to restart to load " + them + ".\n"
-                    + "Your files in mods/ were not changed.\n\n"
-                    + "Click Yes to close Minecraft, then relaunch from your launcher.";
+            return "Translated " + mods + " into retromod-cache/. " + restart
+                    + " The files in mods/ were not changed.";
         }
-        return "Retromod converted " + mods + " to work with this Minecraft version.\n"
-                + "The game needs to restart to load " + them + ".\n\n"
-                + "Click Yes to close Minecraft, then relaunch from your launcher.";
-    }
-
-    /** Text for the desktop popup Forge and NeoForge show after translating into the cache. */
-    public static String cacheRestartPopupText(int n) {
-        // A Retromod update clears the cache, so this restart is not a one-time event.
-        return "Retromod translated " + n + " mod" + (n == 1 ? "" : "s")
-                + " for this Minecraft version.\n\n"
-                + "Restart Minecraft to load " + (n == 1 ? "it" : "them")
-                + ". Your files in mods/ were not changed.\n"
-                + "Retromod asks again after it translates a new mod or after a Retromod update.";
+        return "Updated " + mods + ". " + restart;
     }
 
     /** Cleanly stop the Minecraft client so the user can relaunch. */
-    private static void stopClient() {
+    static void stopClient() {
         // The player relaunches from their launcher. An in-process relaunch cannot be done
         // reliably across launchers (Prism, MultiMC and vanilla each wrap the launch), and a
         // half-working relaunch is worse than a clean stop.
         try {
             Class<?> mcClass = McReflect.findClass(
                     "net.minecraft.client.MinecraftClient",  // yarn
-                    "net.minecraft.client.Minecraft");       // mojang
+                    "net.minecraft.client.Minecraft",        // mojang
+                    "net.minecraft.class_310");              // intermediary, pre-26.1 Fabric
             if (mcClass == null) return;
-            Method getInstance = McReflect.findMethod(mcClass, "getInstance");
+            Method getInstance = McReflect.findMethod(mcClass, "getInstance", "method_1551");
             Object client = getInstance != null ? getInstance.invoke(null) : null;
-            if (client == null) return;
-            // Prefer scheduleStop() (clean shutdown on the main thread); fall back to stop().
-            Method stop = McReflect.findMethod(mcClass, "scheduleStop", "stop", "close");
-            if (stop != null) {
-                LOGGER.info("Stopping client to apply converted mods (user will relaunch)");
-                stop.invoke(client);
-            }
+            if (client != null) stop(client);
         } catch (Throwable t) {
             LOGGER.warn("Could not stop client for restart: {}", t.getMessage());
+        }
+    }
+
+    /** Stops {@code client} through Yarn's scheduleStop() or Mojang's stop(). */
+    static void stop(Object client) throws ReflectiveOperationException {
+        // Both ask the main loop to finish, a clean shutdown. close() is the last resort.
+        Method stop = McReflect.findMethod(client.getClass(), STOP_NAMES);
+        if (stop != null) {
+            LOGGER.info("Stopping client to apply converted mods (user will relaunch)");
+            stop.invoke(client);
         }
     }
 

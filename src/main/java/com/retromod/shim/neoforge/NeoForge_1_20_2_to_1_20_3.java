@@ -20,6 +20,10 @@ public class NeoForge_1_20_2_to_1_20_3 implements VersionShim {
         com.retromod.shim.common.LegacyBlockConstructorBridge.register(transformer);
         // The same release put doors, trapdoors, fence gates and pressure plates' type ahead of their properties.
         com.retromod.shim.common.LegacyBlockSetTypeBridge.register(transformer);
+        // 1.20.3 replaced AbstractTreeGrower with the TreeGrower value class.
+        com.retromod.shim.common.LegacyTreeGrowerBridge.register(transformer);
+        // 1.20.3 made Entity.getTeam() return the PlayerTeam it always held.
+        com.retromod.shim.common.LegacyEntityTeamBridge.register(transformer);
     }
 
     @Override

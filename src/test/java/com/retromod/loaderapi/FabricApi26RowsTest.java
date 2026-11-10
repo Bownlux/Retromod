@@ -27,6 +27,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -82,6 +83,31 @@ class FabricApi26RowsTest {
         }));
         assertTrue(calls.contains(TRANSFER + ".copyNbtForTest"),
                 "an invokeinterface FluidVariant.getNbt must reach the row's target: " + calls);
+    }
+
+    @Test
+    @DisplayName("FabricLoader.isModLoaded goes to the version spoofer on 26.x hosts only")
+    void isModLoadedGoesToTheSpooferOn26x() {
+        RetromodTransformer.MethodKey isModLoaded = new RetromodTransformer.MethodKey(
+                "net/fabricmc/loader/api/FabricLoader", "isModLoaded", "(Ljava/lang/String;)Z");
+        for (String host : List.of("26.1", "26.3", "26.4", "1.21.11")) {
+            transformer.clearRedirectsForTesting();
+            LoaderApiRegistration registration = new LoaderApiRegistration(transformer,
+                    new FabricApi26Provider());
+            try (var scope = transformer.ownedRegistrations()) {
+                FabricApi26Rows.register(FabricApi26Rows.bundled(), registration, host);
+            }
+            RetromodTransformer.MethodTarget target = transformer.getMethodRedirects().get(isModLoaded);
+
+            // Fabric API before 26.1 still provides the fabric id, so older hosts keep the plain call.
+            if (host.equals("1.21.11")) {
+                assertNull(target, "no row may apply to " + host);
+                continue;
+            }
+            assertEquals(new RetromodTransformer.MethodTarget("com/retromod/compat/VersionSpoofer",
+                    "isModLoaded", "(Ljava/lang/Object;Ljava/lang/String;)Z", true), target,
+                    "on " + host + " the call must pass its receiver to VersionSpoofer.isModLoaded");
+        }
     }
 
     @Test

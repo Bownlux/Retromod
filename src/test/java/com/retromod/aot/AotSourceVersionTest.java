@@ -72,6 +72,69 @@ class AotSourceVersionTest {
                 "the mod was built for the newer behavior, so its call stays as written");
     }
 
+    @Test
+    @DisplayName("a mod built for a pre-release with no graph path gets the 26.3 moves on a 26.3 target")
+    void preReleaseSourceGets263Moves(@TempDir Path directory) throws Exception {
+        String pipeline = "com/mojang/blaze3d/pipeline/RenderPipeline";
+        Path input = directory.resolve("pipeline-mod.jar");
+        writeForgeMod(input, "[1.21.5-rc.1,)", call(pipeline, "probe", "()V"));
+
+        assertEquals("com/mojang/renderpearl/api/pipeline/RenderPipeline", firstCallOwner(
+                AotCompiler.forOfflineInputs(new ShimRegistry(), "26.3",
+                        directory.toRealPath().resolve("cache-26.3")).compileModAot(input, true)));
+        transformer.clearRedirectsForTesting();
+        assertEquals(pipeline, firstCallOwner(AotCompiler.forOfflineInputs(new ShimRegistry(), "26.2",
+                directory.toRealPath().resolve("cache-26.2")).compileModAot(input, true)),
+                "a 26.2 target still has the blaze3d package");
+    }
+
+    @Test
+    @DisplayName("a native 26.3 mod keeps its keybind constructor, which already passes SDL key numbers")
+    void native263ModKeepsItsKeybinds(@TempDir Path directory) throws Exception {
+        // An API repair is what sends a same-version mod through the compile at all.
+        ShimRegistry registry = new ShimRegistry();
+        registry.register(new StubApiShim());
+        Path input = directory.resolve("keybind-mod.jar");
+        writeForgeMod(input, "[26.3]", keyMappingProbe());
+
+        Path output = AotCompiler.forOfflineInputs(registry, "26.3",
+                directory.toRealPath().resolve("cache")).compileModAot(input, true);
+
+        assertEquals("net/minecraft/client/KeyMapping", firstCallOwner(output),
+                "KEY_R is 21 under SDL, which the GLFW translation would leave unbound");
+    }
+
+    /** A common API repair that registers nothing. */
+    private static final class StubApiShim implements com.retromod.core.MinecraftVersionedApiShim {
+        @Override public String getShimName() { return "Stub API repair"; }
+        @Override public String getSourceVersion() { return "1.21.4"; }
+        @Override public String getTargetVersion() { return "1.21.5"; }
+        @Override public String getModLoaderType() { return "any"; }
+        @Override public void registerRedirects(RetromodTransformer transformer) {}
+    }
+
+    /** {@code test/Fixture.probe(category)}, building a 26.2-shaped keybind. */
+    private static byte[] keyMappingProbe() {
+        String keyMapping = "net/minecraft/client/KeyMapping";
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/Fixture", null, "java/lang/Object", null);
+        MethodVisitor method = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "probe",
+                "(Lnet/minecraft/client/KeyMapping$Category;)Ljava/lang/Object;", null, null);
+        method.visitCode();
+        method.visitTypeInsn(Opcodes.NEW, keyMapping);
+        method.visitInsn(Opcodes.DUP);
+        method.visitLdcInsn("key.test");
+        method.visitIntInsn(Opcodes.BIPUSH, 21);
+        method.visitVarInsn(Opcodes.ALOAD, 0);
+        method.visitMethodInsn(Opcodes.INVOKESPECIAL, keyMapping, "<init>",
+                "(Ljava/lang/String;ILnet/minecraft/client/KeyMapping$Category;)V", false);
+        method.visitInsn(Opcodes.ARETURN);
+        method.visitMaxs(0, 0);
+        method.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
     /** Redirects {@code test/Api.old()} for mods built before 1.21.2 only. */
     private static final class OlderModsOnlyShim implements VersionShim {
         @Override
@@ -146,6 +209,19 @@ class AotSourceVersionTest {
         method.visitEnd();
         writer.visitEnd();
         return writer.toByteArray();
+    }
+
+    private static String firstCallOwner(Path jarPath) throws Exception {
+        try (ZipFile jar = new ZipFile(jarPath.toFile());
+             InputStream input = jar.getInputStream(jar.getEntry("test/Fixture.class"))) {
+            ClassNode node = new ClassNode();
+            new ClassReader(input.readAllBytes()).accept(node, 0);
+            return node.methods.stream()
+                    .flatMap(method -> Arrays.stream(method.instructions.toArray()))
+                    .filter(MethodInsnNode.class::isInstance)
+                    .map(MethodInsnNode.class::cast)
+                    .findFirst().orElseThrow().owner;
+        }
     }
 
     private static String firstCallName(Path jarPath) throws Exception {

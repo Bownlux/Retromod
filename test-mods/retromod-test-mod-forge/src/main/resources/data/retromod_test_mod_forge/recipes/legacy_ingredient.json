@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [
+    {"type": "retromod_test_mod_forge:legacy_ingredient", "item": "minecraft:stick"}
+  ],
+  "result": {"item": "minecraft:dead_bush"}
+}

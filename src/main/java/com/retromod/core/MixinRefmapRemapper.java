@@ -12,6 +12,8 @@ import com.retromod.mapping.IntermediaryToMojangMapper;
 import com.retromod.mixin.MixinCompatibilityTransformer;
 import com.retromod.mixin.MixinRefmapRepairIndex;
 import com.retromod.util.JsonSecurity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.function.UnaryOperator;
 
@@ -28,6 +30,8 @@ import java.util.function.UnaryOperator;
  * refmaps unremapped while the runtime path handled them.
  */
 public final class MixinRefmapRemapper {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Refmap");
 
     private MixinRefmapRemapper() {}
 
@@ -89,6 +93,7 @@ public final class MixinRefmapRemapper {
             Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
             return gson.toJson(root);
         } catch (Throwable t) {
+            warnUnchanged(t);
             return json;
         }
     }
@@ -140,6 +145,7 @@ public final class MixinRefmapRemapper {
                     : json;
             return new RemapResult(output, repairs.build());
         } catch (Throwable t) {
+            warnUnchanged(t);
             return new RemapResult(json, MixinRefmapRepairIndex.empty());
         }
     }
@@ -172,6 +178,7 @@ public final class MixinRefmapRemapper {
             Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
             return gson.toJson(root);
         } catch (Throwable t) {
+            warnUnchanged(t);
             return json;
         }
     }
@@ -202,8 +209,17 @@ public final class MixinRefmapRemapper {
                     : json;
             return new RemapResult(output, repairs.build());
         } catch (Throwable t) {
+            warnUnchanged(t);
             return new RemapResult(json, MixinRefmapRepairIndex.empty());
         }
+    }
+
+    /** Logs a refmap left unchanged, since its mixins then keep their old targets. */
+    private static void warnUnchanged(Throwable failure) {
+        LOGGER.warn("Could not remap a Mixin refmap, so its mixins keep their old targets and may not"
+                + " apply. If that mod fails to load, include this line in a Retromod bug report: {}",
+                failure.toString());
+        LOGGER.debug("Mixin refmap remap failure", failure);
     }
 
     private static JsonObject remapForgeSection(JsonObject section,

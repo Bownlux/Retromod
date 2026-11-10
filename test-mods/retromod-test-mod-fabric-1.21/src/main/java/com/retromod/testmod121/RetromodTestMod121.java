@@ -15,6 +15,6 @@ public class RetromodTestMod121 implements ModInitializer {
     @Override
     public void onInitialize() {
         TestRunner.runInit();
-        ServerLifecycleEvents.SERVER_STARTED.register(server -> TestRunner.runServerStarted());
+        ServerLifecycleEvents.SERVER_STARTED.register(TestRunner::runServerStarted);
     }
 }

@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -145,7 +146,7 @@ public final class LegacyCreativeTabContents {
 
     private static void onRegister(Object event) {
         try {
-            Object registryKey = event.getClass().getMethod("getRegistryKey").invoke(event);
+            Object registryKey = LegacyPublicMethods.method(event.getClass(), "getRegistryKey").invoke(event);
             // ResourceKey.location() has an SRG name here; its toString does not, and it ends
             // with "<registry id>]".
             if (!String.valueOf(registryKey).endsWith(TAB_REGISTRY + "]")) return;
@@ -157,7 +158,7 @@ public final class LegacyCreativeTabContents {
                 // 26.1 renamed it.
                 locationType = Class.forName("net.minecraft.resources.Identifier");
             }
-            Method register = event.getClass().getMethod("register", keyType, locationType, Supplier.class);
+            Method register = LegacyPublicMethods.method(event.getClass(), "register", keyType, locationType, Supplier.class);
             List<Map.Entry<String, Object>> tabs = new ArrayList<>(pendingTabs().entrySet());
             for (Map.Entry<String, Object> tab : tabs) {
                 Object location = location(locationType, tab.getKey());
@@ -189,12 +190,12 @@ public final class LegacyCreativeTabContents {
     private static Object modEventBus() throws ReflectiveOperationException {
         try {
             Object context = Class.forName("net.neoforged.fml.ModLoadingContext").getMethod("get").invoke(null);
-            Object container = context.getClass().getMethod("getActiveContainer").invoke(context);
-            return container == null ? null : container.getClass().getMethod("getEventBus").invoke(container);
+            Object container = LegacyPublicMethods.method(context.getClass(), "getActiveContainer").invoke(context);
+            return container == null ? null : LegacyPublicMethods.method(container.getClass(), "getEventBus").invoke(container);
         } catch (ClassNotFoundException notNeoForge) {
             Object context = Class.forName("net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext")
                     .getMethod("get").invoke(null);
-            return context == null ? null : context.getClass().getMethod("getModEventBus").invoke(context);
+            return context == null ? null : LegacyPublicMethods.method(context.getClass(), "getModEventBus").invoke(context);
         }
     }
 
@@ -207,7 +208,7 @@ public final class LegacyCreativeTabContents {
                 loading = Class.forName("net.minecraftforge.fml.ModLoadingContext");
             }
             Object context = loading.getMethod("get").invoke(null);
-            Object namespace = context.getClass().getMethod("getActiveNamespace").invoke(context);
+            Object namespace = LegacyPublicMethods.method(context.getClass(), "getActiveNamespace").invoke(context);
             return namespace == null ? null : namespace.toString();
         } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
             return null;

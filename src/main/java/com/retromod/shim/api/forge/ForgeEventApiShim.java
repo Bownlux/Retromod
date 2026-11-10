@@ -14,6 +14,7 @@ import com.retromod.core.SyntheticEmbedder;
 import com.retromod.core.MinecraftVersionedApiShim;
 import com.retromod.shim.forge.embedded.TickEventPhaseSynthetic;
 import com.retromod.util.McReflect;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -110,6 +111,8 @@ public class ForgeEventApiShim implements MinecraftVersionedApiShim {
         // (LivingHurtEvent -> LivingIncomingDamageEvent, world/* -> level/*) wins over a same-name bulk entry.
         loadBulkEventRenames(transformer);
         loadBulkFmlRenames(transformer);
+        // FMLEnvironment's fields and FMLLoader's statics, which NeoForge 1.21.9 made getters and instance calls.
+        com.retromod.shim.forge.LegacyFmlEnvironmentBridge.registerForForgeMods(transformer);
 
         // FMLJavaModLoadingContext.get().getModEventBus() is the first thing almost every Forge @Mod
         // constructor calls, and NeoForge DELETED the class (unlike the fml/** classes above that it
@@ -124,6 +127,10 @@ public class ForgeEventApiShim implements MinecraftVersionedApiShim {
             "net/minecraftforge/fml/javafmlmod/FMLJavaModLoadingContext",
             "net/neoforged/fml/javafmlmod/FMLJavaModLoadingContext"
         );
+        // Forge 47.2 also hands the context to a @Mod constructor; NeoForge's FML hands a container instead.
+        transformer.enablePostProcess(com.retromod.shim.forge.NeoForgeModConstructorArgs.FLAG);
+        // Forge let a listener sit on a parent event that only its children post; NeoForge refuses abstract ones.
+        com.retromod.shim.forge.NeoForgeAbstractEventListeners.register(transformer);
 
         // event bus
         transformer.registerClassRedirect(
@@ -348,6 +355,8 @@ public class ForgeEventApiShim implements MinecraftVersionedApiShim {
                 TickEventPhaseSynthetic.INTERNAL, TickEventPhaseSynthetic.generate());
         transformer.registerClassRedirect(
                 "net/minecraftforge/event/TickEvent$Phase", TickEventPhaseSynthetic.INTERNAL);
+        transformer.registerSyntheticClass(
+                TickEventPhaseSynthetic.SIDE_INTERNAL, TickEventPhaseSynthetic.generateSide());
 
         // Forge's bare TickEvent parent has no NeoForge counterpart under any name, so it is left
         // alone rather than pointed at a class that was never there.
@@ -364,6 +373,12 @@ public class ForgeEventApiShim implements MinecraftVersionedApiShim {
                         TickEventPhaseSynthetic.INTERNAL,
                         TickEventPhaseSynthetic.PHASE_OF_NAME, TickEventPhaseSynthetic.PHASE_OF_DESC,
                         TickEventPhaseSynthetic.PHASE_SET_NAME, TickEventPhaseSynthetic.PHASE_SET_DESC);
+                // NeoForge dropped the side field too; it is the logical side the tick runs on.
+                transformer.registerFieldStaticBridge(
+                        owner, "side",
+                        TickEventPhaseSynthetic.SIDE_INTERNAL,
+                        TickEventPhaseSynthetic.SIDE_OF_NAME, TickEventPhaseSynthetic.SIDE_OF_DESC,
+                        TickEventPhaseSynthetic.SIDE_SET_NAME, TickEventPhaseSynthetic.SIDE_SET_DESC);
             }
         }
 
@@ -455,7 +470,7 @@ public class ForgeEventApiShim implements MinecraftVersionedApiShim {
         } catch (Exception e) {
             LOGGER.warn("Failed to load bulk Forge → NeoForge {} renames: {}", label, e.toString());
         }
-        LOGGER.info("Loaded {} bulk Forge → NeoForge {} class renames", count, label);
+        LOGGER.debug(RetromodLog.DETAIL, "Loaded {} bulk Forge → NeoForge {} class renames", count, label);
     }
 
     @Override

@@ -6,10 +6,14 @@ package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.core.VersionShim;
+import com.retromod.shim.forge.Forge_1_21_1_to_1_21_2;
+import com.retromod.shim.neoforge.NeoForge_1_21_1_to_1_21_2;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
@@ -19,9 +23,14 @@ import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 
+import java.lang.reflect.Constructor;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.objectweb.asm.Opcodes.*;
@@ -82,7 +91,73 @@ class LegacyHolderConstantBridgeTest {
         }
     }
 
+    @Test
+    @DisplayName("The Forge and NeoForge 1.21.2 shims bridge the eat sound a 1.21.1 mod reads")
+    void forgeFamily1212ShimsBridgeTheEatSound() throws Exception {
+        RetromodVersion.TARGET_MC_VERSION = "1.21.4";
+        Path host = indexedHost();
+        for (VersionShim shim : List.of(new Forge_1_21_1_to_1_21_2(), new NeoForge_1_21_1_to_1_21_2())) {
+            RetromodTransformer fresh = freshTransformer();
+            fresh.initFuzzyResolver(host);
+            shim.registerRedirects(fresh);
+            assertTrue(readsThroughGetter(fresh, armorMaterials("GENERIC_EAT")),
+                    shim.getShimName() + " must unwrap GENERIC_EAT, a holder since 1.21.2");
+            assertFalse(readsThroughGetter(fresh, armorMaterials("ITEM_PICKUP")),
+                    shim.getShimName() + " must leave a bare sound event alone");
+        }
+    }
+
+    @Test
+    @DisplayName("Offline, with no readable host class, the holder fields come from the indexed jar")
+    void indexedJarStandsInForTheHost() throws Exception {
+        RetromodTransformer fresh = freshTransformer();
+        fresh.initFuzzyResolver(indexedHost());
+        assertEquals(Map.of("GENERIC_EAT", REFERENCE),
+                LegacyHolderConstantBridge.indexedHolderFields(fresh.getFuzzyResolver(), SOUNDS));
+        assertEquals(Map.of("WATER", "Lnet/minecraft/core/Holder;"),
+                LegacyHolderConstantBridge.indexedHolderFields(fresh.getFuzzyResolver(), POTIONS));
+        assertNull(LegacyHolderConstantBridge.indexedHolderFields(null, SOUNDS),
+                "with no index nothing is known, so the offline 26.3 list decides");
+    }
+
+    private static final String POTIONS = "net/minecraft/world/item/alchemy/Potions";
+
+    @TempDir
+    Path dir;
+
+    /** A target jar whose eat sound and water potion are holders and whose pickup sound is not. */
+    private Path indexedHost() throws Exception {
+        Path jar = dir.resolve("host.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            writeConstants(out, SOUNDS, Map.of("GENERIC_EAT", REFERENCE, "ITEM_PICKUP", SOUND));
+            writeConstants(out, POTIONS, Map.of("WATER", "Lnet/minecraft/core/Holder;"));
+        }
+        return jar;
+    }
+
+    private static void writeConstants(JarOutputStream out, String owner, Map<String, String> fields)
+            throws Exception {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(V17, ACC_PUBLIC, owner, null, "java/lang/Object", null);
+        fields.forEach((name, desc) ->
+                cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, name, desc, null, null).visitEnd());
+        cw.visitEnd();
+        out.putNextEntry(new JarEntry(owner + ".class"));
+        out.write(cw.toByteArray());
+        out.closeEntry();
+    }
+
+    private static RetromodTransformer freshTransformer() throws Exception {
+        Constructor<RetromodTransformer> constructor = RetromodTransformer.class.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        return constructor.newInstance();
+    }
+
     private boolean readsThroughGetter(byte[] classBytes) {
+        return readsThroughGetter(transformer, classBytes);
+    }
+
+    private static boolean readsThroughGetter(RetromodTransformer transformer, byte[] classBytes) {
         ClassNode out = new ClassNode();
         new ClassReader(transformer.transformClass(classBytes, "test/ModArmorMaterials")).accept(out, 0);
         List<AbstractInsnNode> insns = new ArrayList<>();

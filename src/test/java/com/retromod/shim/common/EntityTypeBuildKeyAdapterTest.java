@@ -178,6 +178,60 @@ class EntityTypeBuildKeyAdapterTest {
     }
 
     @Test
+    @DisplayName("a type a RegisterEvent helper registers is built under the helper's id, inline or from a local")
+    void helperRegistrationGivesTheTypeItsId() {
+        officialBridge();
+        String helper = "net/neoforged/neoforge/registries/RegisterEvent$RegisterHelper";
+        String helperRegister = "(L" + IDENTIFIER + ";Ljava/lang/Object;)V";
+        byte[] entities = classWith("test/consumer/Entities", cw -> {
+            // static void inline(RegisterHelper helper, EntityType.Builder builder) {
+            //     helper.register(Identifier.fromNamespaceAndPath("consumer", "moth"), builder.build("moth")); }
+            MethodVisitor inline = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "inline",
+                    "(L" + helper + ";L" + BUILDER + ";)V", null, null);
+            inline.visitCode();
+            inline.visitVarInsn(Opcodes.ALOAD, 0);
+            inline.visitLdcInsn("consumer");
+            inline.visitLdcInsn("moth");
+            inline.visitMethodInsn(Opcodes.INVOKESTATIC, IDENTIFIER, "fromNamespaceAndPath", ID_DESC, false);
+            inline.visitVarInsn(Opcodes.ALOAD, 1);
+            inline.visitLdcInsn("moth");
+            inline.visitMethodInsn(Opcodes.INVOKEVIRTUAL, BUILDER, "build", BUILD_DESC, false);
+            inline.visitMethodInsn(Opcodes.INVOKEINTERFACE, helper, "register", helperRegister, true);
+            inline.visitInsn(Opcodes.RETURN);
+            inline.visitMaxs(0, 0);
+            inline.visitEnd();
+            // static void local(RegisterHelper helper, EntityType.Builder builder) {
+            //     EntityType type = builder.build("beetle");
+            //     helper.register(Identifier.fromNamespaceAndPath("consumer", "beetle"), type); }
+            MethodVisitor local = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "local",
+                    "(L" + helper + ";L" + BUILDER + ";)V", null, null);
+            local.visitCode();
+            local.visitVarInsn(Opcodes.ALOAD, 1);
+            local.visitLdcInsn("beetle");
+            local.visitMethodInsn(Opcodes.INVOKEVIRTUAL, BUILDER, "build", BUILD_DESC, false);
+            local.visitVarInsn(Opcodes.ASTORE, 2);
+            local.visitVarInsn(Opcodes.ALOAD, 0);
+            local.visitLdcInsn("consumer");
+            local.visitLdcInsn("beetle");
+            local.visitMethodInsn(Opcodes.INVOKESTATIC, IDENTIFIER, "fromNamespaceAndPath", ID_DESC, false);
+            local.visitVarInsn(Opcodes.ALOAD, 2);
+            local.visitMethodInsn(Opcodes.INVOKEINTERFACE, helper, "register", helperRegister, true);
+            local.visitInsn(Opcodes.RETURN);
+            local.visitMaxs(0, 0);
+            local.visitEnd();
+        });
+
+        ClassNode transformed = read(transform(entities, "test/consumer/Entities"));
+
+        MethodNode inline = method(transformed, "inline");
+        assertEquals("consumer:moth", registeredIdArgument(keyedBridgeCall(inline, "buildOfficial")));
+        verifies(inline, "test/consumer/Entities");
+        MethodNode local = method(transformed, "local");
+        assertEquals("consumer:beetle", registeredIdArgument(keyedBridgeCall(local, "buildOfficial")));
+        verifies(local, "test/consumer/Entities");
+    }
+
+    @Test
     @DisplayName("on 26.x the id still reads through the register bridge and the Fabric id stamp")
     void readsThroughTheTwentySixRegistrationShape() {
         officialBridge();

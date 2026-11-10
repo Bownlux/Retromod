@@ -1,0 +1,30 @@
+{
+  "type": "minecraft:chest",
+  "pools": [
+    {
+      "rolls": 1,
+      "conditions": [
+        {
+          "condition": "retromod_test_mod_forge:legacy_always"
+        }
+      ],
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "minecraft:diamond",
+          "functions": [
+            {
+              "function": "retromod_test_mod_forge:legacy_set_count",
+              "count": 3,
+              "conditions": [
+                {
+                  "condition": "retromod_test_mod_forge:legacy_always"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -27,6 +27,9 @@ public final class LegacyCriterionTriggerBridge {
     static final String WRITE_CONTEXT = "com/retromod/generated/LegacySerializationContext";
     static final String SUPPORT = "com/retromod/shim/common/embedded/LegacyCriteria";
     static final String LATE = "com/retromod/shim/forge/embedded/LateVanillaRegistration";
+    static final String DIRECT_TRIGGER = "com/retromod/generated/LegacyDirectCriterionTrigger";
+    static final String LISTENER = "com/retromod/generated/LegacyCriterionListener";
+    static final String PLAYERS = "com/retromod/generated/LegacyCriterionPlayers";
 
     private static final String CRITERIA = "net/minecraft/advancements/critereon/";
     static final String OLD_INSTANCE = CRITERIA + "AbstractCriterionTriggerInstance";
@@ -40,6 +43,12 @@ public final class LegacyCriterionTriggerBridge {
     private static final String ITEM_PREDICATE = CRITERIA + "ItemPredicate";
     private static final String TRIGGERS = "net/minecraft/advancements/CriteriaTriggers";
     private static final String CRITERION_TRIGGER = "net/minecraft/advancements/CriterionTrigger";
+    static final String MOVED_CRITERION_TRIGGER = "net/minecraft/advancements/triggers/CriterionTrigger";
+    static final String OLD_LISTENER = CRITERION_TRIGGER + "$Listener";
+    private static final String TRIGGER_INSTANCE = "net/minecraft/advancements/CriterionTriggerInstance";
+    private static final String HOLDER = "net/minecraft/advancements/AdvancementHolder";
+    private static final String PLAYER_ADVANCEMENTS = "net/minecraft/server/PlayerAdvancements";
+    private static final String SERVER_PLAYER = "net/minecraft/server/level/ServerPlayer";
     private static final String ID = "net/minecraft/resources/ResourceLocation";
     private static final String OBJECT = "Ljava/lang/Object;";
 
@@ -92,6 +101,60 @@ public final class LegacyCriterionTriggerBridge {
             t.registerMethodRedirect(ITEM_PREDICATE, "matches", "(Lnet/minecraft/world/item/ItemStack;)Z",
                     ITEM_PREDICATE, "test", "(Lnet/minecraft/world/item/ItemStack;)Z");
         }
+
+        // A trigger that implements the interface itself, as Lootr's does, gets the codec 1.20.2 asks of it.
+        t.registerSyntheticClass(DIRECT_TRIGGER, generateDirectTrigger(hostTriggerInterface()));
+        t.registerInterfaceReplacement(CRITERION_TRIGGER, DIRECT_TRIGGER);
+        t.registerInterfaceReplacement(MOVED_CRITERION_TRIGGER, DIRECT_TRIGGER);
+        // 1.20.2 made the listener a record, whose instance accessor is trigger().
+        if (listenerIsRecord()) {
+            String desc = "()L" + TRIGGER_INSTANCE + ";";
+            t.registerMethodRedirect(OLD_LISTENER, "getTriggerInstance", desc, OLD_LISTENER, "trigger", desc);
+        }
+        registerRemovedListener(t);
+    }
+
+    /**
+     * 26.2 removed the listener and the trigger's listener methods: the player's advancements track
+     * each criterion themselves. A mod's own trigger keeps its listener set, filled from that
+     * tracking whenever the mod reads a player's advancements, which a trigger does before it fires.
+     */
+    public static void registerRemovedListener(RetromodTransformer t) {
+        if (!listenerRemovedOnHost()) return;
+        SyntheticEmbedder.registerClassResource(t, SUPPORT, LegacyCriteria.class);
+        SyntheticEmbedder.registerClassResource(t, LATE, LateVanillaRegistration.class);
+        t.registerSyntheticClass(LISTENER, generateListener());
+        t.registerSyntheticClass(PLAYERS, generatePlayers());
+        t.registerClassRedirect(OLD_LISTENER, LISTENER);
+        t.registerClassRedirect(MOVED_CRITERION_TRIGGER + "$Listener", LISTENER);
+        String getAdvancements = "()L" + PLAYER_ADVANCEMENTS + ";";
+        t.registerWrappingMethodRedirect(SERVER_PLAYER, "getAdvancements", getAdvancements,
+                PLAYERS, "advancements", "(L" + SERVER_PLAYER + ";)L" + PLAYER_ADVANCEMENTS + ";");
+        t.limitRedirectToModsBefore(SERVER_PLAYER, "getAdvancements", getAdvancements, "26.2");
+    }
+
+    /** The host's trigger interface: in triggers/ from 26.2, in advancements/ before. */
+    static String hostTriggerInterface() {
+        if (ClassResourceInspector.read(PLAYER_ADVANCEMENTS) == null) {
+            return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.2") >= 0
+                    ? MOVED_CRITERION_TRIGGER : CRITERION_TRIGGER;
+        }
+        return ClassResourceInspector.exists(MOVED_CRITERION_TRIGGER) ? MOVED_CRITERION_TRIGGER : CRITERION_TRIGGER;
+    }
+
+    /** Whether the host has 1.20.2's record listener, without getTriggerInstance; offline, 1.20.2 to 26.1. */
+    static boolean listenerIsRecord() {
+        ClassNode listener = ClassResourceInspector.read(OLD_LISTENER);
+        if (listener == null) return !listenerRemovedOnHost() && ClassResourceInspector.read(PLAYER_ADVANCEMENTS) == null;
+        return listener.methods.stream().noneMatch(m -> m.name.equals("getTriggerInstance"));
+    }
+
+    /** Whether the host lacks the listener, under its old or moved name; offline, from 26.2. */
+    static boolean listenerRemovedOnHost() {
+        if (ClassResourceInspector.read(PLAYER_ADVANCEMENTS) == null) {
+            return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.2") >= 0;
+        }
+        return !ClassResourceInspector.exists(OLD_LISTENER) && !ClassResourceInspector.exists(MOVED_CRITERION_TRIGGER + "$Listener");
     }
 
     // Offline, where the host cannot be read, the version decides.
@@ -207,6 +270,142 @@ public final class LegacyCriterionTriggerBridge {
 
         cw.visitMethod(ACC_PROTECTED | ACC_ABSTRACT, "createInstance",
                 "(" + JSON_OBJECT + context + "L" + READ_CONTEXT + ";)" + instance, null, null).visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** A subinterface of the host's trigger interface whose default {@code codec()} reads the trigger's JSON, as the base's does. */
+    static byte[] generateDirectTrigger(String hostTrigger) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_ABSTRACT | ACC_INTERFACE, DIRECT_TRIGGER, null, "java/lang/Object",
+                new String[]{hostTrigger});
+        MethodVisitor codec = cw.visitMethod(ACC_PUBLIC, "codec", "()Lcom/mojang/serialization/Codec;", null, null);
+        codec.visitCode();
+        codec.visitVarInsn(ALOAD, 0);
+        codec.visitMethodInsn(INVOKESTATIC, SUPPORT, "codec", "(" + OBJECT + ")" + OBJECT, false);
+        codec.visitTypeInsn(CHECKCAST, "com/mojang/serialization/Codec");
+        codec.visitInsn(ARETURN);
+        codec.visitMaxs(0, 0);
+        codec.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /**
+     * The removed {@code CriterionTrigger.Listener}: a trigger instance, the advancement, and the
+     * criterion it completes. {@code run} awards that criterion. Equal listeners are the same
+     * criterion of the same advancement, so a mod's listener set holds each once.
+     */
+    static byte[] generateListener() {
+        String instance = "L" + TRIGGER_INSTANCE + ";";
+        String holder = "L" + HOLDER + ";";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, LISTENER, null, "java/lang/Object", null);
+        String[][] fields = {{"trigger", instance}, {"advancement", holder}, {"criterion", "Ljava/lang/String;"}};
+        for (String[] field : fields) cw.visitField(ACC_PRIVATE | ACC_FINAL, field[0], field[1], null, null).visitEnd();
+
+        MethodVisitor init = cw.visitMethod(ACC_PUBLIC, "<init>", "(" + instance + holder + "Ljava/lang/String;)V", null, null);
+        init.visitCode();
+        init.visitVarInsn(ALOAD, 0);
+        init.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        for (int i = 0; i < fields.length; i++) {
+            init.visitVarInsn(ALOAD, 0);
+            init.visitVarInsn(ALOAD, i + 1);
+            init.visitFieldInsn(PUTFIELD, LISTENER, fields[i][0], fields[i][1]);
+        }
+        init.visitInsn(RETURN);
+        init.visitMaxs(0, 0);
+        init.visitEnd();
+
+        // 1.20.1 named the instance accessor getTriggerInstance; 1.20.2's record named it trigger.
+        listenerGetter(cw, "getTriggerInstance", "trigger", instance);
+        listenerGetter(cw, "trigger", "trigger", instance);
+        listenerGetter(cw, "advancement", "advancement", holder);
+        listenerGetter(cw, "criterion", "criterion", "Ljava/lang/String;");
+
+        MethodVisitor run = cw.visitMethod(ACC_PUBLIC, "run", "(L" + PLAYER_ADVANCEMENTS + ";)V", null, null);
+        run.visitCode();
+        run.visitVarInsn(ALOAD, 1);
+        run.visitVarInsn(ALOAD, 0);
+        run.visitFieldInsn(GETFIELD, LISTENER, "advancement", holder);
+        run.visitVarInsn(ALOAD, 0);
+        run.visitFieldInsn(GETFIELD, LISTENER, "criterion", "Ljava/lang/String;");
+        run.visitMethodInsn(INVOKEVIRTUAL, PLAYER_ADVANCEMENTS, "award", "(" + holder + "Ljava/lang/String;)Z", false);
+        run.visitInsn(POP);
+        run.visitInsn(RETURN);
+        run.visitMaxs(0, 0);
+        run.visitEnd();
+
+        MethodVisitor equals = cw.visitMethod(ACC_PUBLIC, "equals", "(" + OBJECT + ")Z", null, null);
+        equals.visitCode();
+        org.objectweb.asm.Label no = new org.objectweb.asm.Label();
+        equals.visitVarInsn(ALOAD, 1);
+        equals.visitTypeInsn(INSTANCEOF, LISTENER);
+        equals.visitJumpInsn(IFEQ, no);
+        for (String[] field : fields) {
+            equals.visitVarInsn(ALOAD, 0);
+            equals.visitFieldInsn(GETFIELD, LISTENER, field[0], field[1]);
+            equals.visitVarInsn(ALOAD, 1);
+            equals.visitTypeInsn(CHECKCAST, LISTENER);
+            equals.visitFieldInsn(GETFIELD, LISTENER, field[0], field[1]);
+            equals.visitMethodInsn(INVOKESTATIC, "java/util/Objects", "equals", "(" + OBJECT + OBJECT + ")Z", false);
+            equals.visitJumpInsn(IFEQ, no);
+        }
+        equals.visitInsn(ICONST_1);
+        equals.visitInsn(IRETURN);
+        equals.visitLabel(no);
+        equals.visitFrame(F_SAME, 0, null, 0, null);
+        equals.visitInsn(ICONST_0);
+        equals.visitInsn(IRETURN);
+        equals.visitMaxs(0, 0);
+        equals.visitEnd();
+
+        MethodVisitor hash = cw.visitMethod(ACC_PUBLIC, "hashCode", "()I", null, null);
+        hash.visitCode();
+        hash.visitInsn(ICONST_3);
+        hash.visitTypeInsn(ANEWARRAY, "java/lang/Object");
+        for (int i = 0; i < fields.length; i++) {
+            hash.visitInsn(DUP);
+            hash.visitIntInsn(BIPUSH, i);
+            hash.visitVarInsn(ALOAD, 0);
+            hash.visitFieldInsn(GETFIELD, LISTENER, fields[i][0], fields[i][1]);
+            hash.visitInsn(AASTORE);
+        }
+        hash.visitMethodInsn(INVOKESTATIC, "java/util/Objects", "hash", "([Ljava/lang/Object;)I", false);
+        hash.visitInsn(IRETURN);
+        hash.visitMaxs(0, 0);
+        hash.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    private static void listenerGetter(ClassWriter cw, String name, String field, String desc) {
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, name, "()" + desc, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitFieldInsn(GETFIELD, LISTENER, field, desc);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /** {@code advancements(player)}: the player's advancements, after the helper fills this mod's listener triggers from them. */
+    static byte[] generatePlayers() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, PLAYERS, null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "advancements",
+                "(L" + SERVER_PLAYER + ";)L" + PLAYER_ADVANCEMENTS + ";", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEVIRTUAL, SERVER_PLAYER, "getAdvancements", "()L" + PLAYER_ADVANCEMENTS + ";", false);
+        mv.visitVarInsn(ASTORE, 1);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitVarInsn(ALOAD, 1);
+        mv.visitMethodInsn(INVOKESTATIC, SUPPORT, "syncListeners", "(" + OBJECT + OBJECT + ")V", false);
+        mv.visitVarInsn(ALOAD, 1);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
     }

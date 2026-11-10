@@ -116,6 +116,146 @@ class SyntheticEmbedderCrossJarTest {
     }
 
     @Test
+    @DisplayName("a library's own client stand-ins never join the copies an addon borrows")
+    void clientStandInsStayOutOfBorrowedCopies(@TempDir Path dir) throws Exception {
+        Path library = plainJar(dir.resolve("core.jar"), libraryClasses());
+        SyntheticLibraries libraries = SyntheticLibraries.create();
+        SyntheticEmbedder.embedIntoJar(library, "core.jar", transformer, libraries);
+        // As on a NeoForge dedicated server: the library's helper copy names its own client stand-in.
+        String libraryBase = baseOf(library);
+        String clientStandIn = libraryBase + "clientonly/net/minecraft/client/Minecraft";
+        Map<String, byte[]> libraryEntries = entries(library);
+        libraryEntries.put(libraryBase + MATERIAL_HELPER + ".class", standIn(libraryBase + MATERIAL_HELPER, clientStandIn));
+        libraryEntries.put(clientStandIn + ".class", standIn(clientStandIn, null));
+        jar(library, libraryEntries);
+        libraries.add(library);
+        Path addon = plainJar(dir.resolve("rocks.jar"), addonClasses());
+
+        SyntheticEmbedder.embedIntoJar(addon, "rocks.jar", transformer, libraries);
+
+        assertAddonLinksTo(library, addon);
+    }
+
+    @Test
+    @DisplayName("an addon still borrows a server library's copy whose methods name the library's client stand-ins")
+    void borrowsCopyWhoseMethodNamesAClientStandIn(@TempDir Path dir) throws Exception {
+        String minecraft = "net/minecraft/client/Minecraft";
+        transformer.registerSyntheticClass(MATERIAL, withMethod(standIn(MATERIAL, MATERIAL_HELPER), "(L" + minecraft + ";)V"));
+        Path library = plainJar(dir.resolve("core.jar"), libraryClasses());
+        SyntheticLibraries libraries = SyntheticLibraries.create();
+        SyntheticEmbedder.embedIntoJar(library, "core.jar", transformer, libraries);
+        // As addClientStandIns leaves it on a NeoForge dedicated server, after the embed.
+        String libraryBase = baseOf(library);
+        String clientStandIn = libraryBase + "clientonly/" + minecraft;
+        Map<String, byte[]> libraryEntries = entries(library);
+        String copy = libraryBase + MATERIAL + ".class";
+        libraryEntries.put(copy, renamed(libraryEntries.get(copy), minecraft, clientStandIn));
+        libraryEntries.put(clientStandIn + ".class", standIn(clientStandIn, null));
+        jar(library, libraryEntries);
+        libraries.add(library);
+        Path addon = plainJar(dir.resolve("rocks.jar"), addonClasses());
+
+        SyntheticEmbedder.embedIntoJar(addon, "rocks.jar", transformer, libraries);
+
+        assertAddonLinksTo(library, addon);
+    }
+
+    /** The class with an empty {@code public void open} of the given descriptor added. */
+    private static byte[] withMethod(byte[] classBytes, String descriptor) {
+        ClassNode node = new ClassNode();
+        new ClassReader(classBytes).accept(node, 0);
+        MethodNode open = new MethodNode(ACC_PUBLIC, "open", descriptor, null, null);
+        open.instructions.add(new org.objectweb.asm.tree.InsnNode(RETURN));
+        open.maxLocals = 2;
+        node.methods.add(open);
+        ClassWriter cw = new ClassWriter(0);
+        node.accept(cw);
+        return cw.toByteArray();
+    }
+
+    private static byte[] renamed(byte[] classBytes, String from, String to) {
+        ClassWriter cw = new ClassWriter(0);
+        new ClassReader(classBytes).accept(new org.objectweb.asm.commons.ClassRemapper(cw,
+                new org.objectweb.asm.commons.SimpleRemapper(from, to)), 0);
+        return cw.toByteArray();
+    }
+
+    @Test
+    @DisplayName("an addon whose call names its own client stand-in is not retranslated for it")
+    void clientStandInCallIsNotStale(@TempDir Path dir) throws Exception {
+        String screen = "clientonly/net/minecraft/client/gui/screens/Screen";
+        String libraryScreen = SyntheticEmbedder.embeddedBase("lib.jar") + screen;
+        String addonScreen = SyntheticEmbedder.embeddedBase("addon.jar") + screen;
+        Path library = plainJar(dir.resolve("lib.jar"), Map.of(
+                "lib/Api", apiTaking("lib/Api", libraryScreen),
+                libraryScreen, standIn(libraryScreen, null)));
+        Path addon = plainJar(dir.resolve("addon.jar"), Map.of(
+                "addon/Use", callerOf("addon/Use", "lib/Api", addonScreen),
+                addonScreen, standIn(addonScreen, null)));
+        SyntheticLibraries libraries = SyntheticLibraries.create();
+        libraries.add(library);
+
+        assertNull(SyntheticLibraries.standInOf(libraryScreen), "a client stand-in is no shared stand-in");
+        assertFalse(libraries.isStale(addon), "each mod keeps its own client stand-ins, so nothing is stale");
+    }
+
+    /** {@code static void call(Object o) { Api.use((type) o); }} */
+    private static byte[] callerOf(String name, String api, String type) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, name, null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "call", "(Ljava/lang/Object;)V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitTypeInsn(CHECKCAST, type);
+        mv.visitMethodInsn(INVOKESTATIC, api, "use", "(L" + type + ";)V", false);
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    @Test
+    @DisplayName("a batch --aot addon links to its library, because the offline compile leaves the embed to the CLI")
+    void offlineAotAddonLinksToLibraryConstructor(@TempDir Path dir) throws Exception {
+        Path library = plainJar(dir.resolve("core.jar"), libraryClasses());
+        SyntheticLibraries libraries = SyntheticLibraries.create();
+        SyntheticEmbedder.embedIntoJar(library, "core.jar", transformer, libraries);
+        libraries.add(library);
+        // Offline compiles clear every registration, so a shim registers the stand-ins again.
+        com.retromod.shim.ShimRegistry registry = new com.retromod.shim.ShimRegistry();
+        registry.register(new StandInShim());
+        Path source = forgeJar(dir, "rocks-1.20.1.jar", "rocks", addonClasses());
+        Path cached = Path.of("config", "retromod", "aot-cache", "rocks-1.20.1-aot.jar");
+        Files.deleteIfExists(cached);
+        try {
+            Path compiled = com.retromod.aot.AotCompiler.forOfflineInputs(registry, "26.1")
+                    .compileModAot(source, true);
+            // The batch copies the compiled jar out, then embeds it with the libraries it has seen.
+            Path addon = Files.copy(compiled, out(dir, "addon").resolve("rocks-1.20.1-aot.jar"));
+            SyntheticEmbedder.embedIntoJar(addon, source.getFileName().toString(), transformer, libraries);
+
+            assertAddonLinksTo(library, addon);
+        } finally {
+            Files.deleteIfExists(cached);
+        }
+    }
+
+    /** Registers this test's stand-ins for a Forge 1.20 mod, the milestone 1.20.1 resolves to. */
+    private static final class StandInShim implements VersionShim {
+        @Override public String getShimName() { return "Cross-jar stand-ins"; }
+        @Override public String getSourceVersion() { return "1.20"; }
+        @Override public String getTargetVersion() { return "26.1"; }
+        @Override public String getModLoaderType() { return "forge"; }
+        @Override public void registerRedirects(RetromodTransformer transformer) {
+            transformer.registerSyntheticClass(MATERIAL, standIn(MATERIAL, MATERIAL_HELPER));
+            transformer.registerSyntheticClass(MATERIAL_HELPER, standIn(MATERIAL_HELPER, null));
+            transformer.registerSyntheticClass(ADDON_ONLY, standIn(ADDON_ONLY, null));
+            transformer.registerSyntheticClass(LIBRARY_PRIVATE, standIn(LIBRARY_PRIVATE, null));
+        }
+    }
+
+    @Test
     @DisplayName("without its library, an addon keeps its own copies as before")
     void addonAloneKeepsItsOwnCopies(@TempDir Path dir) throws Exception {
         Path addon = plainJar(dir.resolve("rocks.jar"), addonClasses());
@@ -185,7 +325,10 @@ class SyntheticEmbedderCrossJarTest {
         assertTrue(entries.containsKey(own + EVENTS + ".class"),
                 "the config calls a package-private method of the events, so they stay together");
         assertTrue(entries.containsKey(own + CONFIG + ".class"));
-        assertFalse(entries.containsKey(SyntheticLibraries.LINKS_ENTRY));
+        String core = SyntheticEmbedder.embeddedBase("core.jar");
+        assertEquals(SyntheticLibraries.CROSSES + core + EVENTS + "\n",
+                new String(entries.get(SyntheticLibraries.LINKS_ENTRY), StandardCharsets.UTF_8),
+                "nothing is borrowed, but the copy the call crosses into is listed so staleness can follow it");
     }
 
     @Test
@@ -217,6 +360,39 @@ class SyntheticEmbedderCrossJarTest {
 
         assertEquals(List.of(library, addon),
                 SyntheticLibraries.librariesFirst(List.of(addon, library), jar -> jar));
+    }
+
+    @Test
+    @DisplayName("a stand-in that grew a constructor after the library took its copy stays the addon's own")
+    void grownStandInIsNotShared(@TempDir Path dir) throws Exception {
+        Path library = plainJar(dir.resolve("core.jar"), libraryClasses());
+        Path addon = plainJar(dir.resolve("rocks.jar"), addonClasses());
+        SyntheticLibraries libraries = SyntheticLibraries.create();
+        SyntheticEmbedder.embedIntoJar(library, "core.jar", transformer, libraries);
+        libraries.add(library);
+        // A generated legacy base absorbs each jar's own super(...) shapes, so the addon's copy is larger.
+        transformer.registerSyntheticClass(MATERIAL, withIntConstructor(standIn(MATERIAL, MATERIAL_HELPER)));
+
+        SyntheticEmbedder.embedIntoJar(addon, "rocks.jar", transformer, libraries);
+
+        String addonBase = baseOf(addon);
+        assertTrue(entries(addon).containsKey(addonBase + MATERIAL + ".class"),
+                "the library's Material lacks the addon's constructor, so the addon embeds its own");
+        assertFalse(libraries.isStale(addon), "keeping the larger copy is not a reason to translate again");
+    }
+
+    private static byte[] withIntConstructor(byte[] classBytes) {
+        ClassNode node = new ClassNode();
+        new ClassReader(classBytes).accept(node, 0);
+        MethodNode init = new MethodNode(ACC_PUBLIC, "<init>", "(I)V", null, null);
+        init.visitVarInsn(ALOAD, 0);
+        init.visitMethodInsn(INVOKESPECIAL, node.superName, "<init>", "()V", false);
+        init.visitInsn(RETURN);
+        init.visitMaxs(1, 2);
+        node.methods.add(init);
+        ClassWriter writer = new ClassWriter(0);
+        node.accept(writer);
+        return writer.toByteArray();
     }
 
     @Test

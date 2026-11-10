@@ -7,19 +7,15 @@
 package com.retromod.shim.forge;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.GeneratedLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
-import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.InsnNode;
-import org.objectweb.asm.tree.LdcInsnNode;
-import org.objectweb.asm.tree.MethodInsnNode;
-import org.objectweb.asm.tree.MethodNode;
-import org.objectweb.asm.tree.VarInsnNode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -239,7 +235,7 @@ public final class Forge1122LifecycleSynthetics {
         //     if (m.getParameterCount() == 1 && m.getParameterTypes()[0] == ev)
         //       try { m.setAccessible(true);
         //             m.invoke(mod, ev.getDeclaredConstructor(String.class).newInstance(modid)); }
-        //       catch (Throwable t) { t.printStackTrace(); }
+        //       catch (Throwable t) { warn, naming the mod and the handler, with t; }
         MethodVisitor o = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "fireOne",
                 "(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/Class;)V", null, null);
         o.visitCode();
@@ -308,7 +304,22 @@ public final class Forge1122LifecycleSynthetics {
         o.visitLabel(tryEnd);
         o.visitJumpInsn(GOTO, next);
         o.visitLabel(handler);
-        o.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Throwable", "printStackTrace", "()V", false);
+        // [logger, "Mod <modid> failed in its 1.12.2 handler <name>...", t]; the loop goes on.
+        GeneratedLog.pushLogger(o);
+        o.visitInsn(SWAP);
+        o.visitLdcInsn("[Retromod] Mod ");
+        o.visitVarInsn(ALOAD, 1);
+        o.visitMethodInsn(INVOKESTATIC, "java/lang/String", "valueOf", "(Ljava/lang/Object;)Ljava/lang/String;", false);
+        o.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat", "(Ljava/lang/String;)Ljava/lang/String;", false);
+        o.visitLdcInsn(" failed in its 1.12.2 handler ");
+        o.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat", "(Ljava/lang/String;)Ljava/lang/String;", false);
+        o.visitVarInsn(ALOAD, 5);
+        o.visitMethodInsn(INVOKEVIRTUAL, "java/lang/reflect/Method", "getName", "()Ljava/lang/String;", false);
+        o.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat", "(Ljava/lang/String;)Ljava/lang/String;", false);
+        o.visitLdcInsn(". Loading continues without it.");
+        o.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat", "(Ljava/lang/String;)Ljava/lang/String;", false);
+        o.visitInsn(SWAP);
+        GeneratedLog.warnWithCause(o);
         o.visitLabel(next);
         o.visitIincInsn(4, 1);
         o.visitJumpInsn(GOTO, loop);
@@ -372,21 +383,10 @@ public final class Forge1122LifecycleSynthetics {
             // Every legacy @Mod class attaches, not only those with lifecycle handlers: attach
             // also wires the mod's event subscribers, proxies and registry handlers. Pre-init
             // runs here; init and post-init wait for common setup, after the registry events.
-            for (MethodNode m : cn.methods) {
-                if (!m.name.equals("<init>")) continue;
-                if (delegatesToThis(cn, m)) continue;
-                for (AbstractInsnNode in : m.instructions.toArray()) {
-                    if (in.getOpcode() == RETURN) {
-                        m.instructions.insertBefore(in, new VarInsnNode(ALOAD, 0));
-                        m.instructions.insertBefore(in, new LdcInsnNode(modid));
-                        m.instructions.insertBefore(in, new LdcInsnNode(Type.getObjectType(PRE_EVENT)));
-                        m.instructions.insertBefore(in, new LdcInsnNode(Type.getObjectType(INIT_EVENT)));
-                        m.instructions.insertBefore(in, new LdcInsnNode(Type.getObjectType(POST_EVENT)));
-                        m.instructions.insertBefore(in, new MethodInsnNode(INVOKESTATIC,
-                                Forge1122EventBridge.EVENTS, "attach", ATTACH_DESC, false));
-                    }
-                }
-            }
+            ModConstructorHooks.addCall(cn, new ModConstructorHooks.Call(ModConstructorHooks.Position.TAIL,
+                    Forge1122EventBridge.EVENTS, "attach", ATTACH_DESC, List.of(ModConstructorHooks.Instance.MOD,
+                    modid, Type.getObjectType(PRE_EVENT), Type.getObjectType(INIT_EVENT),
+                    Type.getObjectType(POST_EVENT))));
 
             // the injected tail is stack-neutral at a point where the stack is empty, so the
             // existing frames stay valid; only maxStack needs recomputing
@@ -396,16 +396,5 @@ public final class Forge1122LifecycleSynthetics {
         } catch (Throwable t) {
             return classBytes;
         }
-    }
-
-    /** Whether this ctor's first {@code <init>} call targets the same class (this(...) chain). */
-    private static boolean delegatesToThis(ClassNode cn, MethodNode ctor) {
-        for (AbstractInsnNode in : ctor.instructions.toArray()) {
-            if (in instanceof MethodInsnNode mi && mi.getOpcode() == INVOKESPECIAL
-                    && mi.name.equals("<init>")) {
-                return mi.owner.equals(cn.name);
-            }
-        }
-        return false;
     }
 }

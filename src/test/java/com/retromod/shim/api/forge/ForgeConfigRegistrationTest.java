@@ -92,6 +92,104 @@ class ForgeConfigRegistrationTest {
         }
     }
 
+    @Test
+    @DisplayName("#394: ForgeConfigSpec.setConfig hands the config to the spec through the rebuilt helper")
+    void setConfigGoesToTheHelper() {
+        String config = "Lcom/electronwill/nightconfig/core/CommentedConfig;";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, "test/mod/ClientConfig", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "load",
+                "(Lnet/minecraftforge/common/ForgeConfigSpec;" + config + ")V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitVarInsn(ALOAD, 1);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "net/minecraftforge/common/ForgeConfigSpec", "setConfig", "(" + config + ")V", false);
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        ClassNode out = new ClassNode();
+        new ClassReader(transformer.transformClass(cw.toByteArray(), "test/mod/ClientConfig")).accept(out, 0);
+        MethodInsnNode call = null;
+        for (AbstractInsnNode insn : out.methods.get(0).instructions) {
+            if (insn instanceof MethodInsnNode c && c.name.equals("setConfig")) call = c;
+        }
+        assertNotNull(call, "the setConfig call must remain, routed to the helper");
+        assertEquals(INVOKESTATIC, call.getOpcode());
+        assertEquals("com/retromod/legacyapi/forge/common/LegacyConfigSpecs", call.owner);
+        assertEquals("(Lnet/neoforged/neoforge/common/ModConfigSpec;" + config + ")V", call.desc);
+        assertTrue(transformer.getSyntheticClasses().containsKey(call.owner), "the helper travels with the mod");
+    }
+
+    @Test
+    @DisplayName("#394: a config value read goes through the helper that answers the default before the config loads")
+    void valueReadAnswersDefaultBeforeLoad() {
+        String value = "net/minecraftforge/common/ForgeConfigSpec$BooleanValue";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, "test/mod/Trades", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "read", "(L" + value + ";)Ljava/lang/Object;", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEVIRTUAL, value, "get", "()Ljava/lang/Object;", false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        ClassNode out = new ClassNode();
+        new ClassReader(transformer.transformClass(cw.toByteArray(), "test/mod/Trades")).accept(out, 0);
+        MethodInsnNode call = null;
+        for (AbstractInsnNode insn : out.methods.get(0).instructions) {
+            if (insn instanceof MethodInsnNode c && c.name.equals("get")) call = c;
+        }
+        assertNotNull(call);
+        assertEquals(INVOKESTATIC, call.getOpcode());
+        assertEquals("com/retromod/legacyapi/forge/common/LegacyConfigSpecs", call.owner);
+        assertEquals("(Lnet/neoforged/neoforge/common/ModConfigSpec$ConfigValue;)Ljava/lang/Object;", call.desc);
+    }
+
+    @Test
+    @DisplayName("On NeoForge 26.3 a Forge mod's COMMON config reaches LOCAL and keeps modid-common.toml")
+    void renamedTypesKeepTheOldFileName() {
+        String savedTarget = com.retromod.core.RetromodVersion.TARGET_MC_VERSION;
+        try {
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = "26.3";
+            transformer.clearRedirectsForTesting();
+            new ForgeConfigApiShim().registerRedirects(transformer);
+
+            ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+            cw.visit(V17, ACC_PUBLIC, "test/mod/Types", null, "java/lang/Object", null);
+            MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "common", "()Ljava/lang/Object;", null, null);
+            mv.visitCode();
+            mv.visitFieldInsn(GETSTATIC, "net/minecraftforge/fml/config/ModConfig$Type", "COMMON", FORGE_TYPE);
+            mv.visitInsn(ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+            cw.visitEnd();
+            ClassNode out = new ClassNode();
+            new ClassReader(transformer.transformClass(cw.toByteArray(), "test/mod/Types")).accept(out, 0);
+            String read = null;
+            for (AbstractInsnNode insn : out.methods.get(0).instructions) {
+                if (insn instanceof org.objectweb.asm.tree.FieldInsnNode f) read = f.owner + "." + f.name;
+            }
+            assertEquals("net/neoforged/fml/config/ModConfig$Type.LOCAL", read);
+
+            ClassNode bridge = new ClassNode();
+            new ClassReader(transformer.getSyntheticClasses().get(ForgeConfigApiShim.CONFIG_BRIDGE)).accept(bridge, 0);
+            MethodNode noFileName = bridge.methods.stream().filter(m -> m.desc.endsWith("IConfigSpec;)V")).findFirst().orElseThrow();
+            boolean callsHelper = false;
+            for (AbstractInsnNode insn : noFileName.instructions) {
+                if (insn instanceof MethodInsnNode c && c.owner.endsWith("LegacyModConfigs")) callsHelper = true;
+            }
+            assertTrue(callsHelper, "a config with no file name goes through the old-name helper");
+            assertTrue(transformer.getSyntheticClasses().containsKey(
+                    com.retromod.shim.neoforge.LegacyModConfigTypeBridge.HELPER), "the helper travels with the bridge");
+        } finally {
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = savedTarget;
+        }
+    }
+
     /** Transforms {@code ModLoadingContext.get().registerConfig(null, null[, null])} and returns the call. */
     private MethodInsnNode registerCall(String params) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);

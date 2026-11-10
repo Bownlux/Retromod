@@ -9,6 +9,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import com.retromod.core.RetromodVersion;
 import com.retromod.shim.common.LegacyEquipmentBridge;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -93,7 +94,7 @@ public final class EquipmentAssetMigrator implements ModResourceConverter {
             }
         });
         if (!foreign.isEmpty()) {
-            LOGGER.info("Wrote no equipment asset for {} armor material(s) named in another mod's namespace, "
+            LOGGER.debug(RetromodLog.DETAIL, "Wrote no equipment asset for {} armor material(s) named in another mod's namespace, "
                     + "whose own assets decide how that armor looks: {}", foreign.size(), foreign);
         }
         return own;

@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -15,6 +16,16 @@ public final class LateVanillaRegistration {
 
     /** {@code Registry.register(registry, id, value)} for a String, ResourceLocation or ResourceKey id. */
     public static Object register(Object registry, Object id, Object value) throws Throwable {
+        // Balm's creative tab supplier registers the tab it returns. Forge 1.20.1 let the deferred
+        // register's own registration of the same object pass; Forge 26.x and NeoForge refuse a
+        // duplicate key, so the supplier hands the tab back and the deferred register adds it once.
+        Class<?> bridge = registerBridge();
+        if (bridge != null && buildsEntry(currentEntry(bridge), registry, id)) {
+            Object handed = asRegistryValue(registry, value);
+            // The bridge checks, when the supplier returns, that it returns one of these objects: the
+            // one handed back, or the one passed in, which a supplier may return itself instead.
+            if (handBack(bridge, new Object[] {handed, value})) return handed;
+        }
         return call("register", registry, id, value);
     }
 
@@ -65,6 +76,62 @@ public final class LateVanillaRegistration {
             return mapCodec.getMethod("assumeMapUnsafe", codec).invoke(null, value);
         } catch (ReflectiveOperationException | LinkageError e) {
             return value;
+        }
+    }
+
+    /** Whether {@code current}, the entry a deferred register's supplier is building, is this one. */
+    static boolean buildsEntry(Object current, Object registry, Object id) {
+        if (current == null) return false;
+        try {
+            if (current.getClass().isInstance(id)) return current.equals(id);
+            Object registryKey = LegacyPublicMethods.method(registry.getClass(), "key").invoke(registry);
+            // ResourceKey.create(registryKey, id) is interned, so the entry's own key compares equal.
+            for (Method create : LegacyPublicMethods.methods(current.getClass())) {
+                if (create.getName().equals("create") && Modifier.isStatic(create.getModifiers())
+                        && create.getParameterCount() == 2 && create.getParameterTypes()[0].isInstance(registryKey)
+                        && create.getParameterTypes()[1].isInstance(id)) {
+                    return current.equals(create.invoke(null, registryKey, id));
+                }
+            }
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            return false;
+        }
+        return false;
+    }
+
+    /** The register bridge beside this class that is running a supplier on this thread, or null. */
+    private static Class<?> registerBridge() {
+        String pkg = LateVanillaRegistration.class.getPackageName();
+        for (String bridge : new String[] {"ForgeRegistryIdBridge", "RegistryIdBridge"}) {
+            try {
+                Class<?> type = Class.forName(pkg + "." + bridge, false, LateVanillaRegistration.class.getClassLoader());
+                if (currentEntry(type) != null) return type;
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError absent) {
+                // That bridge is not in this jar.
+            }
+        }
+        return null;
+    }
+
+    /** The registry key the bridge holds while it runs a supplier, or null. */
+    private static Object currentEntry(Class<?> bridge) {
+        try {
+            Object value = ((ThreadLocal<?>) bridge.getField("CURRENT").get(null)).get();
+            // A stamped static field holds a bare id here instead, which names no registry.
+            return value != null && value.getClass().getSimpleName().equals("ResourceKey") ? value : null;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            return null;
+        }
+    }
+
+    /** Records the objects the supplier may return for the bridge's check; false when the bridge cannot check it. */
+    @SuppressWarnings("unchecked")
+    private static boolean handBack(Class<?> bridge, Object value) {
+        try {
+            ((ThreadLocal<Object>) bridge.getField("HANDED").get(null)).set(value);
+            return true;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            return false;
         }
     }
 

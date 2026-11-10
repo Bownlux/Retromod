@@ -86,14 +86,16 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
             "(Lnet/minecraft/core/Registry;Ljava/lang/String;)Lnet/neoforged/neoforge/registries/DeferredRegister;"
         );
 
-        // #87: MC 26.x (1.21.3+) requires the registry id stamped on Block/Item Properties BEFORE the
+        // #87: since 1.21.2 the registry id must be stamped on Block/Item Properties BEFORE the
         // object is constructed (BlockBehaviour.<init> -> requireNonNull(id, "Block id not set")). A Forge
         // 1.20.1 mod's DeferredRegister.register(String, Supplier) builds the object inside the supplier
         // with no id, so it dies at RegisterEvent. Route registration + Properties creation through the
         // RegistryIdBridge synthetic, which threads the id via a ThreadLocal (set by the register wrapper,
-        // read by the Properties factories). Gated to 26.1+ hosts: pre-1.21.3 has no Properties.setId, so
-        // these would NoSuchMethodError there.
-        if (RetromodVersion.isUnobfuscatedTarget(RetromodVersion.TARGET_MC_VERSION)) {
+        // read by the Properties factories). Gated to 1.21.11 and newer: the bridge names Identifier,
+        // which 1.21.11 introduced, so 1.21.2 to 1.21.10 keep the recorder below. Unknown hosts keep
+        // the bridge, as isUnobfuscatedTarget does.
+        if (RetromodVersion.isUnobfuscatedTarget(RetromodVersion.TARGET_MC_VERSION)
+                || RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21.11") >= 0) {
             final String B = RegistryIdBridgeSynthetic.INTERNAL;
             // Register the synthetic HERE, co-located with the redirects that target it, so the
             // pair is always registered together. The entry points also register it via
@@ -147,8 +149,8 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
             transformer.enablePostProcess(RegistryIdBridgeSynthetic.STATIC_FIELDS_FLAG);
         } else if (com.retromod.util.McReflect.isNeoForge()
                 && RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20.5") >= 0) {
-            // NeoForge never builds a data-driven registry's entries, so a pre-1.19.3 mod's
-            // code-built biome is kept here for the legacy worldgen store, as RegistryIdBridge does on 26.x.
+            // NeoForge never builds a data-driven registry's entries, so a pre-1.19.3 mod's code-built
+            // biome is kept here for the legacy worldgen store, as RegistryIdBridge does from 1.21.11.
             final String recorder = RegistryIdBridgeSynthetic.BIOME_RECORDER;
             boolean dataEnchantments = RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21") >= 0;
             if (dataEnchantments) com.retromod.shim.common.LegacyEnchantmentBridge.registerSynthetics(transformer);
@@ -259,12 +261,6 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
             );
         }
 
-        // legacy GameRegistry
-        transformer.registerClassRedirect(
-            "net/minecraftforge/fml/common/registry/GameRegistry",
-            "com/retromod/shim/api/forge/embedded/GameRegistryShim"
-        );
-
         // legacy ObjectHolder, no longer used
         transformer.registerClassRedirect(
             "net/minecraftforge/registries/ObjectHolder",
@@ -302,29 +298,65 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
 
     /**
      * Enchantments and painting variants became datapack registries in 1.21, so BuiltInRegistries
-     * has no field to read. A host that still has one gets the plain field redirect; a newer host
-     * gets a stand-in that only answers {@code key()}, which is all {@code DeferredRegister.create}
-     * needs. The mod's Java entries for those registries cannot bind there.
+     * has no field to read. A host that still has one gets the plain field redirect. On a newer host,
+     * enchantments read the loaded world's registry through the same view as
+     * {@code BuiltInRegistries.ENCHANTMENT}, and the others get a stand-in that only answers
+     * {@code key()}, which is all {@code DeferredRegister.create} needs. The mod's Java entries for
+     * those registries cannot bind there.
      */
     static void registerDatapackRegistryStandIns(RetromodTransformer transformer) {
         String helper = "com/retromod/shim/api/forge/embedded/LegacyDatapackRegistries";
-        String[][] registries = {{"ENCHANTMENTS", "ENCHANTMENT", "enchantments"},
-                {"PAINTING_VARIANTS", "PAINTING_VARIANT", "paintingVariants"}, {"BIOMES", "BIOME", "biomes"}};
+        // Forge field, BuiltInRegistries field, stand-in method, and the version that moved it to data packs.
+        String[][] registries = {{"ENCHANTMENTS", "ENCHANTMENT", "enchantments", "1.21"},
+                {"PAINTING_VARIANTS", "PAINTING_VARIANT", "paintingVariants", "1.21"}, {"BIOMES", "BIOME", "biomes", "1.19.3"}};
         org.objectweb.asm.tree.ClassNode builtIn =
                 com.retromod.core.ClassResourceInspector.read("net/minecraft/core/registries/BuiltInRegistries");
         for (String[] registry : registries) {
+            // The host's own class answers; offline, where the CLI and AOT cannot read it, the target version does, as in game.
             boolean builtInField = builtIn != null
-                    && builtIn.fields.stream().anyMatch(field -> field.name.equals(registry[1]));
+                    ? builtIn.fields.stream().anyMatch(field -> field.name.equals(registry[1]))
+                    : RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, registry[3]) < 0;
             if (builtInField) {
                 forgeReg(transformer, registry[0], registry[1], REGISTRY);
                 continue;
             }
-            if (builtIn == null) continue;
             com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, helper,
                     com.retromod.shim.api.forge.embedded.LegacyDatapackRegistries.class);
+            // Enchantments answer from the world's registry through BuiltInRegistries.ENCHANTMENT's view.
+            com.retromod.core.SyntheticEmbedder.registerClassResource(transformer,
+                    com.retromod.shim.common.LegacyEnchantmentRegistryShim.HELPER,
+                    com.retromod.shim.common.embedded.LegacyEnchantmentRegistry.class);
             transformer.registerFieldRedirect("net/minecraftforge/registries/ForgeRegistries", registry[0],
                     "Lnet/minecraftforge/registries/IForgeRegistry;", helper, registry[2], "()Ljava/lang/Object;");
         }
+    }
+
+    /** The rebuilt registry view old reads of a removed {@code ForgeRegistries} field get on a Forge host. */
+    public static final String DYNAMIC_REGISTRY_VIEW =
+            com.retromod.shim.common.RebuiltApiClasses.ROOT + "forge/registries/DynamicForgeRegistryView";
+
+    /** Sends reads of {@code ForgeRegistries.ENCHANTMENTS}, gone on Forge 26.2, to a view of each world's registry, and makes registers built from it optional. */
+    public static void registerForgeEnchantmentView(RetromodTransformer transformer) {
+        com.retromod.shim.common.RebuiltApiClasses.registerTree(transformer, DYNAMIC_REGISTRY_VIEW);
+        // The view notes a refused registration through the game log.
+        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer,
+                com.retromod.shim.common.embedded.LegacyLog.class.getName().replace('.', '/'),
+                com.retromod.shim.common.embedded.LegacyLog.class);
+        // It reads the world's registry where BuiltInRegistries.ENCHANTMENT's view does, during a data pack load too.
+        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer,
+                com.retromod.shim.common.LegacyEnchantmentRegistryShim.HELPER,
+                com.retromod.shim.common.embedded.LegacyEnchantmentRegistry.class);
+        String forgeRegistry = "Lnet/minecraftforge/registries/IForgeRegistry;";
+        transformer.registerFieldRedirect("net/minecraftforge/registries/ForgeRegistries", "ENCHANTMENTS",
+                forgeRegistry, DYNAMIC_REGISTRY_VIEW, "enchantments", "()" + forgeRegistry);
+        // A required register over the view fails all mod loading at registry events, so the view picks the factory.
+        String deferredRegister = "net/minecraftforge/registries/DeferredRegister";
+        String create = "(" + forgeRegistry + "Ljava/lang/String;)L" + deferredRegister + ";";
+        transformer.registerMethodRedirect(deferredRegister, "create", create,
+                DYNAMIC_REGISTRY_VIEW, "createRegister", create);
+        // The host keeps create, so a mod written for a host without the field calls it as written.
+        transformer.limitRedirectToModsBefore(deferredRegister, "create", create,
+                com.retromod.shim.forge.ForgeHostShape.FIRST_CHECKED_VERSION);
     }
 
     /**
@@ -353,13 +385,5 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
         t.registerMethodRedirect(
             "net/minecraftforge/registries/IForgeRegistry", forgeMethod, forgeDesc,
             "net/minecraft/core/Registry", neoMethod, neoDesc);
-    }
-
-    @Override
-    public String[] getShimClasses() {
-        return new String[] {
-            "com.retromod.shim.api.forge.embedded.RegistryShim",
-            "com.retromod.shim.api.forge.embedded.GameRegistryShim"
-        };
     }
 }

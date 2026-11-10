@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.registry;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -203,7 +204,7 @@ public final class LegacyRegistryAccess {
     }
 
     private static Method findMethod(Class<?> type, String name, int arity) {
-        for (Method candidate : type.getMethods()) {
+        for (Method candidate : LegacyPublicMethods.methods(type)) {
             if (candidate.getName().equals(name) && candidate.getParameterCount() == arity) {
                 return candidate;
             }
@@ -212,7 +213,7 @@ public final class LegacyRegistryAccess {
     }
 
     private static Method findMethod(Class<?> type, String name, Predicate<Method> shape, Object[] args) {
-        for (Method candidate : type.getMethods()) {
+        for (Method candidate : LegacyPublicMethods.methods(type)) {
             if (!candidate.getName().equals(name) || candidate.getParameterCount() != args.length
                     || !shape.test(candidate)) {
                 continue;

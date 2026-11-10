@@ -9,10 +9,15 @@ import com.retromod.shim.forge.embedded.LateVanillaRegistration;
 import java.lang.reflect.Array;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.WeakHashMap;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -46,7 +51,7 @@ public final class LegacyCriteria {
 
     /** {@code CriteriaTriggers.register(trigger)}: the trigger types registry, under the trigger's own id. */
     public static Object register(Object trigger) throws Throwable {
-        Method getId = trigger.getClass().getMethod("getId");
+        Method getId = LegacyPublicMethods.method(trigger.getClass(), "getId");
         getId.trySetAccessible();
         Object id = getId.invoke(trigger);
         Object types = Class.forName("net.minecraft.core.registries.BuiltInRegistries", true, loader())
@@ -107,6 +112,221 @@ public final class LegacyCriteria {
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Retromod could not build the codec of " + trigger.getClass().getName(), e);
         }
+    }
+
+    // ---- listener triggers ----------------------------------------------------------------------
+
+    // Reached by reflection, because each mod's copy sits under its own embed prefix.
+    private static final String SELF = "com.retromod.shim.common.embedded.LegacyCriteria";
+    private static final String LISTENER = "com.retromod.generated.LegacyCriterionListener";
+    private static final String FORGE_EVENT_BUS = "net.minecraftforge.eventbus.api.bus.EventBus";
+    // The criteria each listener trigger was last given, by the player's advancements. Nothing here holds a
+    // player: a value that reached its own key would keep the player, and in singleplayer the stopped server.
+    private static final Map<Object, Map<Object, Object>> SYNCED = new WeakHashMap<>();
+    private static List<Object> listenerTriggers;
+    private static boolean listening;
+
+    /**
+     * 26.2 dropped the trigger listener: the player's advancements track criteria themselves. Gives
+     * each of this mod's triggers that still keep listeners the criteria tracked for the player, so
+     * a trigger that reads the player's advancements before it fires, as Lootr's does, finds them.
+     */
+    public static synchronized void syncListeners(Object player, Object advancements) {
+        try {
+            List<Object> triggers = listenerTriggers();
+            if (triggers.isEmpty()) return;
+            listenForDepartures();
+            Map<Object, Object> synced = SYNCED.computeIfAbsent(advancements, a -> new IdentityHashMap<>());
+            Method tracked = advancements.getClass().getMethod("getTriggerMapForType",
+                    Class.forName("net.minecraft.advancements.triggers.CriterionTrigger", true, loader()));
+            for (Object trigger : triggers) {
+                Map<?, ?> criteria = (Map<?, ?>) tracked.invoke(advancements, trigger);
+                List<Object> now = new ArrayList<>();
+                if (criteria != null) {
+                    for (Map.Entry<?, ?> entry : criteria.entrySet()) now.add(List.of(entry.getKey(), entry.getValue()));
+                }
+                if (now.equals(synced.get(trigger))) continue;
+                giveListeners(trigger, advancements, criteria);
+                synced.put(trigger, now);
+            }
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
+            Throwable cause = e instanceof InvocationTargetException wrapped ? wrapped.getCause() : e;
+            LegacyLog.warnOnce("criterion-listeners", "Old advancement triggers cannot see this player's criteria, so they"
+                    + " do not award them: " + cause);
+        }
+    }
+
+    /** Replaces the trigger's listeners for these advancements with one per tracked criterion. */
+    private static void giveListeners(Object trigger, Object advancements, Map<?, ?> criteria) throws ReflectiveOperationException {
+        Class<?> listener = ownListener();
+        method(trigger.getClass(), "removePlayerListeners", 1, null).invoke(trigger, advancements);
+        if (criteria == null) return;
+        Method add = method(trigger.getClass(), "addPlayerListener", 2, null);
+        for (Map.Entry<?, ?> entry : criteria.entrySet()) {
+            Object key = entry.getKey();
+            Object holder = LegacyPublicMethods.method(key.getClass(), "advancement").invoke(key);
+            Object criterion = LegacyPublicMethods.method(key.getClass(), "criterion").invoke(key);
+            add.invoke(trigger, advancements, listener.getConstructors()[0].newInstance(entry.getValue(), holder, criterion));
+        }
+    }
+
+    /** A player who leaves keeps no listeners, as leaving used to remove them. */
+    static synchronized void forget(Object advancements) {
+        if (advancements == null || SYNCED.remove(advancements) == null) return;
+        removeListeners(advancements);
+    }
+
+    /** A stopped server keeps no player's listeners, so nothing holds its players or their worlds. */
+    static synchronized void forgetAll() {
+        for (Object advancements : new ArrayList<>(SYNCED.keySet())) removeListeners(advancements);
+        SYNCED.clear();
+    }
+
+    private static void removeListeners(Object advancements) {
+        for (Object trigger : listenerTriggers == null ? List.of() : listenerTriggers) {
+            try {
+                method(trigger.getClass(), "removePlayerListeners", 1, null).invoke(trigger, advancements);
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                Throwable cause = e instanceof InvocationTargetException wrapped ? wrapped.getCause() : e;
+                LegacyLog.warnOnce("criterion-listener-removal", "An old advancement trigger kept a departed player's"
+                        + " listeners: " + cause);
+            }
+        }
+    }
+
+    /** Listens for players leaving and the server stopping, on whichever loader runs. */
+    private static void listenForDepartures() {
+        if (listening) return;
+        listening = true;
+        Consumer<Object> loggedOut = event -> forget(advancementsOf(call(event, "getEntity")));
+        Consumer<Object> stopped = event -> forgetAll();
+        try {
+            if (exists(FORGE_EVENT_BUS)) {
+                // Forge 26.2 and newer keep each event's bus in a static BUS field.
+                addForgeListener("net.minecraftforge.event.entity.player.PlayerEvent$PlayerLoggedOutEvent", loggedOut);
+                addForgeListener("net.minecraftforge.event.server.ServerStoppedEvent", stopped);
+            } else if (exists("net.neoforged.neoforge.common.NeoForge")) {
+                Object bus = Class.forName("net.neoforged.neoforge.common.NeoForge", true, loader()).getField("EVENT_BUS").get(null);
+                addNeoForgeListener(bus, "net.neoforged.neoforge.event.entity.player.PlayerEvent$PlayerLoggedOutEvent", loggedOut);
+                addNeoForgeListener(bus, "net.neoforged.neoforge.event.server.ServerStoppedEvent", stopped);
+            } else {
+                // Fabric API: a play connection ends, and the server stops.
+                registerFabric("net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents", "DISCONNECT",
+                        "net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents$Disconnect",
+                        args -> forget(advancementsOf(fieldOrCall(args[0], "player"))));
+                registerFabric("net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents", "SERVER_STOPPED",
+                        "net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents$ServerStopped", args -> forgetAll());
+            }
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
+            LegacyLog.warnOnce("criterion-departures", "Old advancement triggers cannot hear players leave, so their"
+                    + " listeners stay until the game closes: " + e);
+        }
+    }
+
+    private static void addForgeListener(String eventClass, Consumer<Object> listener) throws ReflectiveOperationException {
+        Object bus = Class.forName(eventClass, true, loader()).getField("BUS").get(null);
+        Class.forName(FORGE_EVENT_BUS, true, loader()).getMethod("addListener", Consumer.class).invoke(bus, listener);
+    }
+
+    private static void addNeoForgeListener(Object bus, String eventClass, Consumer<Object> listener)
+            throws ReflectiveOperationException {
+        Class<?> priority = Class.forName("net.neoforged.bus.api.EventPriority", true, loader());
+        Class.forName("net.neoforged.bus.api.IEventBus", true, loader())
+                .getMethod("addListener", priority, boolean.class, Class.class, Consumer.class)
+                .invoke(bus, priority.getField("NORMAL").get(null), false, Class.forName(eventClass, true, loader()), listener);
+    }
+
+    /** {@code holder.FIELD.register(callback)}, with the callback a proxy of the event's interface. */
+    private static void registerFabric(String holder, String field, String callback, Consumer<Object[]> action)
+            throws ReflectiveOperationException {
+        Object event = Class.forName(holder, true, loader()).getField(field).get(null);
+        Class<?> type = Class.forName(callback, true, loader());
+        Object proxy = Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] {type}, (self, method, args) -> {
+            switch (method.getName()) {
+                case "hashCode": return System.identityHashCode(self);
+                case "equals": return self == args[0];
+                case "toString": return "Retromod criterion listener cleanup";
+                default:
+                    action.accept(args);
+                    return null;
+            }
+        });
+        LegacyPublicMethods.method(event.getClass(), "register", Object.class).invoke(event, proxy);
+    }
+
+    private static Object advancementsOf(Object player) {
+        return player == null ? null : call(player, "getAdvancements");
+    }
+
+    private static Object call(Object target, String name) {
+        try {
+            return LegacyPublicMethods.method(target.getClass(), name).invoke(target);
+        } catch (ReflectiveOperationException e) {
+            return null;
+        }
+    }
+
+    private static Object fieldOrCall(Object target, String field) {
+        try {
+            return target.getClass().getField(field).get(target);
+        } catch (ReflectiveOperationException | RuntimeException noField) {
+            return call(target, "getPlayer");
+        }
+    }
+
+    private static boolean exists(String className) {
+        try {
+            Class.forName(className, false, loader());
+            return true;
+        } catch (ClassNotFoundException | LinkageError absent) {
+            return false;
+        }
+    }
+
+    /** The registered triggers whose listener methods take this mod's listener, found once the game has players. */
+    private static List<Object> listenerTriggers() throws ReflectiveOperationException {
+        if (listenerTriggers != null) return listenerTriggers;
+        List<Object> found = new ArrayList<>();
+        Class<?> listener = ownListener();
+        Object types = Class.forName("net.minecraft.core.registries.BuiltInRegistries", true, loader())
+                .getField("TRIGGER_TYPES").get(null);
+        for (Object trigger : (Iterable<?>) types) {
+            try {
+                for (Method method : trigger.getClass().getMethods()) {
+                    if (method.getName().equals("addPlayerListener") && method.getParameterCount() == 2
+                            && method.getParameterTypes()[1] == listener) {
+                        found.add(trigger);
+                        break;
+                    }
+                }
+            } catch (LinkageError unreadable) {
+                // Another mod's trigger whose methods name a missing class is not this mod's to follow.
+            }
+        }
+        listenerTriggers = found;
+        return found;
+    }
+
+    private static Class<?> ownListener() throws ClassNotFoundException {
+        String self = LegacyCriteria.class.getName();
+        return Class.forName(self.substring(0, self.length() - SELF.length()) + LISTENER, true, loader());
+    }
+
+    /** Records that the triggers gave listeners to these advancements, without Minecraft. Tests only. */
+    static synchronized void rememberForTests(Object advancements, List<Object> triggers) {
+        listenerTriggers = triggers;
+        listening = true;
+        SYNCED.computeIfAbsent(advancements, a -> new IdentityHashMap<>());
+    }
+
+    static synchronized int trackedForTests() {
+        return SYNCED.size();
+    }
+
+    static synchronized void resetListenersForTests() {
+        SYNCED.clear();
+        listenerTriggers = null;
+        listening = false;
     }
 
     // ---- entity predicates --------------------------------------------------------------------
@@ -176,7 +396,7 @@ public final class LegacyCriteria {
     /** {@code ItemPredicate.fromJson(element)}: absent or null reads as any item, as it did. */
     public static Object itemFromJson(Object element) {
         try {
-            if (element == null || Boolean.TRUE.equals(element.getClass().getMethod("isJsonNull").invoke(element))) {
+            if (element == null || Boolean.TRUE.equals(LegacyPublicMethods.method(element.getClass(), "isJsonNull").invoke(element))) {
                 return itemAny();
             }
         } catch (ReflectiveOperationException e) {
@@ -242,7 +462,7 @@ public final class LegacyCriteria {
 
     private static Object get(Object json, String key) {
         try {
-            return json.getClass().getMethod("get", String.class).invoke(json, key);
+            return LegacyPublicMethods.method(json.getClass(), "get", String.class).invoke(json, key);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
         }

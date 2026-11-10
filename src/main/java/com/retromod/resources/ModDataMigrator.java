@@ -6,6 +6,7 @@ package com.retromod.resources;
 
 import com.retromod.core.RetromodVersion;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,6 +71,14 @@ public final class ModDataMigrator {
                  || entryName.contains("/advancement")    // under data/
                  || entryName.contains("/recipe")
                  || entryName.contains("/tags/"));
+    }
+
+    /** The entry's path in its pack, reading a pack overlay's {@code <folder>/data/...} as {@code data/...}. */
+    static String dataPath(String entryName) {
+        if (entryName.startsWith("data/")) return entryName;
+        // A host that applies an overlay reads its files in place of the base ones, so they need the same rewrites.
+        int slash = entryName.indexOf('/');
+        return slash > 0 && entryName.startsWith("data/", slash + 1) ? entryName.substring(slash + 1) : entryName;
     }
 
     /** Whether the entry sits in an {@code assets/} folder before any {@code data/} folder. */
@@ -196,6 +205,16 @@ public final class ModDataMigrator {
                     forgeHost && LegacyLootConditionMigrator.isLootModifier(entryName));
         }
 
+        // 26.3 reads an item modifier file as one function, and a trigger's player or entity check as
+        // one predicate, so an old list of functions becomes a sequence and an empty check list,
+        // which matched everything, is dropped. Both run after the rewrite above renamed the keys.
+        if (atLeast(targetMcVersion, "26.3") && entryName.contains("/item_modifier/")) {
+            normalized = sequenceOfFunctions(normalized);
+        }
+        if (atLeast(targetMcVersion, "26.3") && entryName.contains("/advancement/") && probe.contains("[]")) {
+            normalized = dropEmptyTriggerChecks(normalized);
+        }
+
         // Between 1.20.1 and 1.21, int and float providers lost their "value" wrapper, so an old
         // dimension type or feature failed to parse its spawn light level, counts, or heights.
         if (atLeast(targetMcVersion, "1.21") && probe.contains("\"value\"")
@@ -237,6 +256,12 @@ public final class ModDataMigrator {
             normalized = SpawnerDataMigrator.migrate(entryName, normalized);
         }
 
+        // 1.21.2 read a biome's carvers as one list instead of one per carving step, and an old
+        // biome stopped the biome registry from loading.
+        if (BiomeCarverMigrator.appliesTo(targetMcVersion, entryName) && probe.contains("\"carvers\"")) {
+            normalized = BiomeCarverMigrator.migrate(normalized);
+        }
+
         if (Worldgen26_3Migrator.appliesTo(targetMcVersion) && Worldgen26_3Migrator.isWorldgen(entryName)) {
             normalized = Worldgen26_3Migrator.migrate(normalized);
         } else if (Worldgen26_3Migrator.appliesTo(targetMcVersion) && probe.contains("\"Name\"")) {
@@ -249,7 +274,7 @@ public final class ModDataMigrator {
         // "#tag" string, and skips a recipe in the old shape. 26.3 loads recipes with the
         // registries, so there one old recipe stopped the world from loading.
         if (atLeast(targetMcVersion, FIRST_STRING_INGREDIENT_HOST) && isRecipeFile(entryName)
-                && (probe.contains("\"item\"") || probe.contains("\"tag\""))) {
+                && (probe.contains("\"item\"") || probe.contains("\"tag\"") || probe.contains("[]"))) {
             normalized = migrateRecipeIngredients(normalized, targetLoader, sourceMcVersion, targetMcVersion);
         }
 
@@ -359,13 +384,31 @@ public final class ModDataMigrator {
         // Hand-written worldgen files (Jigsaw template_pools, processor_lists) often carry them,
         // and each such file throws MalformedJsonException on a strict host.
         String in = new String(json, StandardCharsets.UTF_8);
-        if (!LENIENT_JSON_HINT.matcher(in).find()) return json;   // already strict; cheap exit
-        String out = stripLenientJson(in);
-        // Other lenient quirks (single quotes, unquoted keys, NaN) are left for the loader to
-        // report. The same array comes back when nothing changed, so callers compare references.
+        String out = LENIENT_JSON_HINT.matcher(in).find() ? stripLenientJson(in) : in;
+        // The old reader also took an unquoted or single-quoted string, such as a processor list
+        // named without quotes, so a file that is still not strict is written out by a lenient parse.
+        if (!isStrictJson(out)) {
+            try {
+                out = new com.google.gson.GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create()
+                        .toJson(com.google.gson.JsonParser.parseString(out));
+            } catch (RuntimeException unreadable) {
+                // Left for the loader to report.
+            }
+        }
+        // The same array comes back when nothing changed, so callers compare references.
         if (out.equals(in)) return json;
         LOGGER.debug("Normalized lenient JSON (stripped comments / trailing commas)");
         return out.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static boolean isStrictJson(String text) {
+        try (JsonReader reader = new JsonReader(new StringReader(text))) {
+            reader.setLenient(false);
+            reader.skipValue();
+            return reader.peek() == JsonToken.END_DOCUMENT;
+        } catch (IOException | RuntimeException notStrict) {
+            return false;
+        }
     }
 
     /** String-aware strip of // and block comments plus trailing commas. */
@@ -685,7 +728,7 @@ public final class ModDataMigrator {
             }
         }
         if (!dangling.isEmpty()) {
-            LOGGER.info("Dropping {} recipe advancement(s) for recipes the mod does not ship: {}",
+            LOGGER.debug(RetromodLog.DETAIL, "Dropping {} recipe advancement(s) for recipes the mod does not ship: {}",
                     dangling.size(), dangling);
         }
         return dangling;
@@ -849,11 +892,57 @@ public final class ModDataMigrator {
 
     private static final java.util.Set<String> POOL_PROVIDERS = java.util.Set.of("rolls", "bonus_rolls");
     private static final java.util.Set<String> FUNCTION_PROVIDERS = java.util.Set.of("count", "damage", "levels");
+    private static final java.util.Set<String> UNIFORM_BOUNDS = java.util.Set.of("min", "max");
+    private static final java.util.Set<String> MODIFIER_PROVIDERS = java.util.Set.of("amount");
+
+    /** An item modifier file holding a list of functions, as one sequence; the same array otherwise. */
+    static byte[] sequenceOfFunctions(byte[] json) {
+        com.google.gson.JsonElement root;
+        try {
+            root = com.google.gson.JsonParser.parseString(new String(json, StandardCharsets.UTF_8));
+        } catch (RuntimeException unparsable) {
+            return json;
+        }
+        if (!(root instanceof com.google.gson.JsonArray functions)) return json;
+        com.google.gson.JsonObject sequence = new com.google.gson.JsonObject();
+        sequence.addProperty("type", "minecraft:sequence");
+        sequence.add("functions", functions);
+        return sequence.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    // The trigger fields that held a list of loot conditions about an entity before 26.3.
+    private static final java.util.Set<String> ENTITY_CHECK_SLOTS = java.util.Set.of("player", "entity", "child",
+            "parent", "partner", "zombie", "villager", "projectile", "shooter", "lightning", "bystander");
+
+    /** An advancement with its empty entity check lists removed; the same array when it has none. */
+    static byte[] dropEmptyTriggerChecks(byte[] json) {
+        com.google.gson.JsonElement root;
+        try {
+            root = com.google.gson.JsonParser.parseString(new String(json, StandardCharsets.UTF_8));
+        } catch (RuntimeException unparsable) {
+            return json;
+        }
+        if (!(root instanceof com.google.gson.JsonObject advancement)
+                || !(advancement.get("criteria") instanceof com.google.gson.JsonObject criteria)) return json;
+        boolean changed = false;
+        for (com.google.gson.JsonElement criterion : criteria.asMap().values()) {
+            if (!(criterion instanceof com.google.gson.JsonObject trigger)
+                    || !(trigger.get("conditions") instanceof com.google.gson.JsonObject conditions)) continue;
+            for (String slot : ENTITY_CHECK_SLOTS) {
+                if (conditions.get(slot) instanceof com.google.gson.JsonArray list && list.isEmpty()) {
+                    conditions.remove(slot);
+                    changed = true;
+                }
+            }
+        }
+        return changed ? root.toString().getBytes(StandardCharsets.UTF_8) : json;
+    }
 
     /**
      * Adds {@code "type": "minecraft:uniform"} to untyped {@code {"min", "max"}} number providers in
-     * a loot table: a pool's rolls and bonus rolls, and a function's count, damage, and levels. The
-     * same shape in a condition or predicate is a range, not a provider, and is left alone.
+     * a loot table: a pool's rolls and bonus rolls, a function's count, damage, and levels, a uniform's
+     * own bounds, and an attribute modifier's amount. The same shape in a condition or predicate is a
+     * range, not a provider, and is left alone.
      */
     static byte[] typeUntypedUniforms(byte[] json) {
         com.google.gson.JsonElement root;
@@ -872,8 +961,12 @@ public final class ModDataMigrator {
         if (element instanceof com.google.gson.JsonArray array) {
             for (com.google.gson.JsonElement item : array) changed |= typeUniforms(item);
         } else if (element instanceof com.google.gson.JsonObject object) {
+            // A uniform's own bounds and an attribute modifier's amount are providers too.
             java.util.Set<String> providers = object.has("function") ? FUNCTION_PROVIDERS
-                    : object.has("entries") ? POOL_PROVIDERS : java.util.Set.of();
+                    : object.has("entries") ? POOL_PROVIDERS
+                    : isTypedUniform(object) ? UNIFORM_BOUNDS
+                    : object.has("attribute") && object.has("operation") ? MODIFIER_PROVIDERS
+                    : java.util.Set.of();
             for (String key : providers) {
                 if (object.get(key) instanceof com.google.gson.JsonObject value && isUntypedUniform(value)) {
                     value.addProperty("type", "minecraft:uniform");
@@ -886,6 +979,11 @@ public final class ModDataMigrator {
             }
         }
         return changed;
+    }
+
+    private static boolean isTypedUniform(com.google.gson.JsonObject value) {
+        return value.get("type") instanceof com.google.gson.JsonPrimitive type && type.isString()
+                && namespaced(type.getAsString()).equals("minecraft:uniform");
     }
 
     private static boolean isUntypedUniform(com.google.gson.JsonObject value) {
@@ -952,11 +1050,40 @@ public final class ModDataMigrator {
                     }
                 }
             }
+            // An empty smithing template or addition list matched an empty slot; from 1.21.2 the slot is
+            // optional and an empty list no longer parses, so the field is left out.
+            if (type.equals("minecraft:smithing_transform")) {
+                for (String slot : new String[] {"template", "addition"}) {
+                    if (recipe.get(slot) instanceof com.google.gson.JsonArray empty && empty.isEmpty()) {
+                        recipe.remove(slot);
+                        changed = true;
+                    }
+                }
+            }
+            // A mod's own recipe type names its ingredients in fields of its own. Before 1.21.2 only an
+            // ingredient read a lone {"item"} or {"tag"} object, so such a field is converted as one.
+            if (!type.isEmpty() && !type.startsWith("minecraft:") && sourceMcVersion != null
+                    && sourceMcVersion.matches("\\d+\\.\\d+.*")
+                    && !atLeast(sourceMcVersion, FIRST_STRING_INGREDIENT_HOST)) {
+                for (var field : recipe.entrySet()) {
+                    if (NOT_INGREDIENT_FIELDS.contains(field.getKey())
+                            || SINGLE_INGREDIENT_FIELDS.contains(field.getKey())) continue;
+                    com.google.gson.JsonElement converted = legacyIngredient(field.getValue(), null);
+                    if (converted != null) {
+                        field.setValue(converted);
+                        changed = true;
+                    }
+                }
+            }
             return changed ? root.toString().getBytes(StandardCharsets.UTF_8) : json;
         } catch (RuntimeException e) {
             return json;   // unparseable or unexpected shape: leave the file alone
         }
     }
+
+    // Fields of a mod's recipe that hold something other than one ingredient, or were handled above.
+    private static final java.util.Set<String> NOT_INGREDIENT_FIELDS = java.util.Set.of(
+            "type", "key", "ingredients", "result");
 
     /** The string form of one legacy ingredient, or null when it is not a legacy ingredient. */
     private static com.google.gson.JsonElement legacyIngredient(com.google.gson.JsonElement value,
@@ -967,6 +1094,11 @@ public final class ModDataMigrator {
             // An object that is not a plain item or tag may still be an item with components.
             if (id == null && components != null) return components.convert(value.getAsJsonObject());
             return id == null ? null : new com.google.gson.JsonPrimitive(id);
+        }
+        // A list of one tag is that tag.
+        if (value.isJsonArray() && value.getAsJsonArray().size() == 1 && value.getAsJsonArray().get(0).isJsonObject()) {
+            String id = legacyIngredientId(value.getAsJsonArray().get(0).getAsJsonObject());
+            if (id != null && id.startsWith("#")) return new com.google.gson.JsonPrimitive(id);
         }
         // An array converts only when every entry is a plain item.
         if (value.isJsonArray() && !value.getAsJsonArray().isEmpty()) {
@@ -1123,7 +1255,7 @@ public final class ModDataMigrator {
     // so an unrelated {"type": ...} object (an effect, a provider) can never be touched.
     private static final java.util.Set<String> ENTITY_PREDICATE_SLOTS = java.util.Set.of(
             "victims", "entity", "projectile", "direct_entity", "source_entity",
-            "shooter", "cause", "parent", "partner", "child", "zombie", "villager");
+            "shooter", "cause", "parent", "partner", "child", "zombie", "villager", "player");
 
     private static final java.util.Set<String> ENTITY_PREDICATE_VOCAB;
     static {
@@ -1181,7 +1313,7 @@ public final class ModDataMigrator {
     private static boolean looksLikeEntityPredicate(com.google.gson.JsonObject obj) {
         boolean anyLegacy = false;
         for (String k : obj.keySet()) {
-            if (ENTITY_PREDICATE_KEYS.containsKey(k)) anyLegacy = true;
+            if (ENTITY_PREDICATE_KEYS.containsKey(k) || k.equals("type_specific")) anyLegacy = true;
             else if (!ENTITY_PREDICATE_VOCAB.contains(k)) return false;
         }
         return anyLegacy;
@@ -1193,17 +1325,60 @@ public final class ModDataMigrator {
         for (String key : predicate.keySet()) {
             String mapped = ENTITY_PREDICATE_KEYS.getOrDefault(key, key);
             com.google.gson.JsonElement value = predicate.get(key);
+            // An old predicate ignored a field it did not have, such as a stray "is_flying". The keyed
+            // form reads every key as a sub-predicate, so such a field is dropped.
+            if (!key.contains(":") && !key.startsWith("type_specific/") && !ENTITY_PREDICATE_VOCAB.contains(key)
+                    && !KEYED_SUB_PREDICATES.contains(key)) {
+                changed[0] = true;
+                continue;
+            }
             // vehicle/targeted_entity values are nested EntityPredicates - migrate them too
             if (value.isJsonObject()
                     && ("vehicle".equals(key) || "targeted_entity".equals(key)
                         || "passenger".equals(key))) {
                 value = rewritePredicateKeys(value.getAsJsonObject(), changed);
             }
+            // The old type_specific object named its kind in "type"; each kind is its own key now.
+            if ("type_specific".equals(key) && value.isJsonObject()) {
+                String kind = typeSpecificKind(value.getAsJsonObject());
+                if (kind != null) {
+                    com.google.gson.JsonObject fields = value.getAsJsonObject().deepCopy();
+                    fields.remove("type");
+                    // A player's looking_at and a lightning bolt's entity_struck hold entity predicates too.
+                    for (String nested : new String[] {"looking_at", "entity_struck"}) {
+                        if (fields.get(nested) instanceof com.google.gson.JsonObject entity) {
+                            fields.add(nested, rewritePredicateKeys(entity, changed));
+                        }
+                    }
+                    mapped = "minecraft:type_specific/" + kind;
+                    value = fields;
+                }
+            }
             if (!mapped.equals(key)) changed[0] = true;
             out.add(mapped, value);
         }
         return out;
     }
+
+    /** The keyed kind for an old type_specific object, or null for one 26.2 has no key for. */
+    private static String typeSpecificKind(com.google.gson.JsonObject typeSpecific) {
+        if (!(typeSpecific.get("type") instanceof com.google.gson.JsonPrimitive type) || !type.isString()) return null;
+        String id = type.getAsString();
+        String kind = id.startsWith("minecraft:") ? id.substring("minecraft:".length()) : id;
+        // The slime predicate became cube_mob, which also matches magma cubes as before.
+        if (kind.equals("slime")) return "cube_mob";
+        return TYPE_SPECIFIC_KINDS.contains(kind) ? kind : null;
+    }
+
+    // The type_specific kinds 26.2 and 26.3 register under type_specific/, read from EntitySubPredicates.
+    private static final java.util.Set<String> TYPE_SPECIFIC_KINDS = java.util.Set.of(
+            "cube_mob", "fishing_hook", "lightning", "player", "raider", "sheep");
+
+    // The other sub-predicate ids 26.3 registers, so data already in the keyed form keeps them.
+    private static final java.util.Set<String> KEYED_SUB_PREDICATES = java.util.Set.of(
+            "components", "distance", "effects", "entity_tags", "entity_type", "equipment", "flags",
+            "location", "movement", "movement_affected_by", "nbt", "passenger", "periodic_tick",
+            "predicates", "slots", "stepping_on", "targeted_entity", "team", "vehicle");
 
     /** The client item definitions to add for a mod's entry names, one per item model without one. */
     public static java.util.Map<String, byte[]> synthesizeItemDefinitionEntries(
@@ -1249,7 +1424,7 @@ public final class ModDataMigrator {
             out.put(defName, json.getBytes(StandardCharsets.UTF_8));
         }
         if (!keptVanilla.isEmpty()) {
-            LOGGER.info("Kept vanilla's item definitions for {}; the mod's own models for them "
+            LOGGER.debug(RetromodLog.DETAIL, "Kept vanilla's item definitions for {}; the mod's own models for them "
                     + "still apply, but their old overrides are not translated", keptVanilla);
         }
         return out;

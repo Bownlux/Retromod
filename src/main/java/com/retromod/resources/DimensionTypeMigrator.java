@@ -36,7 +36,8 @@ public final class DimensionTypeMigrator {
     private DimensionTypeMigrator() {}
 
     static boolean isDimensionType(String entryName) {
-        return entryName.startsWith("data/") && entryName.contains("/dimension_type/") && entryName.endsWith(".json");
+        return ModDataMigrator.dataPath(entryName).startsWith("data/") && entryName.contains("/dimension_type/")
+                && entryName.endsWith(".json");
     }
 
     /** The file rewritten for the target, or the same array when nothing changed. */

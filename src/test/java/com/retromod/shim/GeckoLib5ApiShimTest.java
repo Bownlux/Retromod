@@ -5,6 +5,7 @@
 package com.retromod.shim;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
 import com.retromod.shim.api.common.GeckoLib5ApiShim;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
@@ -22,14 +23,17 @@ import java.util.zip.ZipFile;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * GeckoLib 5 renamed its package and reorganised the library at once, so a mod built against 4.x
- * fails on its first animated item with {@code NoClassDefFoundError} naming a class that is simply
- * gone (#223). The table is derived from the two jars, so these tests check it against them.
+ * GeckoLib 5 reorganised the library and 5.5 moved its package, so a mod built against 4.x fails on
+ * its first animated item with {@code NoClassDefFoundError} naming a class that is simply gone
+ * (#223). The table is derived from the two jars, so these tests check it against them.
  */
 class GeckoLib5ApiShimTest {
 
+    private final String savedTarget = RetromodVersion.TARGET_MC_VERSION;
+
     @AfterEach
     void clearRedirects() {
+        RetromodVersion.TARGET_MC_VERSION = savedTarget;
         RetromodTransformer.getInstance().clearRedirectsForTesting();
     }
 
@@ -42,10 +46,12 @@ class GeckoLib5ApiShimTest {
     }
 
     @Test
-    @DisplayName("The whole table registers as class redirects")
+    @DisplayName("The whole table registers as class redirects where GeckoLib uses com.geckolib")
     void tableRegisters() {
         RetromodTransformer transformer = RetromodTransformer.getInstance();
         transformer.clearRedirectsForTesting();
+        // No GeckoLib is readable here, so the host decides: 26.3's GeckoLib 5.5.7 uses com.geckolib.
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
         new GeckoLib5ApiShim().registerRedirects(transformer);
 
         Map<String, String> redirects = transformer.getClassRedirects();
@@ -56,18 +62,23 @@ class GeckoLib5ApiShimTest {
     }
 
     @Test
-    @DisplayName("It is held back from hosts whose GeckoLib is still 4.x")
+    @DisplayName("It is held back from hosts whose GeckoLib is still 4.x and moves nothing on 1.21.5 to 1.21.11")
     void heldBackBelowTheBoundary() {
-        // GeckoLib 4.x tops out at 1.21.4 and 5.x starts at 1.21.5. Rewriting below that would
-        // point a mod at packages the host's own GeckoLib does not ship.
+        // GeckoLib 4.x tops out at 1.21.4, so those hosts are never offered the shim.
         GeckoLib5ApiShim shim = new GeckoLib5ApiShim();
         for (String host : List.of("1.20.1", "1.21.1", "1.21.4")) {
             assertFalse(ShimRegistry.isAvailableOnHost(shim, host),
                     host + " still ships GeckoLib 4, so the rewrite must not apply");
         }
-        for (String host : List.of("1.21.5", "1.21.11", "26.1.2", "26.2")) {
-            assertTrue(ShimRegistry.isAvailableOnHost(shim, host),
-                    host + " ships GeckoLib 5, so the rewrite applies");
+        // GeckoLib 5.0 to 5.4.5 still use software.bernie.geckolib, so the shim is offered there but moves nothing.
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        for (String host : List.of("1.21.5", "1.21.8", "1.21.11")) {
+            assertTrue(ShimRegistry.isAvailableOnHost(shim, host), host);
+            transformer.clearRedirectsForTesting();
+            RetromodVersion.TARGET_MC_VERSION = host;
+            shim.registerRedirects(transformer);
+            assertNull(transformer.getClassRedirects().get("software/bernie/geckolib/animatable/GeoItem"),
+                    host + " ships GeckoLib with software.bernie names, so they must stay");
         }
     }
 

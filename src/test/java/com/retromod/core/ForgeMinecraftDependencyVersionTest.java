@@ -53,6 +53,7 @@ class ForgeMinecraftDependencyVersionTest {
                 [[dependencies.example]]
                     modId="forge"
                     versionRange="[47,)"
-                """), "the caller keeps its older fallback when no minecraft block exists");
+                """), "without a minecraft block the caller reads the version as every other "
+                + "path does, never from the forge range");
     }
 }

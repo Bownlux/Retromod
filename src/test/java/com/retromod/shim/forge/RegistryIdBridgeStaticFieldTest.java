@@ -4,12 +4,17 @@
  */
 package com.retromod.shim.forge;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.commons.ClassRemapper;
+import org.objectweb.asm.commons.SimpleRemapper;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -30,6 +35,13 @@ class RegistryIdBridgeStaticFieldTest {
     private static final String REGISTRIES = "net/minecraft/core/registries/Registries";
     private static final String BLOCK_PROPS = "net/minecraft/world/level/block/state/BlockBehaviour$Properties";
     private static final String ITEM_PROPS = "net/minecraft/world/item/Item$Properties";
+
+    @BeforeEach
+    @AfterEach
+    void clearSharedSlots() {
+        System.getProperties().remove(RegistryIdBridgeSynthetic.SHARED_CURRENT_KEY);
+        System.getProperties().remove(RegistryIdBridgeSynthetic.SHARED_HANDED_KEY);
+    }
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {RegistryIdBridgeSynthetic.INTERNAL, RegistryIdBridgeSynthetic.FORGE_INTERNAL})
@@ -91,6 +103,42 @@ class RegistryIdBridgeStaticFieldTest {
         assertSame(stubs.registry("ITEM"), stubs.registryOf(itemKey));
         assertNull(stubs.keyOf(apply(lookup, bridge, "applyItem", stubs.itemProps)),
                 "the outer leave empties the slot it found empty");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {RegistryIdBridgeSynthetic.INTERNAL, RegistryIdBridgeSynthetic.FORGE_INTERNAL})
+    @DisplayName("a library's copy stamps the id another jar's static field stamp set")
+    void stampReachesAnotherJarsCopy(String bridgeName) throws Throwable {
+        // ModItems.FOO = new LibraryItem() in one jar: the stamp goes through that jar's copy, and
+        // the library's constructor builds its properties through its own.
+        Stubs stubs = new Stubs();
+        byte[] bytes = bridgeName.equals(RegistryIdBridgeSynthetic.INTERNAL)
+                ? RegistryIdBridgeSynthetic.generate() : RegistryIdBridgeSynthetic.generateForge();
+        Class<?> stamping = stubs.define("addon/" + bridgeName, relocate(bytes, bridgeName, "addon/" + bridgeName));
+        Class<?> library = stubs.define("library/" + bridgeName, relocate(bytes, bridgeName, "library/" + bridgeName));
+        MethodHandles.Lookup stampingLookup = MethodHandles.privateLookupIn(stamping, MethodHandles.lookup());
+        MethodHandles.Lookup libraryLookup = MethodHandles.privateLookupIn(library, MethodHandles.lookup());
+        MethodHandle enter = stampingLookup.findStatic(stamping, "enter",
+                MethodType.methodType(Object.class, stubs.identifier));
+        MethodHandle leave = stampingLookup.findStatic(stamping, "leave",
+                MethodType.methodType(void.class, Object.class));
+        Object id = stubs.identifier.getConstructor().newInstance();
+
+        Object previous = enter.invoke(id);
+        Object itemKey = stubs.keyOf(apply(libraryLookup, library, "applyItem", stubs.itemProps));
+        leave.invoke(previous);
+
+        assertNotNull(itemKey, "the library's copy must see the id the stamping jar's copy set");
+        assertSame(id, stubs.idOf(itemKey));
+        assertNull(stubs.keyOf(apply(libraryLookup, library, "applyItem", stubs.itemProps)),
+                "the stamping copy's leave empties the slot for the library too");
+    }
+
+    /** The bridge under another package, as the embedder relocates each jar's copy. */
+    private static byte[] relocate(byte[] bytes, String from, String to) {
+        ClassWriter cw = new ClassWriter(0);
+        new ClassReader(bytes).accept(new ClassRemapper(cw, new SimpleRemapper(from, to)), 0);
+        return cw.toByteArray();
     }
 
     private static Object apply(MethodHandles.Lookup lookup, Class<?> bridge, String method, Class<?> props)

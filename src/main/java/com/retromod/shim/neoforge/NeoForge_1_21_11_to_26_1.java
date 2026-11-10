@@ -43,6 +43,8 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // Mods built for 1.21.11 also reach the members 26.1 and 26.2 removed; each row is checked on the host.
+        com.retromod.shim.common.LegacyRemovedMemberBridge.register(transformer);
         SyntheticEmbedder.registerClassResource(
                 transformer,
                 "com/retromod/shim/neoforge/embedded/ReloadListenerEventShim",
@@ -100,9 +102,6 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
             "getHeight", "()I", "setHeight", "(I)V"
         );
 
-        // Listener.setGain(float) removed in 26.1 (volume went per-source); mods like
-        // Dynamic FPS call it to mute/unmute, so redirect to a no-op.
-
         // CommandSourceStack.hasPermission(int) bridges to the new PermissionSet system.
         transformer.registerMethodRedirect(
             "net/minecraft/commands/CommandSourceStack", "hasPermission",
@@ -112,23 +111,9 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
             true  // devirtualize
         );
 
-        transformer.registerMethodRedirect(
-            "com/mojang/blaze3d/audio/Listener", "setGain",
-            "(F)V",
-            "com/retromod/shim/fabric/embedded/ItemSafetyShim", "noOp",
-            "(Ljava/lang/Object;F)V",
-            true  // devirtualize: instance method to static method
-        );
-
-        // Item components are data-driven in 26.1; getDefaultInstance() before binding
-        // NPEs, so route through a safe wrapper.
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/item/Item", "getDefaultInstance",
-            "()Lnet/minecraft/world/item/ItemStack;",
-            "com/retromod/shim/fabric/embedded/ItemSafetyShim", "safeGetDefaultInstance",
-            "(Ljava/lang/Object;)Ljava/lang/Object;",
-            true  // devirtualize: instance method → static method
-        );
+        // Listener.setGain(float) is gone from 1.21.9; mods like Dynamic FPS call it to
+        // mute/unmute, so it becomes a no-op.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerListenerSetGainNoOp(transformer);
 
         // Window.getWindow() renamed to record-style handle() in 26.1.
         transformer.registerMethodRedirect(
@@ -154,14 +139,9 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
             "(DD)Lnet/minecraft/world/inventory/Slot;"
         );
 
-        // GameNarrator.sayNow(Component) renamed to saySystemNow in 26.1 (verified absent in
-        // 26.1-snapshot-10, present in 1.21.11; corpus scan: Revamped Phantoms ClientPacketListenerMixin).
-        transformer.registerMethodRedirect(
-            "net/minecraft/client/GameNarrator", "sayNow",
-            "(Lnet/minecraft/network/chat/Component;)V",
-            "net/minecraft/client/GameNarrator", "saySystemNow",
-            "(Lnet/minecraft/network/chat/Component;)V"
-        );
+        // GameNarrator.sayNow(Component) is saySystemNow from 1.21.6 (corpus scan: Revamped
+        // Phantoms ClientPacketListenerMixin).
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerNarratorSayNowRename(transformer);
 
         // FriendlyByteBuf.readJsonWithCodec renamed to readLenientJsonWithCodec in 26.1 (same
         // descriptor; writeJsonWithCodec unchanged; corpus scan: NoChatReports MixinFriendlyByteBuf).
@@ -207,7 +187,18 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
         // 26.1 removed BlockEntityType.Builder, and data attachments serialize with a MapCodec.
         com.retromod.shim.common.LegacyBlockEntityTypeBuilderBridge.register(transformer);
         LegacyAttachmentCodecBridge.register(transformer);
-        registerLootFrom(transformer);
+        com.retromod.shim.forge.LegacyLootFromBridge.register(transformer);
+        // Minecraft 1.21.4 removed BlockEntityWithoutLevelRenderer and NeoForge 1.21.4 getCustomRenderer, so old item
+        // renderers extend a base rebuilt inside each mod and draw through an item model type each mod registers.
+        LegacyNeoForgeItemRendererBridge.register(transformer);
+        // NeoForge 1.21.4 replaced RegisterAdditional with standalone models; old listeners still need the name to resolve.
+        LegacyNeoForgeRegisterAdditionalBridge.register(transformer);
+        // NeoForge 1.21.5 removed the dynamic model API with BakedModel, which old models and their callers still name.
+        LegacyNeoForgeBakedModelBridge.register(transformer);
+        // NeoForge keys AddLayers player renderers by model type, and its getSkins() returns those types.
+        LegacyNeoForgeAddLayersBridge.register(transformer);
+        // NeoForge 26.1 replaced the block color event with block tint sources, and 1.21.4 removed the item color event.
+        LegacyNeoForgeColorBridge.register(transformer);
 
         // BlockEvent$BreakEvent moved into its own subpackage in 26.1 (same ctor, still
         // cancellable). Block-break is one of the most common event subscriptions.
@@ -253,8 +244,8 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
     @Override
     public String[] getShimClasses() {
         return new String[] {
-            // Reuses Fabric's loader-agnostic ItemSafetyShim for safe
-            // getDefaultInstance() and the setGain() no-op.
+            // Reuses Fabric's loader-agnostic ItemSafetyShim for hasPermission(int)
+            // and the setGain() no-op.
             "com.retromod.shim.fabric.embedded.ItemSafetyShim",
             // Bridges the removed 1-arg AddReloadListenerEvent.addListener onto 26.2's id-requiring form (#139).
             "com.retromod.shim.neoforge.embedded.ReloadListenerEventShim"
@@ -311,17 +302,5 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
                 true
             );
         }
-    }
-
-    /** NeoForge's {@code Properties.lootFrom(block)} became a loot table override, where the host has no lootFrom. */
-    private static void registerLootFrom(RetromodTransformer transformer) {
-        String properties = "net/minecraft/world/level/block/state/BlockBehaviour$Properties";
-        org.objectweb.asm.tree.ClassNode host = com.retromod.core.ClassResourceInspector.read(properties);
-        if (host != null && host.methods.stream().anyMatch(method -> method.name.equals("lootFrom"))) return;
-        String helper = "com/retromod/shim/neoforge/embedded/LegacyLootFrom";
-        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, helper,
-                com.retromod.shim.neoforge.embedded.LegacyLootFrom.class);
-        transformer.registerMethodRedirect(properties, "lootFrom", "(Ljava/util/function/Supplier;)L" + properties + ";",
-                helper, "lootFrom", "(Ljava/lang/Object;Ljava/util/function/Supplier;)Ljava/lang/Object;", true);
     }
 }

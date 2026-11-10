@@ -84,15 +84,17 @@ public final class McI18n {
             if (resolved) return;
             textClass = McReflect.findClass(
                 "net.minecraft.text.Text",
-                "net.minecraft.network.chat.Component"
+                "net.minecraft.network.chat.Component",
+                "net.minecraft.class_2561"  // intermediary, pre-26.1 Fabric
             );
             if (textClass != null) {
+                // literal and translatable(String) look alike, so each id follows its own name.
                 translatableMethod = McReflect.findMethod(textClass,
-                        new Class[]{String.class}, "translatable");
+                        new Class[]{String.class}, "translatable", "method_43471");
                 translatableWithArgsMethod = McReflect.findMethod(textClass,
-                        new Class[]{String.class, Object[].class}, "translatable");
+                        new Class[]{String.class, Object[].class}, "translatable", "method_43469");
                 literalMethod = McReflect.findMethod(textClass,
-                        new Class[]{String.class}, "literal");
+                        new Class[]{String.class}, "literal", "method_43470");
                 // older MC has no Text.literal, try Text.of
                 if (literalMethod == null) {
                     literalMethod = McReflect.findMethod(textClass,

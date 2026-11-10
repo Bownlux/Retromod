@@ -5,6 +5,7 @@
 package com.retromod.mixin;
 
 import com.retromod.core.FuzzyMethodResolver;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
@@ -174,7 +175,7 @@ final class MixinFirstPersonRendererAdapter {
         disable(original);
         ClassWriter writer = new ClassWriter(0);
         original.accept(writer);
-        LOGGER.info("Disabled first-person Mixin {}: ItemInHandRenderer is gone and the mixin "
+        LOGGER.debug(RetromodLog.DETAIL, "Disabled first-person Mixin {}: ItemInHandRenderer is gone and the mixin "
                 + "could not be moved to the split renderer", original.name);
         return writer.toByteArray();
     }
@@ -183,7 +184,7 @@ final class MixinFirstPersonRendererAdapter {
         try {
             ClassWriter writer = new com.retromod.util.SafeClassWriter(ClassWriter.COMPUTE_FRAMES);
             classNode.accept(writer);
-            LOGGER.info("Adapted first-person Mixin {} for the {}", classNode.name, what);
+            LOGGER.debug(RetromodLog.DETAIL, "Adapted first-person Mixin {} for the {}", classNode.name, what);
             return writer.toByteArray();
         } catch (Throwable t) {
             LOGGER.debug("Could not verify first-person adaptation of {} ({})", classNode.name, t.toString());

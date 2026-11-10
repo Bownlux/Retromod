@@ -6,6 +6,7 @@ package com.retromod.loaderapi.fabric.v26.content;
 
 import com.retromod.loaderapi.fabric.v26.HostLink;
 import com.retromod.loaderapi.fabric.v26.HostLink.Member;
+import com.retromod.shim.common.LegacyItemComponentValues;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,7 +31,6 @@ public final class LegacyContentRegistries {
     private static final String STATE = "Lnet/minecraft/world/level/block/state/BlockState;";
     private static final String ITEM_LIKE = "Lnet/minecraft/world/level/ItemLike;";
     private static final String TAG_KEY = "Lnet/minecraft/tags/TagKey;";
-    private static final String RESOURCE_KEY = "Lnet/minecraft/resources/ResourceKey;";
     private static final String EVENT = "Lnet/fabricmc/fabric/api/event/Event;";
 
     // Fabric API 26.3 builds the axe, hoe and shovel transforms with the old sounds and rules: a
@@ -51,32 +51,13 @@ public final class LegacyContentRegistries {
     static final Member MODIFY_ITEM = Member.virtual(COMPONENT_EVENTS + "$ModifyContext", "modify",
             "(Lnet/minecraft/world/item/Item;Ljava/util/function/Consumer;)V");
     private static final String COMPONENT_TYPE = "Lnet/minecraft/core/component/DataComponentType;";
-    static final Member BUILDER_SET = Member.virtual("net/minecraft/core/component/DataComponentMap$Builder",
-            "set", "(" + COMPONENT_TYPE + "Ljava/lang/Object;)Lnet/minecraft/core/component/DataComponentMap$Builder;");
-    static final Member COMPOSTABLE = new Member("net/minecraft/core/component/DataComponents",
-            "COMPOSTABLE", COMPONENT_TYPE, true);
-    static final Member COOKING_FUEL = new Member("net/minecraft/core/component/DataComponents",
-            "COOKING_FUEL", COMPONENT_TYPE, true);
+    // The compost and fuel components themselves are built by the helper the NeoForge bridge shares.
+    private static final Member BUILDER_SET = LegacyItemComponentValues.BUILDER_SET;
+    private static final Member COMPOSTABLE = LegacyItemComponentValues.COMPOSTABLE;
+    private static final Member COOKING_FUEL = LegacyItemComponentValues.COOKING_FUEL;
     static final Member VILLAGER_FOOD = new Member("net/minecraft/core/component/DataComponents",
             "VILLAGER_FOOD", COMPONENT_TYPE, true);
     static final Member NEW_VILLAGER_FOOD = Member.constructor("net/minecraft/world/food/VillagerFood", "(I)V");
-    private static final String INTS = "net/minecraft/world/level/storage/loot/providers/number/ints/";
-    private static final String FLOATS = "net/minecraft/world/level/storage/loot/providers/number/floats/";
-    static final Member NEW_COMPOSTABLE = Member.constructor("net/minecraft/world/item/component/Compostable",
-            "(" + RESOURCE_KEY + ")V");
-    static final Member NEW_COOKING_FUEL = Member.constructor("net/minecraft/world/item/component/CookingFuel",
-            "(L" + INTS + "ResolvableInt;L" + FLOATS + "ResolvableFloat;)V");
-    static final Member NEW_INT_CONSTANT = Member.constructor(INTS + "ResolvableInt$Constant", "(I)V");
-    static final Member FLOAT_FROM_KEY = Member.staticMethod(FLOATS + "ResolvableFloat", "fromKey",
-            "(" + RESOURCE_KEY + ")L" + FLOATS + "ResolvableFloat;");
-    static final Member CREATE_KEY = Member.staticMethod("net/minecraft/resources/ResourceKey", "create",
-            "(" + RESOURCE_KEY + "Lnet/minecraft/resources/Identifier;)" + RESOURCE_KEY);
-    static final Member INT_PROVIDERS = new Member("net/minecraft/core/registries/Registries",
-            "CONTEXT_INT_PROVIDER", RESOURCE_KEY, true);
-    static final Member FLOAT_PROVIDERS = new Member("net/minecraft/core/registries/Registries",
-            "CONTEXT_FLOAT_PROVIDER", RESOURCE_KEY, true);
-    static final Member IDENTIFIER = Member.staticMethod("net/minecraft/resources/Identifier",
-            "fromNamespaceAndPath", "(Ljava/lang/String;Ljava/lang/String;)Lnet/minecraft/resources/Identifier;");
     static final Member AS_ITEM = Member.virtual("net/minecraft/world/level/ItemLike", "asItem",
             "()Lnet/minecraft/world/item/Item;");
 
@@ -90,13 +71,6 @@ public final class LegacyContentRegistries {
     static final Member FUEL_REMOVE_TAG = Member.virtual(FUEL_BUILDER, "remove", "(" + TAG_KEY + ")L" + FUEL_BUILDER + ";");
     static final Member REGISTER_LISTENER = Member.virtual("net/fabricmc/fabric/api/event/Event", "register",
             "(Ljava/lang/Object;)V");
-
-    // Vanilla's composting tiers, by the old chance each stands for. A component names one of
-    // these or a whole number of layers, so an old chance takes the nearest tier.
-    private static final Map<Float, String> COMPOST_TIERS = Map.of(
-            0.3f, "compostable/low", 0.5f, "compostable/low_medium", 0.65f, "compostable/medium",
-            0.85f, "compostable/medium_high", 1.0f, "compostable/always_add_one");
-    private static final String FUEL_SPEED = "cooking/speed_default";
 
     // What old mods asked for, kept as they passed it: a block's item may not exist yet when its
     // mod registers, so ItemLike is turned into an item when the components are built.
@@ -314,9 +288,12 @@ public final class LegacyContentRegistries {
             }
             // A chance of 0 never added a layer, so such an item is left as the host has it.
             compost.forEach((item, chance) -> {
-                if (chance > 0) setComponent(context, item, COMPOSTABLE, compostable(chance));
+                if (chance > 0) {
+                    setComponent(context, item, COMPOSTABLE, LegacyItemComponentValues.compostable(chance));
+                }
             });
-            fuel.forEach((item, ticks) -> setComponent(context, item, COOKING_FUEL, cookingFuel(ticks)));
+            fuel.forEach((item, ticks) -> setComponent(context, item, COOKING_FUEL,
+                    LegacyItemComponentValues.cookingFuel(ticks)));
             villagerFood.forEach((item, nutrition) -> setComponent(context, item, VILLAGER_FOOD,
                     call(HostLink.require(NEW_VILLAGER_FOOD), nutrition)));
             // Removing a vanilla fuel takes its component away; null is how the builder removes one.
@@ -330,41 +307,6 @@ public final class LegacyContentRegistries {
         Object componentType = call(HostLink.require(type));
         Consumer<Object> edit = builder -> call(HostLink.require(BUILDER_SET), builder, componentType, value);
         call(HostLink.require(MODIFY_ITEM), context, item, edit);
-    }
-
-    /** The compost component for an old chance, at the nearest of vanilla's tiers. */
-    static Object compostable(float chance) {
-        String tier = nearestTier(chance);
-        if (Math.abs(nearestTierChance(chance) - chance) > 0.001f) {
-            debugOnce("compost-round:" + chance, "Composting chance " + chance + " uses vanilla's "
-                    + tier + " tier, the nearest 26.3 has");
-        }
-        Object key = call(HostLink.require(CREATE_KEY), call(HostLink.require(INT_PROVIDERS)), id(tier));
-        return call(HostLink.require(NEW_COMPOSTABLE), key);
-    }
-
-    /** The fuel component for an old burn time, with vanilla's default cooking speed. */
-    static Object cookingFuel(int ticks) {
-        Object burnTime = call(HostLink.require(NEW_INT_CONSTANT), ticks);
-        Object speedKey = call(HostLink.require(CREATE_KEY), call(HostLink.require(FLOAT_PROVIDERS)), id(FUEL_SPEED));
-        Object speed = call(HostLink.require(FLOAT_FROM_KEY), speedKey);
-        return call(HostLink.require(NEW_COOKING_FUEL), burnTime, speed);
-    }
-
-    static String nearestTier(float chance) {
-        return COMPOST_TIERS.get(nearestTierChance(chance));
-    }
-
-    private static float nearestTierChance(float chance) {
-        float best = 1.0f;
-        for (float tier : COMPOST_TIERS.keySet()) {
-            if (Math.abs(tier - chance) < Math.abs(best - chance)) best = tier;
-        }
-        return best;
-    }
-
-    private static Object id(String path) {
-        return call(HostLink.require(IDENTIFIER), "minecraft", path);
     }
 
     // ---- Host plumbing -----------------------------------------------------------------------

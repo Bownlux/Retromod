@@ -6,7 +6,6 @@ package com.retromod.aot;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
-import com.retromod.embedder.ModVersionInfo;
 import com.retromod.shim.ShimRegistry;
 import com.retromod.shim.fabric.Fabric_1_21_11_to_26_1;
 import com.retromod.shim.fabric.embedded.LegacyBlockRandomTickBridge;
@@ -21,11 +20,9 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.io.InputStream;
-import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
-import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import java.util.zip.ZipFile;
@@ -72,19 +69,15 @@ class AotLoaderNameMappingTest {
     @Test
     void batchAotReconfiguresMappingsBetweenFabricAndForge(@TempDir Path directory)
             throws Exception {
-        AotCompiler compiler = new AotCompiler(new ShimRegistry(), "26.1");
-        ModVersionInfo fabric = info("fabric");
-        ModVersionInfo forge = info("forge");
+        AotCompiler compiler = AotCompiler.forOfflineInputs(
+                new ShimRegistry(), "26.1", directory.toRealPath().resolve("cache"));
+        Path fabricInput = directory.resolve("fabric-input.jar");
+        Path forgeInput = directory.resolve("next-forge-input.jar");
+        writeFabricMod(fabricInput, intermediaryNamedCall());
+        writeModernForgeMod(forgeInput, intermediaryNamedCall());
 
-        compiler.configureLoaderMappingsFor(fabric);
-        Path fabricOutput = compile(compiler, fabric, directory.resolve("fabric-input.jar"),
-                directory.resolve("fabric-output.jar"), intermediaryNamedCall());
-        assertEquals("tick", transformedCallName(fabricOutput));
-
-        compiler.configureLoaderMappingsFor(forge);
-        Path forgeOutput = compile(compiler, forge, directory.resolve("next-forge-input.jar"),
-                directory.resolve("next-forge-output.jar"), intermediaryNamedCall());
-        assertEquals("method_5773", transformedCallName(forgeOutput),
+        assertEquals("tick", transformedCallName(compiler.compileModAot(fabricInput, true)));
+        assertEquals("method_5773", transformedCallName(compiler.compileModAot(forgeInput, true)),
                 "the next Forge AOT jar must not inherit Fabric intermediary mappings");
     }
 
@@ -111,25 +104,6 @@ class AotLoaderNameMappingTest {
         assertFalse(transformer.getFieldRedirects().containsKey(randomTick));
         assertFalse(transformer.getSyntheticClasses().containsKey(
                 LegacyBlockRandomTickBridge.INTERNAL_NAME));
-    }
-
-    private static ModVersionInfo info(String loader) {
-        return new ModVersionInfo("testmod", "1.0", "1.16", loader, null,
-                Set.of("test/"), Set.of(), false);
-    }
-
-    private static Path compile(AotCompiler compiler, ModVersionInfo info,
-            Path input, Path output, byte[] classBytes) throws Exception {
-        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(input))) {
-            jar.putNextEntry(new JarEntry("test/Fixture.class"));
-            jar.write(classBytes);
-            jar.closeEntry();
-        }
-        Method compileJar = AotCompiler.class.getDeclaredMethod(
-                "compileJar", Path.class, Path.class, ModVersionInfo.class);
-        compileJar.setAccessible(true);
-        compileJar.invoke(compiler, input, output, info);
-        return output;
     }
 
     private static void writeForgeMod(Path input, byte[] classBytes) throws Exception {

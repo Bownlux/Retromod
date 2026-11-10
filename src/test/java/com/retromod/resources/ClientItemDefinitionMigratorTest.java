@@ -10,6 +10,7 @@ import com.google.gson.JsonParser;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Handle;
@@ -121,19 +122,87 @@ class ClientItemDefinitionMigratorTest {
     }
 
     @Test
-    @DisplayName("Properties only the mod's code computed, such as a compass angle or a mod's variant, keep the plain model")
-    void modPropertiesKeepThePlainModel() throws IOException {
+    @DisplayName("Properties only the mod's code computed, such as a compass angle, read its old function through Retromod's type")
+    void modPropertiesReadTheOldFunction() throws IOException {
         MapResourceTree tree = run("1.12.2", "26.3", entries(
                 "assets/oldmod/models/item/biome_compass.json",
                 "{\"parent\":\"item/generated\",\"overrides\":[{\"predicate\":{\"angle\":0.5},"
                         + "\"model\":\"oldmod:item/biome_compass_16\"}]}",
                 "assets/oldmod/models/item/net.json",
-                "{\"parent\":\"item/generated\",\"overrides\":[{\"predicate\":{\"variant\":1},"
+                "{\"parent\":\"item/generated\",\"overrides\":[{\"predicate\":{\"oldmod:variant\":1},"
                         + "\"model\":\"oldmod:item/net_full\"}]}"));
 
-        assertEquals(plain("oldmod:item/biome_compass"), definition(tree, "oldmod:biome_compass"),
-                "vanilla's compass would point at spawn, not where the mod's needle pointed");
-        assertEquals(plain("oldmod:item/net"), definition(tree, "oldmod:net"));
+        assertEquals(modRange("minecraft:angle", plain("oldmod:item/biome_compass"), 0.5, plain("oldmod:item/biome_compass_16")),
+                definition(tree, "oldmod:biome_compass"), "vanilla's compass would point at spawn, the mod's own function where it pointed");
+        assertEquals(modRange("oldmod:variant", plain("oldmod:item/net"), 1, plain("oldmod:item/net_full")), definition(tree, "oldmod:net"));
+    }
+
+    @ParameterizedTest(name = "{0} {1}")
+    @CsvSource({"NEOFORGE, 1.21.10, false", "NEOFORGE, 1.21.11, true", "FORGE, 1.21.11, false", "FORGE, 26.1, true", "FABRIC, 1.21.11, false",
+            "FABRIC, 26.1, true"})
+    @DisplayName("A mod's own property reads its function from the first host Retromod's runtime adds the type on, else stays plain")
+    void modPropertiesFollowTheFirstHost(MigrationContext.Loader loader, String target, boolean read) throws IOException {
+        MapResourceTree tree = new MapResourceTree(entries("assets/oldmod/models/item/net.json",
+                "{\"parent\":\"item/generated\",\"overrides\":[{\"predicate\":{\"oldmod:variant\":1},"
+                        + "\"model\":\"oldmod:item/net_full\"}]}"));
+        MigrationContext context = MigrationContext.builder(target).sourceMcVersion("1.20.1").targetLoader(loader)
+                .declaredNamespaces(List.of("oldmod")).build();
+        new ModResourceMigrations(List.of(new ClientItemDefinitionMigrator())).run(tree, context);
+
+        assertEquals(read ? modRange("oldmod:variant", plain("oldmod:item/net"), 1, plain("oldmod:item/net_full")) : plain("oldmod:item/net"),
+                definition(tree, "oldmod:net"));
+    }
+
+    @Test
+    @DisplayName("A mod's function may answer below zero, so thresholds at and below zero stay, and none reads as no match")
+    void modPropertyThresholdsBelowZeroStay() throws IOException {
+        MapResourceTree tree = run("1.20.1", "26.2", entries("assets/oldmod/models/item/gauge.json",
+                "{\"parent\":\"item/generated\",\"overrides\":["
+                        + "{\"predicate\":{\"oldmod:level\":-1},\"model\":\"oldmod:item/gauge_low\"},"
+                        + "{\"predicate\":{\"oldmod:level\":0},\"model\":\"oldmod:item/gauge_mid\"},"
+                        + "{\"predicate\":{\"oldmod:level\":2},\"model\":\"oldmod:item/gauge_high\"}]}"));
+
+        JsonObject model = definition(tree, "oldmod:gauge");
+        JsonArray entries = model.getAsJsonArray("entries");
+        assertEquals(3, entries.size(), model.toString());
+        assertEquals(-1, entries.get(0).getAsJsonObject().get("threshold").getAsDouble());
+        assertEquals(0, entries.get(1).getAsJsonObject().get("threshold").getAsDouble());
+        assertEquals(plain("oldmod:item/gauge_mid"), entries.get(1).getAsJsonObject().get("model"));
+        assertEquals(plain("oldmod:item/gauge"), model.get("fallback"), "an unregistered property held no override in 1.20.1");
+    }
+
+    @Test
+    @DisplayName("A mod's property beside a vanilla one nests under it, and a name no Identifier reads is still dropped")
+    void modPropertyBesideVanillaAndInvalidNames() throws IOException {
+        MapResourceTree tree = run("1.20.1", "26.3", entries(
+                "assets/oldmod/models/item/skillet.json",
+                "{\"parent\":\"item/generated\",\"overrides\":["
+                        + "{\"predicate\":{\"pulling\":1,\"cooking\":1},\"model\":\"oldmod:item/skillet_flip\"}]}",
+                "assets/oldmod/models/item/odd.json",
+                "{\"parent\":\"item/generated\",\"overrides\":[{\"predicate\":{\"Two Words\":1},"
+                        + "\"model\":\"oldmod:item/odd_on\"}]}"));
+
+        JsonObject skillet = definition(tree, "oldmod:skillet");
+        assertEquals("minecraft:condition", skillet.get("type").getAsString(), skillet.toString());
+        assertEquals(plain("oldmod:item/skillet"), skillet.get("on_false"));
+        assertEquals(modRange("minecraft:cooking", plain("oldmod:item/skillet"), 1, plain("oldmod:item/skillet_flip")),
+                skillet.get("on_true"), "an unprefixed name was in Minecraft's namespace, as new ResourceLocation(\"cooking\") put it");
+        assertEquals(plain("oldmod:item/odd"), definition(tree, "oldmod:odd"));
+    }
+
+    private static JsonObject modRange(String id, JsonObject fallback, double threshold, JsonObject model) {
+        JsonObject entry = new JsonObject();
+        entry.addProperty("threshold", threshold);
+        entry.add("model", model);
+        JsonArray entries = new JsonArray();
+        entries.add(entry);
+        JsonObject range = new JsonObject();
+        range.addProperty("type", "minecraft:range_dispatch");
+        range.addProperty("property", "retromod:legacy_item_property");
+        range.addProperty("id", id);
+        range.add("entries", entries);
+        range.add("fallback", fallback);
+        return range;
     }
 
     @Test

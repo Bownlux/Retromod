@@ -31,7 +31,10 @@ public final class NeoForgeMovedClasses {
             Map.entry(NEO + "registries/ClientRegistryManager", NEO + "client/registries/ClientRegistryManager"),
             Map.entry(NEO + "internal/versions/neoforge/NeoForgeVersion", NEO + "common/NeoForgeVersion"),
             // NeoForge patches isTrue, isFalse and isDefault onto Minecraft's own TriState.
-            Map.entry(NEO + "common/util/TriState", "net/minecraft/util/TriState"));
+            Map.entry(NEO + "common/util/TriState", "net/minecraft/util/TriState"),
+            // 1.21.2 posts one event for every item that teleports its eater, chorus fruit included,
+            // with the same entity getter and a new one for the item.
+            Map.entry(NEO + "event/entity/EntityTeleportEvent$ChorusFruit", NEO + "event/entity/EntityTeleportEvent$ItemConsumption"));
 
     /** The first host checked to have every new home; offline, older targets keep the old names. */
     static final String VERIFIED_FROM = "1.21.11";

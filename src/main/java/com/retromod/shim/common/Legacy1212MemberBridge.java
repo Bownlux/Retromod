@@ -7,6 +7,7 @@ package com.retromod.shim.common;
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -36,6 +37,11 @@ public final class Legacy1212MemberBridge {
     static final String CREATE_HELPER = "(L" + ENTITY_TYPE + ";L" + LEVEL + ";)L" + ENTITY + ";";
     static final String OF_STACKS = "([L" + ITEM_STACK + ";)L" + INGREDIENT + ";";
     static final String OF_ITEMS = "([L" + ITEM_LIKE + ";)L" + INGREDIENT + ";";
+
+    static final String PIGLIN_AI = "net/minecraft/world/entity/monster/piglin/PiglinAi";
+    static final String PIGLIN_MEMBERS = RebuiltApiClasses.ROOT + "minecraft/world/entity/monster/piglin/PiglinAiMembers";
+    static final String ANGER_OLD = "(Lnet/minecraft/world/entity/player/Player;Z)V";
+    static final String ANGER_NEW = "(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/entity/player/Player;Z)V";
 
     static final String PROPERTY = "net/minecraft/world/level/block/state/properties/Property";
     static final String VALUES_OLD = "()Ljava/util/Collection;";
@@ -75,12 +81,47 @@ public final class Legacy1212MemberBridge {
         }
     }
 
+    /** Level's constructor in one namespace, before and after 1.21.2 dropped its profiler supplier. */
+    record LevelConstructor(String owner, String oldDesc, String newDesc) {
+        static LevelConstructor of(String level, String levelData, String resourceKey, String registryAccess,
+                String holder) {
+            String head = "(L" + levelData + ";L" + resourceKey + ";L" + registryAccess + ";L" + holder + ";";
+            return new LevelConstructor(level, head + "Ljava/util/function/Supplier;ZZJI)V", head + "ZZJI)V");
+        }
+    }
+
+    static final LevelConstructor MOJANG_LEVEL = LevelConstructor.of(LEVEL,
+            "net/minecraft/world/level/storage/WritableLevelData", "net/minecraft/resources/ResourceKey",
+            "net/minecraft/core/RegistryAccess", "net/minecraft/core/Holder");
+    // Checked against the 1.21.1, 1.21.6 and 1.21.11 intermediary tables.
+    static final LevelConstructor INTERMEDIARY_LEVEL = LevelConstructor.of("net/minecraft/class_1937",
+            "net/minecraft/class_5269", "net/minecraft/class_5321", "net/minecraft/class_5455",
+            "net/minecraft/class_6880");
+
     private Legacy1212MemberBridge() {}
 
     /** Registers a bridge for each member this host lost. */
     public static void register(RetromodTransformer transformer) {
+        // 1.21.2 gave the effect tick the server level, which a 1.21.1 mod's effect needs too.
+        Legacy1205GameplayBridge.register(transformer);
         // TemptGoal reads minecraft:tempt_range, which most old mobs' attributes lack.
         LegacyTemptRangeBridge.register(transformer);
+        // Farmer's Delight packs its cooking pot's item color with Mth.color while the item registers.
+        LegacyMthColorBridge.register(transformer);
+        // Registry became its own lookup: getTagNames() became listTagIds() and asLookup() went away. Carry On
+        // reads its tag lists and model overrides through them while configs load.
+        LegacyRegistryLookupBridge.register(transformer);
+        // Providers list their keys through listRegistryKeys, registry access answers lookup(key), and contexts
+        // answer enabledFeatures(); Xaero's maps and Sophisticated Backpacks implement these themselves.
+        LegacyRegistryProviderAdapter.registerProviderChanges(transformer);
+        // Fake and virtual levels, and mixins into ServerLevel and ClientLevel, call Level's constructor.
+        boolean level = registerLevelConstructor(transformer, MOJANG_LEVEL);
+        // A container block a player opens angers nearby piglins, which now takes the server level.
+        if (replacedOnHost(PIGLIN_AI, "angerNearbyPiglins", ANGER_OLD, "angerNearbyPiglins", ANGER_NEW)) {
+            RebuiltApiClasses.registerTree(transformer, PIGLIN_MEMBERS);
+            transformer.registerMethodRedirect(PIGLIN_AI, "angerNearbyPiglins", ANGER_OLD,
+                    PIGLIN_MEMBERS, "angerNearbyPiglins", ANGER_OLD);
+        }
         // MCreator mods make all of these calls: offspring, attributes, tempting food, block
         // property copies, and entity damage.
         Members members = new Members(
@@ -88,14 +129,48 @@ public final class Legacy1212MemberBridge {
                 replacedOnHost(INGREDIENT, "of", OF_STACKS, "of", OF_ITEMS),
                 replacedOnHost(PROPERTY, "getPossibleValues", VALUES_OLD, "getPossibleValues", VALUES_NEW),
                 replacedOnHost(ENTITY, "hurt", HURT_OLD, "hurtOrSimulate", HURT_OLD));
-        if (!members.any()) {
+        if (!members.any() && !level) {
             LOGGER.debug("1.21.2 member bridge not needed: the host keeps the old members");
             return;
         }
         registerRedirects(transformer, members);
-        LOGGER.info("Bridged 1.21.2 members (EntityType.create: {}, Ingredient.of stacks: {}, "
-                + "Property.getPossibleValues: {}, Entity.hurt: {})", members.create(), members.ingredient(),
-                members.possibleValues(), members.hurt());
+        // NeoForge's chain and the Forge chain both register this, so the notice prints once.
+        if (transformer.firstRegistrationNotice(Legacy1212MemberBridge.class.getName())) {
+            LOGGER.debug(RetromodLog.DETAIL, "Bridged 1.21.2 members (EntityType.create: {}, Ingredient.of stacks: {}, "
+                    + "Property.getPossibleValues: {}, Entity.hurt: {}, Level constructor: {})", members.create(),
+                    members.ingredient(), members.possibleValues(), members.hurt(), level);
+        }
+    }
+
+    /** Registers the Level constructor rewrite in intermediary names, for Fabric hosts 1.21.2 to 1.21.11. */
+    public static void registerIntermediaryLevelConstructor(RetromodTransformer transformer) {
+        registerLevelConstructor(transformer, INTERMEDIARY_LEVEL);
+    }
+
+    /** Drops the profiler supplier from an old {@code super(...)} call, when the host lost that constructor. */
+    static boolean registerLevelConstructor(RetromodTransformer transformer, LevelConstructor level) {
+        if (!replacedOnHost(level.owner(), "<init>", level.oldDesc(), "<init>", level.newDesc())) return false;
+        transformer.registerSuperConstructorAdapter(level.owner(), level.oldDesc(), level.newDesc(),
+                Legacy1212MemberBridge::dropProfilerSupplier);
+        return true;
+    }
+
+    /** Turns {@code supplier, clientSide, debug, seed, updates} on the stack into the last four. */
+    static void dropProfilerSupplier(MethodVisitor mv) {
+        // The receiver is still uninitialized, so the four values above the supplier wait in spare
+        // locals while it is popped. The level then profiles through the global profiler, as every
+        // level has since 1.21.2. The slots are the ones the transformer spills constructor
+        // arguments into, far above any local a constructor declares.
+        int slot = RetromodTransformer.CONSTRUCTOR_ARG_SPILL_SLOT;
+        mv.visitVarInsn(Opcodes.ISTORE, slot);
+        mv.visitVarInsn(Opcodes.LSTORE, slot + 1);
+        mv.visitVarInsn(Opcodes.ISTORE, slot + 3);
+        mv.visitVarInsn(Opcodes.ISTORE, slot + 4);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitVarInsn(Opcodes.ILOAD, slot + 4);
+        mv.visitVarInsn(Opcodes.ILOAD, slot + 3);
+        mv.visitVarInsn(Opcodes.LLOAD, slot + 1);
+        mv.visitVarInsn(Opcodes.ILOAD, slot);
     }
 
     /** Unconditional registration for transform-shape tests. */

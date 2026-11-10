@@ -1,0 +1,12 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "com.retromod.testmod.forge.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "client": [
+    "LegacyResizeDisplayMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

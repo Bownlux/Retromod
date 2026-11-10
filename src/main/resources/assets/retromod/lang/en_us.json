@@ -5,13 +5,12 @@
   "retromod.main.title": "Retromod",
   "retromod.main.subtitle": "Choose old mod jars to update for this Minecraft version",
   "retromod.main.add_mods": "Choose Mods\u2026",
-  "retromod.main.open_folder": "Open Mods Folder",
+  "retromod.main.open_folder": "Open retromod-input/",
   "retromod.main.inplace_status": "%s from cache, %s after restart, %s failed",
 
   "retromod.screen.title": "Retromod Mod Manager",
   "retromod.screen.add_mods": "Choose Mods",
   "retromod.screen.full_aot": "Precompile mods (slower now, faster later)",
-  "retromod.screen.complexity_warning": "Retromod skipped %s because its compatibility check found a high risk of failure. Turn on \"Try unlikely mods\" in Settings if you still want to test it.",
   "retromod.screen.transform_complete": "Your mods are ready. Restart Minecraft to load them.",
   "retromod.screen.no_mods": "No mods selected.",
   "retromod.screen.transforming": "Updating %s",
@@ -29,11 +28,17 @@
   "retromod.settings.remap_reflection": "Update reflected names",
   "retromod.settings.polyfills_enabled": "Replace removed APIs",
   "retromod.settings.verify_transforms": "Check transformed mods",
-  "retromod.settings.force_translate_complex": "Try unlikely mods",
   "retromod.settings.log_transformations": "Log every change",
   "retromod.settings.debug": "Extra debug checks",
   "retromod.settings.write_translated_jars": "Write translated jars to mods/",
   "retromod.settings.next_launch": "Takes effect on the next launch",
+  "retromod.settings.status.verified": "\u00a7aVerified build\u00a7r",
+  "retromod.settings.status.modified": "\u00a7eModified / unofficial build\u00a7r",
+  "retromod.settings.status.impostor": "\u00a7cNot Retromod (manifest mismatch)\u00a7r",
+  "retromod.settings.status.unknown": "\u00a77Authenticity unknown\u00a7r",
+
+  "retromod.restart.converted": "Mods converted for this Minecraft version: %s\nRestart Minecraft to load the converted mods.\n\nClick Yes to close Minecraft, then relaunch from your launcher.",
+  "retromod.restart.cache": "Mods translated for this Minecraft version: %s\nRestart Minecraft to load the translated mods. Your files in mods/ were not changed.\n\nClick Yes to close Minecraft, then relaunch from your launcher.",
 
   "retromod.filepicker.title": "Retromod: Choose Mod Jars",
 

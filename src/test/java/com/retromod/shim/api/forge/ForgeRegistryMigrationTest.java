@@ -180,6 +180,45 @@ class ForgeRegistryMigrationTest {
         assertEquals(resourceKey, field.desc);
     }
 
+    @Test
+    @DisplayName("every Retromod class the registry migration redirects to exists")
+    void registersNoPhantomTargets() {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        new ForgeRegistryApiShim().registerRegistryRedirects(t);
+
+        assertEquals(Set.of(), Set.copyOf(t.collectPhantomComRetromodTargets()),
+                "every Retromod class this shim redirects to must exist or be a registered synthetic");
+    }
+
+    @Test
+    @DisplayName("GameRegistry keeps the polyfill stand-in when API shims register after polyfills")
+    void gameRegistryKeepsPolyfillInCliOrder() {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        // The game and the CLI register polyfills last; the stand-in must also survive the other order.
+        new com.retromod.polyfill.forge.ForgeRegistryPolyfill().registerPolyfills(t);
+        new ForgeRegistryApiShim().registerRegistryRedirects(t);
+
+        ClassWriter cw = fixture();
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "go", "()V", null, null);
+        mv.visitCode();
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "net/minecraftforge/fml/common/registry/GameRegistry",
+                "registerWorldGenerator", "(Ljava/lang/Object;I)V", false);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        MethodInsnNode call = first(go(transform(cw.toByteArray())), MethodInsnNode.class);
+        assertEquals("com/retromod/polyfill/forge/embedded/GameRegistryShim", call.owner,
+                "a 1.12.2 GameRegistry call must reach Retromod's stand-in, not stay on the removed class");
+    }
+
     private static byte[] transform(byte[] in) {
         return RetromodTransformer.getInstance().transformClass(in, "test/RegFixture");
     }

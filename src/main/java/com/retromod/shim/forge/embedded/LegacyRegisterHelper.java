@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 
 /**
@@ -20,7 +21,7 @@ public final class LegacyRegisterHelper {
         ClassLoader loader = LegacyRegisterHelper.class.getClassLoader();
         try {
             Object context = Class.forName("net.neoforged.fml.ModLoadingContext", true, loader).getMethod("get").invoke(null);
-            String namespace = (String) context.getClass().getMethod("getActiveNamespace").invoke(context);
+            String namespace = (String) LegacyPublicMethods.method(context.getClass(), "getActiveNamespace").invoke(context);
             Class<?> idType = idType(loader);
             Object id = idType.getMethod("fromNamespaceAndPath", String.class, String.class).invoke(null, namespace, name);
             Method register = Class.forName("net.neoforged.neoforge.registries.RegisterEvent$RegisterHelper", false, loader)

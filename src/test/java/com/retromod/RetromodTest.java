@@ -597,6 +597,13 @@ public class RetromodTest {
         int moves = com.retromod.mapping.IntermediaryToMojangMapper
                 .applyClassMovesOnly(transformer);
         assertTrue(moves > 500, "expected the full 26.1 class-move table, got " + moves);
+        // Checked before the first transform, whose sweep would drop a dead target silently.
+        assertFalse(transformer.getClassRedirects().containsKey(
+                        "net/fabricmc/fabric/api/blockrenderlayer/v1/BlockRenderLayerMap"),
+                "Forge and NeoForge have no Fabric API, so the Fabric BlockRenderLayerMap move must not apply");
+        assertTrue(transformer.collectPhantomComRetromodTargets().isEmpty(),
+                "class moves must not redirect to a Retromod class that is not registered: "
+                        + transformer.collectPhantomComRetromodTargets());
 
         // top-level relocation: net/minecraft/Util -> net/minecraft/util/Util
         byte[] utilT = transformer.transformClass(

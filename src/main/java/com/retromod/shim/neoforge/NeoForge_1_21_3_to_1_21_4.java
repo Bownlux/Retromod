@@ -6,6 +6,7 @@ package com.retromod.shim.neoforge;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
+import com.retromod.shim.common.Mc1_21_3To1_21_4CoreMoves;
 
 /** NeoForge 1.21.3 to 1.21.4 shim: GatherDataEvent split into Client/Server sub-events. */
 public class NeoForge_1_21_3_to_1_21_4 implements VersionShim {
@@ -16,6 +17,7 @@ public class NeoForge_1_21_3_to_1_21_4 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        Mc1_21_3To1_21_4CoreMoves.register(transformer);
         // Old unified event maps to the Client variant.
         transformer.registerClassRedirect(
             "net/neoforged/neoforge/data/event/GatherDataEvent",
@@ -27,6 +29,9 @@ public class NeoForge_1_21_3_to_1_21_4 implements VersionShim {
             "net/neoforged/neoforge/client/event/RecipesUpdatedEvent",
             "net/neoforged/neoforge/client/event/RecipesReceivedEvent"
         );
+
+        // NeoForge 21.4 removed its model generators and ExistingFileHelper with vanilla's model datagen change.
+        com.retromod.shim.common.LegacyDatagenStandIns.registerNeoForge(transformer);
     }
 
     @Override public String[] getShimClasses() { return new String[0]; }

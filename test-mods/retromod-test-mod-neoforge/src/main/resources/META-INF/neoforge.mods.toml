@@ -21,9 +21,17 @@ versionRange = "[21.1,)"
 ordering = "NONE"
 side = "CLIENT"
 
+# modId comes last on purpose: Retromod must relax this range wherever the block names its mod.
 [[dependencies.retromod_test_mod_neoforge]]
-modId = "minecraft"
 type = "required"
 versionRange = "[1.21.1]"
 ordering = "NONE"
 side = "CLIENT"
+modId = "minecraft"
+
+[[accessTransformers]]
+file = "META-INF/accesstransformer.cfg"
+
+# A mixin on a method 26.1 renamed, for the RenamedMixinTargetCase.
+[[mixins]]
+config = "retromod_test_mod_neoforge.mixins.json"

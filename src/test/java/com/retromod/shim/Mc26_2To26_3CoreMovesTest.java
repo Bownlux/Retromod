@@ -95,6 +95,38 @@ class Mc26_2To26_3CoreMovesTest {
         }
     }
 
+    @Test
+    @DisplayName("SignText.setColor is pinned to 26.3's withColor, which the fuzzy resolver will not guess")
+    void signTextSetColorBecomesWithColor() throws Exception {
+        moves();
+        String signText = "net/minecraft/world/level/block/entity/SignText";
+        String desc = "(Lnet/minecraft/world/item/DyeColor;)L" + signText + ";";
+        RetromodTransformer.MethodTarget target = RetromodTransformer.getInstance().getMethodRedirects()
+                .get(new RetromodTransformer.MethodKey(signText, "setColor", desc));
+        assertNotNull(target, "SignText.setColor must be redirected on 26.3");
+        assertEquals(new RetromodTransformer.MethodTarget(signText, "withColor", desc, false), target);
+
+        // When the jars are here, the old name must be 26.2's and the new one 26.3's.
+        for (String[] side : new String[][]{{"26.2", "setColor"}, {"26.3", "withColor"}}) {
+            Path jar = hostJar(side[0]);
+            if (jar == null) continue;
+            assertTrue(declaresMethod(jar, signText, side[1], desc),
+                    side[0] + " must declare SignText." + side[1] + desc);
+        }
+    }
+
+    private static boolean declaresMethod(Path jar, String owner, String name, String desc) throws Exception {
+        try (ZipFile zip = new ZipFile(jar.toFile())) {
+            var entry = zip.getEntry(owner + ".class");
+            if (entry == null) return false;
+            org.objectweb.asm.tree.ClassNode node = new org.objectweb.asm.tree.ClassNode();
+            try (var in = zip.getInputStream(entry)) {
+                new org.objectweb.asm.ClassReader(in).accept(node, org.objectweb.asm.ClassReader.SKIP_CODE);
+            }
+            return node.methods.stream().anyMatch(m -> m.name.equals(name) && m.desc.equals(desc));
+        }
+    }
+
     private static Path hostJar(String version) {
         // A pre-release wins over a plain jar of the same version. While a version is still in
         // development the newest build is the authority, and an older snapshot sitting under the

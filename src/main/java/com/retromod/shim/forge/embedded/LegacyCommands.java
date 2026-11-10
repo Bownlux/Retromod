@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -88,7 +89,7 @@ public final class LegacyCommands {
             argumentBuilder.getMethod("requires", Predicate.class).invoke(literal, allowed);
             argumentBuilder.getMethod("executes", commandType).invoke(literal, run);
             argumentBuilder.getMethod("then", argumentBuilder).invoke(literal, argument);
-            dispatcher.getClass().getMethod("register", literalBuilder).invoke(dispatcher, literal);
+            LegacyPublicMethods.method(dispatcher.getClass(), "register", literalBuilder).invoke(dispatcher, literal);
         }
     }
 
@@ -103,10 +104,10 @@ public final class LegacyCommands {
     }
 
     private static Object run(Object command, Object context) throws Exception {
-        Object source = context.getClass().getMethod("getSource").invoke(context);
+        Object source = LegacyPublicMethods.method(context.getClass(), "getSource").invoke(context);
         String line = "";
         try {
-            line = (String) context.getClass().getMethod("getArgument", String.class, Class.class)
+            line = (String) LegacyPublicMethods.method(context.getClass(), "getArgument", String.class, Class.class)
                     .invoke(context, "args", String.class);
         } catch (java.lang.reflect.InvocationTargetException noArguments) {
             // The bare command name was typed.
@@ -152,7 +153,7 @@ public final class LegacyCommands {
 
     /** {@code CommandSourceStack.hasPermission(int)}, the only method of that shape. */
     private static boolean hasPermission(Object source, int level) {
-        for (Method method : source.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(source.getClass())) {
             if (method.getReturnType() == boolean.class && method.getParameterCount() == 1
                     && method.getParameterTypes()[0] == int.class) {
                 try {
@@ -221,13 +222,13 @@ public final class LegacyCommands {
         if (!isPlayer(sender)) return "Server";
         try {
             Object profile = null;
-            for (Method method : sender.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(sender.getClass())) {
                 if (method.getParameterCount() == 0 && method.getReturnType().getName().equals("com.mojang.authlib.GameProfile")) {
                     profile = method.invoke(sender);
                     break;
                 }
             }
-            for (Method method : profile.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(profile.getClass())) {
                 if ((method.getName().equals("getName") || method.getName().equals("name"))
                         && method.getParameterCount() == 0) {
                     return (String) method.invoke(profile);
@@ -264,7 +265,7 @@ public final class LegacyCommands {
         Object entity = senderEntity(sender);
         if (entity != null) return fieldOfType(entity, "net.minecraft.world.level.Level");
         try {
-            for (Method method : sender.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(sender.getClass())) {
                 if (method.getParameterCount() == 0
                         && method.getReturnType().getName().equals("net.minecraft.server.level.ServerLevel")) {
                     return method.invoke(sender);
@@ -283,12 +284,12 @@ public final class LegacyCommands {
         if (server == null) return level <= 0;
         try {
             Object profile = null;
-            for (Method method : sender.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(sender.getClass())) {
                 if (method.getParameterCount() == 0 && method.getReturnType().getName().equals("com.mojang.authlib.GameProfile")) {
                     profile = method.invoke(sender);
                 }
             }
-            for (Method method : server.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(server.getClass())) {
                 if (method.getReturnType() == int.class && method.getParameterCount() == 1
                         && method.getParameterTypes()[0].getName().equals("com.mojang.authlib.GameProfile")) {
                     return (Integer) method.invoke(server, profile) >= level;
@@ -353,7 +354,7 @@ public final class LegacyCommands {
     private static Object call(Object target, Class<?> ignored, String... names) {
         for (String name : names) {
             try {
-                Method method = target.getClass().getMethod(name);
+                Method method = LegacyPublicMethods.method(target.getClass(), name);
                 return method.invoke(target);
             } catch (ReflectiveOperationException | RuntimeException next) {
                 // Try the other spelling.

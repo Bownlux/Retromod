@@ -4,11 +4,11 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.McOpener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
-import java.awt.*;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
@@ -326,20 +326,9 @@ public class ModrinthVersionChecker {
         return false;
     }
 
-    /**
-     * Opens the URL in the default browser. When the Desktop API is
-     * unavailable, falls back to a copy-the-URL dialog rather than shelling
-     * out, which keeps Retromod free of {@code Runtime.exec} calls.
-     */
+    /** Opens the URL through Minecraft, or shows it to copy when Minecraft cannot open it. */
     private static void openBrowser(String url) {
-        try {
-            if (Desktop.isDesktopSupported()) {
-                Desktop.getDesktop().browse(URI.create(url));
-                return;
-            }
-        } catch (Exception e) {
-            LOGGER.warn("Could not open browser: {}", e.getMessage());
-        }
+        if (McOpener.openLink(url)) return;
         JOptionPane.showMessageDialog(
             null,
             "Please open this URL in your browser:\n\n" + url,

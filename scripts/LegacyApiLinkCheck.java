@@ -107,8 +107,9 @@ public class LegacyApiLinkCheck {
         else if (host.isInterface() != expectInterface) problems.add(self + ": supertype " + name + " interface flag differs");
     }
 
+    // Retromod's own helpers, such as LegacyLog, are embedded beside the rebuilt classes and tested on their own.
     private static boolean isHost(String owner) {
-        return !owner.startsWith("java/") && !owner.startsWith("com/retromod/legacyapi/") && !owner.startsWith("[");
+        return !owner.startsWith("java/") && !owner.startsWith("com/retromod/") && !owner.startsWith("[");
     }
 
     /** Looks the member up the way the JVM resolves it: the class, its superclasses, then interfaces. */

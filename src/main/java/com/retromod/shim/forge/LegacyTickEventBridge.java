@@ -4,11 +4,8 @@
  */
 package com.retromod.shim.forge;
 
-import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
-import com.retromod.core.RetromodVersion;
 import com.retromod.shim.common.RebuiltApiClasses;
-import com.retromod.util.McReflect;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
@@ -29,6 +26,7 @@ public final class LegacyTickEventBridge {
     static final String TICK = "net/minecraftforge/event/TickEvent";
     static final String TICKS = RebuiltApiClasses.ROOT + "forge/event/TickEvents";
     static final String PHASE = RebuiltApiClasses.ROOT + "forge/event/TickPhase";
+    static final String TYPE = RebuiltApiClasses.ROOT + "forge/event/TickType";
     private static final String OLD_SUBSCRIBE = "Lnet/minecraftforge/eventbus/api/SubscribeEvent;";
     private static final String NEW_SUBSCRIBE = "Lnet/minecraftforge/eventbus/api/listener/SubscribeEvent;";
 
@@ -44,15 +42,20 @@ public final class LegacyTickEventBridge {
         if (!hostSplitTicks()) return;
         RebuiltApiClasses.registerTree(t, TICKS);
         t.registerClassRedirect(TICK + "$Phase", PHASE);
+        t.registerClassRedirect(TICK + "$Type", TYPE);
         String object = "(Ljava/lang/Object;)";
         for (String owner : owners()) {
             t.registerFieldStaticBridge(owner, "phase", TICKS, "phase", object + "L" + PHASE + ";", null, null);
+            t.registerFieldStaticBridge(owner, "type", TICKS, "type", object + "L" + TYPE + ";", null, null);
             t.registerFieldStaticBridge(owner, "side", TICKS, "side", object + "Lnet/minecraftforge/fml/LogicalSide;", null, null);
         }
         t.registerFieldStaticBridge(TICK + "$LevelTickEvent", "level", TICKS, "level",
                 object + "Lnet/minecraft/world/level/Level;", null, null);
         t.registerFieldStaticBridge(TICK + "$PlayerTickEvent", "player", TICKS, "player",
                 object + "Lnet/minecraft/world/entity/player/Player;", null, null);
+        // The render tick's partial tick now lives in the event's timer.
+        t.registerFieldStaticBridge(TICK + "$RenderTickEvent", "renderTickTime", TICKS, "renderTickTime",
+                object + "F", null, null);
         // Old code calls these on a class; they are interface methods now, so a helper calls them.
         t.registerMethodRedirect(TICK + "$ServerTickEvent", "getServer", "()Lnet/minecraft/server/MinecraftServer;",
                 TICKS, "server", object + "Lnet/minecraft/server/MinecraftServer;", true);
@@ -68,14 +71,9 @@ public final class LegacyTickEventBridge {
         return owners;
     }
 
-    /** Read from the host when it can be; offline, a Forge target from 26.2, the first checked to have it. */
+    /** A Forge host that split its tick events, which dropped their Phase enum; offline, a Forge target from 26.2. */
     static boolean hostSplitTicks() {
-        ClassNode tick = ClassResourceInspector.read(TICK);
-        if (tick == null) {
-            return !McReflect.isNeoForge()
-                    && RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.2") >= 0;
-        }
-        return (tick.access & Opcodes.ACC_INTERFACE) != 0;
+        return ForgeHostShape.matches(List.of(TICK), List.of(TICK + "$Phase"));
     }
 
     /** The class with each old tick listener answered by a Pre and a Post listener, or the same array. */
@@ -85,7 +83,8 @@ public final class LegacyTickEventBridge {
     }
 
     static byte[] splitListeners(byte[] classBytes) {
-        if (new String(classBytes, java.nio.charset.StandardCharsets.ISO_8859_1).indexOf(TICK + "$") < 0) return classBytes;
+        // A listener on the base TickEvent names no nested event once its phase enum is remapped.
+        if (new String(classBytes, java.nio.charset.StandardCharsets.ISO_8859_1).indexOf(TICK) < 0) return classBytes;
         ClassNode node = new ClassNode();
         new ClassReader(classBytes).accept(node, 0);
         boolean isInterface = (node.access & Opcodes.ACC_INTERFACE) != 0;
@@ -96,8 +95,13 @@ public final class LegacyTickEventBridge {
             AnnotationNode subscribe = takeSubscribe(method);
             if (subscribe == null) continue;
             // The original keeps its body and is called by one listener per event the host fires.
-            for (String half : List.of("Pre", "Post")) {
-                added.add(listener(node.name, isInterface, method, subscribe, TICK + "$" + event + "$" + half, half));
+            // A listener on the base TickEvent heard all five events, so it gets ten.
+            boolean base = event.isEmpty();
+            for (String each : base ? EVENTS : List.of(event)) {
+                for (String half : List.of("Pre", "Post")) {
+                    String suffix = (base ? each + "$" : "") + half;
+                    added.add(listener(node.name, isInterface, method, subscribe, TICK + "$" + each + "$" + half, suffix));
+                }
             }
         }
         if (added.isEmpty()) return classBytes;
@@ -108,11 +112,12 @@ public final class LegacyTickEventBridge {
         return writer.toByteArray();
     }
 
-    /** The old tick event a void, one-argument method takes, or null. */
+    /** The old tick event a void, one-argument method takes, an empty name for the base TickEvent, or null. */
     private static String tickEvent(MethodNode method) {
         Type[] arguments = Type.getArgumentTypes(method.desc);
         if (arguments.length != 1 || Type.getReturnType(method.desc).getSort() != Type.VOID) return null;
         String argument = arguments[0].getInternalName();
+        if (argument.equals(TICK)) return "";
         for (String event : EVENTS) {
             if (argument.equals(TICK + "$" + event)) return event;
         }
@@ -135,12 +140,12 @@ public final class LegacyTickEventBridge {
 
     /** A listener for one concrete event that calls the original method with it. */
     private static MethodNode listener(String owner, boolean isInterface, MethodNode original, AnnotationNode subscribe,
-                                       String concrete, String half) {
+                                       String concrete, String suffix) {
         boolean isStatic = (original.access & Opcodes.ACC_STATIC) != 0;
         int access = original.access & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED | Opcodes.ACC_STATIC);
-        MethodNode listener = new MethodNode(access, "retromod$" + original.name + "$" + half, "(L" + concrete + ";)V", null, null);
+        MethodNode listener = new MethodNode(access, "retromod$" + original.name + "$" + suffix, "(L" + concrete + ";)V", null, null);
         AnnotationNode copy = new AnnotationNode(NEW_SUBSCRIBE);
-        copy.values = subscribe.values;
+        copy.values = ForgeSubscribeAnnotations.normalizedValues(subscribe.values);
         listener.visibleAnnotations = new ArrayList<>(List.of(copy));
         if (!isStatic) listener.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
         listener.instructions.add(new VarInsnNode(Opcodes.ALOAD, isStatic ? 0 : 1));

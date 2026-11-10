@@ -151,7 +151,7 @@ public final class LegacyEnchantmentSupport {
     private static Object invokeRegister(Object register, Class<?>[] types, Object... args) {
         try {
             Method method = null;
-            for (Method candidate : register.getClass().getMethods()) {
+            for (Method candidate : LegacyPublicMethods.methods(register.getClass())) {
                 if (!candidate.getName().equals("register") || candidate.getParameterCount() != args.length) continue;
                 Class<?>[] parameters = candidate.getParameterTypes();
                 // The id overload takes the host's identifier class, whose name changed in 26.1.
@@ -210,7 +210,11 @@ public final class LegacyEnchantmentSupport {
 
     /** {@code EnchantmentHelper.getItemEnchantmentLevel(enchantment, stack)}. */
     public static int level(Object enchantment, Object stack) {
-        String id = idOf(enchantment);
+        return levelById(idOf(enchantment), stack);
+    }
+
+    /** The level of the enchantment with {@code id}, such as {@code minecraft:looting}, on {@code stack}. */
+    static int levelById(String id, Object stack) {
         if (id == null || stack == null) return 0;
         try {
             Object enchantments = enchantmentsOf(stack);
@@ -227,6 +231,19 @@ public final class LegacyEnchantmentSupport {
             return 0;
         }
         return 0;
+    }
+
+    /** The looting level an old death loot override was handed: the killer's main hand, as 1.20.1 read it. */
+    public static int lootingLevel(Object damageSource) {
+        if (damageSource == null) return 0;
+        try {
+            Object killer = call(damageSource, "getEntity");
+            if (killer == null) return 0;
+            Method mainHand = findMethod(killer.getClass(), "getMainHandItem", 0);
+            return mainHand == null ? 0 : levelById("minecraft:looting", mainHand.invoke(killer));
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return 0;
+        }
     }
 
     /** {@code ItemStack.getEnchantmentLevel(enchantment)}, with the stack first. */
@@ -263,7 +280,7 @@ public final class LegacyEnchantmentSupport {
             Object lookup = findMethod(access.getClass(), "lookupOrThrow", 1).invoke(access, registryKey);
             Object holder = findMethod(lookup.getClass(), "get", 1).invoke(lookup, key(registryKey, id));
             if (holder instanceof Optional<?> optional && optional.isPresent()) {
-                for (Method method : stack.getClass().getMethods()) {
+                for (Method method : LegacyPublicMethods.methods(stack.getClass())) {
                     if (method.getName().equals("enchant") && method.getParameterCount() == 2) {
                         method.invoke(stack, optional.get(), level);
                         return;
@@ -303,13 +320,13 @@ public final class LegacyEnchantmentSupport {
         try {
             Class<?> modList = firstClass("net.neoforged.fml.ModList", "net.minecraftforge.fml.ModList");
             Object mods = modList.getMethod("get").invoke(null);
-            Object found = mods.getClass().getMethod("getModContainerById", String.class).invoke(mods, owner);
+            Object found = LegacyPublicMethods.method(mods.getClass(), "getModContainerById", String.class).invoke(mods, owner);
             Object container = found instanceof Optional<?> optional ? optional.orElse(null) : null;
             if (container == null) {
                 log("could not find mod " + owner + ", so its enchantments are not added");
                 return;
             }
-            Object bus = container.getClass().getMethod("getEventBus").invoke(container);
+            Object bus = LegacyPublicMethods.method(container.getClass(), "getEventBus").invoke(container);
             Class<?> priority = firstClass("net.neoforged.bus.api.EventPriority", "net.minecraftforge.eventbus.api.EventPriority");
             Class<?> event = firstClass("net.neoforged.neoforge.event.AddPackFindersEvent",
                     "net.minecraftforge.event.AddPackFindersEvent");
@@ -324,7 +341,7 @@ public final class LegacyEnchantmentSupport {
 
     private static void onAddPackFinders(Object event) {
         try {
-            Object packType = event.getClass().getMethod("getPackType").invoke(event);
+            Object packType = LegacyPublicMethods.method(event.getClass(), "getPackType").invoke(event);
             if (!(packType instanceof Enum<?> type) || !type.name().equals("SERVER_DATA")) return;
             String packId = "retromod_legacy_enchantments_" + owner;
             Path root = gameDirectory().resolve("config").resolve("retromod").resolve("legacy-enchantments").resolve(packId);
@@ -332,7 +349,7 @@ public final class LegacyEnchantmentSupport {
             if (written == 0) return;
             Object source = LegacyDataPackSource.create(packId, root);
             if (source == null) return;
-            for (Method method : event.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(event.getClass())) {
                 if (method.getName().equals("addRepositorySource") && method.getParameterCount() == 1) {
                     method.invoke(event, source);
                     log("added " + written + " enchantments from " + owner + " as data pack " + packId);
@@ -490,7 +507,7 @@ public final class LegacyEnchantmentSupport {
 
     private static Object enchantmentsOf(Object stack) throws ReflectiveOperationException {
         try {
-            return stack.getClass().getMethod("getEnchantments").invoke(stack);
+            return LegacyPublicMethods.method(stack.getClass(), "getEnchantments").invoke(stack);
         } catch (NoSuchMethodException newer) {
             ClassLoader loader = stack.getClass().getClassLoader();
             Object type = Class.forName("net.minecraft.core.component.DataComponents", true, loader)
@@ -607,7 +624,7 @@ public final class LegacyEnchantmentSupport {
         for (String paths : new String[] {"net.neoforged.fml.loading.FMLPaths", "net.minecraftforge.fml.loading.FMLPaths"}) {
             try {
                 Object gameDir = Class.forName(paths).getField("GAMEDIR").get(null);
-                if (gameDir.getClass().getMethod("get").invoke(gameDir) instanceof Path path) return path;
+                if (LegacyPublicMethods.method(gameDir.getClass(), "get").invoke(gameDir) instanceof Path path) return path;
             } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
                 // not this loader
             }

@@ -61,7 +61,7 @@ public final class NoiseSettingsMigrator {
     private record Cells(int xz, int y) {}
 
     static boolean isTerrainData(String entryName) {
-        if (!entryName.startsWith("data/") || !entryName.endsWith(".json")) return false;
+        if (!ModDataMigrator.dataPath(entryName).startsWith("data/") || !entryName.endsWith(".json")) return false;
         return entryName.contains("/worldgen/noise_settings/") || entryName.contains("/worldgen/density_function/")
                 || entryName.contains("/worldgen/world_preset/") || entryName.contains("/dimension/");
     }

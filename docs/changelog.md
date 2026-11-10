@@ -10,6 +10,134 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.4.0 Snapshot Line
 
+### Snapshot 4, November 9, 2026
+
+- Shows the Retromod button, screens, and restart prompt on Forge and NeoForge clients, on Minecraft 26.2 and newer, and on Fabric and Quilt 1.20 to 1.21.11.
+- Repairs the Choose Mods button, makes Escape leave Retromod's screens, and saves only the setting you change.
+- Opens folders and links through Minecraft itself, so launchers that sandbox the game can route them, and repairs **Open retromod-input/** on 26.3 and on Fabric before 26.1.
+- Lets you drop old mod jars onto the Retromod screen, and names a jar Retromod cannot read.
+- Keeps translation work in `retromod-cache/work/` instead of the system temp folder.
+- Gives Forge 26.x mods the same shared repairs Fabric and NeoForge already had.
+- Carries GUI, input, JOML, sound, and render repairs down to the NeoForge and Forge 1.21.x versions that made each change, so 1.21.1 mods work on 1.21.2 to 1.21.11 too.
+- Drops the removed `RenderSystem` state calls on 1.21.2 to 1.21.11 hosts too, where they used to crash old mods.
+- Bridges more APIs that 1.21.2 to 26.3 renamed or removed: the old NBT getters, registry lookups, keybinds, biome spawns, chunk tickets, recipe lookups by type, item names, dispense behaviors, particles, render types, boat models, furnace timers, food sounds, and the network buffer helpers 26.3 removed.
+- Carries NeoForge fuel and compost data maps into the item components NeoForge 26.3 uses.
+- Stops the fuzzy resolver from swapping unrelated names, such as chains turning into air.
+- Reads mod metadata more like the loaders do: Fabric version arrays, prerelease ranges, multi-loader jars, and Forge dependency blocks in any order.
+- Translates Forge and NeoForge mods that declare no Minecraft version, such as Clumps and Jade, by reading the version from the file name or the Forge version they require.
+- Logs the cause and stack trace when a mod fails to translate, and keeps going when one shim fails.
+- Writes Retromod's messages to `logs/latest.log` on Forge and NeoForge.
+- Keeps `logs/latest.log` short, with step details in `logs/debug.log`, and describes what Retromod found instead of predicting that a mod will not work.
+- Tries every mod you pick, whatever its complexity score. The CLI's `aot --skip-risky` brings back the old skip.
+- Rebuilds the old Forge event system on Forge 26.2: old mods' own events load and are delivered by priority with cancel and result, their event subscriber classes are registered, including those listening to events Forge 26.2 moved off the mod bus such as key mappings and creative tabs, listener priorities carry over, and `DistExecutor`, `ModLoader.get()`, and the real mod list are back. Old listeners and `@SubscribeEvent` handlers can cancel Forge events again, base tick listeners hear every tick event, `unregister` works, and event results and block-break cancels reach Forge again.
+- Bridges more removed Forge 26.2 APIs: the renamed interaction and sapling events, `NetworkHooks`, `ForgeMod` attributes, the biome generation builder, shield actions, old tag constants, `FakePlayer`, Forge's folder packs, code-registered enchantments, the brewing registry, villager and wandering trader trades, and capabilities with their saved data.
+- Keeps old mods on Forge's own event bus and capability classes on Forge 26.x.
+- Delivers old Forge handlers on parent events, such as `PlayerEvent` and `BlockEvent`, to every event below them on Forge 26.2 and 26.3, as Forge 1.20.1 did.
+- Rebuilds Forge 1.20.1's HUD overlay API on Forge 26.2 and 26.3, so overlays from mods such as Jade and AppleSkin load and draw in their old places.
+- Registers old Forge 1.20.1 ingredient serializers on Forge 26.2 and 26.3, so recipes with their custom ingredients can load again.
+- Rebuilds Forge 1.20.1's `RenderLevelStageEvent` on Forge 26.2 and 26.3, so mods such as Carry On and Sophisticated Core load past it.
+- Keeps old Forge block and item colors on Forge 26.2 and 26.3, so tinted leaves, grass, and mod items keep their colors.
+- Rebuilds Forge 1.20.1's baked model API on Forge 26.2 and 26.3, so old custom block and item models draw again.
+- Rebuilds Forge 1.20.1's geometry loaders and the removed `forge:` model loaders on Forge 26.2 and 26.3.
+- Repairs older mods that color leaves and vines with the foliage color getters 1.21.4 removed, on every loader.
+- Repairs more old mixins on 26.x, such as Patchouli's inventory button and smithing pages, TerraBlender's surface rules, and Balm's screen accessors.
+- Repairs old worldgen codecs built with `KeyDispatchDataCodec` on 1.20.5 and newer, which stopped TerraBlender at startup on Forge 26.2.
+- Lets JEI, Balm, Waystones, and Farmer's Delight 1.20.1 construct on Forge 26.2 by repairing stored identifiers, old `Codec.unit` calls, and `RecipeBookType.create`.
+- Rebuilds Forge 1.20.1's compound and NBT ingredients and its event network channels on Forge 26.2 and 26.3, and restores `ChatFormatting.getByName`.
+- Keeps TerraBlender worlds generating on 26.1 and 26.2, keeps Lootr's loot chests working, and restores the entity data serializer Carry On syncs with.
+- Rebuilds the old surface rule API on 26.3, so TerraBlender and Biomes O' Plenty hand their surface rules to 26.3's world generator.
+- Rebuilds the old density function API on 26.3, so TerraBlender's End biomes, Lithostitched, and Tectonic generate there.
+- Repairs Farmer's Delight's flowers and skillet renderer and Patchouli's crash report line on Forge 26.2.
+- Saves and loads block entities from mods built for 1.20.4 or older on 1.21.6 and newer, keeps Forge's block entity persistent data, and upgrades their old item stacks with Minecraft's own data fixer. Their data was dropped at every reload before.
+- Keeps an add-on working when it passes an old tool tier or another rebuilt interface to two translated libraries.
+- Repairs old Forge render, scroll, key, and advancement event members on Forge 26.x and NeoForge, and old `Registry.getTags()` calls on 1.21.2 and newer.
+- Judges whether a mod was built before a change by the newest version its jar shows, not only its declared minimum.
+- Restores old item strings with NBT, the animal food fields that became item tags, `Villager.WANTED_ITEMS`, chest shapes, and advancement triggers that implement the trigger interface themselves.
+- Lets older mods build item stacks before a world loads on 26.1 and newer. Each stack picks up the item's default data once a world loads.
+- Lets old player and mob render layers load and draw on 26.x on every loader, so mods such as Sophisticated Backpacks and Curios get past adding their layers.
+- Draws old block entity renderers, such as Farmer's Delight's stove and Waystones' stones, a mod's own entity renderers, and the items they draw, on 26.1 to 26.3 on every loader.
+- Draws items that old mods render through `ItemRenderer.getModel` and a model, such as Farmer's Delight's cutting board, on 26.1 to 26.3 on every loader, inside the renderers Retromod runs.
+- Rebuilds `BlockRenderDispatcher` and `Minecraft.getBlockRenderer()` on 26.1 to 26.3, so code that reads block models in a reload listener no longer stops there. On Forge 26.2 and 26.3, Sophisticated Backpacks builds its backpack shapes again.
+- Rebuilds NeoForge's old dynamic model classes and model data calls on NeoForge 26.x, so mods whose models are built on them load again. Old geometry loaders still do not run there.
+- Rebuilds `ItemProperties` for old mods on every 26.x loader and NeoForge 1.21.11, so their items load and switch models on their own properties again.
+- Keeps old block and item color handlers working on NeoForge 26.1 to 26.3, for NeoForge 1.21.1 mods and Forge 1.20.1 mods running there.
+- Repairs old mods' loot types and structure processor types on 26.x, so worlds that use their loot tables and structures open.
+- Repairs older mods' conditional loot functions on 26.3, which changed a function's condition list to one condition.
+- Rebuilds the single loot entry base that 26.3 removed, so custom loot entries from mods built for 1.20.5 to 26.2 load and roll on every loader.
+- Gives mods built before 1.20.5 their loot table ids back on newer hosts, which old configs and loot modifiers read when a world starts.
+- Restores the death loot table old mobs choose for themselves, from 1.20.5 through 26.3.
+- Repairs more old loot and registry code on 26.3, including loot context parameters, removed loot entry types, removed built-in registries, and the renamed feature registry, which libraries such as Moonlight and Bookshelf use.
+- Keeps command contexts and registry providers that old mods build themselves working on newer hosts, so worlds with those mods open again.
+- Runs old reload listeners on newer hosts on every loader, including GeckoLib 4's model and animation loading, and answers Forge's environment checks for Forge mods on NeoForge.
+- Keeps GeckoLib 4's own classes, and the mods translated with it, on GeckoLib 4's names on 26.1 to 26.3.
+- Rebuilds GeckoLib 4's animated and glowing textures and its other missing members on Forge and NeoForge 1.21.11 and on 26.x.
+- Keeps NeoForge 1.21.1 mods' common and server configs working on NeoForge 26.3 under their old file names.
+- Removes client-only code from older mods on NeoForge dedicated servers again, marks those jars so clients and export leave them out, and reads a mod's bundled libraries when it rebuilds stack frames.
+- Translates Forge mods for NeoForge offline the same way the game does, and adds `--host-jar` so offline checks can read the loader's own classes.
+- Keeps a mixin aimed at a game class that 26.3 turned into an interface from stopping the game, and loads old placement modifiers and block state providers on 26.3.
+- Lets more NeoForge 1.21.1 mods start on NeoForge 26.3: two-way packets, chorus fruit and interaction events, command colors, container slots, spawn probabilities, and items registered through `BuiltInRegistries`, and stops NeoForge 26.3 refusing translated jars over Mixin's placeholder package.
+- Keeps mods' own data and resource packs, such as YUNG's API, Moonlight, KubeJS, and Quark, loading as packs on 26.3.
+- Keeps worlds with older biome mods, such as Terralith and Biomes O' Plenty, loading on 26.3 after the grass patch rebuild.
+- Reads the Minecraft tag keys 26.1 to 26.3 renamed under their new names, and stops guessing removed tags from similar names.
+- Lets older mods that add their own data or resource pack, such as YUNG's API, Moonlight, and Quark, get past pack discovery on 26.3.
+- Lets older mods that read the game's pack format, or build their own data pack, load on 1.21.11 and newer.
+- Rebuilds the composter's chance table on 26.3 for older mods, such as YUNG's API.
+- Rebuilds NeoForge's old brewing registration event on NeoForge 26.3.
+- Keeps custom biome sources from older mods working on 26.3.
+- Fixes more world-stopping data from 1.21.x mods on 26.3: biome feature order, number providers, ids without a namespace, smithing recipes, spawn egg data, and advancement icons from absent mods.
+- Repairs more old mixins whose target method changed a parameter, and removes the few that would stop the game, such as Moonlight's world generation hook on 26.3.
+- Lets mods that make their own chunk ticket types, such as Chunky, start on 1.21.5 and newer.
+- Keeps the Graphics API on OpenGL from the first start of a fresh install.
+- Stops a few wrong guesses for renamed fields, such as reading a removed tooltip setting as the tool component.
+- Repairs Forge item and fluid handlers, recipe wrappers, and their saved data for Forge mods on NeoForge.
+- Renames the Minecraft names Mojang changed after 1.21 in older NeoForge and Forge mods, and keeps the old build height getters' meaning.
+- Lets Forge mods' mixins apply again on NeoForge 1.21.9 and newer.
+- Rebuilds signs, beds, and many removed entity, inventory, and item calls for 1.21.x mods on 1.21.11 and 26.x.
+- Draws old 1.21.x screens, list rows, buttons, and key checks on 26.x on every loader.
+- Keeps older structure processors, placement types, and several worldgen calls working on 26.2 and 26.3.
+- Points more old mixins at Minecraft methods 26.x renamed, such as `resizeDisplay` and the GUI `render` methods that became `extract`.
+- Keeps older mods loading on NeoForge 1.21.11 and 26.x dedicated servers when a shared class names a client class.
+- Stops renaming Architectury's own networking methods on 26.1 and newer, which stopped Architectury and the mods built on it at startup.
+- Updates 1.21.x worldgen, loot conditions, entity predicates, attributes, wolf variants, and item components that 1.21.2 to 26.3 renamed or rebuilt, so more data mods load on 26.3.
+- Updates worldgen in pack overlays and keeps a feature's loader conditions.
+- Repairs Forge 1.21 networking, display tests, and mod containers for Forge mods on NeoForge.
+- Stops moving EMI, Trinkets 3, and MixinExtras `@WrapWithCondition` class names that current releases still ship, and moves Sodium, Iris, Cardinal Components, and Curios names only when the installed library dropped them.
+- Repairs more old `@Inject` handlers whose target gained or lost parameters, such as Balm's resource loading handler, and points their refmap entries at the new method.
+- Fixes translation bugs found on 26.3 servers: classes that failed verification, broken version ranges, Fabric access wideners with other file names, exact Java versions, and jars that bundle large or repeated entries.
+- Rebuilds the old `VertexConsumer` calls on every loader from 1.21, and keeps GeckoLib 4's entity renderers drawing on 26.x.
+- Repairs old custom block models on Forge 26.2 and 26.3, old model element code on 26.1 and newer, and old item models that mix block and item textures on 1.21.11 and newer.
+- Loads, matches, and crafts recipes that Forge 1.20.1 mods read with their own serializers on Forge and NeoForge from 1.21.2 through 26.3, and fixes a startup crash from Forge tags that listed their own `c:` twin.
+- Lets NeoForge load more Forge 1.20.1 mods: newer MCreator mods, listeners on parent events, old version checks, tick sides, and configs a mod opens itself.
+- Keeps GeckoLib 4 mods on their old package names on 1.21.5 to 1.21.11, where GeckoLib still uses them.
+- Runs on every supported loader's ASM, back to ASM 9.5, and explains clearly when a Fabric or Quilt loader is too old for 26.x.
+- Repairs the 1.20.5 to 1.21 gameplay changes old mods hit during play: arrows, mob effects, death loot, world data saving, item tag calls, scores, and more, on Forge and NeoForge, and on Fabric from 26.1.
+- Gives old mods that read the enchantment registry Minecraft removed in 1.21 the loaded world's enchantments on every loader.
+- Repairs old mods that read and write text as JSON on NeoForge and Forge from 1.20.5 and on Fabric and Quilt from 26.1, keeping click and hover events written before 1.21.5.
+- Repairs old biome, structure, and loot modifier serializers on NeoForge and Forge, and updates old biomes' carver lists, so worlds with those mods load again.
+- Repairs Forge 1.20.1 arm poses on Forge 26.2 and 26.3, `Minecraft.getFrameTime()` on every loader from 1.21, and old JSON text on Fabric and Quilt 1.20.3 to 1.21.11.
+- Rebuilds `TextureAtlasHolder`, so mods with their own sprite atlas, such as JEI, start on 1.21.11 and newer.
+- Draws old item renderers on Forge 26.2 and 26.3 and on NeoForge 26.1 to 26.3, and keeps the flat icon when one fails.
+- Lets Farmer's Delight, Lootr, Sophisticated Backpacks, Patchouli, Waystones, and Balm register their content on Forge 26.2.
+- Lets an old class load when it overrides a method Minecraft has since made final, and restores the old `DataResult.getOrThrow` and tool tier enums.
+- Repairs `Material` in old client mods on 26.1 and newer.
+- Prevents a startup crash on 26.1 and newer when an older mod's Mixin builds an item stack in a static field, as Carry On does.
+- Repairs the NBT reads and item stack save and load methods that 1.21.5 and 1.21.6 changed, for every loader.
+- Calls old block entity and entity save overrides again on 1.21.6 and newer, and repairs old `Level` subclasses.
+- Restores many smaller members old mods call, such as `new ChunkPos(pos)`, `I18n.exists`, `getServer()`, and the old `InteractionResult` factories.
+- Repairs more older Fabric mods on 1.21.6 to 1.21.11: permission checks, game rules, `ServerPlayer.server`, and keybinds.
+- Changes the CLI's default target to 26.3, honors every `--target-loader`, and brings `aot` and `prepare` output in line with `transform`.
+- Gives each redirect the same target offline as in a running game, and repairs old `RenderType` getters and Fabric placement modifiers on 26.1 and newer.
+- Ships the license texts of the libraries and mapping data Retromod bundles inside its jars.
+
+Names the fuzzy resolver used to guess wrongly, such as `Entity.kill()`, now fail when they run until each gets its own bridge. Fabric and Quilt 1.20.5 to 1.21.11 still lack several of these bridges. The CLI applies the Forge-only repairs only with `--target-loader forge`. Old HUD overlays on Forge 26.2 and 26.3 draw only as far as the GUI drawing bridges cover their calls. Custom ingredients that depend on Forge 1.20.1's `Ingredient` internals, such as Farmer's Delight's, still fail, and their recipes are skipped. What old mods draw from `RenderLevelStageEvent` does not reach the screen yet. Old item colors do not reach items drawn by a custom model loader yet. An old override of a method Minecraft made final no longer runs when Minecraft calls it, except where Retromod routes it through a hook. Lithostitched's `sample_density`, which Tectonic uses for underground rivers, still fails on 26.3. JEI 1.20.1 still needs a real port on 26.x, because the client has no recipe manager there. Block entities from old Fabric and Quilt mods still lose their data at reload. Carry On's synced data is not restored on Fabric yet. Old item renderers that call other removed rendering APIs show their flat icon, without enchantment glint. Old feature classes cannot load on 26.3, which rebuilt world features. A launcher sandbox that keeps `mods/` read-only blocks every install except in-place loading on Forge and NeoForge. Pre-launch windows on Fabric and Quilt show links instead of opening them. Dropping jars needs the Retromod screen, which does not open on Forge 1.20 to 1.20.4 or NeoForge 1.20.1. Writing a mod's own compound or strict NBT ingredient still fails, and old Forge event network channels deliver nothing on NeoForge. `RenderLivingEvent.getEntity()` returns null for an entity drawn outside the level, such as a spawner's display mob, and still fails on NeoForge 1.21.2 to 1.21.8. An item stack an older mod builds before a world loads has none of the item's default data until then, so it reports a maximum stack size of 1. On NeoForge and Fabric, an item whose model a mod builds in code, such as Sophisticated Backpacks' backpack, is not drawn yet, and Carry On's carried blocks are not drawn on any loader. Old reload listeners that wrap Minecraft's model or particle managers, and mixins into a vanilla listener's old reload, still fail on 26.x. GeckoLib 4 armor is not drawn on 1.21.11 and newer, and Embeddium and Oculus vertex consumers are not adapted. Recipes read through a 1.20.1 serializer do not appear in the recipe book. Some 1.21.x data still stops a 26.3 world: variant entity predicates, removed float providers, ids without a namespace, and a 1.21.1 biome feature order that differs from 26.3. Mixins on methods that 26.x moved to another class or split in two still need a port. Old GUI code on 26.x keeps only the 2D part of its pose stack, and a few private draw helpers are not bridged yet.
+
+### Snapshot 3.2, October 31, 2026
+
+- Fixes networking for Forge 1.20.2 and newer mods on Forge 26.x, which snapshot 3.1 broke.
+- Translates mods that ship a module descriptor, such as JEI, spark, and Kiwi, on 26.x hosts.
+- Keeps registry lookups (`Registry.getOptional`) working in translated NeoForge and Fabric mods on newer hosts.
+- Keeps the old identifier Gson adapter working on 26.x, which stopped mods such as Jade from loading.
+
 ### Snapshot 3.1, October 30, 2026
 
 - Translates old Forge mods on Forge 1.20, 1.20.2, 1.20.3, and 1.20.4, which run SRG names with their own numbering.

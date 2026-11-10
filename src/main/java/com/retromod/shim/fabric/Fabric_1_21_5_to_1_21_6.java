@@ -35,12 +35,33 @@ public class Fabric_1_21_5_to_1_21_6 implements VersionShim {
     
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // The RenderSystem setters this version removed.
+        com.retromod.shim.common.RemovedRenderStateNeutralize.registerRemovedIn(transformer, "1.21.6");
 
         // ServerPlayer.server became private. The bridge matches Mojang names, which a Fabric
         // mod only has after the 26.x remap.
         if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
                 com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
             com.retromod.shim.common.LegacyPlayerServerBridge.register(transformer);
+            // GuiGraphics.flush went away. The 26.1 shims carry the other GUI drawing changes.
+            com.retromod.shim.common.LegacyGuiGraphicsBridge.register1216(transformer);
+            // Save overrides took a CompoundTag. The host now passes a ValueOutput or ValueInput.
+            com.retromod.shim.common.LegacyValueIoOverrideAdapter.register(transformer);
+        } else {
+            // Before 26.x the same read and the save overrides keep their intermediary names.
+            com.retromod.shim.common.LegacyPlayerServerBridge.registerIntermediary(transformer);
+            com.retromod.shim.common.LegacyValueIoOverrideAdapter.registerIntermediary(transformer);
+            // ItemStack.parse and save, and ContainerHelper's CompoundTag forms, went with value input and output.
+            com.retromod.shim.common.LegacyItemNbtApi.register1216Intermediary(transformer);
+        }
+
+        // RenderType.translucent() went away in 1.21.6; translucentMovingBlock() is the same layer.
+        // Fabric hosts before 26.1 run these intermediary names; 1.21.11 moved both.
+        if (com.retromod.core.RetromodVersion.compareMcVersions(
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "1.21.11") < 0) {
+            String renderType = "()Lnet/minecraft/class_1921;";
+            transformer.registerMethodRedirect("net/minecraft/class_1921", "method_23583", renderType,
+                    "net/minecraft/class_1921", "method_29380", renderType);
         }
 
         // HUD API rewrite: HudRenderCallback -> HudElementRegistry

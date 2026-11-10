@@ -1,0 +1,60 @@
+# Forge types that are classes in Forge 1.20.1 and interfaces on Forge 26.2 and 26.3, read from the Forge jars named below.
+# An old mod calls them with INVOKEVIRTUAL, and Retromod gives such a call the interface form. A running host is read
+# first; this table answers only when the host cannot be read, as in an offline transform, and only for a Forge target
+# at or above the row's version. NeoForge 26.x made no NeoForge 1.21.x class an interface, so it has no table.
+# Columns: the first Minecraft version the row was checked on, and the type.
+# Forge 1.20.1: forge-1.20.1-47.4.10-universal.jar, fmlcore, fmlloader, javafmllanguage, eventbus-6.0.5.jar, forgespi-7.0.1.jar.
+# 26.2: forge-26.2-65.0.0-universal.jar, fmlcore, fmlloader, javafmllanguage-26.2-65.0.0.jar, eventbus-7.0.1.jar, forgespi-8.0.0.jar.
+# 26.3: forge-26.3-66.1.2-universal.jar, fmlcore, fmlloader, javafmllanguage-26.3-66.1.2.jar, eventbus-7.0.6.jar, forgespi-8.0.0.jar.
+26.2	net/minecraftforge/client/event/ClientPlayerNetworkEvent
+26.2	net/minecraftforge/client/event/ContainerScreenEvent
+26.2	net/minecraftforge/client/event/ContainerScreenEvent$Render
+26.2	net/minecraftforge/client/event/CustomizeGuiOverlayEvent
+26.2	net/minecraftforge/client/event/EntityRenderersEvent
+26.2	net/minecraftforge/client/event/InputEvent
+26.2	net/minecraftforge/client/event/InputEvent$MouseButton
+26.2	net/minecraftforge/client/event/ModelEvent
+26.2	net/minecraftforge/client/event/RegisterColorHandlersEvent
+26.2	net/minecraftforge/client/event/RenderLivingEvent
+26.2	net/minecraftforge/client/event/ScreenEvent
+26.2	net/minecraftforge/client/event/ScreenEvent$CharacterTyped
+26.2	net/minecraftforge/client/event/ScreenEvent$KeyInput
+26.2	net/minecraftforge/client/event/ScreenEvent$KeyPressed
+26.2	net/minecraftforge/client/event/ScreenEvent$KeyReleased
+26.2	net/minecraftforge/client/event/ScreenEvent$MouseButtonPressed
+26.2	net/minecraftforge/client/event/ScreenEvent$MouseButtonReleased
+26.2	net/minecraftforge/client/event/ScreenEvent$MouseDragged
+26.2	net/minecraftforge/client/event/ScreenEvent$MouseInput
+26.2	net/minecraftforge/client/event/ScreenEvent$MouseScrolled
+26.2	net/minecraftforge/client/event/ScreenEvent$Render
+26.2	net/minecraftforge/client/event/TextureStitchEvent
+26.2	net/minecraftforge/client/event/ViewportEvent
+26.2	net/minecraftforge/client/event/sound/SoundEvent
+26.2	net/minecraftforge/client/event/sound/SoundEvent$SoundSourceEvent
+26.2	net/minecraftforge/event/TickEvent
+26.2	net/minecraftforge/event/TickEvent$ClientTickEvent
+26.2	net/minecraftforge/event/TickEvent$LevelTickEvent
+26.2	net/minecraftforge/event/TickEvent$PlayerTickEvent
+26.2	net/minecraftforge/event/TickEvent$RenderTickEvent
+26.2	net/minecraftforge/event/TickEvent$ServerTickEvent
+26.2	net/minecraftforge/event/entity/EntityEvent
+26.2	net/minecraftforge/event/entity/item/ItemEvent
+26.2	net/minecraftforge/event/entity/living/LivingConversionEvent
+26.2	net/minecraftforge/event/entity/living/LivingEvent
+26.2	net/minecraftforge/event/entity/living/MobEffectEvent
+26.2	net/minecraftforge/event/entity/player/AdvancementEvent
+26.2	net/minecraftforge/event/entity/player/PlayerContainerEvent
+26.2	net/minecraftforge/event/entity/player/PlayerEvent
+26.2	net/minecraftforge/event/entity/player/PlayerXpEvent
+26.2	net/minecraftforge/event/level/BlockEvent
+26.2	net/minecraftforge/event/level/BlockEvent$CropGrowEvent
+26.2	net/minecraftforge/event/level/ChunkDataEvent
+26.2	net/minecraftforge/event/level/ChunkEvent
+26.2	net/minecraftforge/event/level/ChunkWatchEvent
+26.2	net/minecraftforge/event/level/ExplosionEvent
+26.2	net/minecraftforge/event/level/LevelEvent
+26.2	net/minecraftforge/event/level/PistonEvent
+26.2	net/minecraftforge/event/server/ServerLifecycleEvent
+26.2	net/minecraftforge/fml/event/config/ModConfigEvent
+26.2	net/minecraftforge/fml/loading/LoadingModList
+26.2	net/minecraftforge/registries/DataPackRegistryEvent

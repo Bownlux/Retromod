@@ -77,7 +77,8 @@ public class VirtualModLoader {
         try (InputStream is = getClass().getResourceAsStream("/" + resourcePath)) {
             if (is != null) {
                 out.putNextEntry(new JarEntry(resourcePath));
-                is.transferTo(out);
+                // A copy from the release jar names Retromod's relocated Gson and SLF4J; the mod sees the game's.
+                out.write(com.retromod.util.ShadedLibraryNames.toHostNames(is.readAllBytes()));
                 out.closeEntry();
             }
         }

@@ -4,7 +4,11 @@
  */
 package com.retromod.core;
 
+import com.retromod.shim.common.embedded.LegacyEnchantmentRegistry;
+import com.retromod.shim.common.embedded.LegacyLog;
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import com.retromod.util.JarSignatureSanitizer;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
@@ -44,8 +48,29 @@ public final class SyntheticEmbedder {
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     /** Retromod-owned package root for embedded synthetics. */
     public static final String PREFIX = "com/retromod/embedded/";
+    /** Helpers any compiled helper may call; each travels with every synthetic that names it. */
+    private static final Map<String, Class<?>> SHARED_HELPERS = Map.of(
+            LegacyLog.class.getName().replace('.', '/'), LegacyLog.class,
+            LegacyPublicMethods.class.getName().replace('.', '/'), LegacyPublicMethods.class,
+            // The loaded world's registries, which rebuilt and generated classes read through its view.
+            LegacyEnchantmentRegistry.class.getName().replace('.', '/'), LegacyEnchantmentRegistry.class);
+    private static final String RETROMOD_ROOT = "com/retromod/";
+    /**
+     * Retromod's own packages under com/retromod: its sources, the classes it generates, and the
+     * copies it embeds. The test mods and the test library live under com/retromod too, as mods.
+     */
+    static final List<String> OWN_PACKAGES = List.of("agent", "aot", "archive", "boot", "cli", "compat", "core",
+            "embedded", "embedder", "generated", "gui", "inplace", "legacy", "legacyapi", "loaderapi", "locator",
+            "mapping", "mixin", "polyfill", "resources", "security", "shim", "util", "virtual");
 
     private SyntheticEmbedder() {}
+
+    /** Whether a class is Retromod's own code rather than a mod's, decided by package, never by the com/retromod prefix alone. */
+    public static boolean isRetromodClass(String internalName) {
+        if (internalName == null || !internalName.startsWith(RETROMOD_ROOT)) return false;
+        int end = internalName.indexOf('/', RETROMOD_ROOT.length());
+        return end > 0 && OWN_PACKAGES.contains(internalName.substring(RETROMOD_ROOT.length(), end));
+    }
 
     /** Result of embedding synthetics into an in-memory JAR. */
     public record ByteEmbeddingResult(byte[] jarBytes, int embeddedCount, boolean succeeded) {}
@@ -77,6 +102,19 @@ public final class SyntheticEmbedder {
         }
     }
 
+    /** Registers the shared helpers a new synthetic names, so a mod's copy never calls one left behind. */
+    static void registerSharedHelpers(RetromodTransformer transformer, String internalName, byte[] bytes) {
+        String text = null;
+        for (Map.Entry<String, Class<?>> helper : SHARED_HELPERS.entrySet()) {
+            if (helper.getKey().equals(internalName) || transformer.getSyntheticClasses().containsKey(helper.getKey())) {
+                continue;
+            }
+            // Class names sit in the constant pool as plain ASCII, so a text search finds a reference.
+            if (text == null) text = new String(bytes, StandardCharsets.ISO_8859_1);
+            if (text.contains(helper.getKey())) registerClassResource(transformer, helper.getKey(), helper.getValue());
+        }
+    }
+
     /**
      * Embed every registered synthetic that {@code modDir}'s classes reference and rewrite those
      * references to the embedded copies.
@@ -100,7 +138,29 @@ public final class SyntheticEmbedder {
      */
     private static Map<String, String> syntheticRemapping(
             Map<String, String> relocation, RetromodTransformer transformer) {
-        Map<String, String> classMoves = transformer.getClassRedirects();
+        // A move limited to older mods marks a name the host has again, which a synthetic means as the host's.
+        return withClassMoves(relocation, transformer.getClassRedirectsForHostCode());
+    }
+
+    /** The relocation map plus only the class moves the current mod takes, for the mod's own classes. */
+    private static Map<String, String> modClassRemapping(
+            Map<String, String> relocation, RetromodTransformer transformer, Set<String> ownClassNames) {
+        // A move limited to older mods, such as Forge 1.20.1's PacketDistributor, was left out of
+        // a newer mod by the class pass on purpose, so this pass must not put it back. Nor may it
+        // move a class the jar defines, which the class pass kept.
+        Map<String, String> movesTaken = new HashMap<>();
+        for (Map.Entry<String, String> move : transformer.getClassRedirects().entrySet()) {
+            // The class pass already applied the Minecraft rename table, except to a mixin it keeps inert.
+            if (transformer.isMojangClassRename(move.getKey())) continue;
+            if (!transformer.classRedirectForJar(move.getKey(), ownClassNames::contains).equals(move.getKey())) {
+                movesTaken.put(move.getKey(), move.getValue());
+            }
+        }
+        return withClassMoves(relocation, movesTaken);
+    }
+
+    private static Map<String, String> withClassMoves(
+            Map<String, String> relocation, Map<String, String> classMoves) {
         if (classMoves == null || classMoves.isEmpty()) return relocation;
 
         Map<String, String> combined = new HashMap<>();
@@ -150,45 +210,56 @@ public final class SyntheticEmbedder {
 
             // which registered synthetics does this mod reference?
             Set<String> referenced = new HashSet<>();
-            // The mod's classes are kept only when a library could lend it stand-ins.
+            // The mod's classes are kept only when a library could lend it stand-ins; their names always.
             boolean linking = libraries != null && !libraries.isEmpty();
             Map<String, byte[]> ownClasses = new HashMap<>();
+            Set<String> ownClassNames = new HashSet<>();
             for (Path cf : classFiles) {
                 try {
                     byte[] bytes = Files.readAllBytes(cf);
-                    if (linking) {
-                        String relative = modDir.relativize(cf).toString().replace('\\', '/');
-                        ownClasses.put(relative.substring(0, relative.length() - ".class".length()), bytes);
-                    }
+                    String relative = modDir.relativize(cf).toString().replace('\\', '/');
+                    String className = relative.substring(0, relative.length() - ".class".length());
+                    ownClassNames.add(className);
+                    if (linking) ownClasses.put(className, bytes);
                     referenced.addAll(referencedClasses(bytes));
                 } catch (IOException ignored) {
                 }
             }
             referenced.retainAll(synthetics.keySet());
             if (referenced.isEmpty()) return 0;
-            expandTransitively(referenced, synthetics);
+            expandTransitively(referenced, synthetics, transformer.getClassRedirectsForHostCode());
 
             String base = embeddedBase(uniqueKey);
             Relocation relocation = relocate(base, referenced, ownClasses, synthetics, libraries);
             Map<String, String> rename = relocation.names();
-            Remapper remapper = new SimpleRemapper(syntheticRemapping(rename, transformer));
-            Remapper syntheticRemapper = memberAware(remapper, synthetics, transformer);
+            Remapper remapper = new SimpleRemapper(modClassRemapping(rename, transformer, ownClassNames));
+            Remapper syntheticRemapper = memberAware(
+                    new SimpleRemapper(syntheticRemapping(rename, transformer)), synthetics, transformer);
 
+            // Calls and overrides crossing into a library that took another copy convert the value there.
+            StandInAdapters adapters = adaptersFor(base, relocation, referenced, ownClasses, synthetics, libraries);
+            if (adapters != null) readMixinConfigs(modDir, adapters);
+            Map<Path, byte[]> rewrittenClasses = new HashMap<>();
+            for (Path cf : classFiles) {
+                byte[] in = Files.readAllBytes(cf);
+                byte[] source = adapters == null ? in : adapters.rewrite(in, ownClasses);
+                byte[] out = remap(source, remapper);
+                if (!Arrays.equals(in, out)) rewrittenClasses.put(cf, out);
+            }
+            // The adapters are known once every class is rewritten, since only the ones in use are added.
             Map<Path, byte[]> embeddedOutputs = new HashMap<>();
-            for (String n : relocation.local()) {
-                byte[] renamed = remap(synthetics.get(n), syntheticRemapper);
-                Path target = ZipSecurity.safeResolve(modDir, rename.get(n) + ".class");
+            Map<String, byte[]> added = new HashMap<>();
+            for (String n : relocation.local()) added.put(rename.get(n), remap(synthetics.get(n), syntheticRemapper));
+            if (adapters != null) {
+                adapters.adapters().forEach((name, bytes) -> added.put(name, remap(bytes, remapper)));
+            }
+            for (Map.Entry<String, byte[]> generated : added.entrySet()) {
+                Path target = ZipSecurity.safeResolve(modDir, generated.getKey() + ".class");
                 if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                     throw new IOException("synthetic output collides with an existing mod class: "
                             + modDir.relativize(target));
                 }
-                embeddedOutputs.put(target, renamed);
-            }
-            Map<Path, byte[]> rewrittenClasses = new HashMap<>();
-            for (Path cf : classFiles) {
-                byte[] in = Files.readAllBytes(cf);
-                byte[] out = remap(in, remapper);
-                if (!Arrays.equals(in, out)) rewrittenClasses.put(cf, out);
+                embeddedOutputs.put(target, generated.getValue());
             }
             for (Map.Entry<Path, byte[]> output : embeddedOutputs.entrySet()) {
                 Files.createDirectories(output.getKey().getParent());
@@ -197,10 +268,11 @@ public final class SyntheticEmbedder {
             for (Map.Entry<Path, byte[]> output : rewrittenClasses.entrySet()) {
                 Files.write(output.getKey(), output.getValue());
             }
-            if (!relocation.borrowed().isEmpty()) {
+            if (!relocation.borrowed().isEmpty() || adapters != null) {
                 Path links = ZipSecurity.safeResolve(modDir, SyntheticLibraries.LINKS_ENTRY);
                 Files.createDirectories(links.getParent());
-                Files.write(links, SyntheticLibraries.linksFile(relocation.borrowed()));
+                Files.write(links, SyntheticLibraries.linksFile(relocation.borrowed(),
+                        adapters == null ? Set.of() : adapters.crossed()));
             }
             relocation.log("'" + uniqueKey + "'", base);
             return relocation.local().size();
@@ -234,13 +306,19 @@ public final class SyntheticEmbedder {
      * mod-referenced set to its transitive closure so an embedded copy never dangles on a
      * helper that was renamed away with it - or worse, never embedded at all.
      */
-    private static void expandTransitively(Set<String> referenced, Map<String, byte[]> synthetics) {
+    private static void expandTransitively(Set<String> referenced, Map<String, byte[]> synthetics,
+            Map<String, String> classMoves) {
         java.util.ArrayDeque<String> work = new java.util.ArrayDeque<>(referenced);
         while (!work.isEmpty()) {
             byte[] bytes = synthetics.get(work.poll());
             if (bytes == null) continue;
             for (String dep : referencedClasses(bytes)) {
-                if (synthetics.containsKey(dep) && referenced.add(dep)) work.add(dep);
+                // The embedded copy takes every class move to its end (syntheticRemapping), so a
+                // name that ends at a stand-in needs that stand-in too. LegacyLootTypes builds
+                // LootItemFunctionType, which 26.1 and newer redirect to Retromod's stand-in.
+                String moved = synthetics.containsKey(dep) || classMoves == null
+                        ? dep : lastMove(classMoves, dep);
+                if (synthetics.containsKey(moved) && referenced.add(moved)) work.add(moved);
             }
         }
     }
@@ -257,113 +335,198 @@ public final class SyntheticEmbedder {
     /** Jar-based {@link #embed(Path, String, RetromodTransformer, SyntheticLibraries)}. */
     public static int embedIntoJar(Path jarPath, String uniqueKey, RetromodTransformer transformer,
             SyntheticLibraries libraries) {
-        Map<String, byte[]> synthetics = transformer.getSyntheticClasses();
-        if (synthetics == null || synthetics.isEmpty()) return 0;
         try {
-            java.util.LinkedHashMap<String, byte[]> entries = new java.util.LinkedHashMap<>();
-            long total = 0;
-            try (var zis = new java.util.zip.ZipInputStream(Files.newInputStream(jarPath))) {
-                java.util.zip.ZipEntry e;
-                while ((e = zis.getNextEntry()) != null) {
-                    if (entries.size() >= MAX_ARCHIVE_ENTRIES) {
-                        throw new IOException("jar has too many entries during synthetic embed: "
-                                + jarPath.getFileName());
-                    }
-                    String entryName = validateEntryName(e.getName(), e.isDirectory());
-                    // Bound per-entry (50MB) and aggregate (500MB) like the other extract paths:
-                    // this reads an untrusted jar fully into memory, and the per-entry cap alone
-                    // doesn't stop a many-entry decompression bomb. On overflow, bail: the outer
-                    // catch returns 0 and the original jar is untouched, since writes go through
-                    // the temp-then-move below.
-                    byte[] data = e.isDirectory() ? new byte[0]
-                            : ZipSecurity.safeReadAllBytes(zis);
-                    total += data.length;
-                    if (total > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
-                        throw new java.io.IOException("jar exceeds max total size during synthetic embed: "
-                                + jarPath.getFileName());
-                    }
-                    // directory entries are retained: dropping them breaks package-resource
-                    // lookups and classpath scanners in the rewritten jar
-                    if (entries.putIfAbsent(entryName, data) != null) {
-                        throw new IOException("jar contains duplicate entry during synthetic embed: "
-                                + entryName);
-                    }
-                }
-            }
-            Set<String> referenced = new HashSet<>();
-            Map<String, byte[]> ownClasses = new HashMap<>();
-            for (var en : entries.entrySet()) {
-                if (!en.getKey().endsWith(".class")) continue;
-                referenced.addAll(referencedClasses(en.getValue()));
-                if (!en.getKey().startsWith("META-INF/")) {
-                    ownClasses.put(en.getKey().substring(0, en.getKey().length() - ".class".length()),
-                            en.getValue());
-                }
-            }
-            referenced.retainAll(synthetics.keySet());
-            if (referenced.isEmpty()) return 0;
-            expandTransitively(referenced, synthetics);
-
-            String base = embeddedBase(uniqueKey);
-            Relocation relocation = relocate(base, referenced, ownClasses, synthetics, libraries);
-            Map<String, String> rename = relocation.names();
-            Remapper remapper = new SimpleRemapper(syntheticRemapping(rename, transformer));
-            Remapper syntheticRemapper = memberAware(remapper, synthetics, transformer);
-
-            java.util.LinkedHashMap<String, byte[]> out = new java.util.LinkedHashMap<>();
-            for (var en : entries.entrySet()) {
-                byte[] v = en.getValue();
-                if (en.getKey().endsWith(".class")) v = remap(v, remapper);
-                out.put(en.getKey(), v);
-            }
-            if (!relocation.borrowed().isEmpty()) {
-                out.put(SyntheticLibraries.LINKS_ENTRY, SyntheticLibraries.linksFile(relocation.borrowed()));
-            }
-            for (String n : relocation.local()) {
-                if (out.size() >= MAX_ARCHIVE_ENTRIES) {
-                    throw new IOException("synthetic output would exceed the jar entry limit");
-                }
-                String generatedName = validateEntryName(rename.get(n) + ".class", false);
-                if (out.containsKey(generatedName)) {
-                    throw new IOException("synthetic output collides with an existing jar entry: "
-                            + generatedName);
-                }
-                out.put(generatedName, remap(synthetics.get(n), syntheticRemapper));
-            }
-            JarSignatureSanitizer.sanitizeEntries(out);
-
-            // write to a sibling temp + move: rewriting in place with a truncating stream
-            // destroys the jar if anything throws mid-write (review finding)
-            Path targetJar = jarPath.toAbsolutePath().normalize();
-            if (Files.isSymbolicLink(targetJar)) {
-                throw new IOException("refusing to replace symlinked mod jar: " + targetJar);
-            }
-            ZipSecurity.validateNotSymlink(targetJar);
-            Path tmp = Files.createTempFile(targetJar.getParent(), "retromod-embed-", ".rmtmp");
-            try {
-                try (var zos = new java.util.zip.ZipOutputStream(Files.newOutputStream(tmp))) {
-                    for (var en : out.entrySet()) {
-                        String entryName = validateEntryName(en.getKey(),
-                                en.getKey().endsWith("/"));
-                        zos.putNextEntry(new java.util.zip.ZipEntry(entryName));
-                        zos.write(en.getValue());
-                        zos.closeEntry();
-                    }
-                }
-                try (var ignored = new java.util.zip.ZipFile(tmp.toFile())) {
-                    // Opening the completed temporary file verifies its central directory before
-                    // it replaces the original mod.
-                }
-                moveReplacingAtomically(tmp, targetJar);
-            } finally {
-                Files.deleteIfExists(tmp);
-            }
-            relocation.log("jar '" + uniqueKey + "'", base);
-            return relocation.local().size();
+            return embedIntoJarChecked(jarPath, uniqueKey, transformer, libraries);
         } catch (Exception e) {
-            LOGGER.warn("Synthetic embedding (jar) skipped for '{}': {}", uniqueKey, e.toString());
+            LOGGER.warn("Could not add compatibility classes to '{}': {}", uniqueKey, e.toString());
             return 0;
         }
+    }
+
+    /** Embeds like {@code embedIntoJar}, but deletes and reports a jar that still names a stand-in. */
+    public static int embedIntoJarOrDiscard(Path jarPath, String uniqueKey,
+            RetromodTransformer transformer, SyntheticLibraries libraries) throws IOException {
+        Exception failure = null;
+        int embedded = 0;
+        try {
+            embedded = embedIntoJarChecked(jarPath, uniqueKey, transformer, libraries);
+        } catch (Exception e) {
+            LOGGER.warn("Could not add compatibility classes to '{}': {}", uniqueKey, e.toString());
+            failure = e;
+        }
+        // The scan decides: a failed embed is harmless when the jar never named a stand-in.
+        Map<String, byte[]> synthetics = transformer.getSyntheticClasses();
+        String leftover = firstRegisteredReference(jarPath, synthetics == null ? Set.of() : synthetics.keySet());
+        if (leftover == null) return embedded;
+        // Nothing defines a stand-in at runtime, so this jar would fail with NoClassDefFoundError.
+        Files.deleteIfExists(jarPath);
+        String cause = failure == null ? "it was left unrelocated"
+                : failure.getMessage() != null ? failure.getMessage() : failure.getClass().getSimpleName();
+        throw new IOException(jarPath.getFileName() + " still uses Retromod's compatibility class "
+                + leftover.replace('/', '.') + ", which could not be added to it (" + cause
+                + "). Retromod removed this translated jar rather than keep one that names a missing class.");
+    }
+
+    /** The first registered stand-in a class in {@code jarPath} names, or null. */
+    private static String firstRegisteredReference(Path jarPath, Set<String> registered)
+            throws IOException {
+        if (registered.isEmpty() || !Files.exists(jarPath)) return null;
+        int count = 0;
+        long total = 0;
+        // Read with the same bounds as the embed itself.
+        try (var zis = new java.util.zip.ZipInputStream(Files.newInputStream(jarPath))) {
+            for (java.util.zip.ZipEntry e; (e = zis.getNextEntry()) != null; ) {
+                if (++count > MAX_ARCHIVE_ENTRIES) {
+                    throw new IOException("jar has too many entries to check for compatibility classes: "
+                            + jarPath.getFileName());
+                }
+                if (e.isDirectory() || !e.getName().endsWith(".class")) continue;
+                byte[] data = ZipSecurity.safeReadAllBytes(zis);
+                total += data.length;
+                if (total > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
+                    throw new IOException("jar is too large to check for compatibility classes: "
+                            + jarPath.getFileName());
+                }
+                for (String reference : referencedClasses(data)) {
+                    if (registered.contains(reference)) return reference;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static int embedIntoJarChecked(Path jarPath, String uniqueKey,
+            RetromodTransformer transformer, SyntheticLibraries libraries) throws IOException {
+        Map<String, byte[]> synthetics = transformer.getSyntheticClasses();
+        if (synthetics == null || synthetics.isEmpty()) return 0;
+        java.util.LinkedHashMap<String, byte[]> entries = new java.util.LinkedHashMap<>();
+        Set<String> canonicalNames = new HashSet<>();
+        long total = 0;
+        try (var zis = new java.util.zip.ZipInputStream(Files.newInputStream(jarPath))) {
+            java.util.zip.ZipEntry e;
+            while ((e = zis.getNextEntry()) != null) {
+                if (entries.size() >= MAX_ARCHIVE_ENTRIES) {
+                    throw new IOException("jar has too many entries during synthetic embed: "
+                            + jarPath.getFileName());
+                }
+                String entryName = validateEntryName(e.getName(), e.isDirectory());
+                // A merged fat jar repeats folder entries, which carry no content.
+                String canonicalName = ZipSecurity.canonicalEntryName(entryName);
+                if (!ZipSecurity.firstSighting(canonicalNames, canonicalName, e.isDirectory(),
+                        () -> "jar contains duplicate normalized entry during synthetic embed: " + entryName)) {
+                    continue;
+                }
+                // Bound per-entry (50MB) and aggregate (500MB) like the other extract paths:
+                // this reads an untrusted jar fully into memory, and the per-entry cap alone
+                // doesn't stop a many-entry decompression bomb. On overflow, bail: the outer
+                // catch returns 0 and the original jar is untouched, since writes go through
+                // the temp-then-move below.
+                byte[] data = e.isDirectory() ? new byte[0]
+                        : ZipSecurity.safeReadAllBytes(zis);
+                total += data.length;
+                if (total > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
+                    throw new java.io.IOException("jar exceeds max total size during synthetic embed: "
+                            + jarPath.getFileName());
+                }
+                // directory entries are retained: dropping them breaks package-resource
+                // lookups and classpath scanners in the rewritten jar
+                if (entries.putIfAbsent(entryName, data) != null) {
+                    throw new IOException("jar contains duplicate entry during synthetic embed: "
+                            + entryName);
+                }
+            }
+        }
+        Set<String> referenced = new HashSet<>();
+        Map<String, byte[]> ownClasses = new HashMap<>();
+        for (var en : entries.entrySet()) {
+            if (!en.getKey().endsWith(".class")) continue;
+            referenced.addAll(referencedClasses(en.getValue()));
+            if (!en.getKey().startsWith("META-INF/")) {
+                ownClasses.put(en.getKey().substring(0, en.getKey().length() - ".class".length()),
+                        en.getValue());
+            }
+        }
+        referenced.retainAll(synthetics.keySet());
+        if (referenced.isEmpty()) return 0;
+        expandTransitively(referenced, synthetics, transformer.getClassRedirectsForHostCode());
+
+        String base = embeddedBase(uniqueKey);
+        Relocation relocation = relocate(base, referenced, ownClasses, synthetics, libraries);
+        Map<String, String> rename = relocation.names();
+        Remapper remapper = new SimpleRemapper(modClassRemapping(rename, transformer, ownClasses.keySet()));
+        Remapper syntheticRemapper = memberAware(
+                new SimpleRemapper(syntheticRemapping(rename, transformer)), synthetics, transformer);
+
+        // Calls and overrides crossing into a library that took another copy convert the value there.
+        StandInAdapters adapters = adaptersFor(base, relocation, referenced, ownClasses, synthetics, libraries);
+        if (adapters != null) {
+            for (var en : entries.entrySet()) {
+                if (StandInAdapters.mayBeMixinConfig(en.getKey())) adapters.readMixinConfig(en.getValue());
+            }
+        }
+        java.util.LinkedHashMap<String, byte[]> out = new java.util.LinkedHashMap<>();
+        for (var en : entries.entrySet()) {
+            byte[] v = en.getValue();
+            if (en.getKey().endsWith(".class")) {
+                if (adapters != null && !en.getKey().startsWith("META-INF/")) v = adapters.rewrite(v, ownClasses);
+                v = remap(v, remapper);
+            }
+            out.put(en.getKey(), v);
+        }
+        if (!relocation.borrowed().isEmpty() || adapters != null) {
+            out.put(SyntheticLibraries.LINKS_ENTRY, SyntheticLibraries.linksFile(relocation.borrowed(),
+                    adapters == null ? Set.of() : adapters.crossed()));
+        }
+        if (adapters != null) {
+            for (Map.Entry<String, byte[]> adapter : adapters.adapters().entrySet()) {
+                String adapterName = validateEntryName(adapter.getKey() + ".class", false);
+                if (out.containsKey(adapterName)) {
+                    throw new IOException("synthetic output collides with an existing jar entry: " + adapterName);
+                }
+                out.put(adapterName, remap(adapter.getValue(), remapper));
+            }
+        }
+        for (String n : relocation.local()) {
+            if (out.size() >= MAX_ARCHIVE_ENTRIES) {
+                throw new IOException("synthetic output would exceed the jar entry limit");
+            }
+            String generatedName = validateEntryName(rename.get(n) + ".class", false);
+            if (out.containsKey(generatedName)) {
+                throw new IOException("synthetic output collides with an existing jar entry: "
+                        + generatedName);
+            }
+            out.put(generatedName, remap(synthetics.get(n), syntheticRemapper));
+        }
+        JarSignatureSanitizer.sanitizeEntries(out);
+
+        // write to a sibling temp + move: rewriting in place with a truncating stream
+        // destroys the jar if anything throws mid-write (review finding)
+        Path targetJar = jarPath.toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(targetJar)) {
+            throw new IOException("refusing to replace symlinked mod jar: " + targetJar);
+        }
+        ZipSecurity.validateNotSymlink(targetJar);
+        Path tmp = Files.createTempFile(targetJar.getParent(), "retromod-embed-", ".rmtmp");
+        try {
+            try (var zos = new java.util.zip.ZipOutputStream(Files.newOutputStream(tmp))) {
+                for (var en : out.entrySet()) {
+                    String entryName = validateEntryName(en.getKey(),
+                            en.getKey().endsWith("/"));
+                    zos.putNextEntry(new java.util.zip.ZipEntry(entryName));
+                    zos.write(en.getValue());
+                    zos.closeEntry();
+                }
+            }
+            try (var ignored = new java.util.zip.ZipFile(tmp.toFile())) {
+                // Opening the completed temporary file verifies its central directory before
+                // it replaces the original mod.
+            }
+            moveReplacingAtomically(tmp, targetJar);
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
+        relocation.log("jar '" + uniqueKey + "'", base);
+        return relocation.local().size();
     }
 
     /**
@@ -416,10 +579,10 @@ public final class SyntheticEmbedder {
                 }
                 String name = validateEntryName(entry.getName(), entry.isDirectory());
                 String canonicalName = ZipSecurity.canonicalEntryName(name);
-                if (!canonicalNames.add(canonicalName)) {
-                    throw new IOException(
-                            "nested JAR contains duplicate normalized entry during synthetic embed: "
-                                    + name);
+                // A repeated folder entry carries no content, so it is skipped.
+                if (!ZipSecurity.firstSighting(canonicalNames, canonicalName, entry.isDirectory(),
+                        () -> "nested JAR contains duplicate normalized entry during synthetic embed: " + name)) {
+                    continue;
                 }
                 byte[] data = entry.isDirectory() ? new byte[0]
                         : ZipSecurity.safeReadAllBytes(input);
@@ -435,19 +598,24 @@ public final class SyntheticEmbedder {
         }
 
         Set<String> referenced = new HashSet<>();
+        Set<String> ownClassNames = new HashSet<>();
         for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
             if (entry.getKey().endsWith(".class")) {
                 referenced.addAll(referencedClasses(entry.getValue()));
+                if (!entry.getKey().startsWith("META-INF/")) {
+                    ownClassNames.add(entry.getKey().substring(0, entry.getKey().length() - ".class".length()));
+                }
             }
         }
         referenced.retainAll(synthetics.keySet());
         if (referenced.isEmpty()) return new ByteEmbeddingResult(jarData, 0, true);
-        expandTransitively(referenced, synthetics);
+        expandTransitively(referenced, synthetics, transformer.getClassRedirectsForHostCode());
 
         String base = embeddedBase(uniqueKey);
         Map<String, String> rename = relocationMap(base, referenced);
-        Remapper remapper = new SimpleRemapper(syntheticRemapping(rename, transformer));
-        Remapper syntheticRemapper = memberAware(remapper, synthetics, transformer);
+        Remapper remapper = new SimpleRemapper(modClassRemapping(rename, transformer, ownClassNames));
+        Remapper syntheticRemapper = memberAware(
+                new SimpleRemapper(syntheticRemapping(rename, transformer)), synthetics, transformer);
         java.util.LinkedHashMap<String, byte[]> outputEntries = new java.util.LinkedHashMap<>();
         for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
             byte[] data = entry.getValue();
@@ -561,15 +729,25 @@ public final class SyntheticEmbedder {
     }
 
     /**
-     * Keeps the first of two members that a rename gave the same name and descriptor, such as a
-     * stand-in method spelled both by its readable name and by the SRG name the host maps to it.
-     * Two would fail the class with {@code ClassFormatError: Duplicate method}.
+     * Keeps the first of two members that a rename gave the same name and descriptor, or of two
+     * interfaces it gave the same name, such as a stand-in method spelled both by its readable name
+     * and by the SRG name the host maps to it. Two would fail the class with
+     * {@code ClassFormatError: Duplicate method} or {@code Duplicate interface name}.
      */
     private static final class DuplicateMemberFilter extends org.objectweb.asm.ClassVisitor {
         private final Set<String> seen = new java.util.HashSet<>();
 
         DuplicateMemberFilter(org.objectweb.asm.ClassVisitor next) {
             super(org.objectweb.asm.Opcodes.ASM9, next);
+        }
+
+        @Override
+        public void visit(int version, int access, String name, String signature, String superName,
+                String[] interfaces) {
+            // Two moves onto one interface repeat it in the header, which the JVM rejects.
+            String[] distinct = interfaces == null ? null
+                    : Arrays.stream(interfaces).distinct().toArray(String[]::new);
+            super.visit(version, access, name, signature, superName, distinct);
         }
 
         @Override
@@ -601,12 +779,39 @@ public final class SyntheticEmbedder {
             Map<String, String> borrowed) {
         void log(String target, String base) {
             if (!local.isEmpty()) {
-                LOGGER.info("Embedded {} referenced synthetic class(es) into {} under {}",
+                LOGGER.debug(RetromodLog.DETAIL, "Embedded {} referenced synthetic class(es) into {} under {}",
                         local.size(), target, base);
             }
             if (!borrowed.isEmpty()) {
-                LOGGER.info("{} reuses {} synthetic class(es) from the libraries it builds on",
+                LOGGER.debug(RetromodLog.DETAIL, "{} reuses {} synthetic class(es) from the libraries it builds on",
                         target, borrowed.size());
+            }
+        }
+    }
+
+    /** The adapter plan for libraries this jar hands a stand-in to that took another copy, or null if none did. */
+    private static StandInAdapters adaptersFor(String base, Relocation relocation, Set<String> referenced,
+            Map<String, byte[]> ownClasses, Map<String, byte[]> synthetics, SyntheticLibraries libraries) {
+        if (libraries == null || libraries.isEmpty() || ownClasses.isEmpty()) return null;
+        List<SyntheticLibraries.OtherCopy> others =
+                libraries.otherCopies(ownClasses, referenced, relocation.names());
+        if (others.isEmpty()) return null;
+        return StandInAdapters.plan(base, others, synthetics, relocation.names(), libraries);
+    }
+
+    /** Hands the extracted mod's mixin configs to the adapters, which then add no bridges to mixin classes. */
+    private static void readMixinConfigs(Path modDir, StandInAdapters adapters) throws IOException {
+        List<Path> configs;
+        try (var files = Files.walk(modDir)) {
+            configs = files.filter(file -> Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                    .filter(file -> StandInAdapters.mayBeMixinConfig(
+                            modDir.relativize(file).toString().replace('\\', '/')))
+                    .toList();
+        }
+        for (Path config : configs) {
+            // A config larger than any real one is not read at all.
+            if (Files.size(config) <= StandInAdapters.MAX_MIXIN_CONFIG) {
+                adapters.readMixinConfig(Files.readAllBytes(config));
             }
         }
     }

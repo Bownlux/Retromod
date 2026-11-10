@@ -18,8 +18,7 @@ import net.minecraft.world.item.crafting.BrewingRecipe;
 import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.world.item.crafting.PotionIngredient;
 import net.minecraft.world.item.crafting.RecipeHolder;
-import net.minecraft.world.item.crafting.RecipeMap;
-import net.minecraft.world.item.crafting.RecipeType;
+import net.minecraft.world.item.crafting.RecipeManager;
 import net.minecraft.world.level.Level;
 
 import java.util.ArrayList;
@@ -41,7 +40,7 @@ public class PotionBrewing {
     public final List<Mix<Item>> containerMixes = new ArrayList<>();
     private final List<BrewingRecipe> recipes;
 
-    private record Built(RecipeMap recipes, PotionBrewing brewing) {}
+    private record Built(RecipeManager recipes, PotionBrewing brewing) {}
 
     /** One old mix: a potion turned into another, or a bottle into another bottle. */
     public record Mix<T>(Holder<T> from, Ingredient ingredient, Holder<T> to) {}
@@ -54,13 +53,17 @@ public class PotionBrewing {
     /** The server's brewing, rebuilt only when a reload replaced its recipes. */
     public static PotionBrewing of(MinecraftServer server) {
         if (server == null) return EMPTY;
-        RecipeMap map = server.getRecipeManager().recipeMap();
+        // 26.3's manager holds its recipes for good and a reload makes a new one, so the manager is the cache key.
+        // Only NeoForge adds recipeMap(); getRecipes() is on every 26.3 host.
+        RecipeManager manager = server.getRecipeManager();
         Built built = cache;
-        if (built != null && built.recipes() == map) return built.brewing();
+        if (built != null && built.recipes() == manager) return built.brewing();
         List<BrewingRecipe> brewing = new ArrayList<>();
-        for (RecipeHolder<BrewingRecipe> holder : map.byType(RecipeType.BREWING)) brewing.add(holder.value());
+        for (RecipeHolder<?> holder : manager.getRecipes()) {
+            if (holder.value() instanceof BrewingRecipe recipe) brewing.add(recipe);
+        }
         PotionBrewing result = new PotionBrewing(List.copyOf(brewing));
-        cache = new Built(map, result);
+        cache = new Built(manager, result);
         return result;
     }
 

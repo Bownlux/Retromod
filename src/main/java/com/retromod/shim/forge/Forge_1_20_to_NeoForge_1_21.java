@@ -4,11 +4,14 @@
  */
 package com.retromod.shim.forge;
 
+import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import com.retromod.core.SyntheticEmbedder;
 import com.retromod.core.VersionShim;
+import com.retromod.shim.common.RebuiltApiClasses;
 import com.retromod.util.McReflect;
+import org.objectweb.asm.tree.ClassNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,7 +19,9 @@ import org.slf4j.LoggerFactory;
 public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-ForgeNeoMig");
-    
+    /** The first Forge version with the rebuilt networking API. */
+    static final String NETWORK_REWRITE = "1.20.2";
+
     @Override
     public String getShimName() {
         return "Forge 1.20 to NeoForge 1.21";
@@ -80,6 +85,10 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         LegacyStairBlockBridge.register(transformer);
         // Rarity.create became a NeoForge enum extension, and Forge 26.x dropped it.
         LegacyRarityBridge.register(transformer);
+        // RecipeBookType.create went the same way on NeoForge; an old call gets an existing book type.
+        LegacyRecipeBookTypeBridge.registerNeoForge(transformer);
+        // ArmPose.create too, and NeoForge has no Forge arm pose transformer; an old call gets the item pose.
+        LegacyArmPoseBridge.registerNeoForge(transformer);
         // A vanilla rename, so Forge needs it as much as NeoForge does.
         ForgeNeoForgeApiBridge.registerAttributeOperationRenames(transformer);
         // DropExperienceBlock, AmethystClusterBlock and cauldron constructors from 1.20.3.
@@ -90,6 +99,8 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         com.retromod.shim.common.LegacyProtectedBlockCallBridge.register(transformer);
         // 1.21 made painting variants data; the 26.1 chain registers the same bridge for its package.
         com.retromod.shim.common.LegacyPaintingVariantBridge.register(transformer);
+        // 1.20.2 renamed the last-recipe interface that furnace-like block entities implement.
+        com.retromod.shim.common.LegacyRecipeHolderApi.register(transformer);
         LegacyTierBridge.register(transformer);
         LegacyDungeonHooksBridge.register(transformer);
         // RegisterHelper.register(String, value): Forge named it in the active mod's namespace.
@@ -118,9 +129,25 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         com.retromod.shim.common.LegacySpawnPlacementTypeBridge.register(transformer);
         com.retromod.shim.common.LegacyMobTypeBridge.register(transformer);
         com.retromod.shim.common.LegacyAttributeApiBridge.register(transformer);
+        // 1.20.2 moved the server brand from the player to the connection.
+        com.retromod.shim.common.LegacyClientConnectionBridge.registerServerBrand(transformer);
         com.retromod.shim.common.LegacyItemAttributeOverrideAdapter.register(transformer);
         com.retromod.shim.common.LegacyDispenserBridge.register(transformer);
         com.retromod.shim.common.LegacyDyeColorBridge.register(transformer);
+        // 1.21 renamed ChunkAccess.getStatus() to getPersistedStatus(). Lootr asks for it in its chunk
+        // load handler; Fabric's intermediary id stayed the same, so only Mojang names need this.
+        com.retromod.shim.common.Legacy1205MemberBridge.registerChunkStatusRename(transformer);
+        // 1.21 replaced Minecraft.getFrameTime() with the delta tracker, which models and arm poses read.
+        com.retromod.shim.common.LegacyFrameTimeBridge.register(transformer);
+        // 1.21 replaced the VertexConsumer builder chain (vertex, color, uv, endVertex) with addVertex and setters.
+        com.retromod.shim.common.LegacyVertexApiBridge.register(transformer);
+        // 1.20.3 made Entity.getTeam() return PlayerTeam, and the Forge chain reaches it from here.
+        com.retromod.shim.common.LegacyEntityTeamBridge.register(transformer);
+        // Item.getShareTag went with stack NBT. Sophisticated Backpacks saves a placed backpack through it.
+        registerShareTag(transformer);
+        // A mod built on Forge 46 for 1.20 still names Entity.getLevel(), which 1.20 renamed to level().
+        // Lootr reads the player's level that way while a chest is open.
+        registerEntityGetLevelRename(transformer);
         com.retromod.shim.common.LegacyFoodPropertiesBridge.register(transformer);
         com.retromod.shim.common.LegacyToolItemBridge.register(transformer);
         com.retromod.shim.common.Legacy1205MemberBridge.register(transformer);
@@ -128,6 +155,12 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         com.retromod.shim.common.LegacyMerchantOfferBridge.register(transformer);
         // 1.20.5 also replaced the Gson loot serializers that custom loot functions and conditions used.
         com.retromod.shim.common.LegacyLootSerializerBridge.register(transformer);
+        // It also removed LootDataManager; a mod's loot table lookups by id go to a stand-in.
+        com.retromod.shim.common.LegacyLootDataBridge.register(transformer);
+        // Loot tables became registry keys; old reads and calls keep getting the table's id.
+        com.retromod.shim.common.LegacyLootTableKeyBridge.register(transformer);
+        // An old mob's own getDefaultLootTable() id, which the host stopped asking for, picks its death drops again.
+        com.retromod.shim.common.LegacyMobLootBridge.register(transformer);
         // 1.20.2 split Advancement into its data and an AdvancementHolder.
         com.retromod.shim.common.LegacyAdvancementBridge.register(transformer);
         // The same release read advancement triggers with codecs instead of a mod's JSON reader.
@@ -135,6 +168,10 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         // Recipe serializers became codecs, and recipe lookups return holders, from 1.20.2 to 1.21.
         com.retromod.shim.common.LegacyRecipeApiBridge.register(transformer);
         com.retromod.shim.common.LegacyCodecTypeBridge.register(transformer);
+        // KeyDispatchDataCodec moved to map codecs in the same release.
+        com.retromod.shim.common.LegacyKeyDispatchCodecBridge.register(transformer);
+        // So did the modifier serializer, chunk generator, biome source and surface rule registries.
+        com.retromod.shim.common.LegacyRegistryMapCodecBridge.register(transformer);
         com.retromod.shim.common.LegacyRegistryNbtBridge.register(transformer);
         com.retromod.shim.common.LegacyTreeGrowerBridge.register(transformer);
         com.retromod.shim.common.LegacySynchedDataBridge.register(transformer);
@@ -157,6 +194,8 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         LegacyBrewingRegistryBridge.register(transformer);
         LegacyForgeEventFactoryBridge.register(transformer, com.retromod.core.ClassResourceInspector::exists);
         LegacyModLoaderBridge.register(transformer, com.retromod.core.ClassResourceInspector::exists);
+        // FMLEnvironment's dist and production became getters, and NeoForge has no naming.
+        LegacyFmlEnvironmentBridge.register(transformer);
         LegacyTeleporterBridge.register(transformer, com.retromod.core.ClassResourceInspector::exists);
         LegacyTradeBridge.register(transformer);
         LegacyBrewingBridge.register(transformer);
@@ -284,10 +323,15 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "net/minecraftforge/forgespi/language/IModInfo",
             "net/neoforged/neoforgespi/language/IModInfo"
         );
+        // Mods cast their container to reach getEventBus(), which NeoForge's class of the same name keeps.
+        transformer.registerClassRedirect(
+            "net/minecraftforge/fml/javafmlmod/FMLModContainer",
+            NeoForgeModConstructorArgs.FML_MOD_CONTAINER
+        );
         // FMLEnvironment.dist stays a field read here. getDist() only exists from NeoForge 1.21.9,
         // and redirecting on every host broke each migrated mod that checked its side on 1.21.1
-        // through 1.21.8 with NoSuchMethodError. NeoForge_1_21_8_to_1_21_9 redirects it where the
-        // getter exists.
+        // through 1.21.8 with NoSuchMethodError. LegacyFmlEnvironmentBridge redirects it where only
+        // the getter exists.
 
         // ForgeSpawnEggItem's constructor has the same supplier and color shape as the removed
         // DeferredSpawnEggItem API. The embedded replacement moves the entity type onto the modern
@@ -302,12 +346,25 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         // (ServiceLoader), so the redirect lives there, not here, to keep the two paths consistent.
 
         registerNetworkBridge(transformer);
+        // Forge 1.20.2 rebuilt networking around ChannelBuilder, which the same shim carries.
+        LegacyForgeChannelBridge.register(transformer);
+        // NeoForge reads a display test from the mods toml and has no DisplayTest class.
+        LegacyDisplayTestBridge.register(transformer);
         ForgeMenuBridge.register(transformer);
         LegacyMenuScreensBridge.register(transformer);
         ForgeNeoForgeApiBridge.register(transformer);
         com.retromod.shim.forge.capability.LegacyGenericListenerBridge.register(transformer);
         
         // client events
+        // The NeoForge members later releases moved reach a Forge mod's calls once they name NeoForge's events. The
+        // game registers them from the NeoForge chain for every mod; a Forge mod's offline chain has only this shim.
+        com.retromod.shim.neoforge.NeoForgeMovedMembers.register(transformer);
+        // Forge 1.20.1's getScrollDelta is the vertical scroll, which NeoForge reports beside the horizontal one.
+        String scrolled = "net/neoforged/neoforge/client/event/ScreenEvent$MouseScrolled";
+        for (String event : new String[] {scrolled, scrolled + "$Pre", scrolled + "$Post",
+                "net/neoforged/neoforge/client/event/InputEvent$MouseScrollingEvent"}) {
+            transformer.registerMethodRedirect(event, "getScrollDelta", "()D", event, "getScrollDeltaY", "()D");
+        }
         transformer.registerClassRedirect(
             "net/minecraftforge/client/event/RenderGuiOverlayEvent",
             "net/neoforged/neoforge/client/event/RenderGuiLayerEvent"
@@ -467,6 +524,13 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             netShim + "$ToBooleanBiFunction");
         transformer.registerClassRedirect(
             "net/minecraftforge/network/NetworkDirection", netShim + "$NetworkDirection");
+        // Forge 1.20.2 rebuilt networking and kept these two names for new classes, which Forge
+        // 26.x still has, so only a mod written against the old API takes the shim there. NeoForge
+        // has neither, so a mod of any version takes it.
+        if (!McReflect.isNeoForge()) {
+            transformer.limitClassRedirectToModsBefore("net/minecraftforge/network/NetworkRegistry", NETWORK_REWRITE);
+            transformer.limitClassRedirectToModsBefore("net/minecraftforge/network/NetworkDirection", NETWORK_REWRITE);
+        }
         // newSimpleChannel: the mod's Forge-typed descriptor must erase to the shim's Object form
         // (keyed on both the pre- and post-class-redirect spellings; the return CHECKCASTs back).
         // Class remapping runs first on 26.1, so register both spellings of the resource ID.
@@ -532,6 +596,66 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
                         wrapper, "registerMessage", registrationArgs + "Ljava/lang/Object;", 0, 0);
             }
         }
+        registerEventChannelBridge(transformer, netShim);
+    }
+
+    /** Forge 1.20.1's event channels, whose listeners read raw payloads, go to LegacyEventChannel. */
+    static void registerEventChannelBridge(RetromodTransformer transformer, String netShim) {
+        String forge = "net/minecraftforge/network/";
+        String channel = "com/retromod/shim/forge/embedded/LegacyEventChannel";
+        String oldChannel = forge + "event/EventNetworkChannel";
+        String[][] types = {
+                {oldChannel, channel},
+                {forge + "NetworkEvent", channel + "$NetworkEvent"},
+                {forge + "NetworkEvent$ServerCustomPayloadEvent", channel + "$ServerCustomPayloadEvent"},
+                {forge + "NetworkEvent$ClientCustomPayloadEvent", channel + "$ClientCustomPayloadEvent"},
+                {forge + "ICustomPacket", channel + "$CustomPacket"}};
+        for (String[] type : types) {
+            transformer.registerClassRedirect(type[0], type[1]);
+            // Forge 1.20.2 rebuilt networking, so only a mod written before it takes these.
+            transformer.limitClassRedirectToModsBefore(type[0], NETWORK_REWRITE);
+        }
+
+        // The channel id erases to Object; the call is keyed on both spellings of it, before and after the redirects.
+        String open = "(Ljava/lang/Object;Ljava/util/function/Supplier;Ljava/util/function/Predicate;"
+                + "Ljava/util/function/Predicate;)L" + channel + ";";
+        for (String owner : new String[]{forge + "NetworkRegistry", netShim}) {
+            for (String id : new String[]{"Lnet/minecraft/resources/ResourceLocation;", "Lnet/minecraft/resources/Identifier;"}) {
+                for (String ret : new String[]{"L" + oldChannel + ";", "L" + channel + ";"}) {
+                    transformer.registerMethodRedirect(owner, "newEventChannel", "(" + id
+                            + "Ljava/util/function/Supplier;Ljava/util/function/Predicate;Ljava/util/function/Predicate;)"
+                            + ret, channel, "open", open);
+                }
+            }
+        }
+        for (String owner : new String[]{oldChannel, channel}) {
+            transformer.registerMethodRedirect(owner, "isRemotePresent", "(Lnet/minecraft/network/Connection;)Z",
+                    channel, "isRemotePresent", "(Ljava/lang/Object;)Z");
+        }
+
+        // Members that name Minecraft types return Object, cast back at the mod's call site.
+        for (String[] type : types) {
+            if (type[0].equals(oldChannel) || type[0].endsWith("ICustomPacket")) continue;
+            for (String owner : type) {
+                transformer.registerMethodRedirect(owner, "getPayload", "()Lnet/minecraft/network/FriendlyByteBuf;",
+                        channel + "$NetworkEvent", "getPayload", "()Ljava/lang/Object;");
+            }
+        }
+        for (String owner : new String[]{forge + "ICustomPacket", channel + "$CustomPacket"}) {
+            transformer.registerMethodRedirect(owner, "getThis", "()Lnet/minecraft/network/protocol/Packet;",
+                    channel + "$CustomPacket", "getThis", "()Ljava/lang/Object;");
+        }
+        // The direction builds the packet on the channel opened under that id.
+        for (String owner : new String[]{forge + "NetworkDirection", netShim + "$NetworkDirection"}) {
+            for (String id : new String[]{"Lnet/minecraft/resources/ResourceLocation;", "Lnet/minecraft/resources/Identifier;"}) {
+                for (String ret : new String[]{"L" + forge + "ICustomPacket;", "L" + channel + "$CustomPacket;"}) {
+                    transformer.registerMethodRedirect(owner, "buildPacket",
+                            "(Lorg/apache/commons/lang3/tuple/Pair;" + id + ")" + ret,
+                            channel, "buildPacket", "(L" + netShim + "$NetworkDirection;Ljava/lang/Object;"
+                                    + "Ljava/lang/Object;)L" + channel + "$CustomPacket;", true);
+                }
+            }
+        }
     }
 
     /**
@@ -557,6 +681,14 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         transformer.registerClassRedirect(forgeDistributor, distributor);
         transformer.registerClassRedirect(forgeDistributor + "$PacketTarget", distributor + "$PacketTarget");
         transformer.registerClassRedirect(forgeTargetPoint, targetPoint);
+        // The 1.20.2 PacketDistributor and its nested types reuse these names, so on Forge a newer
+        // mod's sends keep the host's classes, as do the constructor and method redirects keyed on
+        // them. NeoForge has none of them, so there every mod's sends take the shim.
+        if (!McReflect.isNeoForge()) {
+            for (String shared : new String[]{forgeDistributor, forgeDistributor + "$PacketTarget", forgeTargetPoint}) {
+                transformer.limitClassRedirectToModsBefore(shared, NETWORK_REWRITE);
+            }
+        }
 
         for (String owner : new String[]{forgeContext, context}) {
             transformer.registerMethodRedirect(owner, "getSender",
@@ -620,7 +752,52 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "com.retromod.shim.forge.embedded.NetworkShim$CodecHandler",
             "com.retromod.shim.forge.embedded.NetworkShim$HandlerHandler",
             "com.retromod.shim.forge.embedded.NetworkShim$ChannelBuilder",
-            "com.retromod.shim.forge.embedded.NetworkShim$ForgeChannels"
+            "com.retromod.shim.forge.embedded.NetworkShim$ForgeChannels",
+            "com.retromod.shim.forge.embedded.LegacyEventChannel",
+            "com.retromod.shim.forge.embedded.LegacyEventChannel$NetworkEvent",
+            "com.retromod.shim.forge.embedded.LegacyEventChannel$ServerCustomPayloadEvent",
+            "com.retromod.shim.forge.embedded.LegacyEventChannel$ClientCustomPayloadEvent",
+            "com.retromod.shim.forge.embedded.LegacyEventChannel$CustomPacket"
         };
+    }
+
+    /** Points a call to the removed {@code Entity.getLevel()} at {@code level()}, unless the mod's own class declares it. */
+    static void registerEntityGetLevelRename(RetromodTransformer transformer) {
+        String entity = "net/minecraft/world/entity/Entity";
+        String desc = "()Lnet/minecraft/world/level/Level;";
+        ClassNode host = ClassResourceInspector.read(entity);
+        if (host != null && host.methods.stream().anyMatch(m -> m.name.equals("getLevel") && m.desc.equals(desc))) {
+            return;
+        }
+        // Calls name the mod's own entity or Player, so the redirect follows the hierarchy.
+        transformer.registerInheritedMethodRedirect(entity, "getLevel", desc, entity, "level", desc);
+    }
+
+    /** Answers the removed {@code Item.getShareTag(stack)} with the item's own override, else the stack's custom data. */
+    static void registerShareTag(RetromodTransformer transformer) {
+        String item = "net/minecraft/world/item/Item";
+        String desc = "(Lnet/minecraft/world/item/ItemStack;)Lnet/minecraft/nbt/CompoundTag;";
+        String helperDesc = "(Ljava/lang/Object;Lnet/minecraft/world/item/ItemStack;)Lnet/minecraft/nbt/CompoundTag;";
+        String[] extensions = {"net/minecraftforge/common/extensions/IForgeItem",
+                "net/neoforged/neoforge/common/extensions/IItemExtension"};
+        for (String extension : extensions) {
+            ClassNode host = ClassResourceInspector.read(extension);
+            if (host != null && host.methods.stream().anyMatch(m -> m.name.equals("getShareTag") && m.desc.equals(desc))) {
+                return;
+            }
+        }
+        // Offline, stacks lost their NBT in 1.20.5.
+        if (ClassResourceInspector.read(item) == null
+                && RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20.5") < 0) {
+            return;
+        }
+        String shareTag = RebuiltApiClasses.ROOT + "forge/common/LegacyShareTag";
+        RebuiltApiClasses.registerTree(transformer, shareTag);
+        transformer.registerInheritedMethodRedirect(item, "getShareTag", desc, shareTag, "shareTag", helperDesc);
+        for (String extension : extensions) {
+            transformer.registerMethodRedirect(extension, "getShareTag", desc, shareTag, "shareTag", helperDesc, true);
+        }
+        // An override's own super call takes Forge's default, so the override does not run again.
+        transformer.registerSuperCallHelper(shareTag, "shareTag", helperDesc, "hostShareTag");
     }
 }

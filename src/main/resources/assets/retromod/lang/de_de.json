@@ -5,13 +5,12 @@
   "retromod.main.title": "Retromod",
   "retromod.main.subtitle": "W\u00e4hle alte Mod-JARs aus, die für diese Minecraft-Version aktualisiert werden sollen",
   "retromod.main.add_mods": "Mods hinzuf\u00fcgen\u2026",
-  "retromod.main.open_folder": "Mods-Ordner \u00f6ffnen",
+  "retromod.main.open_folder": "retromod-input/ \u00f6ffnen",
   "retromod.main.inplace_status": "%s aus dem Cache, %s nach Neustart, %s fehlgeschlagen",
 
   "retromod.screen.title": "Retromod-Mod-Manager",
   "retromod.screen.add_mods": "Mods ausw\u00e4hlen",
   "retromod.screen.full_aot": "Mods vorkompilieren (jetzt langsamer, sp\u00e4ter schneller)",
-  "retromod.screen.complexity_warning": "Retromod hat %s übersprungen, da der Kompatibilitätscheck ein hohes Risiko des Fehlschlags gefunden hat. Aktiviere \"Unwahrscheinliche Mods versuchen\" in den Einstellungen, wenn du es trotzdem versuchen möchtest.",
   "retromod.screen.transform_complete": "Deine Mods sind bereit. Starte Minecraft neu, um sie zu laden.",
   "retromod.screen.no_mods": "Keine Mods ausgew\u00e4hlt.",
   "retromod.screen.transforming": "Aktualisiere %s",
@@ -29,11 +28,17 @@
   "retromod.settings.remap_reflection": "Reflektierte Namen aktualisieren",
   "retromod.settings.polyfills_enabled": "Entfernte APIs ersetzen",
   "retromod.settings.verify_transforms": "Umgewandelte Mods pr\u00fcfen",
-  "retromod.settings.force_translate_complex": "Unwahrscheinliche Mods versuchen",
   "retromod.settings.log_transformations": "Jede \u00c4nderung protokollieren",
   "retromod.settings.debug": "Weitere Debug-Checks",
   "retromod.settings.write_translated_jars": "\u00dcbersetzte Jars in mods/ schreiben",
   "retromod.settings.next_launch": "Gilt ab dem n\u00e4chsten Start",
+  "retromod.settings.status.verified": "\u00a7aVerifizierter Build\u00a7r",
+  "retromod.settings.status.modified": "\u00a7eVer\u00e4nderter / inoffizieller Build\u00a7r",
+  "retromod.settings.status.impostor": "\u00a7cKein Retromod (Manifest passt nicht)\u00a7r",
+  "retromod.settings.status.unknown": "\u00a77Echtheit unbekannt\u00a7r",
+
+  "retromod.restart.converted": "F\u00fcr diese Minecraft-Version umgewandelte Mods: %s\nStarte Minecraft neu, um die umgewandelten Mods zu laden.\n\nKlicke auf Ja, um Minecraft zu schlie\u00dfen, und starte es dann \u00fcber deinen Launcher neu.",
+  "retromod.restart.cache": "F\u00fcr diese Minecraft-Version \u00fcbersetzte Mods: %s\nStarte Minecraft neu, um die \u00fcbersetzten Mods zu laden. Deine Dateien in mods/ wurden nicht ver\u00e4ndert.\n\nKlicke auf Ja, um Minecraft zu schlie\u00dfen, und starte es dann \u00fcber deinen Launcher neu.",
 
   "retromod.filepicker.title": "Retromod: Mod-JARs ausw\u00e4hlen",
 

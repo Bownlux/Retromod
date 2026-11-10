@@ -16,6 +16,8 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // The RenderSystem setters this version removed.
+        com.retromod.shim.common.RemovedRenderStateNeutralize.registerRemovedIn(transformer, "1.21.2");
         // Vanilla item bases removed in 1.21.2, rebased only on hosts that lost them.
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21.2");
         // NeoForge's own classes that moved package after 21.1, on hosts that moved them.
@@ -24,12 +26,10 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
         LegacyLootModifierBridge.register(transformer);
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerRegistryValueGetterRename(
                 transformer, "net/minecraft/resources/ResourceLocation");
-        // 1.21.2 pathfinding refactor renamed the PathType constants.
-        String pathType = "net/minecraft/world/level/pathfinder/PathType";
-        transformer.registerFieldRedirect(pathType, "DAMAGE_FIRE", pathType, "FIRE");
-        transformer.registerFieldRedirect(pathType, "DANGER_FIRE", pathType, "FIRE_IN_NEIGHBOR");
-        transformer.registerFieldRedirect(pathType, "DAMAGE_OTHER", pathType, "DAMAGING");
-        transformer.registerFieldRedirect(pathType, "DANGER_OTHER", pathType, "DAMAGING_IN_NEIGHBOR");
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerSoundEventLocation(
+                transformer, "net/minecraft/resources/ResourceLocation");
+        // PathType's constants keep their names until 26.1, so their renames live in
+        // Common_1_21_11_to_26_1_ClassMoves.
 
         transformer.registerClassRedirect(
             "net/minecraft/client/renderer/ShaderInstance",
@@ -43,15 +43,31 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
         );
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
             .registerMojangItemInteractionResultBridge(transformer);
+        // The holder's factories and getters, and new InteractionResultHolder(result, object).
+        com.retromod.shim.common.LegacyInteractionResultHolderBridge.register(transformer);
 
         // updateShape/getOcclusionShape signatures and the BlockItem description id changed.
         com.retromod.shim.common.LegacyBlockApiSynthetic.register(transformer);
         com.retromod.shim.common.LegacyBlockMethodBridge.register(transformer);
+        // The same release replaced Properties.lootFrom with a loot table override.
+        com.retromod.shim.forge.LegacyLootFromBridge.register(transformer);
         com.retromod.shim.common.LegacyChestBlockBridge.register(transformer);
+        // Villager.WANTED_ITEMS became the villager_picks_up tag, which a 1.20.5 to 1.21.1 mod still names.
+        com.retromod.shim.common.LegacyAnimalFoodBridge.register(transformer);
         com.retromod.shim.common.LegacyFoodConsumableBridge.register(transformer);
+        // 1.21.2 turned the eat and drink sounds into holders. A 1.21.1 mod never passes the
+        // 1.20.5 shims that register this bridge, and it reads the host, so it gates itself.
+        com.retromod.shim.common.LegacyHolderConstantBridge.register(transformer);
         com.retromod.shim.common.LegacyItemConstructorBridge.register(transformer);
+        // 1.21.2 renamed the boat layer factory and packs map colors as ARGB.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerBoatLayerRenameOnHost(transformer);
+        com.retromod.shim.common.LegacyMapColorBridge.register(transformer);
         // Entity and recipe members that 1.21.2 removed or made stricter.
         com.retromod.shim.common.Legacy1212MemberBridge.register(transformer);
+        // The build height getters became inclusive under new names; the old ones answer one higher.
+        com.retromod.shim.common.LegacyBuildHeightBridge.register(transformer);
+        // Reload listeners lost their two profilers; old listeners get the host's reload.
+        com.retromod.shim.common.LegacyReloadListenerBridge.register(transformer);
         // 1.21.2 made armor materials plain records, with no registry to put them in.
         com.retromod.shim.common.LegacyArmorMaterialRecordBridge.register(transformer);
         // Tool rules take block holder sets instead of a tag or a list of blocks.
@@ -64,32 +80,20 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
         com.retromod.shim.common.LegacyExplosionBaseBridge.registerNeoForge(transformer);
         // Later versions hid Level.isClientSide and Level.random behind their getters.
         com.retromod.shim.common.LegacyLevelFieldBridge.register(transformer);
+        // GuiGraphics lost setColor and bufferSource, and its blits gained a render type argument.
+        com.retromod.shim.common.LegacyGuiGraphicsBridge.register1212(transformer);
         // NeoForge answers an item's crafting remainder from an item instance.
         LegacyCraftingRemainderBridge.register(transformer);
         // EntityType.Builder.build(String) became build(ResourceKey).
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves
             .registerOfficialEntityTypeBuildBridge(transformer);
+        // Util's executor getters return a TracingExecutor that wraps the old ExecutorService.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerUtilExecutorUnwrapOnHost(transformer);
+        // InteractionResult.shouldSwing() is gone; a client-side Success now carries the swing.
+        com.retromod.shim.common.LegacyClientInteractionSynthetic.registerSwingDecision(transformer);
 
-        transformer.registerMethodRedirect(
-            "net/minecraft/core/RegistryAccess", "registryOrThrow",
-            "(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/core/Registry;",
-            "net/minecraft/core/RegistryAccess", "lookupOrThrow",
-            "(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/core/Registry;"
-        );
-
-        transformer.registerMethodRedirect(
-            "net/minecraft/core/Registry", "getHolderOrThrow",
-            "(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/core/Holder$Reference;",
-            "net/minecraft/core/Registry", "getOrThrow",
-            "(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/core/Holder$Reference;"
-        );
-
-        transformer.registerMethodRedirect(
-            "net/minecraft/core/Registry", "getOptional",
-            "(Lnet/minecraft/resources/ResourceLocation;)Ljava/util/Optional;",
-            "net/minecraft/core/Registry", "getOptionalValue",
-            "(Lnet/minecraft/resources/ResourceLocation;)Ljava/util/Optional;"
-        );
+        // registryOrThrow became lookupOrThrow and getHolderOrThrow became getOrThrow.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerRegistryLookupRenames(transformer);
 
         transformer.registerMethodRedirect(
             "net/minecraft/world/item/Item", "getDescription",

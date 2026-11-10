@@ -38,24 +38,6 @@ public class Forge_1_16_5_to_1_17 implements VersionShim {
                     + "Lnet/minecraft/world/level/material/MapColor;)" + result,
             properties, "of", "()" + result
         );
-        transformer.registerMethodRedirect(
-            "net/minecraft/tags/BlockTags", "getAllTags",
-            "()Lnet/minecraft/tags/TagCollection;",
-            "com/retromod/shim/forge/embedded/TagShim", "getBlockTags",
-            "()Ljava/lang/Object;"
-        );
-        transformer.registerMethodRedirect(
-            "net/minecraft/tags/ItemTags", "getAllTags",
-            "()Lnet/minecraft/tags/TagCollection;",
-            "com/retromod/shim/forge/embedded/TagShim", "getItemTags",
-            "()Ljava/lang/Object;"
-        );
-        transformer.registerMethodRedirect(
-            "net/minecraftforge/event/RegistryEvent$Register", "getRegistry",
-            "()Lnet/minecraftforge/registries/IForgeRegistry;",
-            "com/retromod/shim/forge/embedded/RegistryShim", "getRegistry",
-            "(Ljava/lang/Object;)Ljava/lang/Object;"
-        );
     }
 
     /**

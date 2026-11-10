@@ -184,6 +184,54 @@ class Pre1_20_5MojangArmorMaterialBridgeTest {
     }
 
     @Test
+    @DisplayName("A jar is legacy only with the Mojang stand-in registered and one old material")
+    void legacyJarNeedsTheMojangStandIn() {
+        byte[] material = enumMaterial();
+        Pre1_20_5ArmorMaterialBridge.registerRedirects(transformer);
+        assertFalse(Pre1_20_5MojangArmorMaterialBridge.isLegacyJar(transformer, List.of(material)),
+                "the intermediary stand-in cannot hold a Mojang-named class");
+
+        transformer.clearRedirectsForTesting();
+        Pre1_20_5MojangArmorMaterialBridge.registerRedirects(transformer, true);
+        assertTrue(Pre1_20_5MojangArmorMaterialBridge.isLegacyJar(transformer, List.of(material)));
+    }
+
+    @Test
+    @DisplayName("The in-game AOT path moves a Forge enum material onto the bridge on 1.21.1")
+    void aotCompileBridgesTheEnumMaterial(@TempDir Path directory) throws Exception {
+        Pre1_20_5MojangArmorMaterialBridge.registerRedirects(transformer, true);
+        Path input = directory.resolve("materials.jar");
+        try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(input))) {
+            out.putNextEntry(new java.util.jar.JarEntry("test/ModArmorMaterials.class"));
+            out.write(enumMaterial());
+            out.closeEntry();
+        }
+        Path output = directory.resolve("materials-aot.jar");
+        var mod = new com.retromod.embedder.ModVersionInfo("materials", "1.0", "1.20.1", "forge", null,
+                java.util.Set.of("test/"), java.util.Set.of(), false);
+        var compileJar = com.retromod.aot.AotCompiler.class.getDeclaredMethod("compileJar",
+                Path.class, Path.class, com.retromod.embedder.ModVersionInfo.class);
+        compileJar.setAccessible(true);
+        compileJar.invoke(new com.retromod.aot.AotCompiler(new com.retromod.shim.ShimRegistry(), "1.21.1"),
+                input, output, mod);
+
+        try (var jar = new java.util.jar.JarFile(output.toFile())) {
+            ClassNode out = read(jar.getInputStream(jar.getEntry("test/ModArmorMaterials.class")).readAllBytes());
+            assertEquals(List.of(Pre1_20_5ArmorMaterialBridge.LEGACY_MATERIAL), out.interfaces,
+                    "AOT must rename the record interface as the runtime does");
+        }
+    }
+
+    /** A Forge 1.20.1 enum armor material, which implements the old interface. */
+    private static byte[] enumMaterial() {
+        ClassWriter material = new ClassWriter(0);
+        material.visit(V17, ACC_PUBLIC | ACC_SUPER | ACC_ENUM | ACC_FINAL, "test/ModArmorMaterials",
+                null, "java/lang/Enum", new String[] {MATERIAL});
+        material.visitEnd();
+        return material.toByteArray();
+    }
+
+    @Test
     @DisplayName("Only the 1.20.5 to 1.21.1 record shape turns the bridge on")
     void hostShapeGate() {
         ClassNode armorItem = classWith(ACC_PUBLIC, ARMOR_ITEM, "<init>",

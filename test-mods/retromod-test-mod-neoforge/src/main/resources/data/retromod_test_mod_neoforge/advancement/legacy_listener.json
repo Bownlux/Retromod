@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "listened": {
+      "trigger": "retromod_test_mod_neoforge:legacy_listener"
+    }
+  }
+}

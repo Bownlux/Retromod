@@ -186,4 +186,81 @@ class LegacyLootConditionMigratorTest {
         JsonElement got = JsonParser.parseString(new String(actual, StandardCharsets.UTF_8));
         assertEquals(want, got, "migrated JSON");
     }
+
+    @Test
+    @DisplayName("a reference condition names the predicate by id, and value_check is the int check")
+    void referenceAndValueCheck() {
+        String old = """
+                [{"condition":"minecraft:value_check","value":{"type":"minecraft:score","target":{"type":"minecraft:fixed",
+                  "name":"$x"},"score":"settings"},"range":{"min":1,"max":2}},
+                 {"condition":"minecraft:inverted","term":{"condition":"minecraft:reference","name":"mod:tests/held"}}]""";
+        assertJson("""
+                {"type":"minecraft:all_of","terms":[{"type":"minecraft:int_value_check","value":{"type":"minecraft:score",
+                  "target":{"type":"minecraft:fixed","name":"$x"},"score":"settings"},"test":{"min":1,"max":2}},
+                 {"type":"minecraft:inverted","term":"mod:tests/held"}]}""",
+                ModDataMigrator.migrate("data/mod/predicate/check.json", bytes(old), "26.3"));
+        assertJson("""
+                {"type":"minecraft:all_of","terms":["mod:tests/held"]}""",
+                ModDataMigrator.migrate("data/mod/predicate/alias.json",
+                        bytes("{\"condition\":\"minecraft:reference\",\"name\":\"mod:tests/held\"}"), "26.3"));
+    }
+
+    @Test
+    @DisplayName("a Forge loot modifier's condition list keeps a reference as an object, since Forge reads direct conditions")
+    void forgeModifierKeepsReferenceObject() {
+        assertJson("""
+                {"type":"mod:add_item","conditions":[{"type":"minecraft:reference","name":"mod:in_nether"},
+                  {"type":"minecraft:inverted","term":"mod:raining"}]}""",
+                LegacyLootConditionMigrator.migrate(bytes("""
+                {"type":"mod:add_item","conditions":[{"condition":"minecraft:reference","name":"mod:in_nether"},
+                  {"condition":"minecraft:inverted","term":{"condition":"minecraft:reference","name":"mod:raining"}}]}"""),
+                        false, true));
+    }
+
+    @Test
+    @DisplayName("a reference function names the item modifier by id")
+    void referenceFunction() {
+        assertJson("""
+                {"pools":[{"rolls":1,"entries":[{"type":"minecraft:item","name":"minecraft:map"}]}],
+                 "modifier":"mod:loot_modifier"}""",
+                LegacyLootConditionMigrator.migrate(bytes("""
+                {"pools":[{"rolls":1,"entries":[{"type":"minecraft:item","name":"minecraft:map"}]}],
+                 "functions":[{"function":"minecraft:reference","name":"mod:loot_modifier"}]}"""), true));
+    }
+    @Test
+    @DisplayName("an exploration map names its destination tag with a #, and gets the old default when it had none")
+    void explorationMapDestination() {
+        assertJson("""
+                {"type":"minecraft:sequence","functions":[{"type":"minecraft:exploration_map","destination":"#mod:tower",
+                  "zoom":1},{"type":"minecraft:exploration_map","destination":"#minecraft:on_treasure_maps"}]}""",
+                ModDataMigrator.migrate("data/mod/item_modifier/maps.json", bytes("""
+                [{"function":"minecraft:exploration_map","destination":"mod:tower","zoom":1},
+                 {"function":"minecraft:exploration_map"}]"""), "26.3"));
+    }
+
+    @Test
+    @DisplayName("an advancement's empty player check list, which matched everything, is dropped")
+    void emptyPlayerCheckIsDropped() {
+        assertJson("""
+                {"criteria":{"a":{"trigger":"minecraft:player_interacted_with_entity","conditions":{"item":{}}}}}""",
+                ModDataMigrator.migrate("data/mod/advancement/feed.json", bytes("""
+                {"criteria":{"a":{"trigger":"minecraft:player_interacted_with_entity","conditions":{"player":[],"item":{}}}}}"""),
+                        "26.3"));
+    }
+
+    @Test
+    @DisplayName("an untyped range inside a uniform or an attribute modifier's amount gets its type")
+    void nestedUntypedUniforms() {
+        assertJson("""
+                {"pools":[{"rolls":1,"entries":[{"type":"minecraft:item","name":"minecraft:stick","modifier":[
+                 {"type":"minecraft:set_count","count":{"type":"minecraft:uniform","min":1,
+                   "max":{"type":"minecraft:uniform","min":9,"max":13}}},
+                 {"type":"minecraft:set_attributes","modifiers":[{"attribute":"minecraft:armor","id":"mod:a",
+                   "amount":{"type":"minecraft:uniform","min":2.5,"max":3},"operation":"add_value","slot":"head"}]}]}]}]}""",
+                ModDataMigrator.migrate("data/mod/loot_table/stick.json", bytes("""
+                {"pools":[{"rolls":1,"entries":[{"type":"minecraft:item","name":"minecraft:stick","functions":[
+                 {"function":"minecraft:set_count","count":{"type":"minecraft:uniform","min":1,"max":{"min":9,"max":13}}},
+                 {"function":"minecraft:set_attributes","modifiers":[{"attribute":"minecraft:armor","id":"mod:a",
+                   "amount":{"min":2.5,"max":3},"operation":"add_value","slot":"head"}]}]}]}]}"""), "26.3"));
+    }
 }

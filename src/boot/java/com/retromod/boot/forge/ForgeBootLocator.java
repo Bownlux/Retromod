@@ -79,7 +79,7 @@ public final class ForgeBootLocator implements IModLocator {
             // A bootstrap failure must never stop the loader. The game starts without Retromod.
             log.error("Retromod could not start: " + LoaderHooks.unwrap(failure)
                     + ". Retromod is inactive for this launch. Please report this with "
-                    + "logs/latest.log.");
+                    + "logs/latest.log." + System.lineSeparator() + LoaderHooks.describe(failure));
             return List.of();
         }
     }

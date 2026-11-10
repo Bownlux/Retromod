@@ -60,7 +60,9 @@ public final class Worldgen26_3Migrator {
     }
 
     static boolean isWorldgen(String entryName) {
-        return entryName.startsWith("data/") && entryName.contains("/worldgen/") && entryName.endsWith(".json");
+        // A pack overlay's worldgen counts too, since a host that applies the overlay reads it instead.
+        return ModDataMigrator.dataPath(entryName).startsWith("data/") && entryName.contains("/worldgen/")
+                && entryName.endsWith(".json");
     }
 
     /** Where an entry lives on 26.3: configured features and carvers moved folders. */
@@ -99,8 +101,9 @@ public final class Worldgen26_3Migrator {
         }
         if (!(element instanceof JsonObject object)) return element;
         if (isOldState(object)) return state(object, false);
+        // A type without a namespace is a vanilla one, as the game reads it.
         String type = object.has("type") && object.get("type").isJsonPrimitive()
-                ? object.get("type").getAsString() : null;
+                ? namespaced(object.get("type").getAsString()) : null;
 
         if (type != null && REMOVED_FEATURE_TYPES.contains(type)) {
             JsonObject noOp = new JsonObject();
@@ -131,8 +134,12 @@ public final class Worldgen26_3Migrator {
             if (object.has("y_spread")) offset.add("y", migrate(object.get("y_spread")));
             return offset;
         }
-        if (type != null && object.size() == 2 && object.get("config") instanceof JsonObject config) {
+        if (type != null && object.get("config") instanceof JsonObject config && onlyLoaderKeysBeside(object)) {
+            // A loader's own keys, such as neoforge:conditions, move onto the unwrapped object.
             JsonObject flat = new JsonObject();
+            for (Map.Entry<String, JsonElement> field : object.entrySet()) {
+                if (field.getKey().contains(":")) flat.add(field.getKey(), field.getValue());
+            }
             flat.addProperty("type", type);
             for (Map.Entry<String, JsonElement> field : config.entrySet()) flat.add(field.getKey(), field.getValue());
             return migrate(flat);
@@ -142,8 +149,25 @@ public final class Worldgen26_3Migrator {
         for (Map.Entry<String, JsonElement> field : object.entrySet()) {
             out.add(field.getKey(), migrate(field.getValue()));
         }
+        // A spring reads its fluid state only as an object, never as a bare id.
+        if ("minecraft:spring_feature".equals(type) && object.get("state") instanceof JsonObject fluid
+                && isOldState(fluid)) {
+            out.add("state", state(fluid, true));
+        }
         if (type != null && TYPE_RENAMES.containsKey(type)) out.addProperty("type", TYPE_RENAMES.get(type));
         return out;
+    }
+
+    private static String namespaced(String id) {
+        return id.indexOf(':') >= 0 ? id : "minecraft:" + id;
+    }
+
+    /** Whether every key beside {@code type} and {@code config} is a namespaced loader key. */
+    private static boolean onlyLoaderKeysBeside(JsonObject object) {
+        for (String key : object.keySet()) {
+            if (!key.equals("type") && !key.equals("config") && !key.contains(":")) return false;
+        }
+        return true;
     }
 
     /** Any data file with only its old block states rewritten; the same array when it has none. */

@@ -1,5 +1,6 @@
 package com.retromod.cli;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -105,6 +106,35 @@ class NestedJarRecursionTest {
             byte[] deepOut = entry(out, "META-INF/jarjar/deep.jar");
             assertEquals("L" + NEW + ";", refDesc(deepOut, "deep/Deep.class"),
                     "doubly-nested jar must be recursed into and transformed");
+        } finally {
+            t.clearRedirectsForTesting();
+        }
+    }
+
+    @Test
+    @DisplayName("a bundled class that cannot be translated is named in a warning and kept as it was")
+    void untranslatableNestedClassIsReported() throws Exception {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        try {
+            // A redirect makes transformClass parse the class instead of taking its fast path.
+            t.registerClassRedirect(OLD, NEW);
+            byte[] broken = {(byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE};
+            java.util.Map<String, byte[]> entries = new java.util.LinkedHashMap<>();
+            entries.put("lib/Lib.class", classRef("lib/Lib"));
+            entries.put("lib/Broken.class", broken);
+            entries.put("lib/readme.txt", "kept".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            byte[] libJar = jarOf(entries);
+            byte[][] out = new byte[1][];
+
+            String log = com.retromod.loaderapi.LoaderApiTestSupport.captureErr(
+                    () -> out[0] = RetromodCli.transformNestedJar(libJar, 1));
+
+            assertTrue(log.lines().anyMatch(line -> line.contains("WARN") && line.contains("lib/Broken")
+                    && line.contains("nested-depth-1.jar")), log);
+            assertEquals("L" + NEW + ";", refDesc(out[0], "lib/Lib.class"));
+            assertArrayEquals(broken, entry(out[0], "lib/Broken.class"));
+            assertArrayEquals(entries.get("lib/readme.txt"), entry(out[0], "lib/readme.txt"));
         } finally {
             t.clearRedirectsForTesting();
         }

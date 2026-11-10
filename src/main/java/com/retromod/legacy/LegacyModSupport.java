@@ -687,7 +687,8 @@ public class LegacyModSupport {
         try (InputStream is = getClass().getResourceAsStream(resourcePath)) {
             if (is != null) {
                 String entryName = className.replace('.', '/') + ".class";
-                byte[] classBytes = ZipSecurity.safeReadAllBytes(is);
+                // A copy from the release jar names Retromod's relocated Gson and SLF4J; the mod sees the game's.
+                byte[] classBytes = com.retromod.util.ShadedLibraryNames.toHostNames(ZipSecurity.safeReadAllBytes(is));
                 out.putNextEntry(new JarEntry(entryName));
                 out.write(classBytes);
                 out.closeEntry();

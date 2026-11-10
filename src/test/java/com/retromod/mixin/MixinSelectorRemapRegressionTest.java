@@ -65,6 +65,7 @@ class MixinSelectorRemapRegressionTest {
 
     @AfterEach
     void tearDown() {
+        transformer.setModSourceVersion(null);
         transformer.clearRedirectsForTesting();
     }
 
@@ -185,6 +186,70 @@ class MixinSelectorRemapRegressionTest {
         AnnotationNode at = (AnnotationNode) annVal(handlerAnnotation(out, REDIRECT), "at");
         assertEquals("L" + host + ";test()V", annVal(at, "target"),
                 "Minecraft's own code calls Block, so the selector has to keep naming it");
+    }
+
+    @Test
+    @DisplayName("A SandBlock mixin stays on SandBlock for a 1.21.5+ mod and follows the bridge for older ones")
+    void sandBlockMixinFollowsTheModsVersion() {
+        String sand = "net/minecraft/world/level/block/SandBlock";
+        String generated = com.retromod.shim.common.LegacyFallingBlockBridge.GENERATED;
+        String animateTick = "animateTick(Lnet/minecraft/world/level/block/state/BlockState;"
+                + "Lnet/minecraft/world/level/Level;Lnet/minecraft/core/BlockPos;Lnet/minecraft/util/RandomSource;)V";
+        String previousHost = RetromodVersion.TARGET_MC_VERSION;
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        try {
+            com.retromod.shim.common.LegacyFallingBlockBridge.register(transformer);
+            java.util.Map<String, String> expected = new java.util.LinkedHashMap<>();
+            expected.put("1.21.11", sand);
+            expected.put("1.20.1", generated);
+            expected.put(null, generated);
+            for (java.util.Map.Entry<String, String> mod : expected.entrySet()) {
+                transformer.setModSourceVersion(mod.getKey());
+                String owner = mod.getValue();
+                MixinCompatibilityTransformer mixins = new MixinCompatibilityTransformer(transformer);
+
+                byte[] out = mixins.transformMixinClass(sandMixin(sand, "L" + sand + ";" + animateTick));
+
+                ClassNode node = new ClassNode();
+                new ClassReader(out).accept(node, 0);
+                AnnotationNode mixin = node.invisibleAnnotations.stream()
+                        .filter(a -> a.desc.equals("Lorg/spongepowered/asm/mixin/Mixin;")).findFirst().orElseThrow();
+                assertEquals(List.of(Type.getObjectType(owner)), annVal(mixin, "value"), "mod " + mod.getKey());
+                AnnotationNode at = (AnnotationNode) annVal(handlerAnnotation(out, REDIRECT), "at");
+                assertEquals("L" + owner + ";" + animateTick, annVal(at, "target"), "mod " + mod.getKey());
+                assertEquals("L" + owner + ";" + animateTick,
+                        mixins.remapResourceSelector("L" + sand + ";" + animateTick), "mod " + mod.getKey());
+            }
+        } finally {
+            RetromodVersion.TARGET_MC_VERSION = previousHost;
+        }
+    }
+
+    /** {@code @Mixin(target)} with a {@code @Redirect} whose {@code @At} names {@code atTarget}. */
+    private static byte[] sandMixin(String target, String atTarget) {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/mixin/SandMixin", null, "java/lang/Object", null);
+        AnnotationVisitor ma = cw.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        AnnotationVisitor mav = ma.visitArray("value");
+        mav.visit(null, Type.getObjectType(target));
+        mav.visitEnd();
+        ma.visitEnd();
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PRIVATE, "handler", "()V", null, null);
+        AnnotationVisitor av = mv.visitAnnotation(REDIRECT, false);
+        AnnotationVisitor arr = av.visitArray("method");
+        arr.visit(null, "someHandler");
+        arr.visitEnd();
+        AnnotationVisitor at = av.visitAnnotation("at", AT);
+        at.visit("value", "INVOKE");
+        at.visit("target", atTarget);
+        at.visitEnd();
+        av.visitEnd();
+        mv.visitCode();
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 1);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     @Test

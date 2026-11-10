@@ -136,6 +136,43 @@ class CacheToolsTest {
     }
 
     @Test
+    @DisplayName("a copy a dedicated server translated is not exported, since players need its client code")
+    void exportRefusesAServerOnlyCopy() throws IOException {
+        Path game = game();
+        TestModJars.forgeMod(game.resolve("mods/Server Mod.jar"), "servermod", "1.0.0", "[1.19.2,1.20)");
+        launch(game, (source, out) -> markServerOnly(new ForgeModTransformer("1.20.1").transformMod(source, out)));
+
+        CacheTools.ExportResult result = CacheTools.export(game, FORGE_1201, tmp.resolve("shared"), List.of());
+
+        assertTrue(result.exported().isEmpty(), result.toString());
+        assertTrue(result.skipped().get(0).reason().contains("translated on a dedicated server"),
+                result.skipped().get(0).reason());
+        assertFalse(Files.exists(tmp.resolve("shared/Server_Mod-retromod.jar")));
+    }
+
+    /** Rewrites a translated jar with the marker a dedicated server's copy carries. */
+    private static Path markServerOnly(Path jar) throws IOException {
+        Manifest manifest;
+        java.util.Map<String, byte[]> entries = new java.util.LinkedHashMap<>();
+        try (java.util.jar.JarFile file = new java.util.jar.JarFile(jar.toFile())) {
+            manifest = file.getManifest();
+            for (var entry : java.util.Collections.list(file.entries())) {
+                if (entry.isDirectory() || entry.getName().equals("META-INF/MANIFEST.MF")) continue;
+                entries.put(entry.getName(), file.getInputStream(entry).readAllBytes());
+            }
+        }
+        manifest.getMainAttributes().putValue(TranslatedJarMarkers.DIST, TranslatedJarMarkers.DEDICATED_SERVER);
+        try (java.util.jar.JarOutputStream out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            for (java.util.Map.Entry<String, byte[]> entry : entries.entrySet()) {
+                out.putNextEntry(new java.util.jar.JarEntry(entry.getKey()));
+                out.write(entry.getValue());
+                out.closeEntry();
+            }
+        }
+        return jar;
+    }
+
+    @Test
     @DisplayName("a cache from another Retromod build is not exported")
     void exportRefusesAStaleCache() throws IOException {
         Path game = gameWithTranslations();

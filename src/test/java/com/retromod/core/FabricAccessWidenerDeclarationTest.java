@@ -47,6 +47,22 @@ class FabricAccessWidenerDeclarationTest {
     }
 
     @Test
+    void remapsAndKeepsAWidenerDeclaredUnderAnyName(@TempDir Path dir) throws Exception {
+        // Fabric applies a declared file whatever its name; Lithostitched ships lithostitched.ct.
+        Path output = transform(dir, "fixture.ct", "accessWidener v2 intermediary\n"
+                + "accessible class net/minecraft/class_6903\n");
+
+        try (JarFile jar = new JarFile(output.toFile())) {
+            String metadata = read(jar, "fabric.mod.json");
+            assertTrue(metadata.contains("\"fixture.ct\""),
+                    "the remapped widener must stay declared, got: " + metadata);
+            String widener = read(jar, "fixture.ct");
+            assertTrue(widener.startsWith("accessWidener v2 official"),
+                    "the declared widener must be in the host namespace, got: " + widener);
+        }
+    }
+
+    @Test
     void stillDropsAWidenerInAForeignNamespace(@TempDir Path dir) throws Exception {
         Path output = transform(dir,
                 "accessWidener v2 named\naccessible class net/minecraft/client/Minecraft\n");
@@ -71,6 +87,10 @@ class FabricAccessWidenerDeclarationTest {
     }
 
     private static Path transform(Path dir, String widener) throws Exception {
+        return transform(dir, "fixture.accesswidener", widener);
+    }
+
+    private static Path transform(Path dir, String widenerName, String widener) throws Exception {
         String savedTarget = RetromodVersion.TARGET_MC_VERSION;
         RetromodVersion.TARGET_MC_VERSION = "26.1.2";
         try {
@@ -79,8 +99,8 @@ class FabricAccessWidenerDeclarationTest {
                     "fabric.mod.json", "{\"schemaVersion\":1,\"id\":\"fixture\","
                             + "\"version\":\"1.0.0\",\"depends\":{\"fabricloader\":\"*\","
                             + "\"minecraft\":\"1.21.1\"},"
-                            + "\"accessWidener\":\"fixture.accesswidener\"}",
-                    "fixture.accesswidener", widener));
+                            + "\"accessWidener\":\"" + widenerName + "\"}",
+                    widenerName, widener));
             Path outputDir = Files.createDirectories(dir.resolve("out"));
             return new FabricModTransformer("26.1.2").transformMod(source, outputDir);
         } finally {

@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Proxy;
 import java.nio.file.Path;
 import java.util.Optional;
@@ -19,6 +20,11 @@ public final class LegacyDataPackSource {
 
     /** A {@code RepositorySource} that offers {@code root} as a required server data pack at the top. */
     public static Object create(String packId, Path root) {
+        return create(packId, root, "Retromod legacy worldgen");
+    }
+
+    /** As {@link #create(String, Path)}, with the title the pack list shows. */
+    public static Object create(String packId, Path root, String title) {
         try {
             ClassLoader loader = LegacyDataPackSource.class.getClassLoader();
             Class<?> source = Class.forName("net.minecraft.server.packs.repository.RepositorySource", false, loader);
@@ -26,14 +32,14 @@ public final class LegacyDataPackSource {
                 if (method.getName().equals("loadPacks") && args != null && args.length == 1) {
                     @SuppressWarnings("unchecked")
                     Consumer<Object> sink = (Consumer<Object>) args[0];
-                    Object pack = pack(loader, packId, root);
+                    Object pack = pack(loader, packId, root, title);
                     if (pack != null) sink.accept(pack);
                     return null;
                 }
                 return switch (method.getName()) {
                     case "hashCode" -> System.identityHashCode(proxy);
                     case "equals" -> proxy == args[0];
-                    case "toString" -> "Retromod legacy worldgen pack " + packId;
+                    case "toString" -> title + " pack " + packId;
                     default -> null;
                 };
             });
@@ -51,11 +57,11 @@ public final class LegacyDataPackSource {
                     .getMethod("getCurrentVersion").invoke(null);
             Class<?> packType = Class.forName("net.minecraft.server.packs.PackType", true, loader);
             try {
-                Object format = version.getClass().getMethod("packVersion", packType).invoke(version, serverData(loader));
-                return (Integer) format.getClass().getMethod("major").invoke(format);
+                Object format = LegacyPublicMethods.method(version.getClass(), "packVersion", packType).invoke(version, serverData(loader));
+                return (Integer) LegacyPublicMethods.method(format.getClass(), "major").invoke(format);
             } catch (NoSuchMethodException beforeMajorMinor) {
                 // 1.20.5 to 1.21.11 report the format as a plain number.
-                return (Integer) version.getClass().getMethod("getPackVersion", packType)
+                return (Integer) LegacyPublicMethods.method(version.getClass(), "getPackVersion", packType)
                         .invoke(version, serverData(loader));
             }
         } catch (ReflectiveOperationException | LinkageError | ClassCastException e) {
@@ -63,7 +69,7 @@ public final class LegacyDataPackSource {
         }
     }
 
-    private static Object pack(ClassLoader loader, String packId, Path root) throws ReflectiveOperationException {
+    private static Object pack(ClassLoader loader, String packId, Path root, String title) throws ReflectiveOperationException {
         Class<?> component = Class.forName("net.minecraft.network.chat.Component", true, loader);
         Class<?> packSource = Class.forName("net.minecraft.server.packs.repository.PackSource", true, loader);
         Class<?> locationInfo = Class.forName("net.minecraft.server.packs.PackLocationInfo", true, loader);
@@ -75,9 +81,9 @@ public final class LegacyDataPackSource {
         Class<?> pathSupplier = Class.forName("net.minecraft.server.packs.PathPackResources$PathResourcesSupplier",
                 true, loader);
 
-        Object title = component.getMethod("literal", String.class).invoke(null, "Retromod legacy worldgen");
+        Object name = component.getMethod("literal", String.class).invoke(null, title);
         Object info = locationInfo.getConstructor(String.class, component, packSource, Optional.class)
-                .newInstance(packId, title, packSource.getField("BUILT_IN").get(null), Optional.empty());
+                .newInstance(packId, name, packSource.getField("BUILT_IN").get(null), Optional.empty());
         Object top = position.getField("TOP").get(null);
         Object config = selection.getConstructor(boolean.class, position, boolean.class).newInstance(true, top, false);
         Object supplier = pathSupplier.getConstructor(Path.class).newInstance(root);

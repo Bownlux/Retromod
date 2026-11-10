@@ -12,6 +12,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import com.google.gson.stream.JsonReader;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -137,7 +138,7 @@ final class DataLoadGate implements ModResourceConverter {
         }
         if (registryLoaded) removed += keepOutDanglingReferences(tree, referencing, registered);
         if (removed > 0) {
-            LOGGER.info("Kept {} copied data file(s) out of Minecraft {}, which would reject or "
+            LOGGER.debug(RetromodLog.DETAIL, "Kept {} copied data file(s) out of Minecraft {}, which would reject or "
                     + "misread them; the originals are unchanged", removed,
                     context.targetMcVersion());
         }

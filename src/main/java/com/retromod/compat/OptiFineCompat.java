@@ -4,6 +4,7 @@
  */
 package com.retromod.compat;
 
+import com.retromod.util.McOpener;
 import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,7 +12,6 @@ import org.slf4j.LoggerFactory;
 import javax.swing.*;
 import java.awt.*;
 import java.io.InputStream;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -164,12 +164,11 @@ public final class OptiFineCompat {
 
         int choice = choiceHolder[0];
         if (choice == 0) {
-            try {
-                Desktop.getDesktop().browse(
-                    URI.create("https://bownlux.github.io/Retromod/incompatible-mods/"));
-            } catch (Exception e) {
+            // Minecraft opens the link once it runs; this dialog shows before, so name it here.
+            String notes = "https://bownlux.github.io/Retromod/incompatible-mods/";
+            if (!McOpener.openLink(notes)) {
                 SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(null,
-                    "Please visit: https://bownlux.github.io/Retromod/incompatible-mods/",
+                    "Please visit: " + notes,
                     "Compatibility notes",
                     JOptionPane.INFORMATION_MESSAGE));
             }

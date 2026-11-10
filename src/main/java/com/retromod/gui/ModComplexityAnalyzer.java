@@ -4,6 +4,7 @@
  */
 package com.retromod.gui;
 
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 
 import org.objectweb.asm.*;
@@ -15,39 +16,20 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.jar.*;
 
-/**
- * Analyzes a mod JAR to estimate how likely it is to work after
- * Retromod's bytecode transformation.
- *
- * Mods that deeply depend on Minecraft internals, use heavy reflection,
- * hook into rendering pipelines, or use NMS/Forge capabilities extensively
- * are "unlikely to work" because Retromod cannot remap all of their
- * internal dependencies.
- *
- * The complexity score is a heuristic. It does not guarantee failure,
- * but gives users a heads-up before wasting time on a mod that will crash.
- *
- * Scoring:
- *   - Each risk factor adds points to the complexity score
- *   - Score >= THRESHOLD_UNLIKELY means the mod is "unlikely to work"
- *   - Users can override this via "force_translate_complex" in config
- */
+/** Counts the parts of a mod jar that translation often has to rebuild, for the debug log and {@code aot --skip-risky}. */
 public class ModComplexityAnalyzer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-Complexity");
 
-    // Score threshold: at or above this, we warn the user
-    private static final int THRESHOLD_UNLIKELY = 60;
+    /** The score at which {@code aot --skip-risky} skips a mod. Nothing else acts on the score. */
+    public static final int SKIP_SCORE = 60;
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
     private static final long MAX_CLASS_SCAN_SIZE = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
 
-    /**
-     * Result of a complexity analysis.
-     */
+    /** The score, whether it reaches {@link #SKIP_SCORE}, and what the scan found. */
     public record ComplexityReport(
         int score,
-        boolean isUnlikelyToWork,
-        String reason,
+        boolean highScore,
         List<String> riskFactors
     ) {}
 
@@ -286,7 +268,7 @@ public class ModComplexityAnalyzer {
             // migration rather than member-name remapping (#192).
             if (usesLegacyRegistryEvents && constructsRegistryEntriesStatically) {
                 score += 25;
-                riskFactors.add("Uses eager legacy Forge registry entries (needs DeferredRegister migration)");
+                riskFactors.add("Builds legacy Forge registry entries in static initializers");
             }
 
             // Forge capabilities
@@ -319,26 +301,15 @@ public class ModComplexityAnalyzer {
                 riskFactors.add("Uses Mixins (" + mixinCount + " classes)");
             }
 
-            boolean unlikely = score >= THRESHOLD_UNLIKELY;
-            String reason = unlikely
-                ? buildReason(riskFactors)
-                : "Mod appears transformable";
+            // What the scan found goes to the debug log only; it never decides what is translated.
+            LOGGER.debug(RetromodLog.DETAIL, "Scan of {}: score {}/100, found {}",
+                modJar.getFileName(), score, riskFactors.isEmpty() ? "nothing to note" : riskFactors);
 
-            LOGGER.debug("Complexity analysis for {}: score={}, unlikely={}, factors={}",
-                modJar.getFileName(), score, unlikely, riskFactors);
-
-            return new ComplexityReport(score, unlikely, reason, riskFactors);
+            return new ComplexityReport(score, score >= SKIP_SCORE, riskFactors);
 
         } catch (Exception e) {
-            LOGGER.warn("Could not analyze complexity of {}: {}", modJar.getFileName(), e.getMessage());
-            // If we can't analyze, assume it's fine
-            return new ComplexityReport(0, false, "Could not analyze", List.of());
+            LOGGER.debug(RetromodLog.DETAIL, "Could not scan {}: {}", modJar.getFileName(), e.getMessage());
+            return new ComplexityReport(0, false, List.of());
         }
-    }
-
-    private String buildReason(List<String> factors) {
-        if (factors.isEmpty()) return "Unknown";
-        // Pick the top 2 most impactful reasons
-        return String.join("; ", factors.subList(0, Math.min(2, factors.size())));
     }
 }

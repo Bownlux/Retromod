@@ -19,12 +19,15 @@ import com.retromod.shim.fabric.Fabric_1_21_8_to_1_21_9;
 import com.retromod.shim.fabric.Fabric_1_21_9_to_1_21_10;
 import com.retromod.shim.fabric.Fabric_1_21_to_1_21_1;
 import com.retromod.shim.fabric.Fabric_26_1_to_26_2;
+import com.retromod.shim.forge.Forge_1_12_2_to_1_13_2;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ShimRegistryZeroPatchAliasTest {
 
@@ -49,6 +52,7 @@ class ShimRegistryZeroPatchAliasTest {
 
     @Test
     void zeroPatchAliasesCoverEveryShimmedModernReleaseLine() {
+        assertEquals("1.12.2", ShimRegistry.resolveVersion("1.12.0"));
         assertEquals("1.13.2", ShimRegistry.resolveVersion("1.13.0"));
         assertEquals("1.14.4", ShimRegistry.resolveVersion("1.14.0"));
         assertEquals("1.15.2", ShimRegistry.resolveVersion("1.15.0"));
@@ -58,6 +62,34 @@ class ShimRegistryZeroPatchAliasTest {
         assertEquals("1.19", ShimRegistry.resolveVersion("1.19.0"));
         assertEquals("1.20", ShimRegistry.resolveVersion("1.20.0"));
         assertEquals("1.21", ShimRegistry.resolveVersion("1.21.0"));
+    }
+
+    @Test
+    void forge1_12ReleasesEnterTheFlatteningShim() {
+        ShimRegistry registry = ShimRegistryForgeMilestoneTest.forgeShimsFromServiceLoader();
+        List<VersionShim> milestoneChain = registry.findShimChain("forge", "1.12.2", "26.3");
+        assertFalse(milestoneChain.isEmpty(), "the 1.12.2 Forge chain should reach 26.3");
+
+        // mcmod.info names the exact release, and acceptedMinecraftVersions "[1.12,1.13)"
+        // gives its lower bound, 1.12.
+        for (String declared : List.of("1.12", "1.12.0", "1.12.1")) {
+            List<VersionShim> chain = registry.findShimChain("forge", declared, "26.3");
+
+            assertFalse(chain.isEmpty(), "a Forge mod declaring " + declared + " got no shim chain");
+            assertEquals(Forge_1_12_2_to_1_13_2.class, chain.get(0).getClass(),
+                    declared + " should enter the chain at the Flattening shim");
+            assertEquals("26.3", chain.get(chain.size() - 1).getTargetVersion(),
+                    declared + " should reach the newest host");
+            assertEquals(milestoneChain, chain, declared + " should take the 1.12.2 chain");
+        }
+    }
+
+    @Test
+    void forgeReleasesBefore1_12StayWithoutAChain() {
+        ShimRegistry registry = ShimRegistryForgeMilestoneTest.forgeShimsFromServiceLoader();
+
+        // 1.12 rewrote the registry API, so the 1.12.2 shim is not sound for older mods.
+        assertTrue(registry.findShimChain("forge", "1.11.2", "26.3").isEmpty());
     }
 
     @Test

@@ -23,6 +23,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -36,6 +37,23 @@ final class VanillaIdRenames {
     // scripts/harvest-vanilla-id-renames.py builds this table from the vanilla client jars.
     private static final String RESOURCE = "/retromod/vanilla-id-renames.tsv";
     private static final Pattern ID = Pattern.compile("minecraft:[a-z0-9_]+");
+    /** A quoted id written without its namespace, which the game reads as a minecraft: id. */
+    private static final Pattern BARE_ID = Pattern.compile("\"([a-z0-9_]+)\"");
+    // The fields where a bare string names an item, block or entity: item stacks and ingredients,
+    // item and block predicates. A loot entry's "name" and a tag's "values" are checked separately.
+    private static final Set<String> BARE_ID_FIELDS = Set.of("id", "item", "items", "block", "blocks");
+    // The fields where a string names a worldgen feature or carver, never a block or item. The table
+    // holds only block, item, entity and enchantment ids, and 26.3's feature minecraft:grass shares
+    // its name with the old grass block, so a feature reference renamed here points at nothing.
+    // A random selector's "default" is a placed feature too.
+    private static final Set<String> WORLDGEN_FIELDS = Set.of("feature", "features", "feature_true", "feature_false",
+            "vegetation_feature", "placed_feature", "configured_feature", "carver", "carvers", "configured_carver",
+            "default");
+    // Components whose "id" names a block entity or entity type, with the registry that type is in.
+    // minecraft:sign is still a block entity type, so the sign block's rename must not reach it.
+    private static final Map<String, String> TYPED_DATA = Map.of(
+            "block_entity_data", "block_entity", "minecraft:block_entity_data", "block_entity",
+            "entity_data", "entity", "minecraft:entity_data", "entity");
 
     /** The oldest release the table is harvested from: the Flattening, which renamed most ids. */
     static final String FIRST_TABLE_VERSION = "1.13";
@@ -128,7 +146,8 @@ final class VanillaIdRenames {
         // removed id then becomes an optional entry so the rest of the tag still loads.
         String tagRegistry = tagRegistry(entryName);
         boolean[] changed = {false};
-        JsonElement out = rename(root, sourceMcVersion, targetMcVersion, changed);
+        JsonElement out = rename(root, false, false, null, tagRegistry != null, sourceMcVersion, targetMcVersion,
+                changed);
         if (tagRegistry != null && out instanceof JsonObject tag && tag.get("values") instanceof JsonArray values) {
             optionalRemovedEntries(values, tagRegistry, sourceMcVersion, targetMcVersion, changed);
         }
@@ -154,19 +173,31 @@ final class VanillaIdRenames {
         return changed ? out.toString().getBytes(StandardCharsets.UTF_8) : function;
     }
 
-    /** Whether the text names any id the table renames or removes. */
+    /** Whether the text names any id the table renames or removes, with or without its namespace. */
     private static boolean mentionsOldId(String text) {
         Matcher ids = ID.matcher(text);
         while (ids.find()) {
             if (BY_OLD_ID.containsKey(ids.group())) return true;
         }
+        Matcher bare = BARE_ID.matcher(text);
+        while (bare.find()) {
+            if (BY_OLD_ID.containsKey("minecraft:" + bare.group(1))) return true;
+        }
         return false;
     }
 
-    /** Renames old ids through the whole JSON tree, in keys and in string values. */
-    private static JsonElement rename(JsonElement element, String source, String target, boolean[] changed) {
+    /**
+     * Renames old ids through the whole JSON tree, in keys and in string values. {@code idField} says
+     * the element sits in a field that names a registry id, where a bare id counts too, and
+     * {@code worldgenField} that it sits in a field naming a feature or carver, whose ids stay.
+     * {@code typedData} is the registry whose type an object's "id" names, or null.
+     */
+    private static JsonElement rename(JsonElement element, boolean idField, boolean worldgenField, String typedData,
+                                      boolean tagFile, String source, String target, boolean[] changed) {
         if (element instanceof JsonArray array) {
-            for (int i = 0; i < array.size(); i++) array.set(i, rename(array.get(i), source, target, changed));
+            for (int i = 0; i < array.size(); i++) {
+                array.set(i, rename(array.get(i), idField, worldgenField, null, tagFile, source, target, changed));
+            }
             return array;
         }
         if (element instanceof JsonObject object) {
@@ -175,20 +206,55 @@ final class VanillaIdRenames {
                 // A map keyed by id, such as spawn costs or enchantment levels, names ids in its keys.
                 String key = renamed(field.getKey(), source, target);
                 if (!key.equals(field.getKey())) changed[0] = true;
-                out.add(key, rename(field.getValue(), source, target, changed));
+                // Block entity or entity data names its type in "id", which only that registry's rows rename.
+                if (typedData != null && field.getKey().equals("id")) {
+                    out.add(key, typeId(field.getValue(), typedData, source, target, changed));
+                    continue;
+                }
+                boolean ids = BARE_ID_FIELDS.contains(field.getKey()) || tagFile && field.getKey().equals("values")
+                        || field.getKey().equals("name") && isItemEntry(object);
+                // An inline feature is an object and is walked as usual, since its block states name blocks.
+                boolean worldgen = WORLDGEN_FIELDS.contains(field.getKey());
+                out.add(key, rename(field.getValue(), ids, worldgen, TYPED_DATA.get(field.getKey()), tagFile,
+                        source, target, changed));
             }
             return out;
         }
+        // A feature or carver reference names its own registry, which the table has no rows for.
+        if (worldgenField) return element;
         // Only a string that is exactly the old id changes, never one that contains it.
         if (element instanceof JsonPrimitive primitive && primitive.isString()) {
             String id = primitive.getAsString();
             String renamed = renamed(id, source, target);
+            // In an id field, a bare id is a minecraft: id, so it is renamed the same way.
+            if (renamed.equals(id) && idField && id.matches("[a-z0-9_]+")) {
+                String full = renamed("minecraft:" + id, source, target);
+                if (!full.equals("minecraft:" + id)) renamed = full;
+            }
             if (!renamed.equals(id)) {
                 changed[0] = true;
                 return new JsonPrimitive(renamed);
             }
         }
         return element;
+    }
+
+    /** The type id of block entity or entity data, renamed only by a row of {@code registry}. */
+    private static JsonElement typeId(JsonElement value, String registry, String source, String target,
+                                      boolean[] changed) {
+        if (!(value instanceof JsonPrimitive primitive) || !primitive.isString()) return value;
+        String id = primitive.getAsString();
+        // The game reads a bare type id as a minecraft: id.
+        Row row = applicable(id.indexOf(':') < 0 ? "minecraft:" + id : id, registry, source, target);
+        if (row == null || row.newId() == null) return value;
+        changed[0] = true;
+        return new JsonPrimitive(row.newId());
+    }
+
+    /** A loot entry that drops an item, whose "name" is the item's id. */
+    private static boolean isItemEntry(JsonObject object) {
+        return object.get("type") instanceof JsonPrimitive type && type.isString()
+                && (type.getAsString().equals("minecraft:item") || type.getAsString().equals("item"));
     }
 
     /** A removed id no longer fails its whole tag: the entry becomes optional. */

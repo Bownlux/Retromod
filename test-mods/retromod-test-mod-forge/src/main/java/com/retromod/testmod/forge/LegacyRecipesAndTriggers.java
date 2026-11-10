@@ -68,7 +68,8 @@ final class LegacyRecipesAndTriggers {
     static String recipesLoad(MinecraftServer server) {
         RecipeManager recipes = server.getRecipeManager();
         List<EggRecipe> all = recipes.getAllRecipesFor(TYPE.get());
-        if (all.size() != 1) return "fail: " + all.size() + " recipes of the type";
+        // 1.21.2 rebuilt recipes around RecipeMap; Retromod reads this one through its old serializer there too.
+        if (all.size() != 1) return "fail: " + all.size() + " recipes of the type" + (hostRebuiltRecipes() ? " on a 1.21.2 or newer host" : "");
         SimpleContainer eggs = new SimpleContainer(new ItemStack(Items.EGG));
         Optional<EggRecipe> found = recipes.getRecipeFor(TYPE.get(), eggs, server.overworld());
         if (found.isEmpty()) return "fail: an egg matched no recipe";
@@ -76,16 +77,36 @@ final class LegacyRecipesAndTriggers {
         if (!EGG.equals(recipe.getId())) return "fail: the recipe's id is " + recipe.getId();
         ItemStack result = found.get().assemble(eggs, server.registryAccess());
         if (!result.is(Items.SLIME_BALL) || result.getCount() != 2) return "fail: it made " + result;
-        // The form the server sends players, read back.
+        // The form the server sent players, read back. The serializer is the mod's own, as its registered one may
+        // stand behind the host's serializer type.
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
-        SERIALIZER.get().toNetwork(buffer, found.get());
-        EggRecipe copy = SERIALIZER.get().fromNetwork(EGG, buffer);
+        EggSerializer serializer = new EggSerializer();
+        serializer.toNetwork(buffer, found.get());
+        EggRecipe copy = serializer.fromNetwork(EGG, buffer);
         return copy.result.is(Items.SLIME_BALL) && copy.input.test(new ItemStack(Items.EGG))
                 ? "success" : "fail: the network copy differs";
     }
 
+    /** Whether the host has 1.21.2's {@code RecipeMap}, probed without initializing it. */
+    private static boolean hostRebuiltRecipes() {
+        try {
+            Class.forName("net.minecraft.world.item.crafting.RecipeMap", false,
+                    LegacyRecipesAndTriggers.class.getClassLoader());
+            return true;
+        } catch (ClassNotFoundException olderHost) {
+            return false;
+        }
+    }
+
     static String triggerRead() {
         return triggersRead > 0 ? "success" : "fail: the advancement's criterion was not read";
+    }
+
+    /** A lookup by a vanilla type, whose recipes load on every host, unlike the 1.20.1 recipe above. */
+    static String vanillaRecipesListed(MinecraftServer server) {
+        // Only the count is read: a 1.20.1 list held recipes, and 1.20.2 and newer list holders.
+        List<?> smelting = server.getRecipeManager().getAllRecipesFor(RecipeType.SMELTING);
+        return smelting.isEmpty() ? "fail: no smelting recipes were listed" : "success";
     }
 
     static final class EggRecipe implements Recipe<Container> {

@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 
 /**
@@ -35,10 +36,10 @@ public final class LegacyBlockNames {
             Object id = idClass.getMethod("tryParse", String.class).invoke(null, String.valueOf(name));
             if (id == null) return null;
             // 1.21 spells it containsKey/get; 26.x spells it containsKey/getValue.
-            Method contains = registry.getClass().getMethod("containsKey", idClass);
+            Method contains = LegacyPublicMethods.method(registry.getClass(), "containsKey", idClass);
             if (!(Boolean) contains.invoke(registry, id)) return null;
             for (String getter : new String[] {"getValue", "get"}) {
-                for (Method method : registry.getClass().getMethods()) {
+                for (Method method : LegacyPublicMethods.methods(registry.getClass())) {
                     if (method.getName().equals(getter) && method.getParameterCount() == 1
                             && method.getParameterTypes()[0] == idClass) {
                         return method.invoke(registry, id);

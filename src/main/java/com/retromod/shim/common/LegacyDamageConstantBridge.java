@@ -6,6 +6,7 @@ package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.core.SyntheticEmbedder;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
@@ -200,7 +201,7 @@ public final class LegacyDamageConstantBridge {
         } catch (Throwable unreadable) {
             return classBytes;
         }
-        if (node.name.startsWith("com/retromod/") || node.name.startsWith("net/minecraft/")) {
+        if (SyntheticEmbedder.isRetromodClass(node.name) || node.name.startsWith("net/minecraft/")) {
             return classBytes;
         }
         List<Constant> constants = constants();

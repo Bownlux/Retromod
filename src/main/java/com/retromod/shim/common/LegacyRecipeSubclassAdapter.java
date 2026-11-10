@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.common;
 
+import com.retromod.core.SyntheticEmbedder;
 import com.retromod.util.SafeClassWriter;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
@@ -94,6 +95,20 @@ public final class LegacyRecipeSubclassAdapter {
     private static final String NEW_SMITHING_CTOR = "(L" + COMMON_INFO + ";L" + OPTIONAL + ";"
             + L_INGREDIENT + "L" + OPTIONAL + ";L" + TEMPLATE + ";)V";
     private static final String OLD_CUSTOM_CTOR = "(L" + CATEGORY + ";)V";
+    // 1.20.1's constructors also took the recipe id, which a 26.1 recipe leaves to its holder.
+    private static final String ID = "Lnet/minecraft/resources/Identifier;";
+    private static final String NON_NULL_LIST = "net/minecraft/core/NonNullList";
+    private static final String GRID_SHAPED_CTOR = "(" + ID + "Ljava/lang/String;L" + CATEGORY + ";IIL" + NON_NULL_LIST + ";" + L_STACK + ")V";
+    private static final String ID_SHAPELESS_CTOR = "(" + ID + OLD_SHAPELESS_CTOR.substring(1);
+    private static final String ID_SMITHING_CTOR = "(" + ID + OLD_SMITHING_CTOR.substring(1);
+    // 1.20.1 recipes read a crafting container with the registry access; 26.1 hands a crafting input.
+    private static final String CRAFTING_CONTAINER = "net/minecraft/world/inventory/CraftingContainer";
+    private static final String CRAFTING_INPUT = CRAFTING + "CraftingInput";
+    private static final String LEVEL = "net/minecraft/world/level/Level";
+    private static final String OLD_MATCHES = "(L" + CRAFTING_CONTAINER + ";L" + LEVEL + ";)Z";
+    private static final String OLD_ASSEMBLE = "(L" + CRAFTING_CONTAINER + ";Lnet/minecraft/core/RegistryAccess;)" + L_STACK;
+    private static final String MATCHES = "(L" + CRAFTING_INPUT + ";L" + LEVEL + ";)Z";
+    private static final String ASSEMBLE = "(L" + CRAFTING_INPUT + ";)" + L_STACK;
 
     private LegacyRecipeSubclassAdapter() {
     }
@@ -112,7 +127,7 @@ public final class LegacyRecipeSubclassAdapter {
             return classBytes;
         }
         if ((node.access & Opcodes.ACC_INTERFACE) != 0 || node.name.startsWith("net/minecraft/")
-                || node.name.startsWith("com/retromod/")) {
+                || SyntheticEmbedder.isRetromodClass(node.name)) {
             return classBytes;
         }
         boolean changed = false;
@@ -120,6 +135,7 @@ public final class LegacyRecipeSubclassAdapter {
             changed |= rewriteCalls(node.name, method);
         }
         changed |= addCurrentAssembleOverrides(node);
+        changed |= addCraftingInputOverrides(node);
         if (!changed) {
             return classBytes;
         }
@@ -136,7 +152,7 @@ public final class LegacyRecipeSubclassAdapter {
     private static boolean mentionsRecipeApi(byte[] classBytes) {
         String text = new String(classBytes, java.nio.charset.StandardCharsets.ISO_8859_1);
         return text.contains(PROVIDER) || text.contains(SHAPED) || text.contains(SHAPELESS)
-                || text.contains(SMITHING) || text.contains(CUSTOM);
+                || text.contains(SMITHING) || text.contains(CUSTOM) || text.contains(CRAFTING_CONTAINER);
     }
 
     /**
@@ -202,6 +218,9 @@ public final class LegacyRecipeSubclassAdapter {
         if (SHAPED.equals(call.owner) && OLD_SHAPED_NOTIFY_CTOR.equals(call.desc)) return 3;
         if (SHAPELESS.equals(call.owner) && OLD_SHAPELESS_CTOR.equals(call.desc)) return 2;
         if (SMITHING.equals(call.owner) && OLD_SMITHING_CTOR.equals(call.desc)) return 3;
+        if (SHAPED.equals(call.owner) && GRID_SHAPED_CTOR.equals(call.desc)) return 6;
+        if (SHAPELESS.equals(call.owner) && ID_SHAPELESS_CTOR.equals(call.desc)) return 3;
+        if (SMITHING.equals(call.owner) && ID_SMITHING_CTOR.equals(call.desc)) return 4;
         return -1;
     }
 
@@ -216,6 +235,9 @@ public final class LegacyRecipeSubclassAdapter {
             TemplatePassThrough direct) {
         if ("<init>".equals(call.name) && call.getOpcode() == Opcodes.INVOKESPECIAL) {
             return rewriteConstructor(method, call, direct.constructors().contains(call));
+        }
+        if (call.owner.startsWith(CRAFTING) && rewriteContainerCall(method, call)) {
+            return true;
         }
         if ("assemble".equals(call.name) && call.owner.startsWith(CRAFTING)
                 && isLegacyAssemble(call.desc)) {
@@ -264,6 +286,41 @@ public final class LegacyRecipeSubclassAdapter {
             pushOptional(convert, base + 2);
             pushTemplate(convert, base + 3, resultIsTemplate);
             call.desc = NEW_SMITHING_CTOR;
+        } else if (SHAPED.equals(call.owner) && GRID_SHAPED_CTOR.equals(call.desc)) {
+            // id, group, category, width, height, ingredients, result: the grid becomes a pattern.
+            int base = reserveLocals(method, 7);
+            convert.add(new VarInsnNode(Opcodes.ASTORE, base + 6));
+            convert.add(new VarInsnNode(Opcodes.ASTORE, base + 5));
+            convert.add(new VarInsnNode(Opcodes.ISTORE, base + 4));
+            convert.add(new VarInsnNode(Opcodes.ISTORE, base + 3));
+            storeArguments(convert, base, 3);
+            pushCommonInfo(convert);
+            pushBookInfo(convert, base + 1, base + 2);
+            convert.add(new VarInsnNode(Opcodes.ILOAD, base + 3));
+            convert.add(new VarInsnNode(Opcodes.ILOAD, base + 4));
+            convert.add(new VarInsnNode(Opcodes.ALOAD, base + 5));
+            convert.add(new MethodInsnNode(Opcodes.INVOKESTATIC, INTERNALS, "legacyPattern",
+                    "(IILjava/lang/Object;)Ljava/lang/Object;", false));
+            convert.add(new TypeInsnNode(Opcodes.CHECKCAST, PATTERN));
+            pushTemplate(convert, base + 6, resultIsTemplate);
+            call.desc = NEW_SHAPED_CTOR;
+        } else if (SHAPELESS.equals(call.owner) && ID_SHAPELESS_CTOR.equals(call.desc)) {
+            int base = reserveLocals(method, 5);
+            storeArguments(convert, base, 5);
+            pushCommonInfo(convert);
+            pushBookInfo(convert, base + 1, base + 2);
+            pushTemplate(convert, base + 3, resultIsTemplate);
+            convert.add(new VarInsnNode(Opcodes.ALOAD, base + 4));
+            call.desc = NEW_SHAPELESS_CTOR;
+        } else if (SMITHING.equals(call.owner) && ID_SMITHING_CTOR.equals(call.desc)) {
+            int base = reserveLocals(method, 5);
+            storeArguments(convert, base, 5);
+            pushCommonInfo(convert);
+            pushOptional(convert, base + 1);
+            convert.add(new VarInsnNode(Opcodes.ALOAD, base + 2));
+            pushOptional(convert, base + 3);
+            pushTemplate(convert, base + 4, resultIsTemplate);
+            call.desc = NEW_SMITHING_CTOR;
         } else if (CUSTOM.equals(call.owner) && OLD_CUSTOM_CTOR.equals(call.desc)) {
             // 26.1 asks the recipe for its category instead of storing one.
             convert.add(new InsnNode(Opcodes.POP));
@@ -308,6 +365,71 @@ public final class LegacyRecipeSubclassAdapter {
         method.instructions.insertBefore(field, read);
         method.instructions.remove(field);
         return true;
+    }
+
+    /**
+     * A 1.20.1 {@code matches(container, level)} or {@code assemble(container, registries)} call on a
+     * Minecraft crafting recipe, such as Sophisticated Backpacks' {@code super.matches}: the container
+     * becomes its crafting input, and the registries drop away.
+     */
+    private static boolean rewriteContainerCall(MethodNode method, MethodInsnNode call) {
+        InsnList convert = new InsnList();
+        // An interface such as CraftingRecipe declares only the erased forms, which read any recipe input.
+        boolean erased = call.getOpcode() == Opcodes.INVOKEINTERFACE;
+        if ("matches".equals(call.name) && OLD_MATCHES.equals(call.desc)) {
+            // [recipe, container, level]: the container is under the level, so the two swap around it.
+            convert.add(new InsnNode(Opcodes.SWAP));
+            convert.add(asCraftInput());
+            convert.add(new InsnNode(Opcodes.SWAP));
+            call.desc = erased ? "(L" + RECIPE_INPUT + ";L" + LEVEL + ";)Z" : MATCHES;
+        } else if ("assemble".equals(call.name) && OLD_ASSEMBLE.equals(call.desc)) {
+            convert.add(new InsnNode(Opcodes.POP));
+            convert.add(asCraftInput());
+            call.desc = erased ? "(L" + RECIPE_INPUT + ";)" + L_STACK : ASSEMBLE;
+        } else {
+            return false;
+        }
+        method.instructions.insertBefore(call, convert);
+        return true;
+    }
+
+    private static MethodInsnNode asCraftInput() {
+        return new MethodInsnNode(Opcodes.INVOKEINTERFACE, CRAFTING_CONTAINER, "asCraftInput", "()L" + CRAFTING_INPUT + ";", true);
+    }
+
+    /**
+     * A 1.20.1 subclass of a Minecraft crafting recipe overrides {@code matches} and {@code assemble}
+     * for a container; 26.1 calls them with a crafting input, so each gets that form, which calls the
+     * old one with a grid of the same stacks and the running game's registries.
+     */
+    private static boolean addCraftingInputOverrides(ClassNode node) {
+        if (node.superName == null || !node.superName.startsWith(CRAFTING)) return false;
+        List<MethodNode> added = new ArrayList<>();
+        for (MethodNode method : node.methods) {
+            if ((method.access & (Opcodes.ACC_STATIC | Opcodes.ACC_ABSTRACT)) != 0) continue;
+            boolean matches = "matches".equals(method.name) && OLD_MATCHES.equals(method.desc);
+            boolean assemble = "assemble".equals(method.name) && OLD_ASSEMBLE.equals(method.desc);
+            String current = matches ? MATCHES : ASSEMBLE;
+            if ((!matches && !assemble) || declares(node, added, method.name, current)) continue;
+            MethodNode forward = new MethodNode(Opcodes.ACC_PUBLIC, method.name, current, null, null);
+            forward.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            forward.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+            forward.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC, INTERNALS, "craftingContainer",
+                    "(Ljava/lang/Object;)Ljava/lang/Object;", false));
+            forward.instructions.add(new TypeInsnNode(Opcodes.CHECKCAST, CRAFTING_CONTAINER));
+            if (matches) {
+                forward.instructions.add(new VarInsnNode(Opcodes.ALOAD, 2));
+            } else {
+                forward.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC, INTERNALS, "registries",
+                        "()Ljava/lang/Object;", false));
+                forward.instructions.add(new TypeInsnNode(Opcodes.CHECKCAST, "net/minecraft/core/RegistryAccess"));
+            }
+            forward.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, node.name, method.name, method.desc, false));
+            forward.instructions.add(new InsnNode(matches ? Opcodes.IRETURN : Opcodes.ARETURN));
+            added.add(forward);
+        }
+        node.methods.addAll(added);
+        return !added.isEmpty();
     }
 
     /**

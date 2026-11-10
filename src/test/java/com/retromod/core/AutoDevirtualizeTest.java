@@ -93,4 +93,36 @@ class AutoDevirtualizeTest {
         assertEquals(Opcodes.INVOKEVIRTUAL, call.getOpcode(),
                 "same-arity rename must keep the instance opcode");
     }
+
+    @Test
+    @DisplayName("a devirtualize redirect never matches a static call, even when its target takes no extra argument")
+    void devirtualizeRedirectSkipsStaticCall() {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.registerMethodRedirect(
+                "test/devirt/StaticOwner", "ping", "(I)V",
+                "test/devirt/Helper", "ping", "(I)V", true);
+
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/devirt/StaticCaller", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "use", "()V", null, null);
+        mv.visitCode();
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "test/devirt/StaticOwner", "ping", "(I)V", false);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        byte[] out = t.transformClass(cw.toByteArray(), "test/devirt/StaticCaller");
+
+        ClassNode cn = new ClassNode();
+        new ClassReader(out).accept(cn, 0);
+        MethodInsnNode call = null;
+        for (AbstractInsnNode insn : cn.methods.stream()
+                .filter(m -> m.name.equals("use")).findFirst().orElseThrow().instructions) {
+            if (insn instanceof MethodInsnNode m && m.name.equals("ping")) { call = m; break; }
+        }
+        assertNotNull(call);
+        assertEquals("test/devirt/StaticOwner", call.owner,
+                "a static call has no receiver to move, so a newer mod's static call keeps its host method");
+    }
 }

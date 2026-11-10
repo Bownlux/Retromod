@@ -4,6 +4,7 @@
  */
 package com.retromod.resources;
 
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -781,5 +782,77 @@ class ModDataMigratorTest {
     void paintingVariantAlreadyInBlocksIsKept() {
         String painting = "{\"asset_id\":\"mod:wide\",\"height\":2,\"width\":16}";
         assertEquals(painting, mig("data/mod/painting_variant/wide.json", painting, "1.21.1"));
+    }
+
+    @Test
+    @DisplayName("an old type_specific object becomes its keyed kind, slime becomes cube_mob, and looking_at is keyed too")
+    void typeSpecificBecomesKeyedKind() {
+        String in = "{\"condition\":\"minecraft:entity_properties\",\"entity\":\"this\",\"predicate\":"
+                + "{\"type_specific\":{\"type\":\"player\",\"looking_at\":{\"type\":\"minecraft:ghast\"}}}}";
+        String out = mig("data/mod/predicate/x.json", in, "26.2");
+        assertTrue(out.contains("\"minecraft:type_specific/player\":{\"looking_at\":{\"minecraft:entity_type\":\"minecraft:ghast\"}}"), out);
+        String slime = "{\"condition\":\"minecraft:entity_properties\",\"entity\":\"this\",\"predicate\":"
+                + "{\"type_specific\":{\"type\":\"minecraft:slime\",\"size\":1}}}";
+        assertTrue(mig("data/mod/predicate/x.json", slime, "26.2").contains("\"minecraft:type_specific/cube_mob\":{\"size\":1}"));
+        String lightning = "{\"condition\":\"minecraft:entity_properties\",\"entity\":\"this\",\"predicate\":"
+                + "{\"type_specific\":{\"type\":\"lightning\",\"entity_struck\":{\"type\":\"minecraft:pig\"}}}}";
+        assertTrue(mig("data/mod/predicate/x.json", lightning, "26.2").contains(
+                "\"minecraft:type_specific/lightning\":{\"entity_struck\":{\"minecraft:entity_type\":\"minecraft:pig\"}}"));
+    }
+
+    @Test
+    @DisplayName("a field the old entity predicate ignored is dropped, since the keyed form reads it as a sub-predicate")
+    void ignoredEntityPredicateFieldIsDropped() {
+        String in = "{\"condition\":\"minecraft:entity_properties\",\"entity\":\"this\",\"predicate\":"
+                + "{\"flags\":{\"is_sprinting\":true},\"is_flying\":false}}";
+        String out = mig("data/mod/enchantment/x.json", in, "26.2");
+        assertTrue(out.contains("\"minecraft:flags\":{\"is_sprinting\":true}"), out);
+        assertFalse(out.contains("is_flying"), out);
+    }
+
+    @Test
+    @DisplayName("a trigger's player slot holding an entity predicate is keyed like the others")
+    void playerSlotIsKeyed() {
+        String in = "{\"criteria\":{\"a\":{\"trigger\":\"minecraft:tick\",\"conditions\":{\"player\":"
+                + "{\"type_specific\":{\"type\":\"player\",\"advancements\":{\"mod:root\":true}}}}}}}";
+        String out = mig("data/mod/advancement/x.json", in, "26.2");
+        assertTrue(out.contains("\"minecraft:type_specific/player\":{\"advancements\":{\"mod:root\":true}}"), out);
+    }
+
+    @Test
+    @DisplayName("a mod's own recipe type gets string ingredients in its own fields, and a one-tag list is that tag")
+    void customRecipeIngredientsBecomeStrings() {
+        String in = "{\"type\":\"mod:breeding\",\"inputs\":[{\"tag\":\"minecraft:cat_food\"}],"
+                + "\"outputs\":[{\"item\":\"minecraft:cod\"},{\"item\":\"minecraft:salmon\"}],\"result\":{\"item\":\"minecraft:egg\"}}";
+        String out = new String(ModDataMigrator.migrate("data/mod/recipe/cat.json", in.getBytes(StandardCharsets.UTF_8),
+                "1.21.1", "26.3", MigrationContext.Loader.NEOFORGE), StandardCharsets.UTF_8);
+        assertTrue(out.contains("\"inputs\":\"#minecraft:cat_food\""), out);
+        assertTrue(out.contains("\"outputs\":[\"minecraft:cod\",\"minecraft:salmon\"]"), out);
+        assertTrue(out.contains("\"result\":{\"item\":\"minecraft:egg\"}"), "a result is never read as an ingredient");
+        String later = new String(ModDataMigrator.migrate("data/mod/recipe/cat.json", in.getBytes(StandardCharsets.UTF_8),
+                "1.21.4", "26.3", MigrationContext.Loader.NEOFORGE), StandardCharsets.UTF_8);
+        assertTrue(later.contains("\"outputs\":[{\"item\""), "a mod built for 1.21.2 or newer reads its own shape");
+    }
+
+    @Test
+    @DisplayName("an unquoted string the old lenient reader took is written out strictly from 1.21.6")
+    void unquotedStringIsQuoted() {
+        String in = "{\"elements\":[{\"element\":{\"processors\": mod_degradation, \"projection\":\"rigid\"}}]}";
+        String out = mig("data/minecraft/worldgen/template_pool/x.json", in, "1.21.6");
+        assertStrictParses(out);
+        assertTrue(out.contains("\"processors\": \"mod_degradation\""), out);
+        assertEquals(in, mig("data/minecraft/worldgen/template_pool/x.json", in, "1.21.5"), "lenient hosts read it as it is");
+    }
+
+    @Test
+    @DisplayName("an empty smithing template list, which matched an empty slot, is left out from 1.21.2")
+    void emptySmithingTemplateIsDropped() {
+        String recipe = "{\"type\":\"minecraft:smithing_transform\",\"template\":[],\"base\":{\"item\":\"minecraft:jigsaw\"},"
+                + "\"addition\":{\"item\":\"minecraft:elytra\"},\"result\":{\"id\":\"minecraft:elytra\"}}";
+        String out = new String(ModDataMigrator.migrate("data/mod/recipe/elytra.json",
+                recipe.getBytes(StandardCharsets.UTF_8), "1.21.1", "26.3", MigrationContext.Loader.NEOFORGE),
+                StandardCharsets.UTF_8);
+        assertFalse(out.contains("template"), out);
+        assertTrue(out.contains("\"base\":\"minecraft:jigsaw\""), out);
     }
 }

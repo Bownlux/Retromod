@@ -4,6 +4,7 @@
  */
 package com.retromod.inplace;
 
+import com.retromod.boot.InPlaceBoot;
 import com.retromod.core.ForgeModTransformer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Enumeration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -70,14 +72,69 @@ class InPlaceLaunchTest {
     @Test
     @DisplayName("in-place mode without a discovery report leaves mods/ alone")
     void inPlaceWithoutReportLeavesModsAlone() {
-        assertEquals(InPlaceLaunch.Action.LEAVE_ALONE, InPlaceLaunch.decide(tmp, properties(
-                InPlaceLaunch.BOOT_OWNER_PROPERTY, "x")).action());
+        InPlaceLaunch ownerOnly = InPlaceLaunch.decide(tmp, properties(
+                InPlaceLaunch.BOOT_OWNER_PROPERTY, "x"));
+        assertEquals(InPlaceLaunch.Action.LEAVE_ALONE, ownerOnly.action());
+        assertFalse(ownerOnly.knownLimit(),
+                "a bootstrap that should have run the pass is a failure worth reporting");
         assertEquals(InPlaceLaunch.Action.LEAVE_ALONE, InPlaceLaunch.decide(tmp, properties(
                 InPlaceStatus.MODE_PROPERTY, InPlaceStatus.MODE_UNAVAILABLE)).action());
         assertEquals(InPlaceLaunch.Action.LEAVE_ALONE, InPlaceLaunch.decide(tmp, properties(
                 InPlaceStatus.MODE_PROPERTY, InPlaceStatus.MODE_IN_PLACE,
                 InPlaceStatus.STATUS_PROPERTY, tmp.resolve("missing.json").toString()))
                 .action());
+    }
+
+    @Test
+    @DisplayName("a NeoForge version without a discovery pass leaves mods/ alone as a known limit")
+    void hostWithoutDiscoveryPassIsAKnownLimit() {
+        Properties properties = properties(InPlaceLaunch.BOOT_OWNER_PROPERTY, "x");
+        InPlaceBoot.markNoDiscoveryPass(properties);
+
+        InPlaceLaunch launch = InPlaceLaunch.decide(tmp, properties);
+
+        assertEquals(InPlaceLaunch.Action.LEAVE_ALONE, launch.action());
+        assertTrue(launch.knownLimit(), "the bootstrap said this host has no discovery pass");
+        assertEquals("this NeoForge version runs no discovery pass", launch.reason());
+    }
+
+    @Test
+    @DisplayName("the known-limit log asks for no report and offers rewrite mode only from 1.20.5")
+    void knownLimitMessageOffersRewriteOnlyWhereTheLoaderSeesIt() {
+        for (String minecraft : new String[] {"1.20.2", "1.20.4", "1.20.5", "1.20.6", null}) {
+            String message = InPlaceLaunch.knownLimitMessage(minecraft);
+            assertTrue(message.contains("not available on this NeoForge version"), message);
+            assertFalse(message.contains("report"),
+                    "a known limit is not a bug, so the log must not ask for a report: " + message);
+        }
+        for (String minecraft : new String[] {"1.20.2", "1.20.4", null}) {
+            String message = InPlaceLaunch.knownLimitMessage(minecraft);
+            assertFalse(message.contains("write_translated_jars"), "NeoForge " + minecraft
+                    + " cannot see a rewritten jar, so rewrite mode is not offered: " + message);
+        }
+        for (String minecraft : new String[] {"1.20.5", "1.20.6"}) {
+            String message = InPlaceLaunch.knownLimitMessage(minecraft);
+            assertTrue(message.contains("write_translated_jars"), "FML 3.0.18 on " + minecraft
+                    + " reads a rewritten jar, so rewrite mode is offered: " + message);
+        }
+    }
+
+    @Test
+    @DisplayName("write_translated_jars=true still rewrites on a host without a discovery pass")
+    void rewriteOptInWorksWithoutADiscoveryPass() throws IOException {
+        Properties fromProperty = properties(InPlaceLaunch.BOOT_OWNER_PROPERTY, "x",
+                InPlaceSettings.SYSTEM_PROPERTY, "true");
+        InPlaceBoot.markNoDiscoveryPass(fromProperty);
+        assertEquals(InPlaceLaunch.Action.REWRITE,
+                InPlaceLaunch.decide(tmp, fromProperty).action());
+
+        Path config = tmp.resolve("config/retromod/config.json");
+        Files.createDirectories(config.getParent());
+        Files.writeString(config, "{\"write_translated_jars\": true}");
+        Properties fromConfig = properties(InPlaceLaunch.BOOT_OWNER_PROPERTY, "x");
+        InPlaceBoot.markNoDiscoveryPass(fromConfig);
+        assertEquals(InPlaceLaunch.Action.REWRITE, InPlaceLaunch.decide(tmp, fromConfig).action(),
+                "the config file opts in the same way as the system property");
     }
 
     private Path game() throws IOException {
@@ -101,6 +158,11 @@ class InPlaceLaunchTest {
         return InPlaceLaunch.decide(outcome.statusFile().getParent(), properties(
                 InPlaceStatus.MODE_PROPERTY, InPlaceStatus.MODE_IN_PLACE,
                 InPlaceStatus.STATUS_PROPERTY, outcome.statusFile().toString()));
+    }
+
+    /** The translator Retromod's Forge and NeoForge entry points pass in in-place mode. */
+    private static InPlaceLaunch.Translator production() {
+        return (InPlaceLaunch.LinkingTranslator) new ForgeModTransformer("1.20.1")::translateOrThrow;
     }
 
     /** Every file below {@code root} except Retromod's cache, with its bytes. */
@@ -146,8 +208,7 @@ class InPlaceLaunchTest {
         assertNotNull(rewritten);
 
         DiscoveryEngine.Outcome first = discover(game, "1.20.1");
-        assertEquals(1, launchFor(first).translatePending("1.20.1", () ->
-                new ForgeModTransformer("1.20.1")::transformMod));
+        assertEquals(1, launchFor(first).translatePending("1.20.1", InPlaceLaunchTest::production));
         DiscoveryEngine.Outcome second = discover(game, "1.20.1");
         Path cached = Files.list(second.serveFolder()).findFirst().orElseThrow();
 
@@ -166,8 +227,8 @@ class InPlaceLaunchTest {
         DiscoveryEngine.Outcome first = discover(game, "1.20.1");
         Map<String, String> before = snapshotOutsideCache(game);
 
-        int translated = launchFor(first).translatePending("1.20.1", () ->
-                new ForgeModTransformer("1.20.1")::transformMod);
+        int translated = launchFor(first).translatePending("1.20.1",
+                InPlaceLaunchTest::production);
 
         assertEquals(2, translated);
         assertEquals(before, snapshotOutsideCache(game),
@@ -177,6 +238,37 @@ class InPlaceLaunchTest {
             assertTrue(files.noneMatch(f -> f.getFileName().toString().startsWith(".staging")),
                     "staging folders are removed after each translation");
         }
+    }
+
+    @Test
+    @DisplayName("an archive or disk error inside the transformer is retried and keeps its reason")
+    void transformerIoErrorIsRetriedWithItsReason() throws IOException {
+        Path game = game();
+        // A file and a folder share one path, so extraction inside the transformer throws an
+        // IOException. Discovery reads only metadata, so it still lists the jar as pending.
+        Map<String, String> entries = new LinkedHashMap<>();
+        entries.put("META-INF/mods.toml", TestModJars.toml("clash", "1.0.0", "[1.19.2,1.20)",
+                "forge", "[40,)", "mandatory=true"));
+        entries.put("assets/clash/value", "file");
+        entries.put("assets/clash/value/inner.txt", "file below a file");
+        TestModJars.jar(game.resolve("mods/clash.jar"), null, entries);
+
+        // An IOException is RETRY, so each launch up to the limit tries the jar again.
+        for (int launch = 1; launch <= InPlaceLaunch.MAX_TRANSLATION_ATTEMPTS; launch++) {
+            DiscoveryEngine.Outcome outcome = discover(game, "1.20.1");
+            assertEquals(1, InPlaceStatus.read(outcome.statusFile()).pending().size(),
+                    "launch " + launch + " tries the jar again");
+            assertEquals(0, launchFor(outcome).translatePending("1.20.1",
+                    InPlaceLaunchTest::production));
+        }
+
+        InPlaceStatus settled = InPlaceStatus.read(discover(game, "1.20.1").statusFile());
+        assertEquals(List.of(), settled.pending(), "it is not retried on every launch");
+        assertEquals(1, settled.failed().size());
+        String reason = settled.failed().get(0).reason();
+        assertTrue(reason.startsWith("java.nio.file.") && reason.contains("value"),
+                "the stored reason names the I/O error and its path, got: " + reason);
+        assertFalse(reason.contains("latest.log"), "a rotated log cannot hold the reason");
     }
 
     @Test
@@ -220,7 +312,7 @@ class InPlaceLaunchTest {
         Map<String, String> before = snapshotOutsideCache(game);
 
         assertEquals(InPlaceLaunch.ChosenOutcome.TRANSLATED, launch.translateChosen(chosen,
-                "1.20.1", () -> new ForgeModTransformer("1.20.1")::transformMod));
+                "1.20.1", InPlaceLaunchTest::production));
 
         assertEquals(before, snapshotOutsideCache(game), "only the cache changes");
         DiscoveryEngine.Outcome next = discover(game, "1.20.1");

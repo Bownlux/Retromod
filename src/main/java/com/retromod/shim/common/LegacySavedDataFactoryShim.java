@@ -86,8 +86,9 @@ public class LegacySavedDataFactoryShim implements MinecraftVersionedApiShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
-        boolean hostUsesSavedDataTypes = ClassResourceInspector.read(STORAGE) != null
-                && ClassResourceInspector.read(OLD_FACTORY) == null;
+        // Offline, where Minecraft cannot be read, every host this shim registers for, 26.1 and newer, has the types.
+        boolean hostUsesSavedDataTypes = ClassResourceInspector.read(STORAGE) == null
+                || ClassResourceInspector.read(OLD_FACTORY) == null;
         if (hostUsesSavedDataTypes) register(transformer);
     }
 

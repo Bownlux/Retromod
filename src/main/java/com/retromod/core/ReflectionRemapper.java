@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -55,7 +56,7 @@ public final class ReflectionRemapper {
             }
         }
         
-        LOGGER.info("ReflectionRemapper initialized with {} class remaps, {} method remap groups",
+        LOGGER.debug(RetromodLog.DETAIL, "ReflectionRemapper initialized with {} class remaps, {} method remap groups",
             classRemaps.size(), methodRemaps.size());
     }
     

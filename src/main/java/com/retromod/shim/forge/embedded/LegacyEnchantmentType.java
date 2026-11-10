@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.util.Map;
 
@@ -66,7 +67,7 @@ public final class LegacyEnchantmentType {
     /** Whether the type would enchant {@code item}: its predicate, or yes for a vanilla type. */
     public boolean canEnchant(Object item) {
         if (predicate == null) return true;
-        for (Method method : predicate.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(predicate.getClass())) {
             String methodName = method.getName();
             if ((methodName.equals("test") || methodName.equals("apply")) && method.getParameterCount() == 1) {
                 try {

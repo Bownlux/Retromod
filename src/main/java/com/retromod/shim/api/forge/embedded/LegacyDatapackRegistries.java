@@ -13,11 +13,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * enchantments and painting variants in 1.21.
  *
  * <p>There is no registry object to hand a mod any more, only a key. The stand-in answers
- * {@code key()}, so {@code DeferredRegister.create(ForgeRegistries.ENCHANTMENTS, modid)} builds
+ * {@code key()}, so {@code DeferredRegister.create(ForgeRegistries.PAINTING_VARIANTS, modid)} builds
  * a register for that key. Datapack registries never fire the registration event, so the mod's Java
- * entries stay unbound, and every other registry call fails with a message that says why. A mod
- * whose enchantments extend {@code Enchantment} still fails when the first one loads, because 1.21
- * made that class a final record. Reflective because Retromod is not compiled against Minecraft.
+ * entries stay unbound, and every other registry call fails with a message that says why. Enchantments
+ * get the view of the loaded world's registry instead, which also answers {@code key()}.
+ * Reflective because Retromod is not compiled against Minecraft.
  */
 public final class LegacyDatapackRegistries {
 
@@ -25,8 +25,9 @@ public final class LegacyDatapackRegistries {
 
     private LegacyDatapackRegistries() {}
 
+    /** Enchantments read the loaded world's registry, during a data pack load too, as BuiltInRegistries.ENCHANTMENT does. */
     public static Object enchantments() {
-        return standIn("ENCHANTMENT", "1.21");
+        return com.retromod.shim.common.embedded.LegacyEnchantmentRegistry.enchantments();
     }
 
     public static Object paintingVariants() {

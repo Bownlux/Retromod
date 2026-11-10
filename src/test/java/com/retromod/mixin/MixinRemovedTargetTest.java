@@ -5,6 +5,10 @@
 package com.retromod.mixin;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
+import com.retromod.shim.forge.Forge_26_1_to_26_2;
+import com.retromod.shim.forge.LegacyGuiOverlayBridge;
+import com.retromod.util.McReflect;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassWriter;
@@ -113,5 +117,79 @@ class MixinRemovedTargetTest {
         // short-circuit so we don't mass-neutralize on a broken/empty classpath.
         assertNull(mt.mixinTargetsRemovedClass(mixin, name -> false),
                 "when even the sanity-gate class is absent, the probe is untrustworthy → never strip");
+    }
+
+    @Test
+    @DisplayName("On Forge 26.2, a mixin on ForgeGui, its debug overlay or VanillaGuiOverlay is dropped, and a vanilla target is kept")
+    void rebuiltForgeOverlayTargetsAreRemoved() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        String savedTarget = RetromodVersion.TARGET_MC_VERSION;
+        boolean savedForge = McReflect.isForceForge();
+        boolean savedNeoForge = McReflect.isForceNeoForge();
+        try {
+            RetromodVersion.TARGET_MC_VERSION = "26.2";
+            McReflect.setForceNeoForge(false);
+            McReflect.setForceForge(true);
+            transformer.clearRedirectsForTesting();
+            var mt = new MixinCompatibilityTransformer(transformer);
+            String forgeGui = "net/minecraftforge/client/gui/overlay/ForgeGui";
+            ClassNode embeddium = mixinTargeting("me/jellysquid/mods/sodium/mixin/ForgeGuiMixin", forgeGui);
+            assertNull(mt.mixinTargetsRemovedClass(embeddium, HOST_26_1), "without the overlay bridge the Forge target is not judged");
+
+            LegacyGuiOverlayBridge.register(transformer);
+            assertEquals(forgeGui, mt.mixinTargetsRemovedClass(embeddium, HOST_26_1),
+                    "the redirect would land the mixin on the mod's own rebuilt copy");
+            assertEquals(forgeGui, mt.mixinTargetsRemovedClass(embeddium, name -> false), "decided offline too, without a host probe");
+            String debugOverlay = forgeGui + "$ForgeDebugScreenOverlay";
+            assertEquals(debugOverlay, mt.mixinTargetsRemovedClass(
+                    mixinTargeting("tech/betterf3/mixin/ForgeGuiMixin", debugOverlay), HOST_26_1));
+            String vanillaOverlay = "net/minecraftforge/client/gui/overlay/VanillaGuiOverlay";
+            assertEquals(vanillaOverlay, mt.mixinTargetsRemovedClass(
+                    mixinTargeting("glitchcore/mixin/MixinVanillaGuiOverlay", vanillaOverlay), HOST_26_1));
+            // One of the enum's constant bodies goes with the enum, as the debug overlay goes with ForgeGui.
+            String constantBody = vanillaOverlay + "$1";
+            assertEquals(constantBody, mt.mixinTargetsRemovedClass(
+                    mixinTargeting("glitchcore/mixin/MixinVanillaGuiOverlayBody", constantBody), HOST_26_1));
+            assertNull(mt.mixinTargetsRemovedClass(mixinTargeting("net/coderbot/iris/mixin/MixinLevelRenderer",
+                    "net/minecraft/client/renderer/LevelRenderer"), HOST_26_1), "a vanilla target that exists is kept");
+        } finally {
+            RetromodVersion.TARGET_MC_VERSION = savedTarget;
+            McReflect.setForceForge(savedForge);
+            McReflect.setForceNeoForge(savedNeoForge);
+            transformer.clearRedirectsForTesting();
+        }
+    }
+
+    @Test
+    @DisplayName("On Forge 26.2, a mixin into the removed item renderer is dropped, since it would land on the mod's own copy")
+    void rebuiltItemRendererTargetIsRemoved() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        String savedTarget = RetromodVersion.TARGET_MC_VERSION;
+        boolean savedForge = McReflect.isForceForge();
+        boolean savedNeoForge = McReflect.isForceNeoForge();
+        try {
+            RetromodVersion.TARGET_MC_VERSION = "26.2";
+            McReflect.setForceNeoForge(false);
+            McReflect.setForceForge(true);
+            transformer.clearRedirectsForTesting();
+            var mt = new MixinCompatibilityTransformer(transformer);
+            String renderer = "net/minecraft/client/renderer/BlockEntityWithoutLevelRenderer";
+            ClassNode skinLayers = mixinTargeting("dev/tr7zw/skinlayers/mixin/BlockEntityWithoutLevelRendererMixin", renderer);
+            assertNull(mt.mixinTargetsRemovedClass(skinLayers, name -> false), "offline without the bridge, nothing decides it");
+
+            new Forge_26_1_to_26_2().registerRedirects(transformer);
+            transformer.setModSourceVersion("1.20.1");
+            assertEquals(renderer, mt.mixinTargetsRemovedClass(skinLayers, name -> false), "decided by the redirect, offline too");
+            // Retromod's runtime jar carries the rebuilt class, so the host probe alone would keep the mixin.
+            assertEquals(renderer, mt.mixinTargetsRemovedClass(skinLayers, name -> true));
+            transformer.setModSourceVersion("26.2");
+            assertNull(mt.mixinTargetsRemovedClass(skinLayers, name -> true), "a mod that keeps the name is judged by the host");
+        } finally {
+            RetromodVersion.TARGET_MC_VERSION = savedTarget;
+            McReflect.setForceForge(savedForge);
+            McReflect.setForceNeoForge(savedNeoForge);
+            transformer.setModSourceVersion(null);
+            transformer.clearRedirectsForTesting();
+        }
     }
 }

@@ -4,6 +4,9 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyLog;
+
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -76,7 +79,7 @@ public final class LegacyEventCalls {
         // handlers before it are already live. Drop them, or each would fire twice.
         invoke(bus, findOne(bus.getClass(), "unregister", 1), target);
         Method addListener = null;
-        for (Method method : bus.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(bus.getClass())) {
             if (method.getName().equals("addListener") && method.getParameterCount() == 4
                     && method.getParameterTypes()[2] == Class.class) {
                 addListener = method;
@@ -95,8 +98,7 @@ public final class LegacyEventCalls {
             if (subscribe == null) continue;
             Class<?> eventType = handler.getParameterTypes()[0];
             if (java.lang.reflect.Modifier.isAbstract(eventType.getModifiers())) {
-                System.getLogger("Retromod").log(System.Logger.Level.WARNING,
-                        "Skipping " + handler + ": NeoForge never posts the abstract " + eventType.getName()
+                LegacyLog.warn("Skipping " + handler + ": NeoForge never posts the abstract " + eventType.getName()
                         + " that this Forge listener expects");
                 continue;
             }
@@ -107,8 +109,7 @@ public final class LegacyEventCalls {
                 invoke(bus, addListener, priority, receiveCanceled, eventType, listener);
             } catch (IllegalArgumentException wrongBus) {
                 // Forge's game bus accepted mod-bus events and never fired them; NeoForge refuses.
-                System.getLogger("Retromod").log(System.Logger.Level.WARNING,
-                        "Skipping " + handler + " on this bus: " + wrongBus.getMessage());
+                LegacyLog.warn("Skipping " + handler + " on this bus: " + wrongBus.getMessage());
             }
         }
     }
@@ -129,7 +130,7 @@ public final class LegacyEventCalls {
     }
 
     private static Method findOne(Class<?> type, String name, int parameters) {
-        for (Method method : type.getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(type)) {
             if (method.getName().equals(name) && method.getParameterCount() == parameters
                     && method.getParameterTypes()[0] == Object.class) {
                 return method;
@@ -210,7 +211,7 @@ public final class LegacyEventCalls {
      */
     private static void preventDamage(Object event) {
         try {
-            event.getClass().getMethod("setNewDamage", float.class).invoke(event, 0.0f);
+            LegacyPublicMethods.method(event.getClass(), "setNewDamage", float.class).invoke(event, 0.0f);
         } catch (NoSuchMethodException notADamageEvent) {
             // Any other uncancellable event runs on, as Forge's non-cancelable events did.
         } catch (ReflectiveOperationException e) {

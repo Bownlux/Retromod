@@ -7,6 +7,7 @@ package com.retromod.shim.common;
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -16,7 +17,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Bridges the dispenser API that 1.20.2 and 1.21 reshaped, for Mojang-named mods built for 1.20.1
- * (Forge 1.20.1 mods after the SRG remap) on a 1.21.x host.
+ * (Forge 1.20.1 mods after the SRG remap, Fabric mods after the 26.x remap) on a 1.21 or newer host.
  *
  * <p>1.20.2 turned the {@code BlockSource} interface into the {@code dispenser.BlockSource}
  * record, whose getters drop the {@code get} prefix. 1.21 removed
@@ -27,7 +28,8 @@ import org.slf4j.LoggerFactory;
  * generated class with the 1.20.1 behavior: it asks the subclass for the projectile, shoots it
  * from the dispenser face with the subclass's power and uncertainty, and plays the launch sound.
  * The {@code Position} view of the old interface, {@code x()}, {@code y()} and {@code z()}, is
- * not bridged. 26.1 hosts are left to the 26.1 class moves and rebase.
+ * not bridged, nor is the two-argument constructor of {@code BlockSourceImpl}. From 26.1 the
+ * getters are still bridged here and the removed base is left to {@link RemovedBaseToParentBridge}.
  */
 public final class LegacyDispenserBridge {
 
@@ -35,6 +37,7 @@ public final class LegacyDispenserBridge {
 
     static final String OLD_SOURCE = "net/minecraft/core/BlockSource";
     static final String SOURCE = "net/minecraft/core/dispenser/BlockSource";
+    static final String OLD_SOURCE_IMPL = "net/minecraft/core/BlockSourceImpl";
     static final String OLD_PROJECTILE_BASE = "net/minecraft/core/dispenser/AbstractProjectileDispenseBehavior";
     static final String PROJECTILE_BASE = "com/retromod/generated/LegacyProjectileDispenseBehavior";
     static final String DEFAULT_BEHAVIOR = "net/minecraft/core/dispenser/DefaultDispenseItemBehavior";
@@ -67,20 +70,18 @@ public final class LegacyDispenserBridge {
 
     public static void register(RetromodTransformer transformer) {
         if (!hostHasRecordSource()) return;
-        boolean projectileBaseRemoved = !ClassResourceInspector.exists(OLD_PROJECTILE_BASE)
+        // From 26.1 RemovedBaseToParentBridge rebases the removed base, whatever the shim order.
+        boolean projectileBaseRemoved = RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.1") < 0
+                && !ClassResourceInspector.exists(OLD_PROJECTILE_BASE)
                 && (ClassResourceInspector.exists(DEFAULT_BEHAVIOR)
                         || RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21") >= 0);
         registerRedirects(transformer, projectileBaseRemoved);
-        LOGGER.info("Bridged the pre-1.20.2 dispenser BlockSource{}",
+        LOGGER.debug(RetromodLog.DETAIL, "Bridged the pre-1.20.2 dispenser BlockSource{}",
                 projectileBaseRemoved ? " and AbstractProjectileDispenseBehavior" : "");
     }
 
-    /**
-     * The host's own classes decide, below 26.1. Offline, where they are not readable, a target
-     * from 1.20.2 up to 26.1 does.
-     */
+    /** The host's own classes decide; offline, a target from 1.20.2 up does. */
     static boolean hostHasRecordSource() {
-        if (RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.1") >= 0) return false;
         ClassNode source = ClassResourceInspector.read(SOURCE);
         if (source == null && !ClassResourceInspector.exists(OLD_SOURCE)) {
             return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20.2") >= 0;
@@ -92,11 +93,16 @@ public final class LegacyDispenserBridge {
     /** Unconditional registration for transform-shape tests. */
     static void registerRedirects(RetromodTransformer transformer, boolean projectileBaseRemoved) {
         transformer.registerClassRedirect(OLD_SOURCE, SOURCE);
+        // The interface's one implementation went with it. Mixin handlers that capture the locals of
+        // DispenserBlock.dispenseFrom name it, and Mixin rejects a handler whose types are missing.
+        transformer.registerClassRedirect(OLD_SOURCE_IMPL, SOURCE);
         // The record is a class, so the mod's interface calls must become virtual calls.
         transformer.registerClassOwner(SOURCE);
         for (String[] getter : GETTERS) {
-            transformer.registerMethodRedirect(OLD_SOURCE, getter[0], "()" + getter[1],
-                    SOURCE, getter[2], "()" + getter[3]);
+            for (String owner : new String[]{OLD_SOURCE, OLD_SOURCE_IMPL}) {
+                transformer.registerMethodRedirect(owner, getter[0], "()" + getter[1],
+                        SOURCE, getter[2], "()" + getter[3]);
+            }
         }
         if (projectileBaseRemoved) {
             transformer.registerSyntheticClass(PROJECTILE_BASE, generateProjectileBase(hostFacingDesc()));

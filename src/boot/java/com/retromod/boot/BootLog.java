@@ -38,7 +38,8 @@ public final class BootLog {
                     loggerType.getMethod("warn", String.class),
                     loggerType.getMethod("error", String.class));
         } catch (Throwable unavailable) {
-            // Without it, messages go to standard output, which the loaders also capture.
+            // Without it, messages go to standard output. That reaches the launcher console but
+            // not logs/latest.log, because the loaders do not redirect it at discovery time.
             return new BootLog(null, null, null, null);
         }
     }

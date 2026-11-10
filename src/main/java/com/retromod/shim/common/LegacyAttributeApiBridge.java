@@ -7,6 +7,7 @@ package com.retromod.shim.common;
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -76,6 +77,15 @@ public final class LegacyAttributeApiBridge {
             "net/minecraftforge/event/entity/EntityAttributeModificationEvent");
 
     static final String RESOURCE_LOCATION = "net/minecraft/resources/ResourceLocation";
+    static final String ITEM = "net/minecraft/world/item/Item";
+
+    /**
+     * The UUIDs 1.20.4 items keyed their base attack modifiers by, with the ids 1.21 gave them, so a
+     * weapon built the old way still shows its damage and speed as base values.
+     */
+    static final String[][] BASE_ATTACK = {
+            {"BASE_ATTACK_DAMAGE_UUID", "CB3F55D3-645C-4F38-A497-9C13A33DB5CF", "base_attack_damage"},
+            {"BASE_ATTACK_SPEED_UUID", "FA233E1C-4180-4865-B01B-BCCE9785ACA3", "base_attack_speed"}};
     static final String OFFLINE_FIRST_VERSION = "1.21";
     static final String OFFLINE_END_VERSION = "1.21.2";
 
@@ -257,8 +267,11 @@ public final class LegacyAttributeApiBridge {
         }
         List<String> effectConstants = holderConstants(MOB_EFFECTS);
         registerRedirects(transformer, id, rewrites, attributeConstants, effectConstants);
-        LOGGER.info("Bridged {} removed attribute and mob effect members and {} holder constants",
-                rewrites.size(), attributeConstants.size() + effectConstants.size());
+        // NeoForge's chain and the Forge chain both register this, so the notice prints once.
+        if (transformer.firstRegistrationNotice(LegacyAttributeApiBridge.class.getName())) {
+            LOGGER.debug(RetromodLog.DETAIL, "Bridged {} removed attribute and mob effect members and {} holder constants",
+                    rewrites.size(), attributeConstants.size() + effectConstants.size());
+        }
     }
 
     /**
@@ -274,7 +287,9 @@ public final class LegacyAttributeApiBridge {
         }
         registerRedirects(transformer, RESOURCE_LOCATION, candidates(RESOURCE_LOCATION),
                 OFFLINE_ATTRIBUTE_CONSTANTS, OFFLINE_EFFECT_CONSTANTS);
-        LOGGER.info("Bridged the 1.21 attribute and mob effect API from the target version");
+        if (transformer.firstRegistrationNotice(LegacyAttributeApiBridge.class.getName())) {
+            LOGGER.debug(RetromodLog.DETAIL, "Bridged the 1.21 attribute and mob effect API from the target version");
+        }
         return true;
     }
 
@@ -301,6 +316,12 @@ public final class LegacyAttributeApiBridge {
             if (effectConstants.contains(rename[1]) && !effectConstants.contains(rename[0])) {
                 transformer.registerExactFieldRedirect(MOB_EFFECTS, rename[0], L_EFFECT,
                         HELPER, constantGetter(MOB_EFFECTS, rename[1]), "()" + L_EFFECT);
+            }
+        }
+        // Item's base attack UUIDs went with the UUID-keyed modifier; a weapon subclass reads them through itself.
+        if (!id.equals(UUID) && !hostKeepsBaseAttackUuids()) {
+            for (String[] base : BASE_ATTACK) {
+                transformer.registerInheritedStaticFieldRedirect(ITEM, base[0], L_UUID, HELPER, base[0], "()" + L_UUID);
             }
         }
         for (Rewrite rewrite : rewrites) {
@@ -383,6 +404,7 @@ public final class LegacyAttributeApiBridge {
             emitIdOfUuid(cw, id);
             emitUuidOfId(cw, id);
         }
+        for (String[] base : BASE_ATTACK) emitUuidConstant(cw, base[0], base[1]);
         for (String constant : attributeConstants) emitConstantGetter(cw, ATTRIBUTES, constant, ATTRIBUTE);
         for (String constant : effectConstants) emitConstantGetter(cw, MOB_EFFECTS, constant, MOB_EFFECT);
         for (Rewrite rewrite : rewrites) emitAdapter(cw, id, rewrite);
@@ -417,6 +439,21 @@ public final class LegacyAttributeApiBridge {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "idOf",
                 "(" + L_UUID + ")L" + id + ";", null, null);
         mv.visitCode();
+        // A base attack UUID becomes the id the host's own items use.
+        for (String[] base : BASE_ATTACK) {
+            Label other = new Label();
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitLdcInsn(base[1]);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, UUID, "fromString", "(Ljava/lang/String;)" + L_UUID, false);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, UUID, "equals", "(Ljava/lang/Object;)Z", false);
+            mv.visitJumpInsn(Opcodes.IFEQ, other);
+            mv.visitLdcInsn("minecraft");
+            mv.visitLdcInsn(base[2]);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, id, "fromNamespaceAndPath",
+                    "(Ljava/lang/String;Ljava/lang/String;)L" + id + ";", false);
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitLabel(other);
+        }
         mv.visitLdcInsn(ID_NAMESPACE);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, UUID, "toString", "()Ljava/lang/String;", false);
@@ -439,6 +476,21 @@ public final class LegacyAttributeApiBridge {
         Label end = new Label();
         Label fallback = new Label();
         mv.visitTryCatchBlock(start, end, fallback, "java/lang/IllegalArgumentException");
+        // The host's base attack ids answer the UUIDs 1.20.4 used for them.
+        for (String[] base : BASE_ATTACK) {
+            Label other = new Label();
+            mv.visitLdcInsn("minecraft");
+            mv.visitLdcInsn(base[2]);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, id, "fromNamespaceAndPath",
+                    "(Ljava/lang/String;Ljava/lang/String;)L" + id + ";", false);
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Object", "equals", "(Ljava/lang/Object;)Z", false);
+            mv.visitJumpInsn(Opcodes.IFEQ, other);
+            mv.visitLdcInsn(base[1]);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, UUID, "fromString", "(Ljava/lang/String;)" + L_UUID, false);
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitLabel(other);
+        }
         mv.visitLdcInsn(ID_NAMESPACE);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, id, "getNamespace", "()Ljava/lang/String;", false);
@@ -464,6 +516,23 @@ public final class LegacyAttributeApiBridge {
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
+    }
+
+    /** {@code static UUID <name>()}: one of the removed {@code Item} UUID constants. */
+    private static void emitUuidConstant(ClassWriter cw, String name, String uuid) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, name, "()" + L_UUID, null, null);
+        mv.visitCode();
+        mv.visitLdcInsn(uuid);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, UUID, "fromString", "(Ljava/lang/String;)" + L_UUID, false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /** Whether the host's {@code Item} still declares the UUID constants; offline, a host with id-keyed modifiers has none. */
+    private static boolean hostKeepsBaseAttackUuids() {
+        ClassNode item = ClassResourceInspector.read(ITEM);
+        return item != null && item.fields.stream().anyMatch(f -> f.name.equals(BASE_ATTACK[0][0]));
     }
 
     private static void emitConstantGetter(ClassWriter cw, String owner, String constant, String type) {

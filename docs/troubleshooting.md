@@ -19,9 +19,9 @@ With `write_translated_jars` set to `true`, use `retromod-input/` for Forge and 
 
 Do not put an old Fabric API jar in the input folder as a substitute for the host library. Install one Fabric API build made for the host version in `mods/`. Current Retromod builds archive a staged old Fabric API instead of translating and installing a duplicate.
 
-## Graphics Break on Minecraft 26.2
+## Graphics Break on Minecraft 26.2 or Newer
 
-Choose **Video Settings > Graphics API > OpenGL**. Old mods that render directly through OpenGL may fail on Vulkan.
+Choose **Video Settings > Graphics API > Prefer OpenGL**. Old mods that render directly through OpenGL may fail on Vulkan.
 
 ## The Retromod Button Is Missing
 
@@ -56,7 +56,7 @@ Errors such as `MixinApplyError`, `InvalidInjectionException`, missing `@Shadow`
 
 Retromod can redirect many targets and update selected handler signatures. Loader transforms index the installed Minecraft jar automatically. Offline transforms need `--mc-jar <target.jar>` for the same exact target-method checks. Ambiguous overloads, constructors, reordered or removed parameters, changed returns, semantic local captures, and `remap = false` scopes are left for a reviewed bridge. When Retromod cannot repair a known handler safely, it may disable that feature so the rest of the mod can load. File an issue with the first mixin error and the affected mod jar.
 
-For a known fatal handler, advanced users can extend `config/retromod/mixin-blocklist.json`:
+For a known fatal handler, advanced users can extend `config/retromod/mixin-blocklist.json`. Its entries are added to Retromod's bundled list.
 
 ```json
 {
@@ -64,16 +64,26 @@ For a known fatal handler, advanced users can extend `config/retromod/mixin-bloc
     {
       "mixin": "com/example/mod/mixin/SomeMixin",
       "methods": ["brokenHandler"]
+    },
+    {
+      "mixin": "com/example/mod/mixin/OtherMixin",
+      "strip": "class",
+      "targetAtLeast": "1.21.11",
+      "targetAtMost": "1.21.11"
     }
   ]
 }
 ```
 
-Omit `methods` only when the entire mixin must be disabled.
+`methods` removes the methods with those names from the mixin. An entry can also carry the method's descriptor, as in `brokenHandler(Lnet/minecraft/server/level/ServerLevel;)V`, and then removes only that overload. The descriptor uses the names in the mod jar, before Retromod translates it. Without `methods`, Retromod removes every injector and `@Overwrite` handler. It keeps `@Shadow`, `@Accessor`, `@Invoker`, and `@Unique` members, any interface the mixin adds, and its target.
+
+To disable the whole mixin, add `"strip": "class"`. Retromod then points the mixin at a target that does not exist, so the mixin framework skips it. Use it for a mixin that adds an interface or has an accessor that no longer binds. `targetAtLeast` and `targetAtMost` limit an entry to a range of Minecraft versions, both ends included. Without them, the entry applies on every version.
+
+Retromod reads the blocklist when it translates a mod. A mod translated before the edit keeps its old result. On Forge and NeoForge, clear the cache as described in [Cache Looks Stale](#cache-looks-stale).
 
 ## A Mod Extends a Class Minecraft Removed
 
-`IncompatibleClassChangeError`, or a Retromod log line saying a mod class `extends` something that
+`IncompatibleClassChangeError`, or a Retromod warning saying a mod class `extends` something that
 does not exist, is final, or is an interface.
 
 Minecraft keeps folding hardcoded subclasses into data components and deleting the old base. A mod
@@ -83,8 +93,9 @@ is gone. Retromod names the mod class, the base, and why the base cannot be used
 Retromod supplies a replacement base for some of these, such as the old music disc and enchanted
 book item classes. Those mods load, and the behavior the old base carried in its constructor does
 not come back: a converted music disc registers and does not play in a jukebox. Where there is no
-replacement, the mod needs a real port. Attach the log line to an issue with the mod and its
-version.
+replacement yet, that class can fail when the game loads it, and the rest of the mod still loads.
+The warning is Retromod's check, not a crash. If the mod breaks, attach the line to an issue with
+the mod and its version.
 
 Offline transforms read this from the Minecraft jar. The CLI uses an installed copy of the target
 version when it finds one, and `--mc-jar <target.jar>` names it explicitly.
@@ -101,13 +112,13 @@ Forge 1.20.1 and modern NeoForge use substantially different APIs. Retromod brid
 
 ## A Very Large Mod Is Skipped
 
-Retromod refuses a jar whose contents exceed 500 MB unpacked, or that holds a single file over 50 MB. The log shows `ZIP total extracted size exceeds limit` or `ZIP entry exceeds`. The limit stops a crafted archive from exhausting memory during a transform. A jar above it stays untransformed, so the loader then rejects it for its declared Minecraft version, which looks like Retromod having done nothing. Very large jars are usually a mod plus bundled assets. Try a build without the bundled resource pack, or an earlier version below the limit.
+Retromod refuses a jar whose contents exceed 500 MB unpacked, or that holds a single file over 50 MB. In the game log, `ZIP entry too large` names the oversized file, and `total extracted size exceeds limit` means the whole jar is over the limit. The CLI prints `ZIP entry exceeds` or `mod jar exceeds max total decompressed size` instead. The limit stops a crafted archive from exhausting memory during a transform. A jar above it stays untransformed, so the loader then rejects it for its declared Minecraft version, which looks like Retromod having done nothing. Very large jars are usually a mod plus bundled assets. Try a build without the bundled resource pack, or an earlier version below the limit.
 
 ## Cache Looks Stale
 
 Current builds stamp AOT caches and invalidate mismatches automatically. During same-version development runs, delete `config/retromod/aot-cache/` to force a rebuild.
 
-The Forge and NeoForge translation cache is rebuilt after a Retromod or loader update, or a change to `polyfills_enabled` or `transform_mixins`. To force it, close the game and run `java -jar retromod-1.4.0-snapshot.3.1-cli.jar cache clear <game-dir>`. `cache status <game-dir>` shows what the cache holds and why a mod failed.
+The Forge and NeoForge translation cache is rebuilt after a Retromod or loader update, or a change to `polyfills_enabled` or `transform_mixins`. Edits to `config/retromod/mixin-blocklist.json` do not rebuild it. To force it, close the game and run `java -jar retromod-1.4.0-snapshot.4-cli.jar cache clear <game-dir>`. `cache status <game-dir>` shows what the cache holds and why a mod failed.
 
 ## A Current Mod Requires an Old Mod
 
@@ -133,12 +144,14 @@ Set `write_translated_jars` to `true` in `config/retromod/config.json`, or start
 
 Include:
 
-1. `logs/latest.log`
+1. `logs/latest.log`, and on Forge and NeoForge also `logs/debug.log` from the launch that translated the mod
 2. The verify report, if present
 3. On Forge and NeoForge, the CLI output of `cache status <game-dir>`
 4. A link to the exact mod version
 5. `config/retromod/config.json`
 6. Minecraft, loader, loader version, Java, and Retromod versions
 7. What you expected and what happened
+
+Retromod keeps its step-by-step translation lines out of `latest.log`. On Fabric and Quilt, set `log_level` to `"DEBUG"` in `config/retromod/config.json` before the launch you report. See [Log Detail]({{ '/config' | relative_url }}#log-detail).
 
 [Open an issue](https://github.com/Bownlux/Retromod/issues/new).

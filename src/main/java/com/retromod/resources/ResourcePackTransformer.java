@@ -4,6 +4,8 @@
  */
 package com.retromod.resources;
 
+import com.retromod.inplace.WorkFolder;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -99,14 +101,14 @@ public class ResourcePackTransformer {
             oldFormat.display(), targetPackFormat.display());
         
         if (oldFormats.supports(targetPackFormat)) {
-            LOGGER.info("  Pack is already compatible - copying unchanged");
+            LOGGER.debug(RetromodLog.DETAIL, "  Pack is already compatible - copying unchanged");
             Path dest = outputDir.resolve(name);
             PackArchive.copyPathAtomically(sourcePack, dest);
             return dest;
         }
         
         // Create temp directory for transformation
-        Path tempDir = Files.createTempDirectory("retromod-rp-");
+        Path tempDir = WorkFolder.createTempDirectory("retromod-rp-");
         
         try {
             // Extract pack
@@ -134,7 +136,7 @@ public class ResourcePackTransformer {
                 .build();
             int migrated = ModResourceMigrations.migrateDirectory(tempDir, context);
             if (migrated > 0) {
-                LOGGER.info("  Updated {} resource file(s)", migrated);
+                LOGGER.debug(RetromodLog.DETAIL, "  Updated {} resource file(s)", migrated);
             }
             
             // Repack
@@ -142,7 +144,7 @@ public class ResourcePackTransformer {
             Path outputPath = outputDir.resolve(outputName);
             PackArchive.packZip(tempDir, outputPath);
             
-            LOGGER.info("  Transformed: {}", outputName);
+            LOGGER.debug(RetromodLog.DETAIL, "  Transformed: {}", outputName);
             return outputPath;
             
         } finally {
@@ -179,7 +181,7 @@ public class ResourcePackTransformer {
                 namespace.resolve("textures"), oldFormat, targetPackFormat);
         }
         if (movedTextures > 0) {
-            LOGGER.info("  Updated {} versioned texture path(s)", movedTextures);
+            LOGGER.debug(RetromodLog.DETAIL, "  Updated {} versioned texture path(s)", movedTextures);
         }
 
         // Moving a texture without repointing the models that name it leaves a pack that looks
@@ -188,7 +190,7 @@ public class ResourcePackTransformer {
             packDir, blockRenames(), FlatteningTextureRenames.items(), vanillaOnly,
             oldFormat, targetPackFormat);
         if (repointed > 0) {
-            LOGGER.info("  Repointed texture references in {} model(s)", repointed);
+            LOGGER.debug(RetromodLog.DETAIL, "  Repointed texture references in {} model(s)", repointed);
         }
     }
 

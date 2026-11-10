@@ -12,10 +12,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.io.ByteArrayOutputStream;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
@@ -69,6 +71,16 @@ class TransformVerifierTest {
 
         Files.writeString(config, "{\"verify_transforms\":true}");
         assertTrue(TransformVerifier.isEnabled(config));
+    }
+
+    @Test
+    @DisplayName("A config without verify_transforms leaves verification off")
+    void missingVerificationSettingIsOff(@TempDir Path dir) throws Exception {
+        Path config = dir.resolve("config.json");
+        Files.writeString(config, "{}");
+
+        // The settings screen copies this default, so a change here must change it too.
+        assertFalse(TransformVerifier.isEnabled(config));
     }
 
     @Test
@@ -488,6 +500,190 @@ class TransformVerifierTest {
         assertEquals(TransformVerifier.IssueType.MISSING_CLASS,
                 result.issues().get(0).type());
         assertEquals(missingElement, result.issues().get(0).owner());
+    }
+
+    @Test
+    @DisplayName("A class from another mod is not called missing from Minecraft")
+    void otherModClassGetsItsOwnWording() {
+        String otherModClass = new TransformVerifier.Issue(TransformVerifier.IssueType.MISSING_CLASS,
+                "mezz/jei/api/IModPlugin", null, null).toReadableString("26.3");
+        String otherModMethod = new TransformVerifier.Issue(TransformVerifier.IssueType.MISSING_METHOD,
+                "mezz/jei/api/IJeiHelpers", "getRetired", "()V").toReadableString("26.3");
+        String minecraftClass = new TransformVerifier.Issue(TransformVerifier.IssueType.MISSING_CLASS,
+                "net/minecraft/test/Missing", null, null).toReadableString("26.3");
+
+        assertFalse(otherModClass.contains("not found in MC"), otherModClass);
+        assertTrue(otherModClass.contains("another mod or library"), otherModClass);
+        assertEquals("mezz.jei.api.IJeiHelpers.getRetired() not found in the installed mod or library"
+                + " that provides mezz.jei.api.IJeiHelpers.", otherModMethod);
+        assertEquals("net.minecraft.test.Missing not found in MC 26.3", minecraftClass,
+                "a Minecraft gap keeps the wording log readers already search for");
+    }
+
+    @Test
+    @DisplayName("26.3 renderpearl classes are Minecraft classes checked against the exact index")
+    void renderpearlIsMinecraftOwned(@TempDir Path dir) throws Exception {
+        String present = "com/mojang/renderpearl/api/GpuFormat";
+        String missing = "com/mojang/renderpearl/api/RetiredFormat";
+        FuzzyBackedSymbolIndex index = indexClasses(dir, present);
+        Path transformedMod = dir.resolve("renderpearl-links.jar");
+        writeJar(transformedMod, "test/ModPlugin.class",
+                modClass(new String[0], present, missing));
+
+        TransformVerifier.VerifyResult result = TransformVerifier.verify(
+                transformedMod, "renderpearl-links.jar", "26.3", index);
+        String wording = onSide(false, () -> new TransformVerifier.Issue(
+                TransformVerifier.IssueType.MISSING_CLASS, present, null, null)
+                .toReadableString("26.3"));
+
+        assertEquals(List.of(new TransformVerifier.Issue(
+                        TransformVerifier.IssueType.MISSING_CLASS, missing, null, null)),
+                result.issues(), "only the renderpearl class absent from --mc-jar is missing");
+        assertEquals("com.mojang.renderpearl.api.GpuFormat not found in MC 26.3", wording);
+    }
+
+    @Test
+    @DisplayName("Minecraft gaps list ahead of other mods' classes found earlier")
+    void minecraftIssuesListFirst(@TempDir Path dir) throws Exception {
+        String otherMod = "mezz/jei/api/IModPlugin";
+        String minecraft = "net/minecraft/test/Missing";
+        FuzzyBackedSymbolIndex index = indexTarget(
+                dir, targetClass(INDEXED_TARGET, "java/lang/Object", "()V"));
+        Path transformedMod = dir.resolve("jei-plugin.jar");
+        writeJar(transformedMod, "test/ModPlugin.class",
+                modClass(new String[]{otherMod}, minecraft));
+
+        TransformVerifier.VerifyResult result = TransformVerifier.verify(
+                transformedMod, "jei-plugin.jar", "26.3", index);
+
+        assertEquals(List.of(minecraft, otherMod),
+                result.issues().stream().map(TransformVerifier.Issue::owner).toList(),
+                "the Minecraft gap must head the console's first ten lines");
+    }
+
+    @Test
+    @DisplayName("An unfinished verification stays ahead of other mods' classes")
+    void verificationIncompleteStaysAheadOfOtherModIssues(@TempDir Path dir) throws Exception {
+        String otherMod = "mezz/jei/api/IModPlugin";
+        FuzzyMethodResolver resolver = new FuzzyMethodResolver();
+        resolver.indexJar(writeIndexJar(dir, INDEXED_TARGET));
+        FuzzyBackedSymbolIndex failingIndex = new FuzzyBackedSymbolIndex(resolver, "26.3") {
+            @Override
+            public boolean hasMethod(String owner, String name, String descriptor) {
+                throw new IllegalStateException("index read failed");
+            }
+        };
+        Path transformedMod = dir.resolve("incomplete.jar");
+        writeJar(transformedMod,
+                new String[]{"test/ModPlugin.class", "test/MethodProbe.class"},
+                new byte[][]{
+                        modClass(new String[]{otherMod}),
+                        classCallingMethod(INDEXED_TARGET, "anything", "()V")
+                });
+
+        TransformVerifier.VerifyResult result = TransformVerifier.verify(
+                transformedMod, "incomplete.jar", "26.3", failingIndex);
+
+        assertEquals(List.of(TransformVerifier.IssueType.VERIFICATION_INCOMPLETE,
+                        TransformVerifier.IssueType.MISSING_CLASS),
+                result.issues().stream().map(TransformVerifier.Issue::type).toList(),
+                "the other mod's class was found first, but an unfinished check matters more");
+    }
+
+    @Test
+    @DisplayName("A dedicated server does not call a client class missing from Minecraft")
+    void clientClassOnDedicatedServerIsNotCalledMissing() throws Exception {
+        TransformVerifier.Issue input = new TransformVerifier.Issue(
+                TransformVerifier.IssueType.MISSING_CLASS, "net/minecraft/client/player/Input",
+                null, null);
+
+        String server = onSide(true, () -> input.toReadableString("26.3"));
+        String client = onSide(false, () -> input.toReadableString("26.3"));
+
+        assertEquals("net.minecraft.client.player.Input was not checked: it is a client class,"
+                + " and a dedicated server does not have it.", server);
+        assertEquals("net.minecraft.client.player.Input not found in MC 26.3", client);
+    }
+
+    @Test
+    @DisplayName("On a dedicated server, unchecked client classes list after Minecraft gaps")
+    void clientClassesOnServerListAfterMinecraftGaps(@TempDir Path dir) throws Exception {
+        String otherMod = "mezz/jei/api/IModPlugin";
+        String clientClass = "net/minecraft/client/player/Input";
+        String minecraft = "net/minecraft/test/Missing";
+        FuzzyBackedSymbolIndex index = indexTarget(
+                dir, targetClass(INDEXED_TARGET, "java/lang/Object", "()V"));
+        Path transformedMod = dir.resolve("server-side.jar");
+        writeJar(transformedMod, "test/ModPlugin.class",
+                modClass(new String[]{otherMod}, clientClass, minecraft));
+
+        List<String> owners = onSide(true, () -> TransformVerifier.verify(
+                        transformedMod, "server-side.jar", "26.3", index)
+                .issues().stream().map(TransformVerifier.Issue::owner).toList());
+
+        assertEquals(List.of(minecraft, clientClass, otherMod), owners,
+                "a client class a server cannot check is not a confirmed gap");
+    }
+
+    /** Runs {@code body} with the loader side set, then restores the detector's saved answers. */
+    private static <T> T onSide(boolean dedicatedServer, Callable<T> body) throws Exception {
+        Field[] fields = {
+                EnvironmentDetector.class.getDeclaredField("isClient"),
+                EnvironmentDetector.class.getDeclaredField("isHeadless"),
+                EnvironmentDetector.class.getDeclaredField("isDedicatedServer")};
+        Object[] saved = new Object[fields.length];
+        for (int i = 0; i < fields.length; i++) {
+            fields[i].setAccessible(true);
+            saved[i] = fields[i].get(null);
+        }
+        EnvironmentDetector.setLoaderEnvironment(!dedicatedServer);
+        try {
+            return body.call();
+        } finally {
+            for (int i = 0; i < fields.length; i++) {
+                fields[i].set(null, saved[i]);
+            }
+        }
+    }
+
+    /** An exact index of a Minecraft jar holding one empty class for each name. */
+    private static FuzzyBackedSymbolIndex indexClasses(Path dir, String... names) throws Exception {
+        FuzzyMethodResolver resolver = new FuzzyMethodResolver();
+        resolver.indexJar(writeIndexJar(dir, names));
+        return new FuzzyBackedSymbolIndex(resolver, "26.3");
+    }
+
+    private static Path writeIndexJar(Path dir, String... names) throws IOException {
+        Path minecraftJar = dir.resolve("minecraft-26.3-client.jar");
+        String[] entries = new String[names.length];
+        byte[][] contents = new byte[names.length][];
+        for (int i = 0; i < names.length; i++) {
+            entries[i] = names[i] + ".class";
+            contents[i] = emptyClass(names[i]);
+        }
+        writeJar(minecraftJar, entries, contents);
+        return minecraftJar;
+    }
+
+    /** A mod class implementing {@code interfaces} that casts to each of {@code targets} in turn. */
+    private static byte[] modClass(String[] interfaces, String... targets) {
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, "test/ModPlugin",
+                null, "java/lang/Object", interfaces);
+        MethodVisitor method = writer.visitMethod(
+                Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "probe", "(Ljava/lang/Object;)V",
+                null, null);
+        method.visitCode();
+        for (String target : targets) {
+            method.visitVarInsn(Opcodes.ALOAD, 0);
+            method.visitTypeInsn(Opcodes.CHECKCAST, target);
+            method.visitInsn(Opcodes.POP);
+        }
+        method.visitInsn(Opcodes.RETURN);
+        method.visitMaxs(0, 0);
+        method.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
     }
 
     private static FuzzyBackedSymbolIndex indexTarget(Path dir, byte[] targetBytes)

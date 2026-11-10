@@ -16,7 +16,7 @@ public final class FabricRegistryIdSynthetic {
     private FabricRegistryIdSynthetic() {}
 
     // Embedded into Fabric mods, where no other loader family exists, so the bridge references
-    // only Minecraft and itself.
+    // only Minecraft, itself, and the map color guard that is embedded with it.
     public static final String INTERNAL = "com/retromod/shim/fabric/embedded/FabricRegistryIdBridge";
 
     private static final String THREADLOCAL = "java/lang/ThreadLocal";
@@ -34,6 +34,7 @@ public final class FabricRegistryIdSynthetic {
     private static final String L_RK = "L" + RK + ";";
     private static final String L_BBP = "L" + BBP + ";";
     private static final String L_IP = "L" + IP + ";";
+    private static final String MAP_COLOR_GUARD = "com/retromod/shim/common/embedded/LegacyBlockProperties";
 
     /** Builds the bridge class each Fabric mod embeds. */
     public static byte[] generate() {
@@ -260,6 +261,11 @@ public final class FabricRegistryIdSynthetic {
         mv.visitCode();
         mv.visitVarInsn(ALOAD, 0);
         mv.visitMethodInsn(INVOKESTATIC, BBP, "ofFullCopy", "(L" + BB + ";)" + L_BBP, false);
+        // A mod built before 1.20.5 that copies the barrier or light block gets a map color that
+        // reads waterlogged, which its own block lacks, so the guard answers NONE instead of throwing.
+        mv.visitMethodInsn(INVOKESTATIC, MAP_COLOR_GUARD, "guardMapColor",
+                "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+        mv.visitTypeInsn(CHECKCAST, BBP);
         mv.visitMethodInsn(INVOKESTATIC, INTERNAL, "stampBlock", "(" + L_BBP + ")" + L_BBP, false);
         mv.visitInsn(ARETURN);
         mv.visitMaxs(0, 0);

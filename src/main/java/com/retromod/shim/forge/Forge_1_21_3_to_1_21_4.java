@@ -6,12 +6,16 @@ package com.retromod.shim.forge;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
+import com.retromod.shim.common.Mc1_21_3To1_21_4CoreMoves;
 
 public class Forge_1_21_3_to_1_21_4 implements VersionShim {
     @Override public String getShimName() { return "Forge 1.21.3 to 1.21.4"; }
     @Override public String getSourceVersion() { return "1.21.3"; }
     @Override public String getTargetVersion() { return "1.21.4"; }
     @Override public String getModLoaderType() { return "forge"; }
-    @Override public void registerRedirects(RetromodTransformer transformer) {}
+    @Override
+    public void registerRedirects(RetromodTransformer transformer) {
+        Mc1_21_3To1_21_4CoreMoves.register(transformer);
+    }
     @Override public String[] getShimClasses() { return new String[0]; }
 }

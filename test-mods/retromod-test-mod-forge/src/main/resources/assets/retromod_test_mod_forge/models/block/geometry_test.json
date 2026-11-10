@@ -1,0 +1,8 @@
+{
+  "loader": "retromod_test_mod_forge:test_loader",
+  "textures": { "particle": "minecraft:block/stone" },
+  "inner": {
+    "parent": "minecraft:block/cube_all",
+    "textures": { "all": "minecraft:block/stone" }
+  }
+}

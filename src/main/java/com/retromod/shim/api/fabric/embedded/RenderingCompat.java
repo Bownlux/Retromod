@@ -5,6 +5,7 @@
 package com.retromod.shim.api.fabric.embedded;
 
 import com.retromod.core.EnvironmentDetector;
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -87,15 +88,15 @@ public class RenderingCompat {
         if (framebuffer == null) return;
 
         try {
-            Method bindMethod = framebuffer.getClass().getMethod("bindFramebuffer", boolean.class);
+            Method bindMethod = LegacyPublicMethods.method(framebuffer.getClass(), "bindFramebuffer", boolean.class);
             bindMethod.invoke(framebuffer, setViewport);
         } catch (NoSuchMethodException e) {
             try {
-                Method bindMethod = framebuffer.getClass().getMethod("bindWrite", boolean.class);
+                Method bindMethod = LegacyPublicMethods.method(framebuffer.getClass(), "bindWrite", boolean.class);
                 bindMethod.invoke(framebuffer, setViewport);
             } catch (Exception e2) {
                 try {
-                    Method bindMethod = framebuffer.getClass().getMethod("beginRenderPass");
+                    Method bindMethod = LegacyPublicMethods.method(framebuffer.getClass(), "beginRenderPass");
                     bindMethod.invoke(framebuffer);
                 } catch (Exception e3) {
                     LOGGER.debug("Could not bind render target: {}", e3.getMessage());

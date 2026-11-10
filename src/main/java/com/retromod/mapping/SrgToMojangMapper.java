@@ -5,6 +5,7 @@
 package com.retromod.mapping;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -148,7 +149,7 @@ public final class SrgToMojangMapper {
                     RESOURCE_PATH, RESOURCE_PATH_1122);
             return EMPTY;
         }
-        LOGGER.info("Loaded SRG to Mojang mappings for {} methods and {} fields",
+        LOGGER.debug(RetromodLog.DETAIL, "Loaded SRG to Mojang mappings for {} methods and {} fields",
                 methods.size(), fields.size());
         return new SrgToMojangMapper(Map.copyOf(methods), Map.copyOf(fields));
     }

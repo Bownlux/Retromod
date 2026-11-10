@@ -9,9 +9,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -26,6 +26,7 @@ public final class InGameScreenFactory {
     private static Class<?> screenClass;
     private static Class<?> textClass;
     private static Class<?> confirmScreenClass;
+    private static Class<?> alertScreenClass;
     private static Class<?> minecraftClientClass;
     private static Class<?> buttonWidgetClass;
     private static boolean resolved = false;
@@ -39,28 +40,40 @@ public final class InGameScreenFactory {
 
         screenClass = McReflect.findClass(
             "net.minecraft.client.gui.screen.Screen",
-            "net.minecraft.client.gui.screens.Screen"
+            "net.minecraft.client.gui.screens.Screen",
+            "net.minecraft.class_437"  // intermediary, pre-26.1 Fabric
         );
 
         textClass = McReflect.findClass(
             "net.minecraft.text.Text",
-            "net.minecraft.network.chat.Component"
+            "net.minecraft.network.chat.Component",
+            "net.minecraft.class_2561"
         );
 
         // ConfirmLinkScreen has a different constructor and cannot be used here.
         confirmScreenClass = McReflect.findClass(
             "net.minecraft.client.gui.screen.ConfirmScreen",    // yarn
-            "net.minecraft.client.gui.screens.ConfirmScreen"    // mojang
+            "net.minecraft.client.gui.screens.ConfirmScreen",   // mojang
+            "net.minecraft.class_410"                           // intermediary
+        );
+
+        // A message with one button. Yarn calls Mojang's AlertScreen NoticeScreen.
+        alertScreenClass = McReflect.findClass(
+            "net.minecraft.client.gui.screen.NoticeScreen",     // yarn
+            "net.minecraft.client.gui.screens.AlertScreen",     // mojang
+            "net.minecraft.class_403"                           // intermediary
         );
 
         minecraftClientClass = McReflect.findClass(
             "net.minecraft.client.MinecraftClient",
-            "net.minecraft.client.Minecraft"
+            "net.minecraft.client.Minecraft",
+            "net.minecraft.class_310"
         );
 
         buttonWidgetClass = McReflect.findClass(
             "net.minecraft.client.gui.widget.ButtonWidget",
-            "net.minecraft.client.gui.components.Button"
+            "net.minecraft.client.gui.components.Button",
+            "net.minecraft.class_4185"
         );
 
         if (screenClass == null || textClass == null || minecraftClientClass == null) {
@@ -71,21 +84,11 @@ public final class InGameScreenFactory {
         return true;
     }
 
-    private static Object getClientInstance() {
-        try {
-            Method getInstance = McReflect.findMethod(minecraftClientClass, "getInstance");
-            return getInstance != null ? getInstance.invoke(null) : null;
-        } catch (Exception e) {
-            LOGGER.debug("Could not get the Minecraft client instance: {}", e.getMessage());
-            return null;
-        }
-    }
-
     private static Object createText(String text) {
         try {
             // Current Yarn and Mojang names share literal().
             Method literal = McReflect.findMethod(textClass,
-                new Class[]{String.class}, "literal");
+                new Class[]{String.class}, "literal", "method_43470");
             if (literal != null) {
                 return literal.invoke(null, text);
             }
@@ -111,19 +114,8 @@ public final class InGameScreenFactory {
         return null;
     }
 
-    private static void setScreen(Object screen) {
-        try {
-            Object client = getClientInstance();
-            if (client == null) return;
-
-            Method setScreen = McReflect.findMethod(minecraftClientClass,
-                new Class[]{screenClass}, "setScreen");
-            if (setScreen != null) {
-                setScreen.invoke(client, screen);
-            }
-        } catch (Exception e) {
-            LOGGER.warn("Could not open the Minecraft screen: {}", e.getMessage());
-        }
+    private static boolean setScreen(Object screen) {
+        return McScreens.show(screen);
     }
 
     /**
@@ -202,48 +194,95 @@ public final class InGameScreenFactory {
      * @param title        dialog title
      * @param message      dialog body (supports newlines)
      * @param onYes        run when the user clicks Yes
+     * @return true when the screen opened
      */
-    public static void showRestartConfirm(Object parentScreen, String title,
-                                          String message, Runnable onYes) {
+    public static boolean showRestartConfirm(Object parentScreen, String title,
+                                             String message, Runnable onYes) {
+        // Text can only be built once the Minecraft classes are resolved.
+        Object messageText = resolveClasses() ? createText(message) : null;
+        return showRestartConfirm(parentScreen, title, messageText, onYes);
+    }
+
+    /** Like the String form, with a message already built as Minecraft text (a translation). */
+    public static boolean showRestartConfirm(Object parentScreen, String title,
+                                             Object messageText, Runnable onYes) {
         if (!resolveClasses() || confirmScreenClass == null) {
             LOGGER.warn("The restart screen is unavailable on this Minecraft version.");
-            return;
+            return false;
         }
         try {
             Object titleText = createText(title);
-            Object messageText = createText(message);
-            if (titleText == null || messageText == null) return;
+            if (titleText == null || messageText == null) {
+                LOGGER.warn("Retromod could not build the text of its restart screen.");
+                return false;
+            }
 
             Class<?> boolConsumerClass;
             try {
                 boolConsumerClass = Class.forName("it.unimi.dsi.fastutil.booleans.BooleanConsumer");
             } catch (ClassNotFoundException e) {
                 LOGGER.debug("BooleanConsumer unavailable; cannot build ConfirmScreen");
-                return;
+                return false;
             }
 
+            // Yes usually stops the client, so only No (or Esc) needs a screen to return to.
             Object callback = Proxy.newProxyInstance(
                 boolConsumerClass.getClassLoader(),
                 new Class<?>[]{boolConsumerClass},
-                (proxy, method, args) -> {
-                    if (method.getParameterCount() == 1 && args != null) {
-                        boolean confirmed = (Boolean) args[0];
-                        if (confirmed) {
-                            if (onYes != null) onYes.run(); // stops the client; screen irrelevant
-                        } else {
-                            setScreen(parentScreen);
-                        }
-                    }
-                    return null;
-                }
+                answerHandler(onYes, () -> setScreen(parentScreen))
             );
 
             Constructor<?> ctor = confirmScreenClass.getConstructor(
                 boolConsumerClass, textClass, textClass);
             Object screen = ctor.newInstance(callback, titleText, messageText);
-            setScreen(screen);
+            return setScreen(screen);
         } catch (Exception e) {
             LOGGER.warn("Could not show the restart screen: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /** The body of a ConfirmScreen callback: Yes runs onYes, No and Esc run onNo. */
+    static InvocationHandler answerHandler(Runnable onYes, Runnable onNo) {
+        return (proxy, method, args) -> {
+            // ConfirmScreen calls accept(boolean), and its Esc key answers false.
+            if (method.getName().equals("accept") && args != null && args.length == 1
+                    && args[0] instanceof Boolean confirmed) {
+                Runnable answer = confirmed ? onYes : onNo;
+                if (answer != null) answer.run();
+                return null;
+            }
+            boolean noArgs = method.getParameterCount() == 0;
+            if (method.getName().equals("equals") && method.getParameterCount() == 1) {
+                return proxy == args[0];
+            }
+            if (method.getName().equals("hashCode") && noArgs) return System.identityHashCode(proxy);
+            if (method.getName().equals("toString") && noArgs) return "Retromod confirm callback";
+            return method.isDefault() ? InvocationHandler.invokeDefault(proxy, method, args) : null;
+        };
+    }
+
+    /** Shows a message with one button that returns to {@code parentScreen}. */
+    static void showAlert(Object parentScreen, String title, String message) {
+        if (!resolveClasses() || alertScreenClass == null) {
+            LOGGER.warn("Retromod could not show its message screen on this Minecraft version. "
+                    + "The message was: {}", message);
+            return;
+        }
+        try {
+            Object titleText = createText(title);
+            Object messageText = createText(message);
+            if (titleText == null || messageText == null) {
+                LOGGER.warn("Retromod could not build its message text. The message was: {}", message);
+                return;
+            }
+            // AlertScreen(Runnable, title, message): its one button runs the Runnable.
+            Constructor<?> ctor = alertScreenClass.getConstructor(Runnable.class, textClass, textClass);
+            Runnable back = () -> setScreen(parentScreen);
+            setScreen(ctor.newInstance(back, titleText, messageText));
+        } catch (Exception e) {
+            LOGGER.warn("Could not show the message screen: {}. The message was: {}",
+                    e.getMessage(), message);
         }
     }
 
@@ -266,11 +305,8 @@ public final class InGameScreenFactory {
         if (!resolveClasses()) return;
 
         try {
-            // NoticeScreen exists on some MC versions
-            Class<?> noticeScreenClass = McReflect.findClass(
-                "net.minecraft.client.gui.screen.NoticeScreen",
-                "net.minecraft.client.gui.screens.NoticeScreen"
-            );
+            // Yarn's NoticeScreen is Mojang's AlertScreen.
+            Class<?> noticeScreenClass = alertScreenClass;
 
             if (noticeScreenClass != null) {
                 Object titleText = createText("Retromod");
@@ -304,34 +340,14 @@ public final class InGameScreenFactory {
         LOGGER.info("Retromod notice: {}", message);
     }
 
-    /** Shows one result per mod and offers to close the game when a restart is needed. */
-    public static void showUpdateResults(List<String> results, boolean needsRestart) {
-        StringBuilder msg = new StringBuilder();
-
-        for (String result : results) {
-            msg.append(result).append("\n");
-        }
-
+    /** Shows the update results over {@code parentScreen}; call on Minecraft's main thread. */
+    public static void showUpdateResults(Object parentScreen, String message, boolean needsRestart) {
         if (needsRestart) {
-            msg.append("\nRestart Minecraft to load the updated mods.");
+            // The message ends with a question: Yes closes the game, No and Esc go back.
+            showRestartConfirm(parentScreen, "Retromod results", message, RestartPrompt::stopClient);
+        } else {
+            showAlert(parentScreen, "Retromod results", message);
         }
-
-        showResultScreen("Retromod results", msg.toString(), () -> {
-            if (needsRestart) {
-                try {
-                    Object client = getClientInstance();
-                    if (client != null) {
-                        Method scheduleStop = McReflect.findMethod(minecraftClientClass,
-                            "scheduleStop");
-                        if (scheduleStop != null) {
-                            scheduleStop.invoke(client);
-                        }
-                    }
-                } catch (Exception e) {
-                    LOGGER.debug("Could not schedule stop: {}", e.getMessage());
-                }
-            }
-        });
     }
 
     /**

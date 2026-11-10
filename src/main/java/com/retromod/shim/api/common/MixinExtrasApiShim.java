@@ -71,10 +71,8 @@ public class MixinExtrasApiShim implements AuxiliaryVersionShim {
             "com/llamalad7/mixinextras/injector/ModifyExpressionValue"
         );
 
-        transformer.registerClassRedirect(
-            "com/llamalad7/mixinextras/injector/WrapWithCondition",
-            "com/llamalad7/mixinextras/injector/wrapmethod/WrapWithCondition"
-        );
+        // WrapWithCondition stays: every MixinExtras from 0.1.1 to 0.5.5 ships it under injector/, and
+        // injector/wrapmethod/ holds only WrapMethod, so the move dropped every @WrapWithCondition handler.
 
         transformer.registerClassRedirect(
             "com/llamalad7/mixinextras/injector/v2/ModifyReturnValue",

@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.neoforge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -40,7 +41,7 @@ public final class LegacyReloadRegistries {
     private static Object current(ClassLoader loader) throws ReflectiveOperationException {
         Object server = Class.forName("net.neoforged.neoforge.server.ServerLifecycleHooks", false, loader)
                 .getMethod("getCurrentServer").invoke(null);
-        if (server != null) return server.getClass().getMethod("registryAccess").invoke(server);
+        if (server != null) return LegacyPublicMethods.method(server.getClass(), "registryAccess").invoke(server);
         Object built = staticAccess;
         if (built == null) {
             Object root = Class.forName("net.minecraft.core.registries.BuiltInRegistries", false, loader).getField("REGISTRY").get(null);

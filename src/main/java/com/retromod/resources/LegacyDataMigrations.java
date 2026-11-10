@@ -6,6 +6,7 @@ package com.retromod.resources;
 
 import com.retromod.core.ModVersionDetector;
 import com.retromod.core.RetromodVersion;
+import com.retromod.inplace.WorkFolder;
 import com.retromod.util.ZipSecurity;
 
 import java.io.IOException;
@@ -64,7 +65,7 @@ public final class LegacyDataMigrations {
 
         // The CLI and AOT paths stream entries into a new jar, so they migrate the finished jar:
         // only data/ is extracted, and the jar is rewritten only when a file changed.
-        Path tree = Files.createTempDirectory("retromod-data-");
+        Path tree = WorkFolder.createTempDirectory("retromod-data-");
         try {
             if (!extractData(jar, tree)) return 0;
             int written = migrateTree(tree, source, targetMcVersion);
@@ -77,7 +78,7 @@ public final class LegacyDataMigrations {
 
     /** {@link #migrateArchive} for a nested jar held in memory; returns the same bytes when unchanged. */
     public static byte[] migrateArchive(byte[] jar, String targetMcVersion) throws IOException {
-        Path file = Files.createTempFile("retromod-nested-", ".jar");
+        Path file = WorkFolder.createTempFile("retromod-nested-", ".jar");
         try {
             Files.write(file, jar);
             // A nested jar is a mod of its own, so its source version comes from its own metadata.

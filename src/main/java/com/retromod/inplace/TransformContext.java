@@ -32,8 +32,8 @@ import java.util.TreeMap;
  * the folder whenever one of them changes.
  *
  * <p>Only values that reach a transform belong here. {@code verify_transforms} and
- * {@code debug} only report on a finished jar, and {@code force_translate_complex} only gates
- * the in-game picker, so changing them must not throw the cache away.
+ * {@code debug} only report on a finished jar, and the retired {@code force_translate_complex}
+ * no longer does anything, so changing them must not throw the cache away.
  */
 public final class TransformContext {
 
@@ -77,6 +77,9 @@ public final class TransformContext {
         }
         builder.put("loader", loader == null ? "" : loader.toLowerCase(Locale.ROOT));
         builder.put("loader.build", loaderBuild == null ? "" : loaderBuild);
+        // A dedicated server leaves client-only code out of its copies, so each side keeps its own.
+        builder.put("dist", systemProperties == null ? ""
+                : systemProperties.getProperty(InPlaceStatus.DIST_PROPERTY, ""));
 
         boolean autoFixApplies = autoFixApplies(loader, systemProperties);
         builder.put("autofix.applies", Boolean.toString(autoFixApplies));

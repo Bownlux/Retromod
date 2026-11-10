@@ -27,7 +27,7 @@ final class RegistrationDigest {
             "reportedIllegalSuperclasses", "registrationResetHooks", "targetSrgMethodIds",
             "targetSrgSamIndex", "methodRedirectOwners", "constructorRedirectOwners",
             "argDropOwners", "convertingOwners", "singletonOwners", "indyTypedOwners",
-            "neutralizedMethodOwners");
+            "neutralizedMethodOwners", "inheritedMojangRenames", "mojangRenameOnHost");
 
     /** Classes whose static collections also decide what a transform does. */
     private static final List<String> STATIC_REGISTRIES = List.of(

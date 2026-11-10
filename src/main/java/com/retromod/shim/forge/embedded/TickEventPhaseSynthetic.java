@@ -46,6 +46,15 @@ public final class TickEventPhaseSynthetic {
     public static final String PHASE_SET_NAME = "set";
     public static final String PHASE_SET_DESC = "(Ljava/lang/Object;" + DESC + ")V";
 
+    /** The class that reads a tick event's side, apart from the phase so reading one never loads FML's LogicalSide. */
+    public static final String SIDE_INTERNAL = "com/retromod/shim/forge/embedded/TickEventSide";
+
+    /** {@code GETFIELD ...TickEvent$*.side} becomes {@code INVOKESTATIC side(receiver)}; Forge's field was final too. */
+    public static final String SIDE_OF_NAME = "side";
+    public static final String SIDE_OF_DESC = "(Ljava/lang/Object;)Lnet/neoforged/fml/LogicalSide;";
+    public static final String SIDE_SET_NAME = "setSide";
+    public static final String SIDE_SET_DESC = "(Ljava/lang/Object;Lnet/neoforged/fml/LogicalSide;)V";
+
     public static byte[] generate() {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
             @Override protected String getCommonSuperClass(String a, String b) {
@@ -93,6 +102,31 @@ public final class TickEventPhaseSynthetic {
         set.visitInsn(RETURN);
         set.visitMaxs(0, 0);
         set.visitEnd();
+
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** The side reader for the removed {@code side} field. */
+    public static byte[] generateSide() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_FINAL, SIDE_INTERNAL, null, "java/lang/Object", null);
+
+        // Forge set the side from where the tick ran; NeoForge posts each tick event on that side's own
+        // thread, so the thread FML tags as client or server answers it.
+        MethodVisitor side = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, SIDE_OF_NAME, SIDE_OF_DESC, null, null);
+        side.visitCode();
+        side.visitMethodInsn(INVOKESTATIC, "net/neoforged/fml/util/thread/EffectiveSide", "get",
+                "()Lnet/neoforged/fml/LogicalSide;", false);
+        side.visitInsn(ARETURN);
+        side.visitMaxs(0, 0);
+        side.visitEnd();
+
+        MethodVisitor setSide = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, SIDE_SET_NAME, SIDE_SET_DESC, null, null);
+        setSide.visitCode();
+        setSide.visitInsn(RETURN);
+        setSide.visitMaxs(0, 0);
+        setSide.visitEnd();
 
         cw.visitEnd();
         return cw.toByteArray();

@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.util.function.Supplier;
 
 /**
@@ -24,7 +25,7 @@ public final class LegacyBlockStates {
         try {
             Object stone = Class.forName("net.minecraft.world.level.block.Blocks", true,
                     LegacyBlockStates.class.getClassLoader()).getField("STONE").get(null);
-            return stone.getClass().getMethod("defaultBlockState").invoke(stone);
+            return LegacyPublicMethods.method(stone.getClass(), "defaultBlockState").invoke(stone);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Retromod could not find a base state for an old stair block", e);
         }

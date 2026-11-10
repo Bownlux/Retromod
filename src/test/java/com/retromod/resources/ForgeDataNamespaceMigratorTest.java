@@ -14,12 +14,21 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
+import java.lang.reflect.Proxy;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 import static com.retromod.resources.ResourceFixtures.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * NeoForge reads a Forge mod's data under its own names, and newer Forge reads its conditions and
@@ -477,6 +486,97 @@ class ForgeDataNamespaceMigratorTest {
         migrate(tree, NEOFORGE, target);
 
         assertTrue(tree.exists(copy), copy);
+    }
+
+    // Balm's Forge build ships c: tags that also take their forge: twin, which the rewrite turns into c:.
+    private static final String DYES = "data/c/tags/item/dyes.json";
+    private static final String RED_DYES = "data/c/tags/item/dyes/red.json";
+    private static final String STONES = "data/c/tags/item/stones.json";
+
+    private static final List<String> DYE_COLORS = List.of("white", "orange", "magenta", "light_blue", "yellow",
+            "lime", "pink", "gray", "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black");
+
+    /** Balm's dye tags: c:dyes names each color, and each color names its forge: twin and the dye. */
+    private static MapResourceTree balmTags() throws IOException {
+        Map<String, byte[]> files = new TreeMap<>();
+        StringBuilder colors = new StringBuilder();
+        for (String color : DYE_COLORS) {
+            colors.append("\"#c:dyes/").append(color).append("\",");
+            files.put("data/c/tags/item/dyes/" + color + ".json", ("{\"replace\":false,\"values\":[{\"id\":"
+                    + "\"#forge:dyes/" + color + "\",\"required\":false},\"minecraft:" + color + "_dye\"]}")
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        files.put(DYES, ("{\"replace\":false,\"values\":[" + colors + "{\"id\":\"#forge:dyes\",\"required\":false}]}")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        files.put(STONES, ("{\"values\":[{\"id\":\"#forge:stone\",\"required\":false},\"minecraft:stone\"],"
+                + "\"remove\":[\"#forge:stone\"]}").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return new MapResourceTree(files);
+    }
+
+    @ParameterizedTest(name = "{0} {1}")
+    @CsvSource({"NEOFORGE, 1.21.1", "NEOFORGE, 26.3", "FORGE, 26.1", "FORGE, 26.3"})
+    @DisplayName("A c: tag that listed its forge: twin, as Balm's do, does not end up naming itself")
+    void commonTagDropsItsRewrittenTwin(MigrationContext.Loader host, String target) throws IOException {
+        MapResourceTree tree = balmTags();
+
+        migrate(tree, host, target);
+
+        JsonArray dyes = read(tree, DYES).getAsJsonArray("values");
+        assertEquals(DYE_COLORS.size(), dyes.size(), "only the forge:dyes twin is dropped: " + dyes);
+        assertEquals("#c:dyes/red", dyes.get(DYE_COLORS.indexOf("red")).getAsString());
+        assertEquals(JsonParser.parseString("[\"minecraft:red_dye\"]"), read(tree, RED_DYES).get("values"));
+        JsonObject stones = read(tree, STONES);
+        assertEquals(JsonParser.parseString("[\"minecraft:stone\"]"), stones.get("values"),
+                "forge:stone became c:stones, the tag itself");
+        assertEquals(new JsonArray(), stones.get("remove"));
+        assertFalse(read(tree, DYES).get("replace").getAsBoolean(), "the rest of the file is kept");
+    }
+
+    @Test
+    @DisplayName("The 26.3 server's tag sorter orders Balm's translated c: tags instead of recursing without end")
+    void hostTagSorterOrdersBalmTags() throws Exception {
+        Path client = Path.of(System.getProperty("user.home"), "Library/Application Support/PrismLauncher/libraries/"
+                + "com/mojang/minecraft/26.3/minecraft-26.3-client.jar");
+        assumeTrue(Files.isRegularFile(client), "needs the 26.3 client from Prism Launcher");
+        MapResourceTree tree = balmTags();
+        migrate(tree, NEOFORGE, "26.3");
+
+        try (URLClassLoader host = new URLClassLoader(new URL[] {client.toUri().toURL()}, getClass().getClassLoader())) {
+            Class<?> sorterType = host.loadClass("net.minecraft.util.DependencySorter");
+            Class<?> entryType = host.loadClass("net.minecraft.util.DependencySorter$Entry");
+            Object sorter = sorterType.getConstructor().newInstance();
+            // Each tag as TagLoader adds it: its id, and the tags its values name, required or not.
+            List<String> files = new ArrayList<>(List.of(DYES, STONES));
+            DYE_COLORS.forEach(color -> files.add("data/c/tags/item/dyes/" + color + ".json"));
+            for (String file : files) {
+                String id = "c:" + file.substring("data/c/tags/item/".length(), file.length() - ".json".length());
+                List<String> required = new ArrayList<>();
+                List<String> optional = new ArrayList<>();
+                for (var entry : read(tree, file).getAsJsonArray("values")) {
+                    boolean isRequired = !entry.isJsonObject() || !entry.getAsJsonObject().has("required")
+                            || entry.getAsJsonObject().get("required").getAsBoolean();
+                    String value = entry.isJsonObject() ? entry.getAsJsonObject().get("id").getAsString() : entry.getAsString();
+                    if (value.startsWith("#")) (isRequired ? required : optional).add(value.substring(1));
+                }
+                Object entry = Proxy.newProxyInstance(host, new Class<?>[] {entryType}, (proxy, method, args) -> {
+                    if (method.getName().equals("visitRequiredDependencies")) required.forEach(castConsumer(args[0]));
+                    else if (method.getName().equals("visitOptionalDependencies")) optional.forEach(castConsumer(args[0]));
+                    return null;
+                });
+                sorterType.getMethod("addEntry", Object.class, entryType).invoke(sorter, id, entry);
+            }
+            List<String> order = new ArrayList<>();
+            BiConsumer<Object, Object> collect = (id, entry) -> order.add((String) id);
+            sorterType.getMethod("orderByDependencies", BiConsumer.class).invoke(sorter, collect);
+
+            assertEquals(files.size(), order.size(), order.toString());
+            assertTrue(order.indexOf("c:dyes/red") < order.indexOf("c:dyes"), "a tag comes after the tags it names");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Consumer<String> castConsumer(Object consumer) {
+        return (Consumer<String>) consumer;
     }
 
     @Test

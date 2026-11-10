@@ -48,7 +48,9 @@ public final class LegacyLivingRendererAdapter {
     public static byte[] apply(byte[] classBytes) {
         if (classBytes == null || !RetromodVersion.isUnobfuscatedTarget(RetromodVersion.TARGET_MC_VERSION)) return classBytes;
         ClassReader reader = new ClassReader(classBytes);
-        String state = BASES.get(reader.getSuperName());
+        // A module descriptor has no superclass, and an immutable map refuses a null lookup.
+        String superName = reader.getSuperName();
+        String state = superName == null ? null : BASES.get(superName);
         if (state == null || reader.getClassName().startsWith("net/minecraft/")
                 || (reader.getAccess() & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_INTERFACE)) != 0) {
             return classBytes;

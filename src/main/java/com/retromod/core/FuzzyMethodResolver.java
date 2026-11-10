@@ -7,6 +7,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.objectweb.asm.*;
 import org.slf4j.Logger;
@@ -41,7 +42,7 @@ public class FuzzyMethodResolver {
 
     /** Points for exact method name match. */
     private static final int SCORE_EXACT_NAME = 30;
-    /** Points when Levenshtein distance is <= 3. */
+    /** Points when the names are within 3 edits and still read as a rename ({@link #looksRenamed}). */
     private static final int SCORE_LEVENSHTEIN_CLOSE = 20;
     /** Points when old name is a substring of the candidate (or vice versa). */
     private static final int SCORE_SUBSTRING_MATCH = 15;
@@ -60,7 +61,7 @@ public class FuzzyMethodResolver {
 
     /** Minimum score to auto-apply the redirect. Below 85, mismatched return types (MutableComponent vs GuiMessageTag) slipped through and caused VerifyErrors. */
     private static final int THRESHOLD_AUTO_APPLY = 85;
-    /** Minimum score to log a warning (but not apply). */
+    /** Minimum score to list a near miss in the fuzzy report (but not apply). */
     private static final int THRESHOLD_LOG_WARNING = 50;
 
     private static final int MAX_ARCHIVE_ENTRIES = 100_000;
@@ -78,6 +79,15 @@ public class FuzzyMethodResolver {
 
     /** Key: JVM internal class name. Value: fields declared on it. */
     private final Map<String, List<FieldInfo>> fieldIndex = new HashMap<>();
+
+    /** Key: {@code owner.name}. Value: the generic Signature of an indexed field that has type arguments. */
+    private final Map<String, String> fieldSignatures = new HashMap<>();
+
+    /** {@code owner.name} of every indexed static field. */
+    private final Set<String> staticFields = new HashSet<>();
+
+    /** Key: {@code owner.name}. Value: the access flags of every indexed field. */
+    private final Map<String, Integer> fieldAccess = new HashMap<>();
 
     /** Key: JVM internal class name. Value: its superclass plus implemented interfaces. */
     private final Map<String, List<String>> classHierarchy = new HashMap<>();
@@ -102,7 +112,7 @@ public class FuzzyMethodResolver {
     /** Negative cache for platform classes that could not be inspected. */
     private final Set<String> missingExternalClasses = ConcurrentHashMap.newKeySet();
 
-    /** Edits that still read as a rename of the same member rather than a different one. */
+    /** Most edits between two names that {@link #looksRenamed} can still read as one rename. */
     private static final int MAX_RENAME_EDITS = 3;
 
     /** Edits within which two object type names are treated as related rather than unrelated. */
@@ -161,7 +171,8 @@ public class FuzzyMethodResolver {
             List<MethodInfo> methods, List<FieldInfo> fields, List<String> parents) {}
 
     /**
-     * Index every {@code net/minecraft/} and {@code com/mojang/} class, method, and field in the JAR.
+     * Index every {@code net/minecraft/} and {@code com/mojang/} class, method, and field in the JAR,
+     * and the kind of each mod loader class it carries.
      * Call once at startup before any resolve call.
      *
      * @throws IOException if the JAR cannot be read
@@ -186,7 +197,7 @@ public class FuzzyMethodResolver {
             return;
         }
 
-        LOGGER.info("Indexing MC JAR for fuzzy resolution: {}", mcJar.getFileName());
+        LOGGER.debug(RetromodLog.DETAIL, "Indexing MC JAR for fuzzy resolution: {}", mcJar.getFileName());
         long startTime = System.currentTimeMillis();
 
         int classes = 0;
@@ -213,8 +224,10 @@ public class FuzzyMethodResolver {
 
                 // net/minecraft plus com/mojang (DFU, brigadier)
                 if (!canonicalName.endsWith(".class")) continue;
+                // A jar that carries the mod loader too, such as a merged one, also tells its types' kinds.
+                boolean loaderType = LoaderTypeKinds.isLoaderName(canonicalName);
                 if (!canonicalName.startsWith("net/minecraft/") &&
-                    !canonicalName.startsWith("com/mojang/")) {
+                    !canonicalName.startsWith("com/mojang/") && !loaderType) {
                     continue;
                 }
 
@@ -232,6 +245,11 @@ public class FuzzyMethodResolver {
 
                 try {
                     ClassReader reader = new ClassReader(classBytes);
+                    if (loaderType) {
+                        // Kind only: loader members never become fuzzy matches or Minecraft's hierarchy.
+                        indexKindOnly(reader);
+                        continue;
+                    }
 
                     String className = reader.getClassName();
                     String superName = reader.getSuperName();
@@ -274,6 +292,11 @@ public class FuzzyMethodResolver {
                         public FieldVisitor visitField(int access, String name,
                                 String descriptor, String signature, Object value) {
                             classFields.add(new FieldInfo(className, name, descriptor, -1));
+                            if (signature != null && signature.indexOf('<') >= 0) {
+                                fieldSignatures.put(className + "." + name, signature);
+                            }
+                            if ((access & Opcodes.ACC_STATIC) != 0) staticFields.add(className + "." + name);
+                            fieldAccess.put(className + "." + name, access);
                             return null;
                         }
                     }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
@@ -303,7 +326,7 @@ public class FuzzyMethodResolver {
         indexed = true;
 
         long elapsed = System.currentTimeMillis() - startTime;
-        LOGGER.info("Indexed {} classes, {} methods, {} fields from MC JAR in {}ms",
+        LOGGER.debug(RetromodLog.DETAIL, "Indexed {} classes, {} methods, {} fields from MC JAR in {}ms",
                 classes, methods, fields, elapsed);
     }
 
@@ -311,6 +334,9 @@ public class FuzzyMethodResolver {
         methodIndex.clear();
         constructorIndex.clear();
         fieldIndex.clear();
+        fieldSignatures.clear();
+        staticFields.clear();
+        fieldAccess.clear();
         classHierarchy.clear();
         classAccess.clear();
         sealedClasses.clear();
@@ -347,6 +373,18 @@ public class FuzzyMethodResolver {
     /** Whether an indexed class is sealed, so only its listed subclasses may extend it. */
     public boolean isSealed(String internalName) {
         return indexed && internalName != null && sealedClasses.contains(internalName);
+    }
+
+    /** Records a class's access flags and whether it is sealed, and nothing else about it. */
+    private void indexKindOnly(ClassReader reader) {
+        String className = reader.getClassName();
+        classAccess.put(className, reader.getAccess());
+        reader.accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public void visitPermittedSubclass(String permittedSubclass) {
+                sealedClasses.add(className);
+            }
+        }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
     }
 
     public int classAccess(String internalName) {
@@ -550,6 +588,13 @@ public class FuzzyMethodResolver {
         return methods == null ? List.of() : List.copyOf(methods);
     }
 
+    /** Fields declared directly by {@code owner}, immutable and empty when the target JAR is unavailable. */
+    public List<FieldInfo> getDeclaredFields(String owner) {
+        if (!indexed || owner == null) return List.of();
+        List<FieldInfo> fields = fieldIndex.get(owner);
+        return fields == null ? List.of() : List.copyOf(fields);
+    }
+
     /**
      * Methods visible on {@code owner}, including its superclasses and interfaces. The returned
      * list is immutable. Callers must still deduplicate overridden signatures when declaration
@@ -562,13 +607,24 @@ public class FuzzyMethodResolver {
 
     /**
      * Fuzzy-match an unresolved method reference against the target MC JAR. Returns the best match
-     * at or above {@link #THRESHOLD_AUTO_APPLY}; warns (returning null) in the 50-84 band; null below.
+     * at or above {@link #THRESHOLD_AUTO_APPLY}; reports a near miss (returning null) in the 50-84
+     * band; null below.
      *
      * @param owner      JVM internal name of the class the method was called on
      * @param name       the method name that wasn't found
      * @param descriptor the JVM method descriptor of the call
      */
     public MethodInfo resolveMethod(String owner, String name, String descriptor) {
+        return resolveMethod(owner, name, descriptor, null, null);
+    }
+
+    /**
+     * As {@link #resolveMethod(String, String, String)}, for a call made from {@code callers}: the calling class,
+     * or every class a mixin is merged into. A candidate one of them cannot access is never chosen.
+     * {@code callerExtends(caller, ancestor)} answers false only when proven; null callers skip the check.
+     */
+    public MethodInfo resolveMethod(String owner, String name, String descriptor, List<String> callers,
+            java.util.function.BiPredicate<String, String> callerExtends) {
         if (!indexed || isJvmSpecialMethod(name)) return null;
 
         // A reference that already resolves (hierarchy-aware) needs no fixing. Without this
@@ -580,7 +636,7 @@ public class FuzzyMethodResolver {
         // "StructureTemplatePool cannot be cast to Holder" at first structure piece.
         if (hasMethod(owner, name, descriptor)) return null;
 
-        String cacheKey = owner + "." + name + "." + descriptor;
+        String cacheKey = owner + "." + name + "." + descriptor + (callers == null ? "" : "@" + callers);
         MethodInfo cached = methodResolveCache.get(cacheKey);
         if (cached != null) {
             return cached == EMPTY_METHOD_INFO ? null : cached;
@@ -594,6 +650,7 @@ public class FuzzyMethodResolver {
 
         MethodInfo bestMatch = null;
         int bestScore = 0;
+        MethodInfo bestInaccessible = null;
 
         List<String> unresolvedParams = parseParameterTypes(descriptor);
         String unresolvedReturn = parseReturnType(descriptor);
@@ -603,6 +660,14 @@ public class FuzzyMethodResolver {
                     owner, name, descriptor, unresolvedParams, unresolvedReturn,
                     candidate
             );
+            // A member the calling class cannot reach fails with IllegalAccessError where it runs.
+            if (!accessible(candidate.access(), candidate.owner(), callers, callerExtends)) {
+                if (bestInaccessible == null || score > bestInaccessible.score()) {
+                    bestInaccessible = new MethodInfo(candidate.owner(), candidate.name(), candidate.descriptor(),
+                            score, candidate.access());
+                }
+                continue;
+            }
 
             if (score > bestScore) {
                 bestScore = score;
@@ -611,6 +676,18 @@ public class FuzzyMethodResolver {
                         candidate.descriptor(), score, candidate.access()
                 );
             }
+        }
+
+        // When the best guess cannot be reached, the next one down is no better evidence.
+        if (bestInaccessible != null && bestInaccessible.score() >= THRESHOLD_AUTO_APPLY
+                && bestInaccessible.score() >= bestScore) {
+            FuzzyMatchReport.record("METHOD", FuzzyMatchReport.BAND_SUPPRESSED, bestInaccessible.score(),
+                    owner, name, descriptor,
+                    bestInaccessible.owner(), bestInaccessible.name(), bestInaccessible.descriptor());
+            LOGGER.debug("[Retromod-Fuzzy] Declined {}.{}{} -> {}.{}{}: {} cannot access it", owner, name, descriptor,
+                    bestInaccessible.owner(), bestInaccessible.name(), bestInaccessible.descriptor(), callers);
+            boundedCachePut(methodResolveCache, cacheKey, EMPTY_METHOD_INFO);
+            return null;
         }
 
         if (bestMatch != null && bestScore >= THRESHOLD_AUTO_APPLY) {
@@ -638,14 +715,17 @@ public class FuzzyMethodResolver {
             boundedCachePut(methodResolveCache, cacheKey, bestMatch);
             return bestMatch;
         } else if (bestMatch != null && bestScore >= THRESHOLD_LOG_WARNING) {
-            LOGGER.warn("[Retromod-Fuzzy] Possible match for {}.{}{} -> {}.{}{} " +
-                    "(confidence: {}% - below auto-apply threshold of {}%)",
+            // The report holds every near miss; log one at DEBUG only on its first sighting, since
+            // two workers or a cleared cache can reach the same reference again.
+            if (FuzzyMatchReport.record("METHOD", FuzzyMatchReport.BAND_NEAR, bestScore,
                     owner, name, descriptor,
-                    bestMatch.owner(), bestMatch.name(), bestMatch.descriptor(),
-                    bestScore, THRESHOLD_AUTO_APPLY);
-            FuzzyMatchReport.record("METHOD", FuzzyMatchReport.BAND_NEAR, bestScore,
-                    owner, name, descriptor,
-                    bestMatch.owner(), bestMatch.name(), bestMatch.descriptor());
+                    bestMatch.owner(), bestMatch.name(), bestMatch.descriptor())) {
+                LOGGER.debug("[Retromod-Fuzzy] Possible match for {}.{}{} -> {}.{}{} " +
+                        "(confidence: {}% - below auto-apply threshold of {}%)",
+                        owner, name, descriptor,
+                        bestMatch.owner(), bestMatch.name(), bestMatch.descriptor(),
+                        bestScore, THRESHOLD_AUTO_APPLY);
+            }
         } else if (bestMatch != null) {
             LOGGER.debug("[Retromod-Fuzzy] Low confidence match for {}.{}{} -> {}.{}{} ({}%)",
                     owner, name, descriptor,
@@ -728,7 +808,7 @@ public class FuzzyMethodResolver {
         if (candidateName.equals(unresolvedName)) {
             score += SCORE_EXACT_NAME;
         } else {
-            if (levenshteinAtMost(unresolvedName, candidateName, MAX_RENAME_EDITS)) {
+            if (looksRenamed(unresolvedName, candidateName)) {
                 score += SCORE_LEVENSHTEIN_CLOSE;
             } else {
                 String candLower = candidateName.toLowerCase();
@@ -802,7 +882,29 @@ public class FuzzyMethodResolver {
             "Lnet/minecraft/resources/ResourceKey;", "Lnet/minecraft/core/Registry;",
             "Lnet/minecraft/core/DefaultedRegistry;");
 
+    // A tag key names one tag, so a renamed match is another tag: ItemTags.TOOLS scored as WOOL.
+    // Correct renames come from LegacyMemberRenames, which runs before any fuzzy match.
+    private static final String TAG_KEY = "Lnet/minecraft/tags/TagKey;";
+
+    /**
+     * Removed fields whose best guess is known to be wrong. ItemStack.ITEM_NON_AIR_CODEC, a
+     * {@code Codec<Holder<Item>>}, scores as CODEC, a {@code Codec<ItemStack>}, on every 26.x host.
+     */
+    private static final Set<String> NEVER_GUESSED_FIELDS = Set.of(
+            "net/minecraft/world/item/ItemStack.ITEM_NON_AIR_CODEC");
+
     public FieldInfo resolveField(String owner, String name, String descriptor) {
+        return resolveField(owner, name, descriptor, null);
+    }
+
+    /** As {@link #resolveField(String, String, String)}, keeping a static read on static fields when {@code isStatic} is known. */
+    public FieldInfo resolveField(String owner, String name, String descriptor, Boolean isStatic) {
+        return resolveField(owner, name, descriptor, isStatic, null, null);
+    }
+
+    /** As above, for a read or write from {@code callers}, as {@link #resolveMethod(String, String, String, List, java.util.function.BiPredicate)} checks access. */
+    public FieldInfo resolveField(String owner, String name, String descriptor, Boolean isStatic, List<String> callers,
+            java.util.function.BiPredicate<String, String> callerExtends) {
         if (!indexed) return null;
 
         // Same guard as resolveMethod: never rewrite a field reference that already resolves.
@@ -812,8 +914,9 @@ public class FuzzyMethodResolver {
         // registry or biome, never a rename: Registries.BLOCK_TYPE, gone on 26.3, scored as BLOCK
         // and turned a block type register into a second block register.
         if (IDENTITY_FIELD_TYPES.contains(descriptor)) return null;
+        if (NEVER_GUESSED_FIELDS.contains(owner + "." + name)) return null;
 
-        String cacheKey = owner + "." + name + "." + descriptor;
+        String cacheKey = owner + "." + name + "." + descriptor + "." + isStatic + (callers == null ? "" : "@" + callers);
         FieldInfo cached = fieldResolveCache.get(cacheKey);
         if (cached != null) {
             return cached == EMPTY_FIELD_INFO ? null : cached;
@@ -827,9 +930,26 @@ public class FuzzyMethodResolver {
 
         FieldInfo bestMatch = null;
         int bestScore = 0;
+        int bestMismatchedScore = 0;
+        FieldInfo bestInaccessible = null;
 
         for (FieldInfo candidate : candidates) {
             int score = scoreFieldMatch(owner, name, descriptor, candidate);
+            // A static read cannot become an instance field read, or the other way round:
+            // PotionBrewing.ALLOWED_CONTAINERS scored as the instance field containers.
+            if (isStatic != null && staticFields.contains(candidate.owner() + "." + candidate.name()) != isStatic) {
+                bestMismatchedScore = Math.max(bestMismatchedScore, score);
+                continue;
+            }
+            // A field the calling class cannot reach fails with IllegalAccessError: PackMetadataSection.CODEC
+            // scored as the private FALLBACK_CODEC.
+            Integer access = fieldAccess.get(candidate.owner() + "." + candidate.name());
+            if (access != null && !accessible(access, candidate.owner(), callers, callerExtends)) {
+                if (bestInaccessible == null || score > bestInaccessible.score()) {
+                    bestInaccessible = new FieldInfo(candidate.owner(), candidate.name(), candidate.descriptor(), score);
+                }
+                continue;
+            }
 
             if (score > bestScore) {
                 bestScore = score;
@@ -838,6 +958,48 @@ public class FuzzyMethodResolver {
                         candidate.descriptor(), score
                 );
             }
+        }
+
+        // When the best guess is the wrong kind of field, the next one down is no better evidence:
+        // Raid.id tied with static RAID_TIMEOUT_TICKS and would have fallen to raidOmenLevel.
+        if (bestMatch != null && bestMismatchedScore >= bestScore) {
+            boundedCachePut(fieldResolveCache, cacheKey, EMPTY_FIELD_INFO);
+            return null;
+        }
+        // The same holds when the best guess cannot be reached from the calling class.
+        if (bestInaccessible != null && bestInaccessible.score() >= THRESHOLD_AUTO_APPLY
+                && bestInaccessible.score() >= bestScore) {
+            FuzzyMatchReport.record("FIELD", FuzzyMatchReport.BAND_SUPPRESSED, bestInaccessible.score(),
+                    owner, name, descriptor,
+                    bestInaccessible.owner(), bestInaccessible.name(), bestInaccessible.descriptor());
+            LOGGER.debug("[Retromod-Fuzzy] Declined field {}.{} -> {}.{}: {} cannot access it", owner, name,
+                    bestInaccessible.owner(), bestInaccessible.name(), callers);
+            boundedCachePut(fieldResolveCache, cacheKey, EMPTY_FIELD_INFO);
+            return null;
+        }
+
+        // A renamed generic field is a different value when its type arguments may differ:
+        // DataComponents.HIDE_ADDITIONAL_TOOLTIP, a DataComponentType<Unit>, scored as TOOL.
+        if (bestMatch != null && bestScore >= THRESHOLD_AUTO_APPLY && typeArgumentsUnproven(name, bestMatch)) {
+            FuzzyMatchReport.record("FIELD", FuzzyMatchReport.BAND_SUPPRESSED, bestScore,
+                    owner, name, descriptor,
+                    bestMatch.owner(), bestMatch.name(), bestMatch.descriptor());
+            LOGGER.debug("[Retromod-Fuzzy] Declined field {}.{} -> {}.{}: its type arguments {} are not the only "
+                    + "ones its class uses for {}", owner, name, bestMatch.owner(), bestMatch.name(),
+                    fieldSignatures.get(bestMatch.owner() + "." + bestMatch.name()), descriptor);
+            boundedCachePut(fieldResolveCache, cacheKey, EMPTY_FIELD_INFO);
+            return null;
+        }
+
+        if (bestMatch != null && bestScore >= THRESHOLD_AUTO_APPLY && TAG_KEY.equals(descriptor)
+                && !bestMatch.name().equals(name)) {
+            FuzzyMatchReport.record("FIELD", FuzzyMatchReport.BAND_SUPPRESSED, bestScore,
+                    owner, name, descriptor,
+                    bestMatch.owner(), bestMatch.name(), bestMatch.descriptor());
+            LOGGER.debug("[Retromod-Fuzzy] Declined tag {}.{} -> {}.{}: a renamed tag key is another tag",
+                    owner, name, bestMatch.owner(), bestMatch.name());
+            boundedCachePut(fieldResolveCache, cacheKey, EMPTY_FIELD_INFO);
+            return null;
         }
 
         if (bestMatch != null && bestScore >= THRESHOLD_AUTO_APPLY) {
@@ -851,18 +1013,58 @@ public class FuzzyMethodResolver {
             boundedCachePut(fieldResolveCache, cacheKey, bestMatch);
             return bestMatch;
         } else if (bestMatch != null && bestScore >= THRESHOLD_LOG_WARNING) {
-            LOGGER.warn("[Retromod-Fuzzy] Possible field match for {}.{} {} -> {}.{} {} " +
-                    "(confidence: {}% - below auto-apply threshold of {}%)",
+            // Same as resolveMethod: the report holds it, DEBUG names it once.
+            if (FuzzyMatchReport.record("FIELD", FuzzyMatchReport.BAND_NEAR, bestScore,
                     owner, name, descriptor,
-                    bestMatch.owner(), bestMatch.name(), bestMatch.descriptor(),
-                    bestScore, THRESHOLD_AUTO_APPLY);
-            FuzzyMatchReport.record("FIELD", FuzzyMatchReport.BAND_NEAR, bestScore,
-                    owner, name, descriptor,
-                    bestMatch.owner(), bestMatch.name(), bestMatch.descriptor());
+                    bestMatch.owner(), bestMatch.name(), bestMatch.descriptor())) {
+                LOGGER.debug("[Retromod-Fuzzy] Possible field match for {}.{} {} -> {}.{} {} " +
+                        "(confidence: {}% - below auto-apply threshold of {}%)",
+                        owner, name, descriptor,
+                        bestMatch.owner(), bestMatch.name(), bestMatch.descriptor(),
+                        bestScore, THRESHOLD_AUTO_APPLY);
+            }
         }
 
         boundedCachePut(fieldResolveCache, cacheKey, EMPTY_FIELD_INFO);
         return null;
+    }
+
+    /** Whether a renamed generic candidate has siblings of its erased type with other type arguments, so the missing field's are unknown. */
+    boolean typeArgumentsUnproven(String missingName, FieldInfo candidate) {
+        if (candidate.name().equals(missingName)) return false;
+        String signature = fieldSignatures.get(candidate.owner() + "." + candidate.name());
+        if (signature == null) return false;
+        List<FieldInfo> siblings = fieldIndex.getOrDefault(candidate.owner(), List.of());
+        for (FieldInfo sibling : siblings) {
+            if (!sibling.descriptor().equals(candidate.descriptor())) continue;
+            if (!signature.equals(fieldSignatures.get(sibling.owner() + "." + sibling.name()))) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Whether code running in every one of {@code callers} may use a member of {@code memberOwner} with
+     * {@code access}. Unknown callers pass; {@code callerExtends} answers false only for a caller proven not to
+     * extend the class.
+     */
+    static boolean accessible(int access, String memberOwner, List<String> callers,
+            java.util.function.BiPredicate<String, String> callerExtends) {
+        if (callers == null || callers.isEmpty() || (access & Opcodes.ACC_PUBLIC) != 0) return true;
+        // Mixin merges a separate copy into each target, so every one of them has to reach the member.
+        for (String caller : callers) {
+            if ((access & Opcodes.ACC_PRIVATE) != 0) {
+                if (!caller.equals(memberOwner)) return false;
+            } else if (!packageOf(caller).equals(packageOf(memberOwner))) {
+                boolean subclass = callerExtends == null || callerExtends.test(caller, memberOwner);
+                if ((access & Opcodes.ACC_PROTECTED) == 0 || !subclass) return false;
+            }
+        }
+        return true;
+    }
+
+    private static String packageOf(String internalName) {
+        int slash = internalName.lastIndexOf('/');
+        return slash < 0 ? "" : internalName.substring(0, slash);
     }
 
     /** Fields on {@code owner} plus all inherited from its hierarchy. */
@@ -926,7 +1128,7 @@ public class FuzzyMethodResolver {
         if (candidate.name().equals(unresolvedName)) {
             score += SCORE_EXACT_NAME;
         } else {
-            if (levenshteinAtMost(unresolvedName, candidate.name(), MAX_RENAME_EDITS)) {
+            if (looksRenamed(unresolvedName, candidate.name())) {
                 score += SCORE_LEVENSHTEIN_CLOSE;
             } else {
                 String candName = candidate.name();
@@ -1014,6 +1216,101 @@ public class FuzzyMethodResolver {
             if (isAncestor(parent, ancestor, maxDepth - 1)) return true;
         }
         return false;
+    }
+
+    /**
+     * Whether {@code newName} reads as a rename of {@code oldName} rather than a different member.
+     * Package-private for testing.
+     */
+    static boolean looksRenamed(String oldName, String newName) {
+        // Short names sit a few edits from many unrelated ones (kill and tick, CHAIN and AIR), so
+        // the edit cap alone is not evidence. Check it first: it is cheap and settles most pairs.
+        if (!levenshteinAtMost(oldName, newName, MAX_RENAME_EDITS)) return false;
+
+        // A get or is prefix added, dropped or swapped, or only the capitalization changed.
+        if (withoutAccessorPrefix(oldName).equalsIgnoreCase(withoutAccessorPrefix(newName))) return true;
+
+        // Set aside the words both names share at the start and at the end.
+        List<String> oldWords = splitWords(oldName);
+        List<String> newWords = splitWords(newName);
+        int start = 0;
+        while (start < oldWords.size() && start < newWords.size()
+                && oldWords.get(start).equals(newWords.get(start))) {
+            start++;
+        }
+        int oldEnd = oldWords.size();
+        int newEnd = newWords.size();
+        while (oldEnd > start && newEnd > start
+                && oldWords.get(oldEnd - 1).equals(newWords.get(newEnd - 1))) {
+            oldEnd--;
+            newEnd--;
+        }
+        int oldLeft = oldEnd - start;
+        int newLeft = newEnd - start;
+
+        // One word added or dropped, as in getMaxSection and getMaxSectionY.
+        if (oldLeft + newLeft == 1) return true;
+        // One word respelled, as in Vid and Video. A swapped word (EAT and DEATH, Indirect and
+        // Direct) or a changed number (method_8322 and method_8615) names another member.
+        return oldLeft == 1 && newLeft == 1 && isRespelling(oldWords.get(start), newWords.get(start));
+    }
+
+    /** The name without a leading get or is that starts a capitalized word. */
+    private static String withoutAccessorPrefix(String name) {
+        for (String prefix : new String[]{"get", "is"}) {
+            if (name.length() > prefix.length() && name.startsWith(prefix)
+                    && Character.isUpperCase(name.charAt(prefix.length()))) {
+                return name.substring(prefix.length());
+            }
+        }
+        return name;
+    }
+
+    /** Lowercase words of a name, split at {@code _}, {@code $}, case changes and digit runs. */
+    private static List<String> splitWords(String name) {
+        List<String> words = new ArrayList<>();
+        StringBuilder word = new StringBuilder();
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            boolean separator = c == '_' || c == '$';
+            if (word.length() > 0 && (separator || startsNewWord(name, i))) {
+                words.add(word.toString());
+                word.setLength(0);
+            }
+            if (!separator) word.append(Character.toLowerCase(c));
+        }
+        if (word.length() > 0) words.add(word.toString());
+        return words;
+    }
+
+    /** Whether the character at {@code i} begins a new word, in camel case or a digit run. */
+    private static boolean startsNewWord(String name, int i) {
+        char previous = name.charAt(i - 1);
+        char current = name.charAt(i);
+        if (Character.isDigit(previous) != Character.isDigit(current)) return true;
+        if (Character.isLowerCase(previous) && Character.isUpperCase(current)) return true;
+        // The last capital of an acronym starts the next word: RGBColor is RGB and Color.
+        return Character.isUpperCase(previous) && Character.isUpperCase(current)
+                && i + 1 < name.length() && Character.isLowerCase(name.charAt(i + 1));
+    }
+
+    /** Whether two lowercase words are spellings of one word, not two different words. */
+    private static boolean isRespelling(String a, String b) {
+        if (!isLettersOnly(a) || !isLettersOnly(b)) return false;
+        String shorter = a.length() <= b.length() ? a : b;
+        String longer = a.length() <= b.length() ? b : a;
+        // A shortened or extended word: WORLDGEN and WORLD, limiter and limit.
+        if (longer.startsWith(shorter)) return shorter.length() >= 3;
+        // A typo fix in a longer word: noCollission and noCollision, dowse and douse.
+        return shorter.length() >= 5 && a.charAt(0) == b.charAt(0) && a.charAt(1) == b.charAt(1)
+                && levenshteinAtMost(a, b, Math.max(1, longer.length() / 4));
+    }
+
+    private static boolean isLettersOnly(String word) {
+        for (int i = 0; i < word.length(); i++) {
+            if (!Character.isLetter(word.charAt(i))) return false;
+        }
+        return !word.isEmpty();
     }
 
     /**

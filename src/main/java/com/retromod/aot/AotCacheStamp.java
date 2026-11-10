@@ -6,6 +6,7 @@
  */
 package com.retromod.aot;
 
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -161,7 +162,7 @@ public final class AotCacheStamp {
                 try {
                     recorded = readRecordedStamp(stampFile);
                 } catch (IOException e) {
-                    LOGGER.info("The AOT cache stamp is unreadable, clearing {}", cacheDir);
+                    LOGGER.debug(RetromodLog.DETAIL, "The AOT cache stamp is unreadable, clearing {}", cacheDir);
                     recorded = null;
                 }
                 if (stamp.equals(recorded)) {
@@ -173,7 +174,7 @@ public final class AotCacheStamp {
                     empty = s.findFirst().isEmpty();
                 }
                 if (!empty) {
-                    LOGGER.info("Retromod build changed since the AOT cache was written, clearing {}",
+                    LOGGER.debug(RetromodLog.DETAIL, "Retromod build changed since the AOT cache was written, clearing {}",
                             cacheDir);
                     wipe(trustedRoot, cacheDir);
                     // A failed delete must leave the old stamp in place. Otherwise the

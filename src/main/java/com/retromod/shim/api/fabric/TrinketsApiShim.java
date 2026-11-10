@@ -7,7 +7,7 @@ package com.retromod.shim.api.fabric;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.AuxiliaryVersionShim;
 
-/** Trinkets accessory-slot API (Fabric): SlotType became SlotReference and component retrieval moved. */
+/** Trinkets accessory-slot API (Fabric): component retrieval and trinket registration go through the shim. */
 public class TrinketsApiShim implements AuxiliaryVersionShim {
     
     @Override
@@ -70,20 +70,9 @@ public class TrinketsApiShim implements AuxiliaryVersionShim {
             "(Lnet/minecraft/entity/LivingEntity;)Ljava/util/Optional;"
         );
 
-        transformer.registerClassRedirect(
-            "dev/emi/trinkets/api/SlotType",
-            "dev/emi/trinkets/api/SlotReference"
-        );
-
-        // getSlots() -> getInventory()
-        transformer.registerMethodRedirect(
-            "dev/emi/trinkets/api/TrinketComponent",
-            "getSlots",
-            "()Ljava/util/Map;",
-            "dev/emi/trinkets/api/TrinketComponent",
-            "getInventory",
-            "()Ldev/emi/trinkets/api/TrinketInventory;"
-        );
+        // SlotType stays: Trinkets 3.0.0 to 3.10.0 ship it beside SlotReference, so moving it broke every
+        // current dependent. TrinketComponent.getInventory() returns a Map in every 3.x, so getSlots() has no
+        // single-call successor either.
 
         transformer.registerMethodRedirect(
             "dev/emi/trinkets/api/TrinketsApi",

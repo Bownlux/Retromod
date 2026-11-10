@@ -11,16 +11,18 @@ import com.retromod.util.McReflect;
 import java.lang.reflect.*;
 import java.util.*;
 
-/**
- * Bridges the old String-based KeyBinding category constructor to the Category record added in 1.21.9.
- * McReflect resolves the class across yarn (dev) and intermediary (production) namespaces.
- */
+/** Bridges the old String-category KeyBinding constructors to the Category record added in 1.21.9. */
 public final class KeyBindingShim {
+
+    // The id class's static (String, String) factory under its intermediary, Mojang, and Yarn names.
+    // Matched by name, not shape: 1.21.11 also has tryBuild (method_43902), which returns null for a bad id.
+    private static final String[] ID_FACTORY_NAMES = {"method_60655", "fromNamespaceAndPath", "of"};
 
     private static final Map<String, Object> categoryCache = new HashMap<>();
     private static Class<?> categoryClass;
     private static Class<?> keyBindingClass;
     private static Constructor<?> newConstructor;
+    private static Constructor<?> defaultConstructor;
     private static Constructor<?> categoryConstructor;
     private static boolean initialized = false;
     private static boolean initFailed = false;
@@ -43,8 +45,43 @@ public final class KeyBindingShim {
         } catch (Exception e) {
             Object fallback = createFallback(translationKey, inputType, keyCode, categoryString);
             if (fallback != null) return fallback;
-            throw new RuntimeException("Retromod: Failed to create KeyBinding for '" + translationKey + "'", e);
+            throw creationFailed(translationKey, categoryString, e);
         }
+    }
+
+    /** Creates a KeyBinding from the old {@code (String, int, String)} constructor. Called by transformed bytecode. */
+    public static Object createDefault(String translationKey, int keyCode, String categoryString) {
+        // 26.3 renumbered keys for SDL; a no-op on a GLFW host.
+        keyCode = com.retromod.polyfill.minecraft.RetroKeyMapping.hostKeyCode(keyCode);
+        initialize();
+
+        if (initFailed || defaultConstructor == null) {
+            return createFallback(translationKey, keyCode, categoryString);
+        }
+
+        try {
+            Object category = getOrCreateCategory(categoryString);
+            return defaultConstructor.newInstance(translationKey, keyCode, category);
+        } catch (Exception e) {
+            Object fallback = createFallback(translationKey, keyCode, categoryString);
+            if (fallback != null) return fallback;
+            throw creationFailed(translationKey, categoryString, e);
+        }
+    }
+
+    private static RuntimeException creationFailed(String translationKey, String categoryString, Exception cause) {
+        return new RuntimeException("Retromod could not create the key binding '" + translationKey
+                + "' in category '" + categoryString + "' on this Minecraft version. Report it at "
+                + "https://github.com/Bownlux/Retromod/issues with the mod and Minecraft version.", cause);
+    }
+
+    // Production Fabric before 26.1 runs intermediary names, which McReflect tries like the others.
+    private static Class<?> findKeyBindingClass() {
+        return McReflect.findClass(
+            "net.minecraft.client.option.KeyBinding",  // yarn
+            "net.minecraft.client.KeyMapping",         // mojang
+            "net.minecraft.class_304"                  // intermediary
+        );
     }
 
     private static synchronized void initialize() {
@@ -52,10 +89,7 @@ public final class KeyBindingShim {
         initialized = true;
 
         try {
-            keyBindingClass = McReflect.findClass(
-                "net.minecraft.client.option.KeyBinding",  // yarn
-                "net.minecraft.client.KeyMapping"          // mojang
-            );
+            keyBindingClass = findKeyBindingClass();
 
             if (keyBindingClass == null) {
                 initFailed = true;
@@ -117,6 +151,9 @@ public final class KeyBindingShim {
                 }
             }
 
+            // The 3-argument form defaults the input type to a keyboard key. Only createDefault needs it.
+            defaultConstructor = findConstructor(keyBindingClass, String.class, int.class, categoryClass);
+
             if (newConstructor == null || categoryConstructor == null) {
                 initFailed = true;
             }
@@ -155,10 +192,30 @@ public final class KeyBindingShim {
             if (path.isEmpty()) path = "custom";
         }
 
-        Object identifier = IdentifierShim.of(namespace, path);
+        // The Category constructor names the host's id class. IdentifierShim knows only Yarn and
+        // Mojang names and fails to initialize on an intermediary host.
+        Object identifier = identifier(categoryConstructor.getParameterTypes()[0], namespace, path);
         Object category = registerCategory(categoryClass, categoryConstructor, identifier);
         categoryCache.put(categoryString, category);
         return category;
+    }
+
+    /** Builds an id with the id class's own static (String, String) factory. */
+    static Object identifier(Class<?> idClass, String namespace, String path) throws Exception {
+        for (String name : ID_FACTORY_NAMES) {
+            Method factory;
+            try {
+                factory = idClass.getMethod(name, String.class, String.class);
+            } catch (NoSuchMethodException otherNamespace) {
+                continue;
+            }
+            if (Modifier.isStatic(factory.getModifiers())) {
+                return factory.invoke(null, namespace, path);
+            }
+        }
+        throw new NoSuchMethodException("Retromod found no static (String, String) factory on "
+                + idClass.getName() + " for the key category " + namespace + ":" + path
+                + ". It looked for " + String.join(", ", ID_FACTORY_NAMES) + ".");
     }
 
     /**
@@ -184,37 +241,51 @@ public final class KeyBindingShim {
         return categoryConstructor.newInstance(identifier);
     }
 
-    // Pre-1.21.9 hosts still have the String-category constructor.
-    private static Object createFallback(String translationKey, Object inputType, int keyCode, String categoryString) {
+    private static Constructor<?> findConstructor(Class<?> owner, Class<?>... params) {
+        try {
+            return owner.getConstructor(params);
+        } catch (NoSuchMethodException notPublic) {
+            try {
+                Constructor<?> c = owner.getDeclaredConstructor(params);
+                c.setAccessible(true);
+                return c;
+            } catch (NoSuchMethodException absent) {
+                return null;
+            }
+        }
+    }
+
+    // Pre-1.21.9 hosts still have the String-category constructors, with the same arguments as the call.
+    private static Object createFallback(Object... args) {
         if (keyBindingClass == null) {
-            keyBindingClass = McReflect.findClass(
-                "net.minecraft.client.option.KeyBinding",
-                "net.minecraft.client.KeyMapping"
-            );
+            keyBindingClass = findKeyBindingClass();
         }
         if (keyBindingClass == null) return null;
 
         for (Constructor<?> c : keyBindingClass.getConstructors()) {
-            Class<?>[] params = c.getParameterTypes();
-            if (params.length == 4 && params[3] == String.class) {
+            if (takesStringCategory(c, args.length)) {
                 try {
-                    return c.newInstance(translationKey, inputType, keyCode, categoryString);
+                    return c.newInstance(args);
                 } catch (Exception e) {
                     return null;
                 }
             }
         }
         for (Constructor<?> c : keyBindingClass.getDeclaredConstructors()) {
-            Class<?>[] params = c.getParameterTypes();
-            if (params.length == 4 && params[3] == String.class) {
+            if (takesStringCategory(c, args.length)) {
                 try {
                     c.setAccessible(true);
-                    return c.newInstance(translationKey, inputType, keyCode, categoryString);
+                    return c.newInstance(args);
                 } catch (Exception e) {
                     return null;
                 }
             }
         }
         return null;
+    }
+
+    private static boolean takesStringCategory(Constructor<?> c, int argumentCount) {
+        Class<?>[] params = c.getParameterTypes();
+        return params.length == argumentCount && params[argumentCount - 1] == String.class;
     }
 }

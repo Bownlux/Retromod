@@ -4,6 +4,7 @@
  */
 package com.retromod.core.parallel;
 
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,7 +70,7 @@ public final class RetromodExecutors {
                     new NamedDaemonForkJoinWorkerThreadFactory("retromod-worker-"),
                     (t, e) -> LOGGER.warn("Worker {} died: {}", t.getName(), e.getMessage()),
                     true);
-            LOGGER.info("Retromod parallel executor initialized with {} threads", PARALLELISM);
+            LOGGER.debug(RetromodLog.DETAIL, "Retromod parallel executor initialized with {} threads", PARALLELISM);
             return sharedPool;
         }
     }

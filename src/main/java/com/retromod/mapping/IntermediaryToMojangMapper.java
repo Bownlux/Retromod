@@ -4,6 +4,7 @@
  */
 package com.retromod.mapping;
 
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -74,7 +75,7 @@ public class IntermediaryToMojangMapper {
             }
 
             long elapsed = System.currentTimeMillis() - start;
-            LOGGER.info("Loaded intermediary to Mojang mappings for {} classes, {} fields, "
+            LOGGER.debug(RetromodLog.DETAIL, "Loaded intermediary to Mojang mappings for {} classes, {} fields, "
                             + "and {} methods in {} ms",
                     classMap.size(), fieldMap.size(), methodMap.size(), elapsed);
 
@@ -101,7 +102,7 @@ public class IntermediaryToMojangMapper {
                 }
             }
 
-            LOGGER.info("Loaded {} class move redirects for 26.1 package reorganization", classMoves.size());
+            LOGGER.debug(RetromodLog.DETAIL, "Loaded {} class move redirects for 26.1 package reorganization", classMoves.size());
         } catch (IOException e) {
             LOGGER.warn("Failed to load 26.1 class moves: {}", e.getMessage());
         }
@@ -110,6 +111,17 @@ public class IntermediaryToMojangMapper {
     /** Old Mojang to new Mojang class redirects for 26.1 package moves. */
     public Map<String, String> getClassMoves() {
         return Collections.unmodifiableMap(classMoves);
+    }
+
+    /** Whether a class move renames a Fabric API class, whose stand-in only the Fabric API shims register. */
+    public static boolean isFabricApiMove(String oldName) {
+        return oldName.startsWith("net/fabricmc/");
+    }
+
+    /** Whether a class move applies to a mod of this loader: Fabric API moves reach only Fabric and Quilt mods. */
+    public static boolean appliesToLoader(String oldName, String modLoader) {
+        return !isFabricApiMove(oldName)
+                || "fabric".equalsIgnoreCase(modLoader) || "quilt".equalsIgnoreCase(modLoader);
     }
 
     /**
@@ -259,6 +271,8 @@ public class IntermediaryToMojangMapper {
             return 0;
         }
 
+        // ResourceLocation.Serializer moves to a generated adapter, which every mod that names it carries.
+        com.retromod.shim.common.LegacyIdentifierSerializer.register(transformer);
         Map<String, String> classMoveMap = mapper.getClassMoves();
 
         int classRedirects = 0;
@@ -286,7 +300,7 @@ public class IntermediaryToMojangMapper {
             classMoves++;
         }
 
-        LOGGER.info("Registered {} intermediary to Mojang class redirects ({} composed), "
+        LOGGER.debug(RetromodLog.DETAIL, "Registered {} intermediary to Mojang class redirects ({} composed), "
                         + "{} method names, {} field names, and {} class moves",
                 classRedirects, composed, mapper.getMethodMap().size(),
                 mapper.getFieldMap().size(), classMoves);
@@ -359,10 +373,9 @@ public class IntermediaryToMojangMapper {
      * package reorganization, or a mod referencing {@code net/minecraft/Util} or
      * a repackaged entity crashes with {@code NoClassDefFoundError} on a 26.1 host.
      *
-     * <p>Gating is the caller's responsibility: only invoke on a 26.1+ host
-     * ({@link com.retromod.core.RetromodVersion#isUnobfuscatedTarget}). On a
-     * pre-26.1 host these moves would rewrite a mod's working references into
-     * 26.1 names that don't exist yet (#21/#29).
+     * <p>Each move is checked against the host's classes, so this is safe on a host before
+     * 26.1 too: 1.21.11 already renamed {@code ResourceLocation} and moved {@code Util}, and
+     * a move to a class the host lacks is skipped (#21/#29).
      *
      * <p>The {@code Identifier} constructor redirects are keyed on the post-move
      * name: the class move (or the loader's own shim) renames
@@ -399,20 +412,31 @@ public class IntermediaryToMojangMapper {
         // java.class.path (it's a JPMS module), and the disk search mis-matched
         // a library (srgutils) by substring, yielding an empty index.
         java.util.function.Predicate<String> hostHasClass = buildHostClassCheck();
+        if (hostHasClass == null) {
+            // Offline, the CLI and AOT read the host from the --mc-jar or installed game index.
+            com.retromod.core.FuzzyMethodResolver index = transformer.getFuzzyResolver();
+            if (index != null && index.isIndexed()) hostHasClass = index::hasClass;
+        }
         boolean haveHost = hostHasClass != null;
         boolean unobfFallback =
                 com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
                         com.retromod.core.RetromodVersion.TARGET_MC_VERSION);
         if (!haveHost) {
-            LOGGER.warn("Could not inspect host classes while applying class moves. "
-                    + "Using the broader 26.1 version check instead (apply all: {}).",
-                    unobfFallback);
+            LOGGER.warn("Could not inspect the target's classes while applying class moves, so "
+                    + "{} of them. Pass --mc-jar with a Mojang-named game jar for {} to apply "
+                    + "exactly the moves that version made.",
+                    unobfFallback ? "Retromod applies all" : "Retromod applies none",
+                    com.retromod.core.RetromodVersion.TARGET_MC_VERSION);
         }
 
+        // ResourceLocation.Serializer moves to a generated adapter, which every mod that names it carries.
+        com.retromod.shim.common.LegacyIdentifierSerializer.register(transformer);
         int applied = 0, skippedNewMissing = 0, skippedOldPresent = 0;
         for (Map.Entry<String, String> entry : classMoveMap.entrySet()) {
             String oldName = entry.getKey();
             String newName = entry.getValue();
+            // Forge and NeoForge have no Fabric API, and this row's stand-in is registered only on Fabric.
+            if (isFabricApiMove(oldName)) continue;
             boolean apply = haveHost
                     ? appliesOnHost(oldName, newName, hostHasClass, unobfFallback)
                     : unobfFallback;
@@ -436,7 +460,7 @@ public class IntermediaryToMojangMapper {
             registerIdentifierCtorRedirects(transformer);
         }
 
-        LOGGER.info("Registered {} vanilla class moves for host MC {} (host-filtered: "
+        LOGGER.debug(RetromodLog.DETAIL, "Registered {} vanilla class moves for host MC {} (host-filtered: "
                 + "{} skipped new-missing, {} skipped old-present){}",
                 applied, com.retromod.core.RetromodVersion.TARGET_MC_VERSION,
                 skippedNewMissing, skippedOldPresent,
@@ -472,7 +496,7 @@ public class IntermediaryToMojangMapper {
      * initialize=false, the probe {@code EnvironmentDetector} uses on NeoForge
      * (#46), which never runs {@code <clinit>}.
      */
-    private static java.util.function.Predicate<String> buildHostClassCheck() {
+    static java.util.function.Predicate<String> buildHostClassCheck() {
         try {
             ClassLoader ctx = Thread.currentThread().getContextClassLoader();
             // SharedConstants exists across every MC version Retromod targets.

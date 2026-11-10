@@ -67,6 +67,19 @@ class LegacyItemConstructorBridgeTest {
     }
 
     @Test
+    @DisplayName("on 26.3 the rebuilt SignItem takes the old constructor, and the factories never name the removed class")
+    void removedSignItemLeavesTheFactoryOut() {
+        LegacyItemConstructorBridge.register(transformer, "26.3");
+
+        MethodInsnNode call = constructionCall(transformedMaker(signMaker()));
+        assertEquals(Opcodes.INVOKESPECIAL, call.getOpcode(), "the rebuilt class keeps the old constructor");
+        byte[] factories = transformer.getSyntheticClasses().get(LegacyItemConstructorBridge.INTERNAL);
+        assertFalse(new String(factories, java.nio.charset.StandardCharsets.ISO_8859_1).contains(LegacyItemConstructorBridge.SIGN_ITEM),
+                "a factory naming SignItem would not link on 26.3");
+        assertVerifies(factories);
+    }
+
+    @Test
     @DisplayName("the generated factories and boat stand-in are valid classes")
     void generatedClassesVerify() {
         assertVerifies(LegacyItemConstructorBridge.generate());

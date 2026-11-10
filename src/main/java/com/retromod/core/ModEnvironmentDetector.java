@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 
 import org.slf4j.Logger;
@@ -142,15 +143,15 @@ public final class ModEnvironmentDetector {
 
         switch (env) {
             case SERVER -> {
-                LOGGER.info("{} is server-only. Joining clients do not need Retromod for it.",
+                LOGGER.debug(RetromodLog.DETAIL, "{} is server-only. Joining clients do not need Retromod for it.",
                     fileName);
             }
             case CLIENT -> {
-                LOGGER.info("{} is client-only. It does not need to be installed on the server.",
+                LOGGER.debug(RetromodLog.DETAIL, "{} is client-only. It does not need to be installed on the server.",
                     fileName);
             }
             case BOTH -> {
-                LOGGER.info("{} runs on both client and server", fileName);
+                LOGGER.debug(RetromodLog.DETAIL, "{} runs on both client and server", fileName);
             }
             default -> {
                 LOGGER.debug("{} does not declare a side, so Retromod will treat it as both.",

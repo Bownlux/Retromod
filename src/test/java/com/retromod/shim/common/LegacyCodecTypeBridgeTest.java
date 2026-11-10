@@ -5,6 +5,7 @@
 package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
@@ -31,10 +32,17 @@ import static org.junit.jupiter.api.Assertions.*;
 class LegacyCodecTypeBridgeTest {
 
     private static final String STRUCTURE_TYPE = "net/minecraft/world/level/levelgen/structure/StructureType";
+    private static final String STRUCTURE_PLACEMENT_TYPE =
+            "net/minecraft/world/level/levelgen/structure/placement/StructurePlacementType";
+    private static final String STRUCTURE_POOL_ELEMENT_TYPE =
+            "net/minecraft/world/level/levelgen/structure/pools/StructurePoolElementType";
+
+    private final String previousTarget = RetromodVersion.TARGET_MC_VERSION;
 
     @AfterEach
     void reset() {
         RetromodTransformer.getInstance().clearRedirectsForTesting();
+        RetromodVersion.TARGET_MC_VERSION = previousTarget;
     }
 
     @Test
@@ -74,6 +82,75 @@ class LegacyCodecTypeBridgeTest {
         for (MethodNode method : helper.methods) {
             new Analyzer<>(new BasicVerifier()).analyze(helper.name, method);
         }
+    }
+
+    @Test
+    void offline263BridgesTheTypesThatKeptTheirMapCodec() {
+        RetromodTransformer transformer = registerOffline("26.3");
+
+        assertEquals(List.of(STRUCTURE_TYPE, STRUCTURE_POOL_ELEMENT_TYPE), helperInterfaces(transformer),
+                "26.3 keeps a map codec on StructureType and StructurePoolElementType and removed the placement types");
+        assertFalse(redirectsPlacementModifierRegister(transformer),
+                "26.3 has no PlacementModifierType, so its register call must not be redirected");
+        assertEquals(CODEC_BASES[0][1], superAfterTransform(transformer, CODEC_BASES[0][0]),
+                "a ChunkGenerator subclass is rebased on 26.3");
+        assertEquals(CODEC_BASES[1][1], superAfterTransform(transformer, CODEC_BASES[1][0]),
+                "a BiomeSource subclass is rebased on 26.3");
+    }
+
+    @Test
+    void offline262KeepsThePlacementTypes() {
+        RetromodTransformer transformer = registerOffline("26.2");
+
+        assertEquals(List.of(PLACEMENT_MODIFIER_TYPE, STRUCTURE_TYPE, STRUCTURE_PLACEMENT_TYPE,
+                        STRUCTURE_POOL_ELEMENT_TYPE), helperInterfaces(transformer),
+                "26.2 took the map codec from StructureProcessorType only");
+        assertTrue(redirectsPlacementModifierRegister(transformer),
+                "26.2 still has PlacementModifierType.register, which takes a map codec");
+    }
+
+    @Test
+    void theHostVersionDecidesPerTypeWhenTheClassCannotBeRead() {
+        List<String> every = new ArrayList<>(INTERFACES);
+        for (String[] base : CODEC_BASES) every.add(base[0]);
+        assertEquals(7, every.size());
+
+        for (String type : every) {
+            assertFalse(mapCodecByVersion(type, "1.20.4"), type + " returned a plain codec on 1.20.4");
+            assertTrue(mapCodecByVersion(type, "26.1"), type + " returns a map codec on 26.1");
+        }
+        assertFalse(mapCodecByVersion(PLACEMENT_MODIFIER_TYPE, "26.3-rc-1"),
+                "a 26.3 release candidate already lacks PlacementModifierType");
+        assertTrue(mapCodecByVersion(STRUCTURE_TYPE, "26.3-rc-1"),
+                "StructureType keeps its map codec on a 26.3 release candidate");
+    }
+
+    /** Registers the bridge for {@code host} with no Minecraft class readable, as the CLI and AOT run. */
+    private static RetromodTransformer registerOffline(String host) {
+        RetromodVersion.TARGET_MC_VERSION = host;
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        LegacyCodecTypeBridge.register(transformer);
+        return transformer;
+    }
+
+    private static List<String> helperInterfaces(RetromodTransformer transformer) {
+        byte[] helper = transformer.getSyntheticClasses().get(HELPER);
+        assertNotNull(helper, "the codec type helper was not registered");
+        return node(helper).interfaces;
+    }
+
+    private static boolean redirectsPlacementModifierRegister(RetromodTransformer transformer) {
+        return transformer.getMethodRedirects().keySet().stream()
+                .anyMatch(key -> key.owner().equals(PLACEMENT_MODIFIER_TYPE) && key.name().equals("register"));
+    }
+
+    /** The superclass a mod class extending {@code base} has after the transform. */
+    private static String superAfterTransform(RetromodTransformer transformer, String base) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, "mod/CustomWorldgen", null, base, null);
+        cw.visitEnd();
+        return node(transformer.transformClass(cw.toByteArray(), "mod/CustomWorldgen")).superName;
     }
 
     private static byte[] transform() {
@@ -135,6 +212,34 @@ class LegacyCodecTypeBridgeTest {
         ClassNode node = new ClassNode();
         new ClassReader(bytes).accept(node, 0);
         return node;
+    }
+
+    /**
+     * A mixin must extend a class in its target's hierarchy, so one that extends ChunkGenerator to
+     * reach its members goes back to it after the rebase (C2ME's MixinNoiseChunkGenerator on 26.3).
+     */
+    @Test
+    void aMixinOnAChunkGeneratorKeepsTheHostBase() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        transformer.clearRedirectsForTesting();
+        registerCodecBases(transformer);
+
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, "mod/mixin/MixinNoiseChunkGenerator", null,
+                CODEC_BASES[0][0], null);
+        var mixin = cw.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        var targets = mixin.visitArray("value");
+        targets.visit(null, Type.getObjectType("net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator"));
+        targets.visitEnd();
+        mixin.visitEnd();
+        cw.visitEnd();
+        byte[] rebased = transformer.transformClass(cw.toByteArray(), "mod/mixin/MixinNoiseChunkGenerator");
+        byte[] repaired = new com.retromod.mixin.MixinCompatibilityTransformer(transformer)
+                .applyPostRemapRepairs(rebased);
+
+        assertEquals(CODEC_BASES[0][0], node(repaired).superName,
+                "the generated base lives in the mod jar, outside NoiseBasedChunkGenerator's hierarchy");
     }
 
     /**

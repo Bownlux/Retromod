@@ -89,11 +89,10 @@ class LoaderApiOwnershipTest {
     }
 
     @Test
-    @DisplayName("CLI transform and batch register API shims after polyfills, then reach the hook")
+    @DisplayName("CLI transform and batch register in the game's order, then reach the hook")
     void cliOrders() throws Exception {
         ModVersionInfo info = new ModVersionInfo("fixture", "1.0", "1.21.1", "fabric", "1.0",
                 java.util.Set.of(), java.util.Set.of(), false);
-        new PolyfillRegistry().loadAndRegister(transformer);
         var auxiliary = com.retromod.cli.RetromodCli.class.getDeclaredMethod("registerAuxiliaryRedirects",
                 RetromodTransformer.class, ModVersionInfo.class, List.class);
         auxiliary.setAccessible(true);
@@ -110,10 +109,10 @@ class LoaderApiOwnershipTest {
     }
 
     @Test
-    @DisplayName("AOT registers polyfills before the shim chain")
+    @DisplayName("AOT registers the shim chain before polyfills, as the game does")
     void aotOrder() {
-        new PolyfillRegistry().loadAndRegister(transformer);
         registerFabricShims();
+        new PolyfillRegistry().loadAndRegister(transformer);
         prepare(LoaderApiContext.TransformPath.AOT);
         registerFabricShims();
         assertOwned("after the AOT order");

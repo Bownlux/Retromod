@@ -5,6 +5,7 @@
 package com.retromod.archive;
 
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.RetromodLog;
 import com.retromod.util.ZipSecurity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -121,7 +122,7 @@ public class ApiArchiveManager {
         Map<String, byte[]> classes = extractClasses(archivePath);
         archiveCache.put(archiveKey, classes);
 
-        LOGGER.info("Loaded archive {} with {} classes", archiveKey, classes.size());
+        LOGGER.debug(RetromodLog.DETAIL, "Loaded archive {} with {} classes", archiveKey, classes.size());
     }
 
     /**

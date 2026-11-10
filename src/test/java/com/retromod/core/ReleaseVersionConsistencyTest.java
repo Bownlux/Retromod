@@ -21,8 +21,10 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -133,6 +135,49 @@ class ReleaseVersionConsistencyTest {
                 "'fabric':{'fabric.mod.json','quilt.mod.json'}"));
         assertTrue(windowsBuilder.contains("qmap.get('minecraft')=='='+mc"));
         assertTrue(windowsBuilder.contains("qmap.get('java')==j"));
+    }
+
+    @Test
+    void publicDocsQuoteTheReleaseMatrixTotals() throws Exception {
+        // The changelogs keep the counts of their own releases, so only current guides are checked.
+        Map<String, Integer> expected =
+                expectedArtifactCounts(Files.readString(Path.of("build-all.sh")));
+        int loaderJars = expected.get("FABRIC") + expected.get("FORGE") + expected.get("NEOFORGE");
+        int total = expected.get("TOTAL");
+        Pattern loaderJarCount = Pattern.compile("\\b(\\d+) loader jars\\b");
+        Pattern artifactCount = Pattern.compile("\\b(\\d+) artifacts\\b");
+
+        for (String docName : List.of("README.md", "docs/installation.md", "docs/contributing.md",
+                "docs/authenticity.md", "AGENTS.md", "CLAUDE.md")) {
+            String doc = Files.readString(Path.of(docName));
+            int quoted = 0;
+            Matcher loaderJarMatch = loaderJarCount.matcher(doc);
+            while (loaderJarMatch.find()) {
+                quoted++;
+                assertEquals(loaderJars, Integer.parseInt(loaderJarMatch.group(1)),
+                        docName + " says " + loaderJarMatch.group(1)
+                                + " loader jars, but build-all.sh builds " + loaderJars);
+            }
+            Matcher artifactMatch = artifactCount.matcher(doc);
+            while (artifactMatch.find()) {
+                quoted++;
+                assertEquals(total, Integer.parseInt(artifactMatch.group(1)),
+                        docName + " says " + artifactMatch.group(1)
+                                + " artifacts, but build-all.sh builds " + total);
+            }
+            // A reworded count would otherwise pass by matching nothing.
+            assertTrue(quoted > 0, docName + " no longer quotes the release matrix as "
+                    + "\"N loader jars\" or \"N artifacts\"; update this test to the new wording");
+        }
+    }
+
+    @Test
+    void cliDefaultTargetIsTheNewestVersionTheReleaseBuildsFor() throws Exception {
+        List<String> versions = shellArray(Files.readString(Path.of("build-all.sh")), "MC_VERSIONS");
+
+        assertEquals(versions.get(versions.size() - 1),
+                privateStaticString(RetromodCli.class, "DEFAULT_TARGET_MC_VERSION"),
+                "RetromodCli.DEFAULT_TARGET_MC_VERSION must be the last MC_VERSIONS entry in build-all.sh");
     }
 
     @Test
@@ -277,6 +322,18 @@ class ReleaseVersionConsistencyTest {
             values.add(value.group(1));
         }
         return values;
+    }
+
+    private static Map<String, Integer> expectedArtifactCounts(String script) {
+        Matcher assignment = Pattern.compile("(?m)^EXPECTED_(\\w+)=(\\d+)$").matcher(script);
+        Map<String, Integer> counts = new HashMap<>();
+        while (assignment.find()) {
+            counts.put(assignment.group(1), Integer.parseInt(assignment.group(2)));
+        }
+        for (String key : List.of("FABRIC", "FORGE", "NEOFORGE", "TOTAL")) {
+            assertTrue(counts.containsKey(key), "build-all.sh is missing EXPECTED_" + key);
+        }
+        return counts;
     }
 
     private static List<String> batchWords(String script, String name) {

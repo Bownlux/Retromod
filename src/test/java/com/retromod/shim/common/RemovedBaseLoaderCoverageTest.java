@@ -21,11 +21,12 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * A removed base has to be rebased on every loader that can host the mod.
  *
- * <p>Forge assembles its own list of the shared 26.1 adaptations instead of calling the common
- * {@code register()}, so it silently missed the removed-base bridges entirely. A Forge mod with a
- * custom tool, armour piece or music disc transformed correctly through the CLI, because that path
- * does call {@code register()}, and then failed at its {@code extends} when the game ran it. That
- * split is the reason this is checked per loader rather than once.
+ * <p>Forge once assembled its own list of the shared 26.1 adaptations instead of calling the
+ * common {@code register()}, so it silently missed the removed-base bridges entirely. A Forge mod
+ * with a custom tool, armor piece or music disc transformed correctly through the CLI, because
+ * that path does call {@code register()}, and then failed at its {@code extends} when the game ran
+ * it. Every loader shim now calls {@code register()}; this stays per loader so a shim that stops
+ * calling it fails here.
  */
 class RemovedBaseLoaderCoverageTest {
 
@@ -57,8 +58,8 @@ class RemovedBaseLoaderCoverageTest {
         for (String base : MUST_REBASE) {
             assertTrue(rebased.contains(base),
                     loader + " does not rebase " + base + ", so a mod extending it loads on the "
-                    + "other loaders and fails here. Forge builds its own list, so a bridge added "
-                    + "to the common path has to be added there too");
+                    + "other loaders and fails here. Check that this loader's 26.1 shim still "
+                    + "calls Common_1_21_11_to_26_1_ClassMoves.register()");
         }
     }
 

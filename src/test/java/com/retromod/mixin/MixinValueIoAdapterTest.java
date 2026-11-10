@@ -252,16 +252,16 @@ class MixinValueIoAdapterTest {
     }
 
     @Test
-    @DisplayName("The ValueIO gate is host >= 1.21.5 (when the refactor landed)")
+    @DisplayName("The ValueIO gate is host >= 1.21.6 (when the refactor landed)")
     void versionGate() {
-        assertTrue(com.retromod.core.RetromodVersion.compareMcVersions("26.2", "1.21.5") >= 0, "26.x has ValueIO");
-        assertTrue(com.retromod.core.RetromodVersion.compareMcVersions("1.21.11", "1.21.5") >= 0, "1.21.11 has ValueIO");
-        assertTrue(com.retromod.core.RetromodVersion.compareMcVersions("1.21.1", "1.21.5") < 0, "1.21.1 does not");
-        assertTrue(com.retromod.core.RetromodVersion.compareMcVersions("unknown", "1.21.5") < 0, "unknown declines");
+        assertTrue(com.retromod.core.RetromodVersion.compareMcVersions("26.2", "1.21.6") >= 0, "26.x has ValueIO");
+        assertTrue(com.retromod.core.RetromodVersion.compareMcVersions("1.21.11", "1.21.6") >= 0, "1.21.11 has ValueIO");
+        assertTrue(com.retromod.core.RetromodVersion.compareMcVersions("1.21.5", "1.21.6") < 0, "1.21.5 does not");
+        assertTrue(com.retromod.core.RetromodVersion.compareMcVersions("unknown", "1.21.6") < 0, "unknown declines");
     }
 
     @Test
-    @DisplayName("adaptValueIoHandlers post-remap entry point: adapts on a 26.x host, no-ops below 1.21.5")
+    @DisplayName("adaptValueIoHandlers post-remap entry point: adapts on a 26.x host, no-ops below 1.21.6")
     void adaptEntryPointGated() {
         String saved = RetromodVersion.TARGET_MC_VERSION;
         try {
@@ -269,7 +269,10 @@ class MixinValueIoAdapterTest {
             byte[] in = saveDataMixin("addAdditionalSaveData", "(L" + COMPOUND_TAG + ";" + CI + ")V");
 
             RetromodVersion.TARGET_MC_VERSION = "1.21.1";               // pre-ValueIO host
-            assertSame(in, mt.adaptValueIoHandlers(in), "below 1.21.5 the pass is a no-op (input returned)");
+            assertSame(in, mt.adaptValueIoHandlers(in), "below 1.21.6 the pass is a no-op (input returned)");
+            // 1.21.5 still saved entities into a CompoundTag, so the handler is valid there.
+            RetromodVersion.TARGET_MC_VERSION = "1.21.5";
+            assertSame(in, mt.adaptValueIoHandlers(in), "a 1.21.5 host keeps the CompoundTag handler");
 
             RetromodVersion.TARGET_MC_VERSION = "26.2";                 // ValueIO host
             ClassNode out = parse(mt.adaptValueIoHandlers(in));

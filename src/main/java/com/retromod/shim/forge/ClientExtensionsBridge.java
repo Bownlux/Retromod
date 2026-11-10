@@ -4,6 +4,8 @@
  */
 package com.retromod.shim.forge;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,7 +42,7 @@ public final class ClientExtensionsBridge {
             Class<?> loadingContext = Class.forName("net.neoforged.fml.ModLoadingContext", false, loader);
             Object context = loadingContext.getMethod("get").invoke(null);
             Object container = loadingContext.getMethod("getActiveContainer").invoke(context);
-            Object bus = container.getClass().getMethod("getEventBus").invoke(container);
+            Object bus = LegacyPublicMethods.method(container.getClass(), "getEventBus").invoke(container);
             // NeoForge posts mod-bus events one priority phase at a time across all mods, so the
             // lowest phase runs after every mod's own registrations. Those are then skipped
             // instead of registered twice, which NeoForge rejects.
@@ -65,7 +67,7 @@ public final class ClientExtensionsBridge {
         routed += routeRegistry(event, "BLOCK", "registerBlock");
         routed += routeRegistry(event, "MOB_EFFECT", "registerMobEffect");
         if (routed > 0) {
-            LOGGER.info("Registered {} Forge client extension(s) through NeoForge", routed);
+            LOGGER.debug(RetromodLog.DETAIL, "Registered {} Forge client extension(s) through NeoForge", routed);
         }
     }
 
@@ -128,7 +130,7 @@ public final class ClientExtensionsBridge {
      */
     static boolean alreadyRegistered(Object event, Method register, Object entry) {
         String check = "is" + register.getName().substring("register".length()) + "Registered";
-        for (Method method : event.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(event.getClass())) {
             if (method.getName().equals(check) && method.getParameterCount() == 1
                     && method.getParameterTypes()[0].isInstance(entry)) {
                 try {

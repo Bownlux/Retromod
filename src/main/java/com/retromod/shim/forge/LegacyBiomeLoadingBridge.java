@@ -5,6 +5,8 @@
 package com.retromod.shim.forge;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.GeneratedLog;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
@@ -57,7 +59,8 @@ public final class LegacyBiomeLoadingBridge {
     }
 
     public static void register(RetromodTransformer transformer) {
-        transformer.registerSyntheticClass(MODIFIER, generateModifier());
+        // Its post call names the old event base, which Forge 26.2 removed.
+        transformer.registerSyntheticClass(MODIFIER, LegacyEventBaseBridge.adaptGenerated(generateModifier()));
     }
 
     /** The stand-in event, carrying what a 1.18 handler reads and edits. */
@@ -214,7 +217,7 @@ public final class LegacyBiomeLoadingBridge {
         mv.visitJumpInsn(GOTO, done);
         mv.visitLabel(handler);
         mv.visitVarInsn(ASTORE, 0);
-        report(mv, "[Retromod] Could not register the biome modifier for an old BiomeLoadingEvent handler: ");
+        report(mv, "[Retromod] Could not register the biome modifier for an old BiomeLoadingEvent handler");
         mv.visitLabel(done);
         mv.visitInsn(RETURN);
         mv.visitMaxs(0, 0);
@@ -281,21 +284,19 @@ public final class LegacyBiomeLoadingBridge {
         mv.visitVarInsn(ALOAD, 7);
         mv.visitVarInsn(ASTORE, 0);
         report(mv, "[Retromod] An old BiomeLoadingEvent handler failed, so some of its spawns or features "
-                + "may be missing: ");
+                + "may be missing");
         mv.visitLabel(skip);
         mv.visitInsn(RETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }
 
-    /** Prints {@code message} and the throwable in local 0 to standard error, which Forge logs. */
+    /** Warns {@code message} with the throwable in local 0 in the game log, which standard error never reaches on Forge. */
     private static void report(MethodVisitor mv, String message) {
-        mv.visitFieldInsn(GETSTATIC, "java/lang/System", "err", "Ljava/io/PrintStream;");
+        GeneratedLog.pushLogger(mv);
         mv.visitLdcInsn(message);
         mv.visitVarInsn(ALOAD, 0);
-        mv.visitMethodInsn(INVOKESTATIC, "java/lang/String", "valueOf", "(Ljava/lang/Object;)Ljava/lang/String;", false);
-        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat", "(Ljava/lang/String;)Ljava/lang/String;", false);
-        mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+        GeneratedLog.warnWithCause(mv);
     }
 
     /**
@@ -341,7 +342,7 @@ public final class LegacyBiomeLoadingBridge {
             Files.write(entry, dataEntry(modId));
             wired.add(modId);
         }
-        LOGGER.info("Posting the old BiomeLoadingEvent through a biome modifier for {}", wired);
+        LOGGER.debug(RetromodLog.DETAIL, "Posting the old BiomeLoadingEvent through a biome modifier for {}", wired);
         return wired.size();
     }
 
@@ -381,7 +382,7 @@ public final class LegacyBiomeLoadingBridge {
             Map<String, byte[]> entries = new LinkedHashMap<>();
             for (String modId : modIds) entries.put(dataEntryName(modId), dataEntry(modId));
             if (!modIds.isEmpty()) {
-                LOGGER.info("Posting the old BiomeLoadingEvent through a biome modifier for {}", modIds);
+                LOGGER.debug(RetromodLog.DETAIL, "Posting the old BiomeLoadingEvent through a biome modifier for {}", modIds);
             }
             return entries;
         }

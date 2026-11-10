@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,7 +32,7 @@ public class ItemSafetyShim {
         try {
             Method m = getDefaultInstanceMethod;
             if (m == null || m.getDeclaringClass() != item.getClass()) {
-                m = item.getClass().getMethod("getDefaultInstance");
+                m = LegacyPublicMethods.method(item.getClass(), "getDefaultInstance");
                 getDefaultInstanceMethod = m;
             }
             return m.invoke(item);
@@ -127,8 +128,8 @@ public class ItemSafetyShim {
      */
     public static String getTranslationKey(Object component) {
         try {
-            Object contents = component.getClass().getMethod("getContents").invoke(component);
-            return (String) contents.getClass().getMethod("getKey").invoke(contents);
+            Object contents = LegacyPublicMethods.method(component.getClass(), "getContents").invoke(component);
+            return (String) LegacyPublicMethods.method(contents.getClass(), "getKey").invoke(contents);
         } catch (Exception e) {
             return "";
         }
@@ -148,10 +149,10 @@ public class ItemSafetyShim {
             Class<?> hasCommandLevelClass = cl.loadClass("net.minecraft.server.permissions.Permission$HasCommandLevel");
             Object permission = hasCommandLevelClass.getConstructor(permLevelClass).newInstance(permLevel);
 
-            Object permSet = source.getClass().getMethod("permissions").invoke(source);
+            Object permSet = LegacyPublicMethods.method(source.getClass(), "permissions").invoke(source);
 
             Class<?> permClass = cl.loadClass("net.minecraft.server.permissions.Permission");
-            return (boolean) permSet.getClass().getMethod("hasPermission", permClass).invoke(permSet, permission);
+            return (boolean) LegacyPublicMethods.method(permSet.getClass(), "hasPermission", permClass).invoke(permSet, permission);
         } catch (Exception e) {
             return level <= 0;
         }
@@ -200,7 +201,7 @@ public class ItemSafetyShim {
      */
     public static void safeEventRegister(Object event, Object listener) {
         try {
-            event.getClass().getMethod("register", Object.class).invoke(event, listener);
+            LegacyPublicMethods.method(event.getClass(), "register", Object.class).invoke(event, listener);
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             if (cause instanceof ArrayStoreException) {
@@ -214,14 +215,14 @@ public class ItemSafetyShim {
     /** Phased variant of {@link #safeEventRegister}: Event.register(phase, listener). */
     public static void safeEventRegisterPhased(Object event, Object phase, Object listener) {
         try {
-            for (java.lang.reflect.Method m : event.getClass().getMethods()) {
+            for (java.lang.reflect.Method m : LegacyPublicMethods.methods(event.getClass())) {
                 if (m.getName().equals("register") && m.getParameterCount() == 2
                         && !m.getParameterTypes()[0].equals(Object.class)) {
                     m.invoke(event, phase, listener);
                     return;
                 }
             }
-            event.getClass().getMethod("register", phase.getClass(), Object.class).invoke(event, phase, listener);
+            LegacyPublicMethods.method(event.getClass(), "register", phase.getClass(), Object.class).invoke(event, phase, listener);
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             if (cause instanceof ArrayStoreException) {

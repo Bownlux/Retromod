@@ -226,10 +226,11 @@ class Forge1122LifecycleTest {
         }
     }
 
-    @Test
-    @DisplayName("functional: fire() constructs the events and invokes the handlers in order")
-    void bridgeActuallyFires() throws Exception {
-        // a tiny mod class recording which handlers ran (compiled by hand against the stand-ins)
+    /**
+     * A tiny mod class recording which handlers ran (compiled by hand against the stand-ins), with
+     * the bridge and event stand-ins beside it. When {@code preThrows}, onPre throws "boom" first.
+     */
+    private static MapClassLoader fireModLoader(boolean preThrows) {
         String pre = Forge1122LifecycleSynthetics.PRE_EVENT;
         String init = Forge1122LifecycleSynthetics.INIT_EVENT;
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
@@ -245,12 +246,20 @@ class Forge1122LifecycleTest {
         for (String[] h : new String[][]{{"onPre", pre, "P"}, {"onInit", init, "I"}}) {
             MethodVisitor m = cw.visitMethod(ACC_PUBLIC, h[0], "(L" + h[1] + ";)V", null, null);
             m.visitCode();
-            m.visitFieldInsn(GETSTATIC, "test/FireMod", "log", "Ljava/lang/String;");
-            m.visitLdcInsn(h[2]);
-            m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
-                    "(Ljava/lang/String;)Ljava/lang/String;", false);
-            m.visitFieldInsn(PUTSTATIC, "test/FireMod", "log", "Ljava/lang/String;");
-            m.visitInsn(RETURN);
+            if (preThrows && h[0].equals("onPre")) {
+                m.visitTypeInsn(NEW, "java/lang/IllegalStateException");
+                m.visitInsn(DUP);
+                m.visitLdcInsn("boom");
+                m.visitMethodInsn(INVOKESPECIAL, "java/lang/IllegalStateException", "<init>", "(Ljava/lang/String;)V", false);
+                m.visitInsn(ATHROW);
+            } else {
+                m.visitFieldInsn(GETSTATIC, "test/FireMod", "log", "Ljava/lang/String;");
+                m.visitLdcInsn(h[2]);
+                m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat",
+                        "(Ljava/lang/String;)Ljava/lang/String;", false);
+                m.visitFieldInsn(PUTSTATIC, "test/FireMod", "log", "Ljava/lang/String;");
+                m.visitInsn(RETURN);
+            }
             m.visitMaxs(0, 0);
             m.visitEnd();
         }
@@ -265,8 +274,11 @@ class Forge1122LifecycleTest {
         defs.put(Forge1122LifecycleSynthetics.POST_EVENT.replace('/', '.'),
                 Forge1122LifecycleSynthetics.generateEvent(
                         Forge1122LifecycleSynthetics.POST_EVENT, false));
+        return new MapClassLoader(defs);
+    }
 
-        MapClassLoader cl = new MapClassLoader(defs);
+    /** Runs the bridge's fire(mod, "firemod") and returns the mod class. */
+    private static Class<?> fire(MapClassLoader cl) throws Exception {
         Class<?> modClass = Class.forName("test.FireMod", true, cl);
         modClass.getField("log").set(null, "");
         Object mod = modClass.getDeclaredConstructor().newInstance();
@@ -274,6 +286,15 @@ class Forge1122LifecycleTest {
                 Forge1122LifecycleSynthetics.BRIDGE.replace('/', '.'), true, cl);
         Method fire = bridge.getMethod("fire", Object.class, String.class);
         fire.invoke(null, mod, "firemod");
+        return modClass;
+    }
+
+    @Test
+    @DisplayName("functional: fire() constructs the events and invokes the handlers in order")
+    void bridgeActuallyFires() throws Exception {
+        String pre = Forge1122LifecycleSynthetics.PRE_EVENT;
+        MapClassLoader cl = fireModLoader(false);
+        Class<?> modClass = fire(cl);
         assertEquals("PI", modClass.getField("log").get(null),
                 "handlers must run in pre -> init order with constructed events");
 
@@ -283,5 +304,24 @@ class Forge1122LifecycleTest {
         Object file = preEv.getMethod("getSuggestedConfigurationFile").invoke(ev);
         assertTrue(file.toString().endsWith("firemod.cfg"),
                 "suggested config file must be config/<modid>.cfg, got " + file);
+    }
+
+    @Test
+    @DisplayName("A handler that throws is logged with the mod, the handler, and the cause, and loading continues")
+    void failingHandlerIsLoggedAndLoadingContinues() throws Exception {
+        MapClassLoader cl = fireModLoader(true);
+        java.io.PrintStream previous = System.err;
+        java.io.ByteArrayOutputStream err = new java.io.ByteArrayOutputStream();
+        Class<?> modClass;
+        // slf4j-simple, the test logger, writes to whatever System.err is when it logs.
+        System.setErr(new java.io.PrintStream(err, true));
+        try {
+            modClass = fire(cl);
+        } finally {
+            System.setErr(previous);
+        }
+        String report = err.toString();
+        assertTrue(report.contains("firemod") && report.contains("onPre") && report.contains("boom"), report);
+        assertEquals("I", modClass.getField("log").get(null), "onInit still runs after onPre failed");
     }
 }

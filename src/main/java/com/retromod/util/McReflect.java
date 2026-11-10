@@ -4,6 +4,7 @@
  */
 package com.retromod.util;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,6 +38,10 @@ public final class McReflect {
     // neoforge flag flips it, so nothing changes for a normal in-game run.
     private static volatile boolean forceNeoForge = false;
 
+    // Set for a Forge host: the CLI's --target-loader forge and RetromodForge at startup. Forge
+    // keeps classes that the stand-ins built for other targets would replace.
+    private static volatile boolean forceForge = false;
+
     private McReflect() {}
 
     /**
@@ -51,6 +56,21 @@ public final class McReflect {
     /** Whether the offline NeoForge-target override is active. */
     public static boolean isForceNeoForge() {
         return forceNeoForge;
+    }
+
+    /** Marks the target as a Forge host, for the CLI's {@code --target-loader forge} and RetromodForge. */
+    public static void setForceForge(boolean force) {
+        forceForge = force;
+    }
+
+    /** Whether the Forge-target flag is set, whatever {@link #isNeoForge()} says. */
+    public static boolean isForceForge() {
+        return forceForge;
+    }
+
+    /** Whether Retromod translates for a Forge host. A NeoForge target always wins. */
+    public static boolean isForgeTarget() {
+        return forceForge && !isNeoForge();
     }
 
     /**
@@ -291,7 +311,7 @@ public final class McReflect {
                 mappingResolver = loaderClass.getMethod("getMappingResolver").invoke(loader);
 
                 // Find the mapClassName method on the resolver
-                for (Method m : mappingResolver.getClass().getMethods()) {
+                for (Method m : LegacyPublicMethods.methods(mappingResolver.getClass())) {
                     if ("mapClassName".equals(m.getName()) && m.getParameterCount() == 2) {
                         mapClassNameMethod = m;
                         break;

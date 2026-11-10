@@ -42,7 +42,8 @@ class ForgeMissingMinecraftMetadataTest {
         ModVersionInfo info = new ModVersionDetector().detectVersion(forgeJar("1.3.0"));
 
         assertEquals("betterportals", info.modId());
-        assertNull(info.targetMcVersion());
+        assertEquals("1.16.4", info.targetMcVersion(),
+                "the mod's own 1.3.0 is never read; the Forge 35 floor decides");
     }
 
     /**
@@ -121,9 +122,9 @@ class ForgeMissingMinecraftMetadataTest {
         ModVersionInfo info = ModVersionDetector.metadataOnly().detectVersion(mdkTemplateJar(
                 "META-INF/mods.toml", "forge", "[36.0.1,)", "1.0.0", "1.0.0"));
 
-        assertNull(info.targetMcVersion(),
-                "a mod's own semver in the manifest is not a Minecraft version");
-        assertFalse(info.needsTransformation("1.21.1"));
+        assertEquals("1.16.5", info.targetMcVersion(),
+                "a mod's own semver in the manifest is not a Minecraft version; the forge [36.0.1,) floor is");
+        assertTrue(info.needsTransformation("1.21.1"));
     }
 
     @Test

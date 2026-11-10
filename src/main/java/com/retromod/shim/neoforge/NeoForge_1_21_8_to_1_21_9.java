@@ -57,10 +57,56 @@ public class NeoForge_1_21_8_to_1_21_9 implements VersionShim {
         );
     }
 
+    /** FMLLoader's statics on a host where 1.21.9 made it an instance; Forge mods on NeoForge take these too. */
+    public static void registerLoaderStatics(RetromodTransformer transformer) {
+        // Dist and the production flag kept an exact static form on FMLEnvironment, whose bodies
+        // are literally FMLLoader.getCurrent().getDist() and .isProduction(). A static-to-static
+        // redirect is the whole repair for these two, and it stays a direct call, which matters
+        // because a side check is the kind of thing a mod runs every tick.
+        transformer.registerMethodRedirect(
+            FML_LOADER, "getDist", DIST_DESC,
+            FML_ENVIRONMENT, "getDist", DIST_DESC
+        );
+        transformer.registerMethodRedirect(
+            FML_LOADER, "isProduction", "()Z",
+            FML_ENVIRONMENT, "isProduction", "()Z"
+        );
+        // The loader instance kept both names, so a mod built for 1.21.9 or newer keeps its own instance calls.
+        transformer.limitRedirectToModsBefore(FML_LOADER, "getDist", DIST_DESC, "1.21.9");
+        transformer.limitRedirectToModsBefore(FML_LOADER, "isProduction", "()Z", "1.21.9");
+
+        // The rest gained no static form, so each call has to pick up the loader instance first.
+        // Names and return types survived except the two NeoForge renamed on the way.
+        registerLoaderInstanceCall(transformer, "getLoadingModList",
+            "()Lnet/neoforged/fml/loading/LoadingModList;", "getLoadingModList");
+        registerLoaderInstanceCall(transformer, "getGamePath",
+            "()Ljava/nio/file/Path;", "getGameDir");
+        registerLoaderInstanceCall(transformer, "versionInfo",
+            "()Lnet/neoforged/fml/loading/VersionInfo;", "getVersionInfo");
+        registerLoaderInstanceCall(transformer, "getGameLayer",
+            "()Ljava/lang/ModuleLayer;", "getGameLayer");
+        registerLoaderInstanceCall(transformer, "getBindings",
+            "()Lnet/neoforged/fml/IBindingsProvider;", "getBindings");
+    }
+
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
         // authlib 7 made GameProfile a record; vanilla, so every loader needs it.
         com.retromod.shim.common.LegacyGameProfileBridge.register(transformer);
+        // WorldVersion.getPackVersion(PackType) became packVersion(PackType) with a major and minor number.
+        com.retromod.shim.common.LegacyPackVersionBridge.register(transformer);
+        // EntityRenderDispatcher stopped caching the camera orientation; the camera still has it.
+        com.retromod.shim.common.LegacyRenderCallBridge.registerCameraOrientation(transformer);
+        // Keyframe's constructors took Vector3fc.
+        com.retromod.shim.common.JomlParameterWidening.register1_21_9(transformer);
+        // Entity.getServer() is gone; the entity's level still has the server.
+        com.retromod.shim.common.LegacyPlayerServerBridge.registerGetServer(transformer);
+        // Style.withFont took a FontDescription; a font file is its Resource form.
+        com.retromod.shim.common.LegacyStyleFontBridge.register(transformer);
+        // EntityDataSerializers.COMPOUND_TAG is gone; a rebuilt serializer joins NeoForge's serializer registry.
+        com.retromod.shim.common.LegacyEntityDataSerializerBridge.register(transformer);
+        // Reload listeners take a shared state, so a 1.21.2 to 1.21.8 listener gets the host's reload.
+        com.retromod.shim.common.LegacyReloadListenerBridge.register(transformer);
 
         // The Transfer API rework left IItemHandler alone. Checked against the loader jars:
         // getSlots, getStackInSlot, insertItem, extractItem, getSlotLimit and isItemValid have the
@@ -80,18 +126,7 @@ public class NeoForge_1_21_8_to_1_21_9 implements VersionShim {
         // methods. A mod built against the old shape links fine and then dies on its first call
         // with IncompatibleClassChangeError naming a method that plainly exists (#248).
 
-        // Dist and the production flag kept an exact static form on FMLEnvironment, whose bodies
-        // are literally FMLLoader.getCurrent().getDist() and .isProduction(). A static-to-static
-        // redirect is the whole repair for these two, and it stays a direct call, which matters
-        // because a side check is the kind of thing a mod runs every tick.
-        transformer.registerMethodRedirect(
-            FML_LOADER, "getDist", DIST_DESC,
-            FML_ENVIRONMENT, "getDist", DIST_DESC
-        );
-        transformer.registerMethodRedirect(
-            FML_LOADER, "isProduction", "()Z",
-            FML_ENVIRONMENT, "isProduction", "()Z"
-        );
+        registerLoaderStatics(transformer);
 
         // The same two on FMLEnvironment were public static final fields, so a read has to become
         // a call. Both were final, so no mod can hold a write for the rewrite to get wrong.
@@ -104,32 +139,28 @@ public class NeoForge_1_21_8_to_1_21_9 implements VersionShim {
             FML_ENVIRONMENT, "isProduction", "()Z"
         );
 
-        // The rest gained no static form, so each call has to pick up the loader instance first.
-        // Names and return types survived except the two NeoForge renamed on the way.
-        registerLoaderInstanceCall(transformer, "getLoadingModList",
-            "()Lnet/neoforged/fml/loading/LoadingModList;", "getLoadingModList");
-        registerLoaderInstanceCall(transformer, "getGamePath",
-            "()Ljava/nio/file/Path;", "getGameDir");
-        registerLoaderInstanceCall(transformer, "versionInfo",
-            "()Lnet/neoforged/fml/loading/VersionInfo;", "getVersionInfo");
-        registerLoaderInstanceCall(transformer, "getGameLayer",
-            "()Ljava/lang/ModuleLayer;", "getGameLayer");
-        registerLoaderInstanceCall(transformer, "getBindings",
-            "()Lnet/neoforged/fml/IBindingsProvider;", "getBindings");
-
         // Not bridged, because 1.21.9 removed them outright rather than moving them:
         // beginModScan, completeScan, modLauncherModList, addAccessTransformer, beforeStart,
         // getLauncherInfo, launcherHandlerName, progressWindowTick, and the backgroundScanHandler
         // field. Those are loader plumbing, so a mod reaching them needs a real port.
 
-        // KeyMapping dropped its String-category constructor for a Category record;
-        // the shim builds the record from the old string.
-        transformer.registerConstructorRedirect(
-            "net/minecraft/client/KeyMapping",
-            "(Ljava/lang/String;Lcom/mojang/blaze3d/platform/InputConstants$Type;ILjava/lang/String;)V",
-            "com/retromod/shim/neoforge/embedded/KeyMappingShim", "create",
-            "(Ljava/lang/String;Ljava/lang/Object;ILjava/lang/String;)Ljava/lang/Object;"
-        );
+        // The same release dropped SecureJarHandler, and with it a mod file's findResource and getSecureJar.
+        LegacyModFileBridge.register(transformer);
+
+        // KeyMapping dropped its String-category constructors for a Category record, the 3- and
+        // 4-argument vanilla forms and NeoForge's conflict-context forms alike. The older
+        // KeyMappingShim that handled only the 4-argument form is kept, like every old shim.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerStringCategoryKeyMappings(
+            transformer);
+
+        // The input rework moved Screen's static modifier checks onto Minecraft and made
+        // InputConstants.isKeyDown take the Window. Listener calls and overrides that took
+        // primitives are rebuilt by LegacyInputEventCallAdapter and LegacyGuiOverrideAdapter.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerScreenModifierKeys(transformer);
+        com.retromod.shim.common.LegacyGuiDrawBridge.registerWindowHandleKeyPoll(transformer);
+
+        // Listener.setGain(float) is gone, so the old call becomes a no-op.
+        com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerListenerSetGainNoOp(transformer);
 
         // Entity.getWorld() -> getEntityWorld().
         transformer.registerMethodRedirect(
@@ -151,7 +182,8 @@ public class NeoForge_1_21_8_to_1_21_9 implements VersionShim {
     @Override
     public String[] getShimClasses() {
         return new String[] {
-            "com.retromod.shim.neoforge.embedded.KeyMappingShim"
+            "com.retromod.shim.neoforge.embedded.KeyMappingShim",
+            "com.retromod.shim.fabric.embedded.ItemSafetyShim"
         };
     }
 }

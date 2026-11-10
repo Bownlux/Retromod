@@ -9,13 +9,14 @@ import com.retromod.core.ForgeModTransformer;
 import com.retromod.core.ModVersionDetector;
 import com.retromod.core.QuiltModTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.core.SyntheticLibraries;
 import com.retromod.core.VersionShim;
-import com.retromod.aot.AotCompiler;
 import com.retromod.shim.ShimRegistry;
 import com.retromod.embedder.ModVersionInfo;
 import com.retromod.inplace.InPlaceLaunch;
 import com.retromod.inplace.InPlaceSettings;
 import com.retromod.util.ArchivePublication;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -128,19 +129,9 @@ public class ModCompatibilityChecker {
         return false;
     }
     
-    /**
-     * Transform a mod JAR and copy to mods folder.
-     * 
-     * Uses the appropriate transformer based on mod loader:
-     * - Fabric: FabricModTransformer (updates fabric.mod.json directly)
-     * - Quilt: QuiltModTransformer (uses Fabric bytecode repairs and updates quilt.mod.json)
-     * - Forge/NeoForge: AotCompiler (bytecode transformation)
-     * 
-     * @param sourceJar The original mod JAR (from user's selection)
-     * @return Path to the transformed JAR in the mods folder
-     */
+    /** Translates a picked mod into mods/ with the transformer its loader's startup flow uses. */
     public Path transformAndInstall(Path sourceJar) throws IOException {
-        LOGGER.info("Transforming: {}", sourceJar.getFileName());
+        LOGGER.debug(RetromodLog.DETAIL, "Transforming: {}", sourceJar.getFileName());
         
         // Create mods folder if needed
         Files.createDirectories(modsFolder);
@@ -167,29 +158,28 @@ public class ModCompatibilityChecker {
         if ("fabric".equals(loaderType)) {
             // Use FabricModTransformer, which updates fabric.mod.json in the JAR
             // so no fabric_loader_dependencies.json is needed!
-            LOGGER.info("Using Fabric transformer (will update fabric.mod.json)");
+            LOGGER.debug(RetromodLog.DETAIL, "Using Fabric transformer (will update fabric.mod.json)");
             FabricModTransformer fabricTransformer = new FabricModTransformer(targetVersion);
             transformed = fabricTransformer.transformMod(sourceJar, modsFolder);
         } else if ("quilt".equals(loaderType)) {
-            LOGGER.info("Using Quilt transformer (will update quilt.mod.json)");
+            LOGGER.debug(RetromodLog.DETAIL, "Using Quilt transformer (will update quilt.mod.json)");
             QuiltModTransformer quiltTransformer = new QuiltModTransformer(targetVersion);
             transformed = quiltTransformer.transformMod(sourceJar, modsFolder);
         } else {
-            // Use AotCompiler for Forge/NeoForge
-            LOGGER.info("Using AOT compiler for {}", loaderType);
-            AotCompiler compiler = new AotCompiler(shimRegistry, targetVersion);
-            
-            Path tempTransformed = compiler.compileModAot(sourceJar, true);
-            
-            // Copy to mods folder with -retromod suffix
-            String originalName = sourceJar.getFileName().toString();
-            String newName = originalName.replace(".jar", "-retromod.jar");
-            transformed = modsFolder.resolve(newName);
-            
-            ArchivePublication.copyReplacing(tempTransformed, transformed);
+            // The call the startup flow makes for retromod-input/, so a picked jar gets the same
+            // safe file name and the toml this host's loader reads.
+            LOGGER.debug(RetromodLog.DETAIL, "Using the Forge/NeoForge transformer for {}", loaderType);
+            transformed = new ForgeModTransformer(targetVersion).transformMod(
+                    sourceJar, modsFolder, SyntheticLibraries.ofFolder(modsFolder));
         }
-        
-        LOGGER.info("Installed transformed mod: {}", transformed.getFileName());
+
+        // A transformer returns null when the translation failed, so the GUI reports it as failed.
+        if (transformed == null) {
+            throw new IOException("Retromod could not update " + sourceJar.getFileName()
+                    + ". The reason is in logs/latest.log.");
+        }
+
+        LOGGER.debug(RetromodLog.DETAIL, "Installed transformed mod: {}", transformed.getFileName());
         return transformed;
     }
 
@@ -200,8 +190,8 @@ public class ModCompatibilityChecker {
         String loaderType = info != null ? info.modLoaderType() : "unknown";
         if (!handledInPlace(loaderType, System.getProperties())) return Optional.empty();
 
-        // The original goes into mods/ unchanged. An AOT jar there, as transformAndInstall writes,
-        // would go against the setting, and its output differs from the entry point's translation.
+        // The original goes into mods/ unchanged. A translated jar there, as transformAndInstall
+        // writes, would go against the setting.
         Files.createDirectories(modsFolder);
         Path installed = modsFolder.resolve(sourceJar.getFileName().toString());
         if (!Files.exists(installed) || !Files.isSameFile(sourceJar, installed)) {
@@ -210,7 +200,7 @@ public class ModCompatibilityChecker {
         // Translate it into Retromod's cache now, so the next launch loads it.
         InPlaceLaunch launch = InPlaceLaunch.forEntryPoint(modsFolder.getParent());
         InPlaceLaunch.ChosenOutcome outcome = launch.translateChosen(installed, targetVersion,
-                () -> (InPlaceLaunch.LinkingTranslator) new ForgeModTransformer(targetVersion)::transformMod);
+                () -> (InPlaceLaunch.LinkingTranslator) new ForgeModTransformer(targetVersion)::translateOrThrow);
         LOGGER.info("Added {} to mods/ ({})", installed.getFileName(), outcome);
         return Optional.of(new InPlaceInstall(installed, outcome));
     }

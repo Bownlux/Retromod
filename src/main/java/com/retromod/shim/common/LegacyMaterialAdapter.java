@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.common;
 
+import com.retromod.core.SyntheticEmbedder;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.tree.AbstractInsnNode;
@@ -67,7 +68,7 @@ public final class LegacyMaterialAdapter {
         } catch (Throwable unreadable) {
             return classBytes;
         }
-        if (node.name.startsWith("com/retromod/") || node.name.startsWith("net/minecraft/")) {
+        if (SyntheticEmbedder.isRetromodClass(node.name) || node.name.startsWith("net/minecraft/")) {
             return classBytes;
         }
         Names names = new Names(methodName, fieldName);

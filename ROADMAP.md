@@ -300,9 +300,10 @@ Each of these came from a report with a log behind it, and each names one place 
 - A Forge `@Mod.EventBusSubscriber` class that mixes static and instance handlers loses its static
   handlers on NeoForge, because NeoForge rejects such a class and Forge only ever subscribed the
   static ones.
-- The registry-id bridge registers from 26.1, but a block's id became mandatory at 1.21.2, so a
-  NeoForge 1.21.1 mod on a 1.21.2 through 1.21.11 host still fails with `Block id not set`. The
-  bridge names 26.x types, so widening it needs checking against a 1.21.x host first.
+- The registry-id bridge registers from 1.21.11, but a block's id became mandatory at 1.21.2, so a
+  Forge or NeoForge 1.21.1 mod on a 1.21.2 through 1.21.10 host still fails with `Block id not set`.
+  The bridge names `Identifier`, which 1.21.11 introduced, so those hosts need a `ResourceLocation`
+  build checked against a 1.21.x host.
 - 26.3 key translation stops at `KeyMapping`, `isKeyDown` and `getOrCreate`. `ToggleKeyMapping`,
   subclass constructors and Forge's conflict-context constructors keep GLFW defaults.
 - Retromod points a disabled mixin at `retromod/stripped/<Name>`, and the resulting "target was not

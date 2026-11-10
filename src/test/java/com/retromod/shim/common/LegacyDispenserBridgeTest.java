@@ -5,6 +5,9 @@
 package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
+import com.retromod.mapping.IntermediaryToMojangMapper;
+import com.retromod.shim.fabric.Fabric_1_21_1_to_1_21_2;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
@@ -27,8 +30,13 @@ import static org.junit.jupiter.api.Assertions.*;
 /** A 1.20.1 projectile dispense behavior, after the SRG remap, against the 1.21 dispenser API. */
 class LegacyDispenserBridgeTest {
 
+    private static final String REBASED_BASE = "com/retromod/generated/LegacyAbstractProjectileDispenseBehavior";
+
+    private final String previousHost = RetromodVersion.TARGET_MC_VERSION;
+
     @AfterEach
     void reset() {
+        RetromodVersion.TARGET_MC_VERSION = previousHost;
         RetromodTransformer.getInstance().clearRedirectsForTesting();
     }
 
@@ -89,6 +97,168 @@ class LegacyDispenserBridgeTest {
         ClassNode behavior = node(transformer.transformClass(legacyBehavior(), "test/DartBehavior.class"));
 
         assertEquals(OLD_PROJECTILE_BASE, behavior.superName, "a host that keeps the base keeps it");
+    }
+
+    @Test
+    void gettersAreBridgedOn26x() {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        LegacyDispenserBridge.register(transformer);
+
+        // Forge and NeoForge calls name the old interface; Fabric calls name the record after the remap.
+        for (String owner : List.of(OLD_SOURCE, SOURCE)) {
+            ClassNode behavior = node(transformer.transformClass(getterBehavior(owner), "test/GetterBehavior.class"));
+            MethodNode execute = behavior.methods.stream().filter(m -> m.name.equals("execute")).findFirst().orElseThrow();
+            assertEquals(List.of("level", "pos", "state"), recordCalls(execute),
+                    "26.x still has only the record accessors, so calls through " + owner + " must reach them");
+        }
+        assertFalse(transformer.getSyntheticClasses().containsKey(PROJECTILE_BASE),
+                "from 26.1 the removed base is left to RemovedBaseToParentBridge");
+        assertNotEquals(PROJECTILE_BASE, transformer.getClassRedirects().get(OLD_PROJECTILE_BASE));
+    }
+
+    @Test
+    void aHandlerCapturingTheOldImplementationNamesTheRecord() {
+        RetromodVersion.TARGET_MC_VERSION = "26.2";
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        LegacyDispenserBridge.register(transformer);
+
+        // Farmer's Delight 1.20.1's cutting board handler captures dispenseFrom's BlockSourceImpl local.
+        ClassNode mixin = node(transformer.transformClass(implementationCapture(),
+                "test/CuttingBoardDispenserMixin.class"));
+
+        MethodNode handler = mixin.methods.stream().filter(m -> m.name.equals("onDispense")).findFirst().orElseThrow();
+        assertEquals("(L" + SOURCE + ";)V", handler.desc,
+                "Mixin rejects a handler whose parameter type the host lacks, and 26.2 has no BlockSourceImpl");
+        assertEquals(List.of("state"), recordCalls(handler), "getBlockState must reach the record accessor");
+    }
+
+    @Test
+    void theRebaseKeepsTheRemovedBaseOn26x() {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        LegacyDispenserBridge.register(transformer);
+        RemovedBaseToParentBridge.register(transformer);
+
+        ClassNode behavior = node(transformer.transformClass(legacyBehavior(), "test/DartBehavior.class"));
+
+        assertEquals(REBASED_BASE, behavior.superName, "the 26.x rebase must own the removed base");
+        MethodNode execute = behavior.methods.stream().filter(m -> m.name.equals("execute")).findFirst().orElseThrow();
+        assertEquals(List.of("level", "pos"), recordCalls(execute), "the getters must still reach the accessors");
+    }
+
+    @Test
+    void fabricRegistersItOnceItsModsAreMojangNamed() {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        new Fabric_1_21_1_to_1_21_2().registerRedirects(transformer);
+        assertEquals(SOURCE, transformer.getClassRedirects().get(OLD_SOURCE));
+
+        // An intermediary host never sees the Mojang name, so the bridge stays off there.
+        RetromodVersion.TARGET_MC_VERSION = "1.21.4";
+        transformer.clearRedirectsForTesting();
+        new Fabric_1_21_1_to_1_21_2().registerRedirects(transformer);
+        assertFalse(transformer.getClassRedirects().containsKey(OLD_SOURCE));
+    }
+
+    @Test
+    void aFabricGetterCallReachesTheRecordOn26x() {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        new Fabric_1_21_1_to_1_21_2().registerRedirects(transformer);
+        IntermediaryToMojangMapper.applyTo(transformer);
+
+        ClassNode behavior = node(transformer.transformClass(intermediaryBehavior(), "test/FabricBehavior.class"));
+
+        MethodNode execute = behavior.methods.stream().filter(m -> m.name.equals("execute")).findFirst().orElseThrow();
+        assertEquals(List.of("level"), recordCalls(execute),
+                "class_2342.method_10207 lands on the record as getLevel, which 26.x lacks");
+    }
+
+    @Test
+    void a121HostStillGetsTheFiringBase() {
+        RetromodVersion.TARGET_MC_VERSION = "1.21.1";
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        LegacyDispenserBridge.register(transformer);
+
+        assertTrue(transformer.getSyntheticClasses().containsKey(PROJECTILE_BASE),
+                "1.21.x keeps the generated base that fires the projectile");
+        assertEquals(PROJECTILE_BASE, transformer.getClassRedirects().get(OLD_PROJECTILE_BASE));
+    }
+
+    /** The names of the record calls in a method, each checked to be a virtual class call. */
+    private static List<String> recordCalls(MethodNode method) {
+        List<String> calls = new ArrayList<>();
+        for (AbstractInsnNode insn : method.instructions.toArray()) {
+            if (insn instanceof MethodInsnNode call && call.owner.equals(SOURCE)) {
+                calls.add(call.name);
+                assertEquals(Opcodes.INVOKEVIRTUAL, call.getOpcode(), "a record accessor is a virtual call: " + call.name);
+                assertFalse(call.itf, "the record is not an interface: " + call.name);
+            }
+        }
+        return calls;
+    }
+
+    /** A plain dispense behavior that reads the level, position and state through the given owner. */
+    private static byte[] getterBehavior(String owner) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/GetterBehavior", null, DEFAULT_BEHAVIOR, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "execute",
+                "(L" + owner + ";Lnet/minecraft/world/item/ItemStack;)Lnet/minecraft/world/item/ItemStack;",
+                null, null);
+        mv.visitCode();
+        for (String[] getter : GETTERS) {
+            if (getter[0].equals("getEntity")) continue;
+            mv.visitVarInsn(Opcodes.ALOAD, 1);
+            mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, owner, getter[0], "()" + getter[1], true);
+            mv.visitInsn(Opcodes.POP);
+        }
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** A handler that takes 1.20.1's BlockSourceImpl and reads its block state. */
+    private static byte[] implementationCapture() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/CuttingBoardDispenserMixin", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "onDispense", "(L" + OLD_SOURCE_IMPL + ";)V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, OLD_SOURCE_IMPL, "getBlockState",
+                "()Lnet/minecraft/world/level/block/state/BlockState;", false);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** A Fabric 1.20.1 behavior in intermediary names that reads the dispenser's level. */
+    private static byte[] intermediaryBehavior() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/FabricBehavior", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "execute", "(Lnet/minecraft/class_2342;)V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "net/minecraft/class_2342", "method_10207",
+                "()Lnet/minecraft/class_3218;", true);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     /** A dispense behavior that reads the level and position from the old interface. */

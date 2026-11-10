@@ -34,31 +34,6 @@ public class NeoForge_1_20_4_to_1_20_5 implements VersionShim {
         com.retromod.shim.common.LegacyHolderConstantBridge.register(transformer);
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.20.5");
 
-        // NBT item tags route through the component bridge
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/item/ItemStack", "getTag",
-            "()Lnet/minecraft/nbt/CompoundTag;",
-            "com/retromod/shim/neoforge/embedded/ComponentBridgeShim", "getTag",
-            "(Lnet/minecraft/world/item/ItemStack;)Lnet/minecraft/nbt/CompoundTag;"
-        );
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/item/ItemStack", "getOrCreateTag",
-            "()Lnet/minecraft/nbt/CompoundTag;",
-            "com/retromod/shim/neoforge/embedded/ComponentBridgeShim", "getOrCreateTag",
-            "(Lnet/minecraft/world/item/ItemStack;)Lnet/minecraft/nbt/CompoundTag;"
-        );
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/item/ItemStack", "setTag",
-            "(Lnet/minecraft/nbt/CompoundTag;)V",
-            "com/retromod/shim/neoforge/embedded/ComponentBridgeShim", "setTag",
-            "(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/nbt/CompoundTag;)V"
-        );
-        transformer.registerMethodRedirect(
-            "net/minecraft/world/item/ItemStack", "hasTag",
-            "()Z",
-            "com/retromod/shim/neoforge/embedded/ComponentBridgeShim", "hasTag",
-            "(Lnet/minecraft/world/item/ItemStack;)Z"
-        );
         // capabilities moved package, LazyOptional became Optional
         transformer.registerClassRedirect(
             "net/neoforged/neoforge/common/capabilities/ICapabilityProvider",
@@ -85,8 +60,23 @@ public class NeoForge_1_20_4_to_1_20_5 implements VersionShim {
         com.retromod.shim.common.LegacyMerchantOfferBridge.register(transformer);
         // 1.20.5 also replaced the Gson loot serializers that custom loot functions and conditions used.
         com.retromod.shim.common.LegacyLootSerializerBridge.register(transformer);
+        com.retromod.shim.common.LegacyLootDataBridge.register(transformer);
+        // Loot tables became registry keys; old reads and calls keep getting the table's id.
+        com.retromod.shim.common.LegacyLootTableKeyBridge.register(transformer);
+        // An old mob's own getDefaultLootTable() id, which the host stopped asking for, picks its death drops again.
+        com.retromod.shim.common.LegacyMobLootBridge.register(transformer);
         com.retromod.shim.common.LegacyCodecTypeBridge.register(transformer);
+        // KeyDispatchDataCodec moved to map codecs in the same release.
+        com.retromod.shim.common.LegacyKeyDispatchCodecBridge.register(transformer);
+        // So did the modifier serializer, chunk generator, biome source and surface rule registries.
+        com.retromod.shim.common.LegacyRegistryMapCodecBridge.register(transformer);
         com.retromod.shim.common.LegacyRegistryNbtBridge.register(transformer);
+        // 1.20.5 removed MobType and SpawnPlacements.Type, moved entity data onto a builder,
+        // and renamed the attribute operations. Each bridge checks the host itself.
+        com.retromod.shim.common.LegacyMobTypeBridge.register(transformer);
+        com.retromod.shim.common.LegacySpawnPlacementTypeBridge.register(transformer);
+        com.retromod.shim.common.LegacySynchedDataBridge.register(transformer);
+        com.retromod.shim.forge.ForgeNeoForgeApiBridge.registerAttributeOperationRenames(transformer);
     }
 
     @Override

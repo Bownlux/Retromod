@@ -5,6 +5,8 @@
 package com.retromod.core;
 
 import com.retromod.embedder.ModVersionInfo;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -33,6 +35,19 @@ class NeoForgeLoaderRangeVersionTest {
 
     /** The range under test can be arbitrarily long, so it must not shape the file name. */
     private int jarCounter;
+
+    /** Some bounds are read differently on a 26.x host, so each test restores the host it found. */
+    private String savedHost;
+
+    @BeforeEach
+    void saveHost() {
+        savedHost = RetromodVersion.TARGET_MC_VERSION;
+    }
+
+    @AfterEach
+    void restoreHost() {
+        RetromodVersion.TARGET_MC_VERSION = savedHost;
+    }
 
     private Path neoForgeJar(String neoforgeRange, String modVersion) throws Exception {
         String toml = """
@@ -118,6 +133,53 @@ class NeoForgeLoaderRangeVersionTest {
                 "[\u0661\u0662.1,)"}) {     // non-ASCII digits, which parseInt also accepts
             assertNull(detect(hostile),
                     "a version must never be derived from " + hostile.replace("\n", ""));
+        }
+    }
+
+    @Test
+    @DisplayName("on a 26.x host a hostile pre-release bound still yields digits and dots or nothing")
+    void refusesHostileRangesOnA26Host() throws Exception {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        for (String hostile : new String[]{
+                "[26.2.x/../../../..,)", "[21../../../../../etc,)", "[21.1 /etc/passwd,)",
+                "[21." + "9".repeat(4000) + ",)", "[+21.1,)", "[-21.1,)", "[\u0661\u0662.1,)",
+                "[21.-beta,)", "[21.0.0-beta/../..,)", "[21." + "9".repeat(4000) + "-beta,)"}) {
+            String version = detect(hostile);
+            assertTrue(version == null || version.matches("\\d+(\\.\\d+)*"),
+                    "a hostile bound gave " + version);
+        }
+    }
+
+    @Test
+    @DisplayName("on NeoForge 26.x a beta 1.x-line bound names the Minecraft version")
+    void betaBoundOnThe1xLineIsReadOnA26Host() throws Exception {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        // Cloth Config 15.0.140 and AppleSkin for 1.21 declare only these, and break on 26.3.
+        assertEquals("1.21.0", detect("[21.0.110-beta,)"));
+        assertEquals("1.21.0", detect("[21.0.0-beta,)"));
+        assertEquals("1.20.4", detect("[20.4.72-beta,)"));
+        assertTrue(new ModVersionDetector().detectVersion(neoForgeJar("[21.0.110-beta,)", "15.0.140"))
+                .needsTransformation("26.3"), "the library is translated instead of left broken");
+    }
+
+    @Test
+    @DisplayName("on NeoForge 1.21.1 a beta bound stays unknown, so a native jar is left alone")
+    void betaBoundStaysUnknownOnA1xHost() throws Exception {
+        RetromodVersion.TARGET_MC_VERSION = "1.21.1";
+        // EMI 1.1.24 for 1.21.1 declares only [20.4.72-beta,). Reading it as 1.20.4 would
+        // translate a jar that runs as it is, the trap TerraBlender's [20.4,) was.
+        assertNull(detect("[21.0.110-beta,)"));
+        assertNull(detect("[21.0.0-beta,)"));
+        assertNull(detect("[20.4.72-beta,)"));
+    }
+
+    @Test
+    @DisplayName("a 26.x-line bound reads the same on every host")
+    void unprefixedBoundIsReadTheSameOnEveryHost() throws Exception {
+        for (String host : new String[]{"1.21.1", "26.3"}) {
+            RetromodVersion.TARGET_MC_VERSION = host;
+            assertEquals("26.3.0", detect("[26.3.0.43-beta,)"), "host " + host);
+            assertNull(detect("[26.1.0-beta,)"), "host " + host);
         }
     }
 

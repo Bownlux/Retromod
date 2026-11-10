@@ -54,6 +54,102 @@ class LegacyEquipmentBridgeTest {
     }
 
     @Test
+    @DisplayName("Farmer's Delight's SkilletItem: a field and calls typed as the old Tiers enum move onto the old interface and its view")
+    void oldEnumTypeFollowsTheInterface() {
+        var transformer = com.retromod.core.RetromodTransformer.getInstance();
+        String savedTarget = com.retromod.core.RetromodVersion.TARGET_MC_VERSION;
+        try {
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = "26.2";
+            transformer.clearRedirectsForTesting();
+            LegacyEquipmentBridge.register(transformer);
+            byte[] skillet = skilletShape("net/minecraft/world/item/Tiers", "IRON", "getUses");
+
+            Map<String, String> renames = LegacyEquipmentBridge.legacyRenames(transformer, List.of(skillet));
+            assertEquals(LegacyEquipmentBridge.TIER, renames.get("net/minecraft/world/item/Tiers"));
+            assertEquals(LegacyEquipmentBridge.TIER, renames.get("net/minecraft/class_1834"));
+            ClassNode out = read(LegacyEquipmentBridge.apply(LegacyEquipmentBridge.rename(skillet, renames)));
+
+            assertEquals("L" + LegacyEquipmentBridge.TIER + ";", out.fields.get(0).desc);
+            MethodInsnNode constant = (MethodInsnNode) Arrays.stream(method(out, "<clinit>").instructions.toArray())
+                    .filter(MethodInsnNode.class::isInstance).findFirst().orElseThrow();
+            assertEquals(LegacyEquipmentBridge.TIER_VIEW + ".IRON()L" + LegacyEquipmentBridge.TIER + ";",
+                    constant.owner + "." + constant.name + constant.desc);
+            MethodInsnNode uses = (MethodInsnNode) Arrays.stream(method(out, "uses").instructions.toArray())
+                    .filter(MethodInsnNode.class::isInstance).findFirst().orElseThrow();
+            assertEquals(LegacyEquipmentBridge.TIER + ".getUses", uses.owner + "." + uses.name,
+                    "the transformer's own pass then makes this an interface call");
+        } finally {
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = savedTarget;
+            transformer.clearRedirectsForTesting();
+        }
+    }
+
+    /** A class with a static field typed as {@code tiers}, set from one constant and read through one method. */
+    private static byte[] skilletShape(String tiers, String constant, String method) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, "mod/Skillet", null, "java/lang/Object", null);
+        cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "TIER", "L" + tiers + ";", null, null).visitEnd();
+        MethodVisitor clinit = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null);
+        clinit.visitCode();
+        clinit.visitFieldInsn(GETSTATIC, tiers, constant, "L" + tiers + ";");
+        clinit.visitFieldInsn(PUTSTATIC, "mod/Skillet", "TIER", "L" + tiers + ";");
+        clinit.visitInsn(RETURN);
+        clinit.visitMaxs(0, 0);
+        clinit.visitEnd();
+        MethodVisitor uses = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "uses", "()I", null, null);
+        uses.visitCode();
+        uses.visitFieldInsn(GETSTATIC, "mod/Skillet", "TIER", "L" + tiers + ";");
+        uses.visitMethodInsn(INVOKEVIRTUAL, tiers, method, "()I", false);
+        uses.visitInsn(IRETURN);
+        uses.visitMaxs(0, 0);
+        uses.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    private static MethodNode method(ClassNode node, String name) {
+        return node.methods.stream().filter(m -> m.name.equals(name)).findFirst().orElseThrow();
+    }
+
+    @Test
+    @DisplayName("the old Tiers.values() and valueOf(name) answer with the views, in the enum's order")
+    void oldEnumStaticsAnswerWithViews() throws Exception {
+        ClassNode tier = read(LegacyEquipmentBridge.generateInterface(LegacyEquipmentBridge.TIER,
+                LegacyEquipmentBridge.TIER_METHODS, LegacyEquipmentBridge.TIER_VIEW, LegacyEquipmentBridge.TIER_ENUM_ORDER));
+        MethodNode values = method(tier, "values");
+        assertEquals("()[L" + LegacyEquipmentBridge.TIER + ";", values.desc);
+        List<String> order = Arrays.stream(values.instructions.toArray()).filter(MethodInsnNode.class::isInstance)
+                .map(i -> ((MethodInsnNode) i).owner + "." + ((MethodInsnNode) i).name).toList();
+        assertEquals(LegacyEquipmentBridge.TIER_ENUM_ORDER.stream().map(c -> LegacyEquipmentBridge.TIER_VIEW + "." + c).toList(),
+                order);
+        assertEquals("(Ljava/lang/String;)L" + LegacyEquipmentBridge.TIER + ";", method(tier, "valueOf").desc);
+        for (MethodNode method : tier.methods) {
+            if ((method.access & ACC_ABSTRACT) == 0) new Analyzer<>(new BasicVerifier()).analyze(tier.name, method);
+        }
+    }
+
+    @Test
+    @DisplayName("a view names itself with the old enum constant, CHAIN for chainmail, as KubeJS keys tiers by toString()")
+    void viewsNameThemselvesLikeTheOldEnum() throws Exception {
+        ClassNode view = read(LegacyEquipmentBridge.generateView(LegacyEquipmentBridge.ARMOR_VIEW,
+                LegacyEquipmentBridge.ARMOR_MATERIAL, LegacyEquipmentBridge.ARMOR_METHODS,
+                "net/minecraft/world/item/equipment/ArmorMaterials", "net/minecraft/world/item/equipment/ArmorMaterial",
+                LegacyEquipmentBridge.ARMOR_CONSTANTS));
+        List<Object> names = Arrays.stream(method(view, "<clinit>").instructions.toArray())
+                .filter(org.objectweb.asm.tree.LdcInsnNode.class::isInstance)
+                .map(insn -> ((org.objectweb.asm.tree.LdcInsnNode) insn).cst).toList();
+        assertEquals(List.of("LEATHER", "CHAIN", "IRON", "GOLD", "DIAMOND", "TURTLE", "NETHERITE"), names);
+        for (String accessor : List.of("toString", "name")) {
+            MethodNode method = method(view, accessor);
+            assertEquals("()Ljava/lang/String;", method.desc);
+            new Analyzer<>(new BasicVerifier()).analyze(view.name, method);
+        }
+        ClassNode tier = read(LegacyEquipmentBridge.generateInterface(LegacyEquipmentBridge.TIER,
+                LegacyEquipmentBridge.TIER_METHODS, LegacyEquipmentBridge.TIER_VIEW, LegacyEquipmentBridge.TIER_ENUM_ORDER));
+        assertEquals(0, method(tier, "name").access & ACC_ABSTRACT, "an old Tiers.name() call resolves on the interface");
+    }
+
+    @Test
     @DisplayName("a view of a vanilla material answers every old method through the support class")
     void viewsVerify() throws Exception {
         ClassNode view = read(LegacyEquipmentBridge.generateView(LegacyEquipmentBridge.TIER_VIEW,

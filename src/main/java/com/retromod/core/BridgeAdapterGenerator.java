@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -150,7 +151,7 @@ public class BridgeAdapterGenerator {
             generateBridgeMethod(cv, bridge);
         }
         if (!pendingBridges.isEmpty()) {
-            LOGGER.info("Generated {} bridge adapter(s) for {}", pendingBridges.size(), currentClassName);
+            LOGGER.debug(RetromodLog.DETAIL, "Generated {} bridge adapter(s) for {}", pendingBridges.size(), currentClassName);
         }
     }
 

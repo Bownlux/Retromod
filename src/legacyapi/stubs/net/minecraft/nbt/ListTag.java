@@ -7,4 +7,5 @@ public final class ListTag extends AbstractList<Tag> implements Tag {
     public ListTag() { throw new UnsupportedOperationException(); }
     @Override public Tag get(int index) { throw new UnsupportedOperationException(); }
     @Override public int size() { throw new UnsupportedOperationException(); }
+    @Override public ListTag copy() { throw new UnsupportedOperationException(); }
 }

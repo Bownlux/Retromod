@@ -8,19 +8,16 @@ import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.SyntheticEmbedder;
 import com.retromod.shim.common.embedded.LegacySpawns;
+import com.retromod.shim.forge.ForgeHostShape;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.tree.ClassNode;
 
+import java.util.List;
+
 import static org.objectweb.asm.Opcodes.*;
 
-/**
- * Keeps an old biome's mob spawns. {@code SpawnerData} lost its weight to a weighted list and now
- * takes its group size as an {@code IntProvider}, and {@code addSpawn(category, data)} became
- * {@code addSpawn(type, category, weight, counts)}. A biome built in code failed with
- * {@code NoSuchMethodError}, and an unbuilt biome left the registry unbound, which stopped the world
- * from loading. Each old entry keeps its type, weight, and counts.
- */
+/** Keeps an old biome's mob spawns, with their weights, on hosts that moved the weight to a weighted list. */
 public final class LegacyBiomeSpawnsBridge {
 
     static final String CALLS = "com/retromod/generated/LegacySpawnCalls";
@@ -31,26 +28,93 @@ public final class LegacyBiomeSpawnsBridge {
     private static final String CATEGORY = "Lnet/minecraft/world/entity/MobCategory;";
     private static final String OLD_DATA = "(" + TYPE + "III)V";
     private static final String OBJECT = "Ljava/lang/Object;";
+    /** The loaders' biome modifier builders, which mods name as the owner of their spawn calls. */
+    static final String[] LOADER_BUILDERS = {
+        "net/neoforged/neoforge/common/world/MobSpawnSettingsBuilder",
+        "net/minecraftforge/common/world/MobSpawnSettingsBuilder"};
+    /** The loaders' structure spawn override builders. */
+    static final String[] STRUCTURE_OVERRIDES = {
+        "net/neoforged/neoforge/common/world/StructureSettingsBuilder$StructureSpawnOverrideBuilder",
+        "net/minecraftforge/common/world/StructureSettingsBuilder$StructureSpawnOverrideBuilder"};
+    static final String OLD_GET_SPAWNER = "(" + CATEGORY + ")Ljava/util/List;";
+    static final String OLD_STRUCTURE_ADD = "(L" + DATA + ";)V";
 
     private LegacyBiomeSpawnsBridge() {}
 
-    /** Only where the entry takes an {@code IntProvider} and the old constructor is gone. */
+    /** Registers where the host's spawn entry has lost its weight. */
     public static void register(RetromodTransformer transformer) {
+        // SpawnerData lost its weight in 1.21.5, and 26.3 made its group size an IntProvider. A biome
+        // built in code then failed with NoSuchMethodError, and the unbuilt biome left the registry
+        // unbound, which stopped the world from loading.
         ClassNode data = ClassResourceInspector.read(DATA);
-        if (data == null || data.methods.stream().anyMatch(m -> m.name.equals("<init>") && m.desc.equals(OLD_DATA))
-                || data.methods.stream().noneMatch(m -> m.name.equals("<init>")
-                        && m.desc.equals("(" + TYPE + "Lnet/minecraft/util/valueproviders/IntProvider;)V"))) {
-            return;
-        }
+        if (data != null ? !appliesTo(data) : !offlineForgeTarget()) return;
         registerRedirects(transformer);
+        // A loader builder whose getSpawner no longer returns a list gets one that writes through.
+        for (String owner : LOADER_BUILDERS) {
+            if (needsSpawnerList(owner, ClassResourceInspector.read(owner))) {
+                registerSpawnerListRedirect(transformer, owner);
+            }
+        }
+        // NeoForge 21.11 and 26.3 dropped the structure override's addSpawn(entry); Forge 26.2 kept it.
+        for (String owner : STRUCTURE_OVERRIDES) {
+            ClassNode overrides = ClassResourceInspector.read(owner);
+            if (overrides != null && !hasMethod(overrides, "addSpawn", OLD_STRUCTURE_ADD)) {
+                registerStructureSpawnRedirect(transformer, owner);
+            }
+        }
+    }
+
+    /** True when the entry lacks the weighted constructor and has the 1.21.5 or 26.3 one. */
+    static boolean appliesTo(ClassNode data) {
+        if (hasMethod(data, "<init>", OLD_DATA)) return false;
+        return hasMethod(data, "<init>", "(" + TYPE + "II)V")
+                || hasMethod(data, "<init>", "(" + TYPE + "Lnet/minecraft/util/valueproviders/IntProvider;)V");
+    }
+
+    /** Whether the builder's getSpawner lost its list; {@code builder} is null when the host's class cannot be read. */
+    static boolean needsSpawnerList(String owner, ClassNode builder) {
+        if (builder != null) return !hasMethod(builder, "getSpawner", OLD_GET_SPAWNER);
+        // Forge's builder is checked to return a weighted list on 26.2 and 26.3; NeoForge's is left as it was.
+        return owner.startsWith("net/minecraftforge/") && ForgeHostShape.matches(List.of(owner), List.of());
+    }
+
+    /**
+     * Offline the CLI cannot read the host's classes. Forge 26.2 and 26.3 are checked to have the
+     * weightless entry, so a Forge target from 26.2 takes the bridge; other offline targets do not.
+     */
+    static boolean offlineForgeTarget() {
+        return ForgeHostShape.matches(List.of(), List.of());
     }
 
     static void registerRedirects(RetromodTransformer transformer) {
         SyntheticEmbedder.registerClassResource(transformer, HELPER, LegacySpawns.class);
         transformer.registerSyntheticClass(CALLS, generateCalls());
         transformer.registerConstructorRedirect(DATA, OLD_DATA, CALLS, "spawnerData", "(" + TYPE + "III)L" + DATA + ";");
-        transformer.registerMethodRedirect(BUILDER, "addSpawn", "(" + CATEGORY + "L" + DATA + ";)L" + BUILDER + ";",
-                CALLS, "addSpawn", "(L" + BUILDER + ";" + CATEGORY + "L" + DATA + ";)L" + BUILDER + ";", true);
+        // javac names the loader's builder as the owner when the mod holds one, as biome modifiers do.
+        String addDesc = "(" + CATEGORY + "L" + DATA + ";)L" + BUILDER + ";";
+        String callsDesc = "(L" + BUILDER + ";" + CATEGORY + "L" + DATA + ";)L" + BUILDER + ";";
+        transformer.registerMethodRedirect(BUILDER, "addSpawn", addDesc, CALLS, "addSpawn", callsDesc, true);
+        for (String owner : LOADER_BUILDERS) {
+            transformer.registerMethodRedirect(owner, "addSpawn", addDesc, CALLS, "addSpawn", callsDesc, true);
+        }
+        // The record's type field is private from 1.21.5; an old removeIf predicate read it directly.
+        transformer.registerFieldAccessorRedirect(DATA, "type", "type", "()" + TYPE, null, null);
+    }
+
+    static void registerSpawnerListRedirect(RetromodTransformer transformer, String owner) {
+        SyntheticEmbedder.registerClassResource(transformer, HELPER, LegacySpawns.class);
+        transformer.registerMethodRedirect(owner, "getSpawner", OLD_GET_SPAWNER, HELPER, "spawnerList",
+                "(" + OBJECT + OBJECT + ")Ljava/util/List;", true);
+    }
+
+    static void registerStructureSpawnRedirect(RetromodTransformer transformer, String owner) {
+        SyntheticEmbedder.registerClassResource(transformer, HELPER, LegacySpawns.class);
+        transformer.registerMethodRedirect(owner, "addSpawn", OLD_STRUCTURE_ADD, HELPER, "addStructureSpawn",
+                "(" + OBJECT + OBJECT + ")V", true);
+    }
+
+    private static boolean hasMethod(ClassNode node, String name, String desc) {
+        return node.methods.stream().anyMatch(m -> m.name.equals(name) && m.desc.equals(desc));
     }
 
     /** Typed wrappers over the compiled helper, which can only name {@code Object}. */

@@ -34,7 +34,7 @@ public final class LegacyPoseGui {
     /** An old {@code event.getPoseStack()}: a pose stack that draws through the event's extractor. */
     public static Object poseFor(Object event) {
         try {
-            Object graphics = event.getClass().getMethod("getGuiGraphics").invoke(event);
+            Object graphics = LegacyPublicMethods.method(event.getClass(), "getGuiGraphics").invoke(event);
             Object pose = Class.forName("com.mojang.blaze3d.vertex.PoseStack", true, event.getClass().getClassLoader())
                     .getConstructor().newInstance();
             GRAPHICS.put(pose, graphics);
@@ -88,7 +88,7 @@ public final class LegacyPoseGui {
         if (graphics == null) return;
         try {
             Object pipeline = guiTextured(graphics);
-            for (Method method : graphics.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(graphics.getClass())) {
                 if (method.getName().equals("blit") && method.getParameterCount() == 12) {
                     method.invoke(graphics, pipeline, texture, x, y, u, v, width, height, regionWidth, regionHeight,
                             textureWidth, textureHeight);
@@ -109,7 +109,7 @@ public final class LegacyPoseGui {
         if (graphics == null) return;
         try {
             Object pipeline = guiTextured(graphics);
-            for (Method method : graphics.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(graphics.getClass())) {
                 Class<?>[] types = method.getParameterTypes();
                 // blit(pipeline, texture, x, y, u, v, width, height, textureWidth, textureHeight, color)
                 if (method.getName().equals("blit") && types.length == 11 && types[4] == float.class) {
@@ -129,7 +129,7 @@ public final class LegacyPoseGui {
         Object graphics = begin(pose);
         if (graphics == null) return;
         try {
-            graphics.getClass().getMethod("fill", int.class, int.class, int.class, int.class, int.class)
+            LegacyPublicMethods.method(graphics.getClass(), "fill", int.class, int.class, int.class, int.class, int.class)
                     .invoke(graphics, x1, y1, x2, y2, argb);
         } catch (ReflectiveOperationException | RuntimeException e) {
             // skipped
@@ -170,14 +170,14 @@ public final class LegacyPoseGui {
         Object graphics = pose == null ? null : GRAPHICS.get(pose);
         if (graphics == null) return null;
         try {
-            Object stack = graphics.getClass().getMethod("pose").invoke(graphics);
-            stack.getClass().getMethod("pushMatrix").invoke(stack);
-            Object last = pose.getClass().getMethod("last").invoke(pose);
-            Object m = last.getClass().getMethod("pose").invoke(last);
+            Object stack = LegacyPublicMethods.method(graphics.getClass(), "pose").invoke(graphics);
+            LegacyPublicMethods.method(stack.getClass(), "pushMatrix").invoke(stack);
+            Object last = LegacyPublicMethods.method(pose.getClass(), "last").invoke(pose);
+            Object m = LegacyPublicMethods.method(last.getClass(), "pose").invoke(last);
             Object affine = Class.forName("org.joml.Matrix3x2f", true, stack.getClass().getClassLoader())
                     .getConstructor(float.class, float.class, float.class, float.class, float.class, float.class)
                     .newInstance(get(m, "m00"), get(m, "m01"), get(m, "m10"), get(m, "m11"), get(m, "m30"), get(m, "m31"));
-            for (Method mul : stack.getClass().getMethods()) {
+            for (Method mul : LegacyPublicMethods.methods(stack.getClass())) {
                 if (mul.getName().equals("mul") && mul.getParameterCount() == 1
                         && mul.getParameterTypes()[0].isInstance(affine)) {
                     mul.invoke(stack, affine);
@@ -192,8 +192,8 @@ public final class LegacyPoseGui {
 
     private static void end(Object graphics) {
         try {
-            Object stack = graphics.getClass().getMethod("pose").invoke(graphics);
-            stack.getClass().getMethod("popMatrix").invoke(stack);
+            Object stack = LegacyPublicMethods.method(graphics.getClass(), "pose").invoke(graphics);
+            LegacyPublicMethods.method(stack.getClass(), "popMatrix").invoke(stack);
         } catch (ReflectiveOperationException | RuntimeException e) {
             // the extractor is gone with its frame
         }
@@ -203,7 +203,7 @@ public final class LegacyPoseGui {
         Object graphics = begin(pose);
         if (graphics == null) return;
         try {
-            for (Method method : graphics.getClass().getMethods()) {
+            for (Method method : LegacyPublicMethods.methods(graphics.getClass())) {
                 Class<?>[] types = method.getParameterTypes();
                 boolean wanted = centered ? method.getName().equals("centeredText") && types.length == 5
                         : method.getName().equals("text") && types.length == 6;
@@ -221,7 +221,7 @@ public final class LegacyPoseGui {
     }
 
     private static int width(Object font, Object text) {
-        for (Method method : font.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(font.getClass())) {
             if (method.getName().equals("width") && method.getParameterCount() == 1
                     && method.getParameterTypes()[0].isInstance(text)) {
                 try {
@@ -240,7 +240,7 @@ public final class LegacyPoseGui {
     }
 
     private static float get(Object matrix, String element) throws ReflectiveOperationException {
-        return (Float) matrix.getClass().getMethod(element).invoke(matrix);
+        return (Float) LegacyPublicMethods.method(matrix.getClass(), element).invoke(matrix);
     }
 
     private static int channel(float value) {

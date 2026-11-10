@@ -8,7 +8,9 @@ import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import com.retromod.core.SyntheticEmbedder;
+import com.retromod.mixin.MixinLazyStaticInitializer;
 import com.retromod.shim.common.embedded.LegacyRecipes;
+import com.retromod.util.McReflect;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
@@ -28,7 +30,7 @@ import java.util.function.Predicate;
 
 import static org.objectweb.asm.Opcodes.*;
 
-/** Keeps a 1.20.1 mod's recipes, recipe serializers, and recipe lookups working on 1.20.5 to 1.21.1 hosts. */
+/** Keeps a 1.20.1 mod's recipes, recipe serializers, and recipe lookups working on hosts from 1.20.5 to 26.3. */
 public final class LegacyRecipeApiBridge {
 
     static final String SUPPORT = "com/retromod/shim/common/embedded/LegacyRecipes";
@@ -50,6 +52,16 @@ public final class LegacyRecipeApiBridge {
     private static final String STACK = "net/minecraft/world/item/ItemStack";
     private static final String ITEM = "net/minecraft/world/item/Item";
     private static final String ID = "net/minecraft/resources/ResourceLocation";
+    // 1.21.11 renamed ResourceLocation, and a mod's references take the host's name before the class repair runs.
+    private static final String IDENTIFIER = "net/minecraft/resources/Identifier";
+    private static final String SERVER_LEVEL = "net/minecraft/server/level/ServerLevel";
+    private static final String CACHED_CHECK = CRAFTING + "RecipeManager$CachedCheck";
+    private static final String PLACEMENT = CRAFTING + "PlacementInfo";
+    private static final String BOOK_CATEGORY = CRAFTING + "RecipeBookCategory";
+    private static final String BOOK_CATEGORIES = CRAFTING + "RecipeBookCategories";
+    static final String CRAFTING_HELPER = "net/minecraftforge/common/crafting/CraftingHelper";
+    private static final String QUERIES = LegacyRecipeIntrospectionBridge.CALLS;
+    private static final String INTROSPECTION = LegacyRecipeIntrospectionBridge.SUPPORT;
     private static final String BUF = "net/minecraft/network/FriendlyByteBuf";
     private static final String ACCESS = "net/minecraft/core/RegistryAccess";
     private static final String PROVIDER = "net/minecraft/core/HolderLookup$Provider";
@@ -57,6 +69,7 @@ public final class LegacyRecipeApiBridge {
     private static final String MAP_CODEC = "com/mojang/serialization/MapCodec";
     private static final String STREAM_CODEC = "net/minecraft/network/codec/StreamCodec";
     private static final String OBJECT = "Ljava/lang/Object;";
+    private static final String ITEM_LIKE = "net/minecraft/world/level/ItemLike";
 
     // Assembled at runtime so the release jar's Gson relocation leaves the game's Gson names alone.
     private static final String GSON = String.join("/", "com", "google", "gson") + "/";
@@ -70,8 +83,16 @@ public final class LegacyRecipeApiBridge {
     static final String OLD_FROM_JSON = "(L" + ID + ";" + JSON_OBJECT + ")";
     static final String OLD_FROM_NETWORK = "(L" + ID + ";L" + BUF + ";)";
 
-    /** Which 1.20.5 to 1.21.1 recipe API the host has: recipes read a {@code RecipeInput} from 1.21. */
-    record HostShape(boolean inputs) {
+    /**
+     * Which recipe API the host has: recipes read a {@code RecipeInput} from 1.21; from 1.21.2 they answer
+     * placement and book questions and the manager keeps them by key; from 26.1 {@code assemble} takes no
+     * registries; from 1.21.11 ids are {@code Identifier}s.
+     */
+    record HostShape(boolean inputs, boolean recipeBook, boolean assembleProvider, String id) {
+        HostShape(boolean inputs) {
+            this(inputs, false, true, ID);
+        }
+
         String input() {
             return inputs ? RECIPE_INPUT : CONTAINER;
         }
@@ -88,7 +109,10 @@ public final class LegacyRecipeApiBridge {
         if (host == null) return;
         registeredShape = host;
         SyntheticEmbedder.registerClassResource(t, SUPPORT, LegacyRecipes.class);
-        t.registerSyntheticClass(CALLS, generateCalls(host));
+        // From 26.1 a stack needs bound components, which a world binds after its recipes first load.
+        boolean earlyStacks = MixinLazyStaticInitializer.hostBindsComponentsLate(RetromodVersion.TARGET_MC_VERSION, t.getFuzzyResolver());
+        if (earlyStacks) RebuiltApiClasses.registerTree(t, LegacyEarlyItemStackBridge.HELPER);
+        t.registerSyntheticClass(CALLS, generateCalls(host, earlyStacks));
         t.registerSyntheticClass(STREAM, generateStreamCodec());
         if (host.inputs()) t.registerSyntheticClass(INPUT, generateInput());
 
@@ -96,18 +120,29 @@ public final class LegacyRecipeApiBridge {
         // descriptor, so only mods built before 1.20.2 are rewritten.
         String manager = "L" + MANAGER + ";";
         String type = "L" + RECIPE_TYPE + ";";
+        String id = "L" + host.id() + ";";
         String lookup = "(" + type + "L" + CONTAINER + ";L" + LEVEL + ";)";
-        lookup(t, "getRecipeFor", lookup + "Ljava/util/Optional;", manager);
-        lookup(t, "getRecipesFor", lookup + "Ljava/util/List;", manager);
-        lookup(t, "getAllRecipesFor", "(" + type + ")Ljava/util/List;", manager);
-        lookup(t, "getRecipes", "()Ljava/util/Collection;", manager);
-        lookup(t, "byKey", "(L" + ID + ";)Ljava/util/Optional;", manager);
-        lookup(t, "replaceRecipes", "(Ljava/lang/Iterable;)V", manager);
+        lookup(t, MANAGER, "getRecipeFor", lookup + "Ljava/util/Optional;", manager);
+        lookup(t, MANAGER, "getRecipesFor", lookup + "Ljava/util/List;", manager);
+        lookup(t, MANAGER, "getRecipes", "()Ljava/util/Collection;", manager);
+        if (host.recipeBook()) {
+            registerRecipeBookLookups(t, host);
+        } else {
+            lookup(t, MANAGER, "getAllRecipesFor", "(" + type + ")Ljava/util/List;", manager);
+            lookup(t, MANAGER, "byKey", "(" + id + ")Ljava/util/Optional;", manager);
+            lookup(t, MANAGER, "replaceRecipes", "(Ljava/lang/Iterable;)V", manager);
+        }
 
         // A recipe's id moved to its holder in 1.20.2.
         for (String owner : List.of(RECIPE, CRAFTING_RECIPE, SHAPED, CRAFTING + "ShapelessRecipe",
                 CRAFTING + "AbstractCookingRecipe", CRAFTING + "SingleItemRecipe", CRAFTING + "CustomRecipe")) {
-            t.registerMethodRedirect(owner, "getId", "()L" + ID + ";", CALLS, "getId", "(L" + RECIPE + ";)L" + ID + ";", true);
+            t.registerMethodRedirect(owner, "getId", "()" + id, CALLS, "getId", "(L" + RECIPE + ";)" + id, true);
+        }
+        registerSerializerCalls(t, host);
+        // Forge's IShapedRecipe gave shaped recipes getRecipeWidth and getRecipeHeight; NeoForge has only the vanilla names.
+        if (lacksForgeShapedSize()) {
+            t.registerMethodRedirect(SHAPED, "getRecipeWidth", "()I", SHAPED, "getWidth", "()I");
+            t.registerMethodRedirect(SHAPED, "getRecipeHeight", "()I", SHAPED, "getHeight", "()I");
         }
 
         // Ingredients, stacks, and items read from JSON and buffers by removed helpers.
@@ -128,10 +163,70 @@ public final class LegacyRecipeApiBridge {
         return hasSynthetic.test(CALLS);
     }
 
-    private static void lookup(RetromodTransformer t, String name, String desc, String manager) {
-        String helperDesc = "(" + manager + desc.substring(1);
-        t.registerMethodRedirect(MANAGER, name, desc, CALLS, name, helperDesc, true);
-        t.limitRedirectToModsBefore(MANAGER, name, desc, "1.20.2");
+    private static void lookup(RetromodTransformer t, String owner, String name, String desc, String receiver) {
+        String helperDesc = "(" + receiver + desc.substring(1);
+        t.registerMethodRedirect(owner, name, desc, CALLS, name, helperDesc, true);
+        t.limitRedirectToModsBefore(owner, name, desc, "1.20.2");
+    }
+
+    /** The lookups 1.21.2 rebuilt around keys and a server-side manager. */
+    private static void registerRecipeBookLookups(RetromodTransformer t, HostShape host) {
+        String manager = "L" + MANAGER + ";";
+        String type = "L" + RECIPE_TYPE + ";";
+        String id = "L" + host.id() + ";";
+        String container = "L" + CONTAINER + ";L" + LEVEL + ";";
+        SyntheticEmbedder.registerClassResource(t, INTROSPECTION, com.retromod.shim.common.embedded.LegacyRecipeIntrospection.class);
+        // The 1.21.1 bridge already answers these with holders, so an older mod's call takes one more step to the recipes.
+        step(t, "allRecipesFor", "(" + manager + type + ")Ljava/util/List;", "getAllRecipesFor");
+        step(t, "byKey", "(" + manager + id + ")Ljava/util/Optional;", "byKey");
+        // Sophisticated Core passes the id of the recipe it found last, which only sped the search up.
+        lookup(t, MANAGER, "getRecipeFor", "(" + type + container + id + ")Ljava/util/Optional;", manager);
+        // A cached check reads a server level's recipes, which a client no longer has.
+        String check = "(" + container + ")Ljava/util/Optional;";
+        t.registerMethodRedirect(CACHED_CHECK, "getRecipeFor", check, CALLS, "cachedRecipeFor", "(L" + CACHED_CHECK + ";" + check.substring(1), true);
+        t.limitRedirectToModsBefore(CACHED_CHECK, "getRecipeFor", check, "1.20.2");
+        // The level's own manager went in 1.21.2; a server level still answers one through recipeAccess().
+        for (String level : List.of(LEVEL, SERVER_LEVEL)) {
+            t.registerMethodRedirect(level, "getRecipeManager", "()" + manager, CALLS, "recipeManager", "(L" + LEVEL + ";)" + manager, true);
+        }
+        // getGroup() took the name group() in 1.21.2.
+        for (String owner : List.of(RECIPE, CRAFTING_RECIPE, SHAPED, CRAFTING + "ShapelessRecipe", CRAFTING + "AbstractCookingRecipe",
+                CRAFTING + "SingleItemRecipe", CRAFTING + "CustomRecipe")) {
+            t.registerMethodRedirect(owner, "getGroup", "()Ljava/lang/String;", owner, "group", "()Ljava/lang/String;");
+        }
+        // Ingredient.EMPTY went too; an ingredient of no items stands in.
+        ClassNode ingredient = ClassResourceInspector.read(INGREDIENT);
+        if (ingredient == null || ingredient.fields.stream().noneMatch(f -> f.name.equals("EMPTY"))) {
+            t.registerFieldRedirect(INGREDIENT, "EMPTY", "L" + INGREDIENT + ";", CALLS, "emptyIngredient", "()L" + INGREDIENT + ";");
+        }
+        // isEmpty now counts a tag's items, and recipes load before their tags are bound; 1.20.1 only asked for a value.
+        t.registerMethodRedirect(INGREDIENT, "isEmpty", "()Z", CALLS, "ingredientIsEmpty", "(L" + INGREDIENT + ";)Z", true);
+        t.limitRedirectToModsBefore(INGREDIENT, "isEmpty", "()Z", "1.21.2");
+    }
+
+    /** An old mod's call to the 1.21.1 bridge's helper continues to the helper that answers recipes. */
+    private static void step(RetromodTransformer t, String queriesName, String desc, String callsName) {
+        t.registerMethodRedirect(QUERIES, queriesName, desc, CALLS, callsName, desc);
+        t.limitRedirectToModsBefore(QUERIES, queriesName, desc, "1.20.2");
+    }
+
+    /** Minecraft's own serializers lost their 1.20.1 readers in 1.20.5, and Forge's CraftingHelper its stack reader in 1.21.11. */
+    private static void registerSerializerCalls(RetromodTransformer t, HostShape host) {
+        String id = "L" + host.id() + ";";
+        String recipe = "L" + RECIPE + ";";
+        // The receiver is any serializer, since a mod's own no longer claims the interface on 26.1.
+        t.registerMethodRedirect(SERIALIZER, "fromJson", "(" + id + JSON_OBJECT + ")" + recipe, CALLS, "serializerFromJson",
+                "(" + OBJECT + id + JSON_OBJECT + ")" + recipe, true);
+        t.registerMethodRedirect(SERIALIZER, "fromNetwork", "(" + id + "L" + BUF + ";)" + recipe, CALLS, "serializerFromNetwork",
+                "(" + OBJECT + id + "L" + BUF + ";)" + recipe, true);
+        t.registerMethodRedirect(SERIALIZER, "toNetwork", "(L" + BUF + ";" + recipe + ")V", CALLS, "serializerToNetwork",
+                "(" + OBJECT + "L" + BUF + ";" + recipe + ")V", true);
+        if (ClassResourceInspector.exists(CRAFTING_HELPER)) return;
+        String stack = "L" + STACK + ";";
+        t.registerMethodRedirect(CRAFTING_HELPER, "getItemStack", "(" + JSON_OBJECT + "Z)" + stack, CALLS, "craftingItemStack",
+                "(" + JSON_OBJECT + "Z)" + stack);
+        t.registerMethodRedirect(CRAFTING_HELPER, "getItemStack", "(" + JSON_OBJECT + "ZZ)" + stack, CALLS, "craftingItemStack",
+                "(" + JSON_OBJECT + "ZZ)" + stack);
     }
 
     /** A removed member to its adapter; an instance member's receiver becomes the first argument. */
@@ -141,29 +236,41 @@ public final class LegacyRecipeApiBridge {
         t.registerMethodRedirect(owner, name, desc, CALLS, helper, helperDesc, instance);
     }
 
-    // Offline, where the host cannot be read, the version range decides.
+    // Offline, where the host cannot be read, the version decides.
     static HostShape hostShape() {
         ClassNode serializer = ClassResourceInspector.read(SERIALIZER);
         ClassNode recipe = ClassResourceInspector.read(RECIPE);
         if (serializer == null || recipe == null) return offlineShape(RetromodVersion.TARGET_MC_VERSION);
-        boolean codecs = (serializer.access & ACC_INTERFACE) != 0
-                && declares(serializer, "codec", "()L" + MAP_CODEC + ";")
+        // An interface through 1.21.11, a record of the two codecs from 26.1.
+        boolean codecs = declares(serializer, "codec", "()L" + MAP_CODEC + ";")
                 && declares(serializer, "streamCodec", "()L" + STREAM_CODEC + ";");
         boolean results = declares(recipe, "getResultItem", "(L" + PROVIDER + ";)L" + STACK + ";");
-        if (!codecs || !results) return null;
-        return new HostShape(ClassResourceInspector.exists(RECIPE_INPUT));
+        boolean recipeBook = declares(recipe, "placementInfo", "()L" + PLACEMENT + ";");
+        if (!codecs || !(results || recipeBook)) return null;
+        boolean provider = recipe.methods.stream().anyMatch(m -> m.name.equals("assemble") && m.desc.contains(PROVIDER));
+        String id = ClassResourceInspector.exists(IDENTIFIER) ? IDENTIFIER : ID;
+        return new HostShape(ClassResourceInspector.exists(RECIPE_INPUT), recipeBook, provider, id);
     }
 
     static HostShape offlineShape(String host) {
-        if (RetromodVersion.compareMcVersions(host, "1.20.5") < 0 || RetromodVersion.compareMcVersions(host, "1.21.2") >= 0) {
-            return null;
+        if (RetromodVersion.compareMcVersions(host, "1.20.5") < 0) return null;
+        if (RetromodVersion.compareMcVersions(host, "1.21.2") < 0) {
+            return new HostShape(RetromodVersion.compareMcVersions(host, "1.21") >= 0);
         }
-        return new HostShape(RetromodVersion.compareMcVersions(host, "1.21") >= 0);
+        return new HostShape(true, true, RetromodVersion.compareMcVersions(host, "26.1") < 0,
+                RetromodVersion.compareMcVersions(host, "1.21.11") >= 0 ? IDENTIFIER : ID);
     }
 
     private static boolean removedOnHost(String owner, String name, String desc) {
         ClassNode node = ClassResourceInspector.read(owner);
         return node == null || !declares(node, name, desc);
+    }
+
+    /** Whether the host's shaped recipe lacks Forge's size getters: read from the host, else true on NeoForge. */
+    static boolean lacksForgeShapedSize() {
+        ClassNode shaped = ClassResourceInspector.read(SHAPED);
+        if (shaped != null) return !declares(shaped, "getRecipeWidth", "()I");
+        return McReflect.isNeoForge();
     }
 
     private static boolean declares(ClassNode node, String name, String desc) {
@@ -182,11 +289,13 @@ public final class LegacyRecipeApiBridge {
     static byte[] apply(byte[] classBytes, HostShape host, BiPredicate<String, String> inheritsFrom) {
         ClassNode node = new ClassNode();
         new ClassReader(classBytes).accept(node, 0);
-        if ((node.access & ACC_INTERFACE) != 0 || node.name.startsWith("net/minecraft/") || isRetromodHelper(node.name)) {
+        if ((node.access & ACC_INTERFACE) != 0 || node.name.startsWith("net/minecraft/")
+                || SyntheticEmbedder.isRetromodClass(node.name)) {
             return classBytes;
         }
         boolean changed = false;
-        if (node.interfaces.contains(SERIALIZER) && isOldSerializer(node)) {
+        // 26.1 drops the serializer interface before this repair runs, so there the readers alone say what the class is.
+        if (node.interfaces.contains(SERIALIZER) ? isOldSerializer(node, false) : host.recipeBook() && isOldSerializer(node, true)) {
             changed |= addSerializerCodecs(node);
         }
         if (isRecipe(node, inheritsFrom)) {
@@ -198,17 +307,18 @@ public final class LegacyRecipeApiBridge {
         return writer.toByteArray();
     }
 
-    // Retromod's own helpers are already in the host's shape. Only these packages: a mod may
-    // live under com/retromod too, as Retromod's test mods do.
-    private static boolean isRetromodHelper(String name) {
-        return name.startsWith("com/retromod/generated/") || name.startsWith(SyntheticEmbedder.PREFIX)
-                || name.startsWith("com/retromod/shim/");
-    }
-
-    private static boolean isOldSerializer(ClassNode node) {
-        return node.methods.stream().anyMatch(m -> (m.access & ACC_STATIC) == 0
-                && (m.name.equals("fromJson") && m.desc.startsWith(OLD_FROM_JSON)
-                    || m.name.equals("fromNetwork") && m.desc.startsWith(OLD_FROM_NETWORK)));
+    /** Whether the class has the 1.20.1 readers: either one, or with {@code both} the JSON and the network one. */
+    private static boolean isOldSerializer(ClassNode node, boolean both) {
+        boolean json = false;
+        boolean network = false;
+        for (MethodNode m : node.methods) {
+            if ((m.access & ACC_STATIC) != 0) continue;
+            for (String id : List.of(ID, IDENTIFIER)) {
+                json |= m.name.equals("fromJson") && m.desc.startsWith("(L" + id + ";" + JSON_OBJECT + ")");
+                network |= m.name.equals("fromNetwork") && m.desc.startsWith("(L" + id + ";L" + BUF + ";)");
+            }
+        }
+        return both ? json && network : json || network;
     }
 
     private static boolean isRecipe(ClassNode node, BiPredicate<String, String> inheritsFrom) {
@@ -249,12 +359,68 @@ public final class LegacyRecipeApiBridge {
         // From 1.21 matches and getRemainingItems read an input. Before, they still read a container.
         if (host.inputs()) {
             changed |= addForwarder(node, "matches", OLD_MATCHES, "(" + input + "L" + LEVEL + ";)Z", true, false);
+        }
+        if (host.recipeBook()) {
+            // 26.1 dropped the registries from assemble; the old one gets the running game's.
+            String assemble = host.assembleProvider() ? "(" + input + "L" + PROVIDER + ";)L" + STACK + ";" : "(" + input + ")L" + STACK + ";";
+            changed |= addForwarder(node, "assemble", OLD_ASSEMBLE, assemble, true, true);
+            changed |= addRecipeBookAnswers(node);
+            return changed;
+        }
+        if (host.inputs()) {
             changed |= addForwarder(node, "getRemainingItems", OLD_REMAINING, "(" + input + ")L" + LIST + ";", true, false);
         }
         changed |= addForwarder(node, "assemble", OLD_ASSEMBLE, "(" + input + "L" + PROVIDER + ";)L" + STACK + ";",
                 host.inputs(), true);
         changed |= addForwarder(node, "getResultItem", OLD_RESULT, "(L" + PROVIDER + ";)L" + STACK + ";", false, true);
         return changed;
+    }
+
+    /**
+     * The questions a 1.21.2 recipe answers for the recipe book, which an old recipe cannot: it places nothing,
+     * files under the miscellaneous crafting tab, shows its unlock notification as 1.20.1 did by default, and
+     * names the group its old {@code getGroup} gave.
+     */
+    private static boolean addRecipeBookAnswers(ClassNode node) {
+        if (!node.interfaces.contains(RECIPE) && !node.interfaces.contains(CRAFTING_RECIPE)) return false;
+        boolean changed = false;
+        if (findInstance(node, "placementInfo", "()L" + PLACEMENT + ";") == null) {
+            node.methods.add(constant(GETSTATIC, PLACEMENT, "NOT_PLACEABLE", "placementInfo", PLACEMENT));
+            changed = true;
+        }
+        // CraftingRecipe answers its own category.
+        if (node.interfaces.contains(RECIPE) && findInstance(node, "recipeBookCategory", "()L" + BOOK_CATEGORY + ";") == null) {
+            node.methods.add(constant(GETSTATIC, BOOK_CATEGORIES, "CRAFTING_MISC", "recipeBookCategory", BOOK_CATEGORY));
+            changed = true;
+        }
+        if (findInstance(node, "showNotification", "()Z") == null) {
+            MethodNode show = new MethodNode(ACC_PUBLIC, "showNotification", "()Z", null, null);
+            show.instructions.add(new InsnNode(ICONST_1));
+            show.instructions.add(new InsnNode(IRETURN));
+            node.methods.add(show);
+            changed = true;
+        }
+        if (findInstance(node, "group", "()Ljava/lang/String;") == null) {
+            MethodNode group = new MethodNode(ACC_PUBLIC, "group", "()Ljava/lang/String;", null, null);
+            if (findInstance(node, "getGroup", "()Ljava/lang/String;") != null) {
+                group.instructions.add(new VarInsnNode(ALOAD, 0));
+                group.instructions.add(new MethodInsnNode(INVOKEVIRTUAL, node.name, "getGroup", "()Ljava/lang/String;", false));
+            } else {
+                group.instructions.add(new org.objectweb.asm.tree.LdcInsnNode(""));
+            }
+            group.instructions.add(new InsnNode(ARETURN));
+            node.methods.add(group);
+            changed = true;
+        }
+        return changed;
+    }
+
+    /** {@code public T name() { return Owner.FIELD; }}. */
+    private static MethodNode constant(int opcode, String owner, String field, String name, String type) {
+        MethodNode method = new MethodNode(ACC_PUBLIC, name, "()L" + type + ";", null, null);
+        method.instructions.add(new org.objectweb.asm.tree.FieldInsnNode(opcode, owner, field, "L" + type + ";"));
+        method.instructions.add(new InsnNode(ARETURN));
+        return method;
     }
 
     /**
@@ -279,6 +445,12 @@ public final class LegacyRecipeApiBridge {
                         "(L" + PROVIDER + ";)L" + ACCESS + ";", false));
             }
         }
+        // A host form without registries still owes the old method its registry access: the running game's.
+        if (convertProvider && Type.getArgumentTypes(oldDesc).length > arguments.length) {
+            method.instructions.add(new InsnNode(ACONST_NULL));
+            method.instructions.add(new MethodInsnNode(INVOKESTATIC, CALLS, "registryAccess",
+                    "(L" + PROVIDER + ";)L" + ACCESS + ";", false));
+        }
         method.instructions.add(new MethodInsnNode(INVOKEVIRTUAL, node.name, name, oldDesc, false));
         method.instructions.add(new InsnNode(Type.getReturnType(newDesc).getOpcode(IRETURN)));
         node.methods.add(method);
@@ -296,6 +468,11 @@ public final class LegacyRecipeApiBridge {
 
     /** Exact-typed static adapters: the lookups call the host and unwrap holders, the rest forward to the helper. */
     static byte[] generateCalls(HostShape host) {
+        return generateCalls(host, false);
+    }
+
+    /** As above; with {@code earlyStacks} the stacks a serializer reads are built to wait for bound components. */
+    static byte[] generateCalls(HostShape host, boolean earlyStacks) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, CALLS, null, "java/lang/Object", null);
         String manager = "L" + MANAGER + ";";
@@ -304,18 +481,30 @@ public final class LegacyRecipeApiBridge {
         String level = "L" + LEVEL + ";";
         String hostLookup = "(" + type + "L" + host.input() + ";" + level + ")";
 
+        String id = "L" + host.id() + ";";
         lookupCall(cw, host, "getRecipeFor", "(" + manager + type + container + level + ")Ljava/util/Optional;",
                 hostLookup + "Ljava/util/Optional;", "value");
-        lookupCall(cw, host, "getRecipesFor", "(" + manager + type + container + level + ")Ljava/util/List;",
-                hostLookup + "Ljava/util/List;", "values");
-        lookupCall(cw, host, "getAllRecipesFor", "(" + manager + type + ")Ljava/util/List;",
-                "(" + type + ")Ljava/util/List;", "values");
         lookupCall(cw, host, "getRecipes", "(" + manager + ")Ljava/util/Collection;", "()Ljava/util/Collection;", "values");
-        lookupCall(cw, host, "byKey", "(" + manager + "L" + ID + ";)Ljava/util/Optional;",
-                "(L" + ID + ";)Ljava/util/Optional;", "value");
-        replaceRecipes(cw, manager);
+        if (host.recipeBook()) {
+            recipeBookCalls(cw, manager, type, container, level, id);
+        } else {
+            lookupCall(cw, host, "getRecipesFor", "(" + manager + type + container + level + ")Ljava/util/List;",
+                    hostLookup + "Ljava/util/List;", "values");
+            lookupCall(cw, host, "getAllRecipesFor", "(" + manager + type + ")Ljava/util/List;",
+                    "(" + type + ")Ljava/util/List;", "values");
+            lookupCall(cw, host, "byKey", "(" + manager + id + ")Ljava/util/Optional;",
+                    "(" + id + ")Ljava/util/Optional;", "value");
+            replaceRecipes(cw, manager);
+        }
+        String recipe = "L" + RECIPE + ";";
+        String buf = "L" + BUF + ";";
+        forward(cw, "serializerFromJson", "(" + OBJECT + id + JSON_OBJECT + ")" + recipe, "serializerFromJson");
+        forward(cw, "serializerFromNetwork", "(" + OBJECT + id + buf + ")" + recipe, "serializerFromNetwork");
+        forward(cw, "serializerToNetwork", "(" + OBJECT + buf + recipe + ")V", "serializerToNetwork");
+        stackFromJson(cw, "craftingItemStack", "(" + JSON_OBJECT + "Z)L" + STACK + ";", earlyStacks);
+        stackFromJson(cw, "craftingItemStack", "(" + JSON_OBJECT + "ZZ)L" + STACK + ";", earlyStacks);
 
-        forward(cw, "getId", "(L" + RECIPE + ";)L" + ID + ";", "id");
+        forward(cw, "getId", "(L" + RECIPE + ";)" + id, "id");
         forward(cw, "registryAccess", "(L" + PROVIDER + ";)L" + ACCESS + ";", "registryAccess");
         if (host.inputs()) container(cw);
         String ingredient = "L" + INGREDIENT + ";";
@@ -326,7 +515,7 @@ public final class LegacyRecipeApiBridge {
         forward(cw, "ingredientToNetwork", "(" + ingredient + "L" + BUF + ";)V", "ingredientToNetwork");
         forward(cw, "readItem", "(L" + BUF + ";)L" + STACK + ";", "readItem");
         forward(cw, "writeItem", "(L" + BUF + ";L" + STACK + ";)L" + BUF + ";", "writeItem");
-        forward(cw, "itemStackFromJson", "(" + JSON_OBJECT + ")L" + STACK + ";", "itemStackFromJson");
+        stackFromJson(cw, "itemStackFromJson", "(" + JSON_OBJECT + ")L" + STACK + ";", earlyStacks);
         forward(cw, "itemFromJson", "(" + JSON_OBJECT + ")L" + ITEM + ";", "itemFromJson");
         cw.visitEnd();
         return cw.toByteArray();
@@ -353,6 +542,73 @@ public final class LegacyRecipeApiBridge {
         mv.visitInsn(ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
+    }
+
+    /**
+     * The 1.21.2 lookups: the 1.21.1 bridge's helper finds holders, which are unwrapped; a container travels as an
+     * input; the level answers its manager; and a check runs only on a server level.
+     */
+    private static void recipeBookCalls(ClassWriter cw, String manager, String type, String container, String level, String id) {
+        unwrapped(cw, "getAllRecipesFor", "(" + manager + type + ")Ljava/util/List;", "allRecipesFor", "values", -1);
+        unwrapped(cw, "byKey", "(" + manager + id + ")Ljava/util/Optional;", "byKey", "value", -1);
+        unwrapped(cw, "getRecipesFor", "(" + manager + type + container + level + ")Ljava/util/List;", "recipesFor", "values", 2);
+        supportCall(cw, SUPPORT, "getRecipeFor", "(" + manager + type + container + level + id + ")Ljava/util/Optional;", "recipeWithId", 2, 4);
+        supportCall(cw, SUPPORT, "cachedRecipeFor", "(L" + CACHED_CHECK + ";" + container + level + ")Ljava/util/Optional;", "cachedRecipeFor", 1, -1);
+        supportCall(cw, SUPPORT, "recipeManager", "(" + level + ")" + manager, "recipeManager", -1, -1);
+        supportCall(cw, INTROSPECTION, "emptyIngredient", "()L" + INGREDIENT + ";", "emptyIngredient", -1, -1);
+        MethodVisitor empty = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "ingredientIsEmpty", "(L" + INGREDIENT + ";)Z", null, null);
+        empty.visitCode();
+        empty.visitVarInsn(ALOAD, 0);
+        empty.visitMethodInsn(INVOKESTATIC, INTROSPECTION, "ingredientIsEmpty", "(" + OBJECT + ")Z", false);
+        empty.visitInsn(IRETURN);
+        empty.visitMaxs(0, 0);
+        empty.visitEnd();
+    }
+
+    /** {@code static R name(args)}: the 1.21.1 bridge's helper, its holders then unwrapped by {@code unwrap}. */
+    private static void unwrapped(ClassWriter cw, String name, String desc, String helper, String unwrap, int containerArgument) {
+        Type[] arguments = Type.getArgumentTypes(desc);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, name, desc, null, null);
+        mv.visitCode();
+        pushArguments(mv, arguments, containerArgument, -1);
+        mv.visitMethodInsn(INVOKESTATIC, INTROSPECTION, helper, "(" + OBJECT.repeat(arguments.length) + ")" + OBJECT, false);
+        mv.visitMethodInsn(INVOKESTATIC, SUPPORT, unwrap, "(" + OBJECT + ")" + OBJECT, false);
+        mv.visitTypeInsn(CHECKCAST, Type.getReturnType(desc).getInternalName());
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /** {@code static R name(args)}: a helper of {@code owner}, a container passed as an input; {@code dropped} is left out. */
+    private static void supportCall(ClassWriter cw, String owner, String name, String desc, String helper, int containerArgument,
+            int dropped) {
+        Type[] arguments = Type.getArgumentTypes(desc);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, name, desc, null, null);
+        mv.visitCode();
+        int passed = pushArguments(mv, arguments, containerArgument, dropped);
+        mv.visitMethodInsn(INVOKESTATIC, owner, helper, "(" + OBJECT.repeat(passed) + ")" + OBJECT, false);
+        mv.visitTypeInsn(CHECKCAST, Type.getReturnType(desc).getInternalName());
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /** Loads each argument but {@code dropped}, the one at {@code containerArgument} wrapped as an input; returns how many. */
+    private static int pushArguments(MethodVisitor mv, Type[] arguments, int containerArgument, int dropped) {
+        int passed = 0;
+        for (int i = 0; i < arguments.length; i++) {
+            if (i == dropped) continue;
+            if (i == containerArgument) {
+                mv.visitTypeInsn(NEW, INPUT);
+                mv.visitInsn(DUP);
+                mv.visitVarInsn(ALOAD, i);
+                mv.visitMethodInsn(INVOKESPECIAL, INPUT, "<init>", "(L" + CONTAINER + ";)V", false);
+            } else {
+                mv.visitVarInsn(ALOAD, i);
+            }
+            passed++;
+        }
+        return passed;
     }
 
     private static void replaceRecipes(ClassWriter cw, String manager) {
@@ -386,6 +642,25 @@ public final class LegacyRecipeApiBridge {
         mv.visitVarInsn(ALOAD, 0);
         mv.visitMethodInsn(INVOKESTATIC, SUPPORT, "container", "(" + OBJECT + ")" + OBJECT, false);
         mv.visitTypeInsn(CHECKCAST, CONTAINER);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /** {@code static ItemStack name(json, ...)}: the stack {@code item} and {@code count} name, early when the host binds late. */
+    private static void stackFromJson(ClassWriter cw, String name, String desc, boolean earlyStacks) {
+        if (!earlyStacks) {
+            forward(cw, name, desc, "itemStackFromJson");
+            return;
+        }
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, name, desc, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKESTATIC, SUPPORT, "itemFromJson", "(" + OBJECT + ")" + OBJECT, false);
+        mv.visitTypeInsn(CHECKCAST, ITEM_LIKE);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKESTATIC, SUPPORT, "countFromJson", "(" + OBJECT + ")I", false);
+        mv.visitMethodInsn(INVOKESTATIC, LegacyEarlyItemStackBridge.HELPER, "of", "(L" + ITEM_LIKE + ";I)L" + STACK + ";", false);
         mv.visitInsn(ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

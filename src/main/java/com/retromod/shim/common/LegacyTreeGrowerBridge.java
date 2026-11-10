@@ -6,6 +6,7 @@ package com.retromod.shim.common;
 
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -61,7 +62,10 @@ public final class LegacyTreeGrowerBridge {
     public static void register(RetromodTransformer transformer) {
         if (!hostHasTreeGrower()) return;
         registerRedirects(transformer);
-        LOGGER.info("Bridged the removed AbstractTreeGrower and SaplingBlock(AbstractTreeGrower, Properties)");
+        // NeoForge's chain and the Forge chain both register this, so the notice prints once.
+        if (transformer.firstRegistrationNotice(LegacyTreeGrowerBridge.class.getName())) {
+            LOGGER.debug(RetromodLog.DETAIL, "Bridged the removed AbstractTreeGrower and SaplingBlock(AbstractTreeGrower, Properties)");
+        }
     }
 
     /**

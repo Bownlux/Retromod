@@ -4,6 +4,9 @@
  */
 package com.retromod.shim.api.fabric.embedded;
 
+import com.retromod.shim.api.common.embedded.ApiShimWarnings;
+
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -48,6 +51,7 @@ public class FabricItemGroupBuilderShim {
             return (net.minecraft.class_1761) result;
         } catch (Throwable t) {
             // no ItemGroup API on the host: return null so the caller's static init survives
+            warn("build", id, "it returned null", t);
             return null;
         }
     }
@@ -76,7 +80,7 @@ public class FabricItemGroupBuilderShim {
                         builder = displayNameMethod.invoke(builder, text);
                     }
                 } catch (Exception e) {
-                    // ignore
+                    warn("displayName", identifier, "the item group has no display name", e);
                 }
             }
 
@@ -89,7 +93,7 @@ public class FabricItemGroupBuilderShim {
                         builder = entriesMethod.invoke(builder, entriesCallback);
                     }
                 } catch (Exception e) {
-                    // ignore
+                    warn("appendItems", identifier, "the item group's items were not added", e);
                 }
             }
 
@@ -131,14 +135,19 @@ public class FabricItemGroupBuilderShim {
             Class<?> textClass = Class.forName("net.minecraft.text.Text");
             Method translatableMethod = textClass.getMethod("translatable", String.class);
             
-            String namespace = identifier.getClass().getMethod("getNamespace").invoke(identifier).toString();
-            String path = identifier.getClass().getMethod("getPath").invoke(identifier).toString();
+            String namespace = LegacyPublicMethods.method(identifier.getClass(), "getNamespace").invoke(identifier).toString();
+            String path = LegacyPublicMethods.method(identifier.getClass(), "getPath").invoke(identifier).toString();
             String key = "itemGroup." + namespace + "." + path;
             
             return translatableMethod.invoke(null, key);
         } catch (Exception e) {
+            warn("createDisplayName", identifier, "the item group has no display name", e);
             return null;
         }
+    }
+
+    private static void warn(String call, Object receiver, String effect, Throwable failure) {
+        ApiShimWarnings.warnOnce("Fabric item group", call, receiver, effect, failure);
     }
     
     private Object createEntriesCallback(Consumer<?> oldConsumer) {
@@ -153,7 +162,7 @@ public class FabricItemGroupBuilderShim {
                     ((Consumer<java.util.List<Object>>) oldConsumer).accept(items);
 
                     Object entries = args[1];
-                    Method addMethod = entries.getClass().getMethod("add", 
+                    Method addMethod = LegacyPublicMethods.method(entries.getClass(), "add",
                         Class.forName("net.minecraft.item.ItemStack"));
                     for (Object item : items) {
                         addMethod.invoke(entries, item);

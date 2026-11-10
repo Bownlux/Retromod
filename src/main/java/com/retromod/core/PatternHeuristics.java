@@ -324,7 +324,9 @@ public class PatternHeuristics {
         // Fabric_1_21_11_to_26_1 table died NoSuchMethodError at init (AppleSkin's SyncHandler, found
         // in an in-game 26.2 launch). Reconstruct the actual 26.1 name instead of a token replace.
         rules.add((owner, name, desc) -> {
-            if (!owner.contains("networking")) return null;
+            // Only Fabric API's own classes were renamed. A mod's networking package keeps its names:
+            // Architectury's registerS2C became a clientboundRegister its own class never declared.
+            if (!owner.startsWith("net/fabricmc/fabric/api/") || !owner.contains("/networking/")) return null;
             if (name.endsWith("S2C") && name.length() > 3) {
                 return new PatternResult(owner, "clientbound" + capitalize(name.substring(0, name.length() - 3)),
                     desc, 0.9, "<channel>S2C->clientbound<Channel>",

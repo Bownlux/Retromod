@@ -168,9 +168,7 @@ public final class IsOverloadBridgeSynthetic {
 
         // EntityRenderDispatcher no longer caches and exposes cameraOrientation. Its prepare
         // method now stores only the Camera, whose rotation() is the same orientation value.
-        t.registerMethodRedirect(ENTITY_RENDER_DISPATCHER, "cameraOrientation", "()" + L_QUATERNION,
-                INTERNAL, "cameraOrientation",
-                "(" + L_ENTITY_RENDER_DISPATCHER + ")" + L_QUATERNION, true);
+        registerCameraOrientation(t, INTERNAL);
 
         // 26.1+ moved IntProvider/FloatProvider's static codec factories AND codec constants to
         // the companion classes with IDENTICAL signatures (verified on 26.2: IntProviders has
@@ -243,6 +241,13 @@ public final class IsOverloadBridgeSynthetic {
                 "(" + L_CODEC + "Lnet/minecraft/util/context/ContextKeySet;)" + L_CODEC,
                 "net/minecraft/world/item/enchantment/ConditionalEffect", "codec",
                 "(" + L_CODEC + ")" + L_CODEC);
+    }
+
+    /** Points cameraOrientation() at a helper class that holds {@link #emitCameraOrientation}. */
+    static void registerCameraOrientation(RetromodTransformer t, String helperOwner) {
+        t.registerMethodRedirect(ENTITY_RENDER_DISPATCHER, "cameraOrientation", "()" + L_QUATERNION,
+                helperOwner, "cameraOrientation",
+                "(" + L_ENTITY_RENDER_DISPATCHER + ")" + L_QUATERNION, true);
     }
 
     /** A ClassWriter that never consults the (absent) MC class hierarchy for frame computation. */
@@ -522,7 +527,7 @@ public final class IsOverloadBridgeSynthetic {
     }
 
     /** Read the orientation from the Camera now retained by EntityRenderDispatcher.prepare. */
-    private static void emitCameraOrientation(ClassWriter cw) {
+    static void emitCameraOrientation(ClassWriter cw) {
         MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "cameraOrientation",
                 "(" + L_ENTITY_RENDER_DISPATCHER + ")" + L_QUATERNION, null, null);
         m.visitCode();

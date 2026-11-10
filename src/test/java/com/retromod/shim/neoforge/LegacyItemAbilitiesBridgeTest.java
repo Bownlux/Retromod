@@ -133,6 +133,53 @@ class LegacyItemAbilitiesBridgeTest {
         assertEquals("get", get.name);
     }
 
+    @Test
+    @DisplayName("Forge 26.2 already lacks the shield ability and its set, and only those two are bridged there")
+    void forge262BridgesOnlyTheShield() {
+        transformer.clearRedirectsForTesting();
+        // The fields Forge 26.2's ToolActions declares, read from forge-26.2-65.0.0-universal.jar.
+        LegacyItemAbilitiesBridge.register(transformer, LegacyItemAbilitiesBridge.FORGE, Set.of(
+                "AXE_DIG", "PICKAXE_DIG", "SHOVEL_DIG", "HOE_DIG", "SWORD_DIG", "SHEARS_DIG", "AXE_STRIP",
+                "AXE_SCRAPE", "AXE_WAX_OFF", "SHOVEL_FLATTEN", "SWORD_SWEEP", "SHEARS_HARVEST", "SHEARS_CARVE",
+                "SHEARS_DISARM", "HOE_TILL", "FISHING_ROD_CAST", "DEFAULT_AXE_ACTIONS", "DEFAULT_HOE_ACTIONS",
+                "DEFAULT_SHOVEL_ACTIONS", "DEFAULT_PICKAXE_ACTIONS", "DEFAULT_SWORD_ACTIONS",
+                "DEFAULT_SHEARS_ACTIONS", "DEFAULT_FISHING_ROD_ACTIONS"));
+        assertEquals(List.of("DEFAULT_SHIELD_ACTIONS", "SHIELD_BLOCK"), forgeRedirects());
+
+        MethodNode shield = helperMethod(transformer.getSyntheticClasses().get("com/retromod/generated/LegacyToolActions"),
+                "SHIELD_BLOCK");
+        assertEquals("shield_block", first(shield, LdcInsnNode.class).cst);
+    }
+
+    @Test
+    @DisplayName("Offline, a Forge 26.2 target gets the shield getters and a 26.3 target gets every removed constant")
+    void offlineForgeTargetsFollowTheVersion() {
+        String saved = com.retromod.core.RetromodVersion.TARGET_MC_VERSION;
+        try {
+            transformer.clearRedirectsForTesting();
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = "26.2";
+            LegacyItemAbilitiesBridge.register(transformer, LegacyItemAbilitiesBridge.FORGE, null);
+            assertEquals(List.of("DEFAULT_SHIELD_ACTIONS", "SHIELD_BLOCK"), forgeRedirects());
+            LegacyItemAbilitiesBridge.register(transformer, null);
+            assertTrue(transformer.getFieldRedirects().keySet().stream()
+                    .noneMatch(key -> key.owner().equals("net/neoforged/neoforge/common/ItemAbilities")),
+                    "NeoForge 26.2 keeps its shield ability");
+
+            transformer.clearRedirectsForTesting();
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = "26.3";
+            LegacyItemAbilitiesBridge.register(transformer, LegacyItemAbilitiesBridge.FORGE, null);
+            assertEquals(17, forgeRedirects().size(), forgeRedirects().toString());
+        } finally {
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = saved;
+        }
+    }
+
+    private List<String> forgeRedirects() {
+        return transformer.getFieldRedirects().keySet().stream()
+                .filter(key -> key.owner().equals("net/minecraftforge/common/ToolActions"))
+                .map(key -> key.name()).sorted().toList();
+    }
+
     private static byte[] modReading(String owner, String field, String desc) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(V17, ACC_PUBLIC, "test/Reader", null, "java/lang/Object", null);

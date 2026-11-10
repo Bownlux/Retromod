@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.concurrent.Callable;
@@ -46,7 +47,7 @@ public final class LateForgeRegistration {
         try {
             action.call();
         } finally {
-            if (reopened) registry.getClass().getMethod("freeze").invoke(registry);
+            if (reopened) LegacyPublicMethods.method(registry.getClass(), "freeze").invoke(registry);
         }
     }
 
@@ -63,9 +64,9 @@ public final class LateForgeRegistration {
 
     private static boolean reopenIfLocked(Object registry) {
         try {
-            Method isLocked = registry.getClass().getMethod("isLocked");
+            Method isLocked = LegacyPublicMethods.method(registry.getClass(), "isLocked");
             if (!Boolean.TRUE.equals(isLocked.invoke(registry))) return false;
-            registry.getClass().getMethod("unfreeze").invoke(registry);
+            LegacyPublicMethods.method(registry.getClass(), "unfreeze").invoke(registry);
             return true;
         } catch (ReflectiveOperationException | RuntimeException e) {
             // Not a lockable Forge registry: register normally and let it report its own error.

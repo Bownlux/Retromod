@@ -6,6 +6,7 @@ package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
@@ -129,7 +130,7 @@ public final class FinalBaseConstructionAdapter {
             // the constructor call into a static call, so no stack map frame changes.
             ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
             node.accept(writer);
-            LOGGER.info("{} builds {} object(s) whose Minecraft base is now final; building one "
+            LOGGER.debug(RetromodLog.DETAIL, "{} builds {} object(s) whose Minecraft base is now final; building one "
                     + "now reports why instead of stopping the class from loading", node.name, throwers.size());
             return writer.toByteArray();
         } catch (Throwable t) {
@@ -211,8 +212,8 @@ public final class FinalBaseConstructionAdapter {
         body.add(new InsnNode(Opcodes.DUP));
         body.add(new LdcInsnNode(created.replace('/', '.') + " extends " + base.owner().replace('/', '.')
                 + ", which is final on this Minecraft version, so it cannot be built. "
-                + base.reason() + ". Remove whatever defines it, such as a script, or use a version "
-                + "of the mod made for this Minecraft version."));
+                + base.reason() + ". Retromod has no replacement for it yet. Report this with the "
+                + "mod and its version."));
         body.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, "java/lang/UnsupportedOperationException",
                 "<init>", "(Ljava/lang/String;)V", false));
         body.add(new InsnNode(Opcodes.ATHROW));

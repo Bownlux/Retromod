@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.neoforge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.util.Locale;
 
@@ -63,7 +64,7 @@ public final class ReloadListenerEventShim {
     }
 
     private static Method twoArgAddListener(Class<?> eventClass) {
-        for (Method m : eventClass.getMethods()) {
+        for (Method m : LegacyPublicMethods.methods(eventClass)) {
             if ("addListener".equals(m.getName()) && m.getParameterCount() == 2) {
                 return m;
             }

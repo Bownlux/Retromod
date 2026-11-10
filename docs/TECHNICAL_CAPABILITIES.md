@@ -46,8 +46,8 @@ Some renderer migrations can be staged safely without claiming full visual compa
 
 - Fabric on 26.1 and newer maps intermediary names to Mojang names.
 - Fabric before 26.1 stays in intermediary names and uses a growing set of targeted bridges. Coverage is useful but not complete.
-- NeoForge mods already use Mojang names.
-- Old Forge names map to Mojang names on unobfuscated hosts. Forge 1.20.1 also has an owner-and-descriptor-qualified target-SRG table. Other pre-26 Forge targets do not yet have equivalent complete tables.
+- NeoForge 1.20.2 and newer mods already use Mojang names.
+- Old Forge names map to Mojang names on hosts that run Mojang names: Forge 1.20.6 and newer, NeoForge 1.20.2 and newer, and 26.x. Forge 1.20 to 1.20.4 run SRG names, so Retromod emits each host's own SRG names from an owner-and-descriptor-qualified table. Forge hosts before 1.20 have no table and keep source member names.
 - Forge-to-NeoForge migration covers selected common APIs, not every Forge subsystem.
 
 ## Usually Cannot Be Automated

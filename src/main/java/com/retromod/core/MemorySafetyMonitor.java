@@ -4,6 +4,7 @@
  */
 package com.retromod.core;
 
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -377,7 +378,7 @@ public class MemorySafetyMonitor {
         System.gc();
         try { Thread.sleep(100); } catch (InterruptedException ignored) {}
         double after = getMemoryUsagePercent();
-        LOGGER.info("GC: {}% -> {}%", String.format("%.1f", before * 100), String.format("%.1f", after * 100));
+        LOGGER.debug(RetromodLog.DETAIL, "GC: {}% -> {}%", String.format("%.1f", before * 100), String.format("%.1f", after * 100));
     }
     
     /** Tracks one in-flight class transformation. */

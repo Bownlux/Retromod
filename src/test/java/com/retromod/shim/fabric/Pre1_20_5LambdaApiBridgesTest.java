@@ -290,10 +290,13 @@ class Pre1_20_5LambdaApiBridgesTest {
         MethodInsnNode call = only(transform(cw.toByteArray()), MethodInsnNode.class);
 
         assertEquals(Pre1_20_5ComponentJsonBridge.HELPER, call.owner);
-        MethodInsnNode delegate = calls(read(Pre1_20_5ComponentJsonBridge.generateHelper(
-                List.of(fromJson)))).get(0);
+        List<MethodInsnNode> helperCalls = calls(read(Pre1_20_5ComponentJsonBridge.generateHelper(List.of(fromJson))));
+        assertEquals(List.of("com/retromod/shim/common/embedded/LegacyEnchantmentRegistry.registriesOr",
+                Pre1_20_5ComponentJsonBridge.SERIALIZER + "." + fromJson.name()),
+                helperCalls.stream().map(insn -> insn.owner + "." + insn.name).toList(),
+                "the helper asks for the loaded world's registries, then calls the 1.20.5 form");
         assertEquals("(Lcom/google/gson/JsonElement;Lnet/minecraft/class_7225$class_7874;)Lnet/minecraft/class_5250;",
-                delegate.desc, "the helper must pass a lookup provider to the 1.20.5 form");
+                helperCalls.get(1).desc, "the helper must pass a lookup provider to the 1.20.5 form");
         assertWellFormed(Pre1_20_5ComponentJsonBridge.generateHelper(Pre1_20_5ComponentJsonBridge.CALLS));
     }
 
@@ -465,7 +468,8 @@ class Pre1_20_5LambdaApiBridgesTest {
         assertEquals(2, received.size(), "a working callback must run every time");
         assertSame(resourceManager, received.get(0)[0], "the resource manager is passed through");
         assertNull(received.get(0)[1], "the removed LootDataManager has no current value");
-        List<String> lines = report.lines().filter(line -> line.startsWith("[Retromod]")).toList();
+        // The test logger puts its thread, level, and logger name before each message.
+        List<String> lines = report.lines().filter(line -> line.contains("[Retromod]")).toList();
         assertEquals(2, lines.size(),
                 "each broken callback is reported once, and one must not hide another: " + report);
         assertTrue(lines.get(0).contains("class_5270") && lines.get(1).contains("class_60"), report);

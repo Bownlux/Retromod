@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.function.BiConsumer;
 import java.util.jar.Manifest;
 import java.util.stream.Stream;
 
@@ -118,6 +119,39 @@ class DiscoveryEngineTest {
     private static Path old(Path game, String name) throws IOException {
         return TestModJars.forgeMod(game.resolve("mods").resolve(name), "oldmod", "1.0.0",
                 "[1.19.2,1.20)");
+    }
+
+    @Test
+    @DisplayName("an old jar built for several loaders is translated through its Forge metadata")
+    void multiLoaderJarIsReadAsForge() throws IOException {
+        // One jar for every loader also carries fabric.mod.json, which used to win the detection,
+        // so the pass ignored the mod as a Fabric one.
+        Path game = game();
+        Path multi = old(game, "multi-loader.jar");
+        addEntry(multi, "fabric.mod.json",
+                "{\"schemaVersion\":1,\"id\":\"oldmod\",\"version\":\"1.0.0\",\"depends\":{\"minecraft\":\"1.19.2\"}}");
+
+        DiscoveryEngine.Outcome outcome = forge(game);
+
+        assertEquals(List.of(multi), outcome.hide(), "the refused old mod is held back for translation");
+        assertEquals(1, status(outcome).pending().size());
+    }
+
+    /** Rewrites a jar with one more text entry. */
+    private static void addEntry(Path jar, String name, String text) throws IOException {
+        Path rewritten = jar.resolveSibling(jar.getFileName() + ".tmp");
+        try (java.util.zip.ZipInputStream in = new java.util.zip.ZipInputStream(Files.newInputStream(jar));
+             java.util.zip.ZipOutputStream out = new java.util.zip.ZipOutputStream(Files.newOutputStream(rewritten))) {
+            for (java.util.zip.ZipEntry entry; (entry = in.getNextEntry()) != null; ) {
+                out.putNextEntry(new java.util.zip.ZipEntry(entry.getName()));
+                in.transferTo(out);
+                out.closeEntry();
+            }
+            out.putNextEntry(new java.util.zip.ZipEntry(name));
+            out.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            out.closeEntry();
+        }
+        Files.move(rewritten, jar, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     }
 
     @Test
@@ -273,6 +307,41 @@ class DiscoveryEngineTest {
         assertEquals(List.of(versionless), outcome.hide(),
                 "NeoForge skips a Forge-only jar, so leaving it visible would leave it unloaded");
         assertEquals(1, status(outcome).pending().size());
+    }
+
+    /** Shaped like Cloth Config 15.0.140 for NeoForge 1.21: its only version clue is a beta range. */
+    private static Path betaRangeLibrary(Path game) throws IOException {
+        return TestModJars.jar(game.resolve("mods/cloth-config-15.0.140-neoforge.jar"), null,
+                Map.of(ForgeModMetadata.NEOFORGE_TOML, "modLoader=\"javafml\"\nloaderVersion=\"[1,)\"\n"
+                        + "license=\"LGPL-3.0\"\n[[mods]]\nmodId=\"cloth_config\"\nversion=\"15.0.140\"\n"
+                        + "[[dependencies.cloth_config]]\nmodId=\"neoforge\"\ntype=\"required\"\n"
+                        + "versionRange=\"[21.0.110-beta,)\"\n"));
+    }
+
+    @Test
+    @DisplayName("a NeoForge 1.21 library with only a beta range is translated on NeoForge 26.3")
+    void betaRangeLibraryIsTranslatedOn263() throws IOException {
+        Path game = game();
+        betaRangeLibrary(game);
+
+        DiscoveryEngine.Outcome outcome = neo(game);
+
+        assertEquals(1, status(outcome).pending().size(),
+                "the library references ResourceLocation, which 26.3 no longer has");
+        assertEquals(List.of(), outcome.hide(), "NeoForge accepts its open range, so it stays visible");
+    }
+
+    @Test
+    @DisplayName("the same library is left alone on NeoForge 1.21.1, where it runs as it is")
+    void betaRangeLibraryIsLeftAloneOn1211() throws IOException {
+        Path game = game();
+        betaRangeLibrary(game);
+
+        DiscoveryEngine.Outcome outcome = discover(game, "neoforge", "1.21.1", "21.1.200",
+                ForgeModMetadata.NEOFORGE_TOML, DiscoveryEngine.ServeStyle.FILES, new Properties());
+
+        assertEquals(List.of(), status(outcome).pending());
+        assertEquals(List.of(), outcome.hide());
     }
 
     @Test
@@ -505,6 +574,44 @@ class DiscoveryEngineTest {
     }
 
     @Test
+    @DisplayName("a jar the CLI translated for this game is left alone, not translated a second time")
+    void cliOutputInModsIsLeftAlone() throws Exception {
+        Path game = game();
+        Path source = TestModJars.forgeMod(tmp.resolve("source/oldmod.jar"), "oldmod", "1.0.0",
+                "[1.19.2,1.20)");
+        Path output = game.resolve("mods/oldmod-transformed.jar");
+        cliTransform(source, output, FORGE_HOST);
+
+        DiscoveryEngine.Outcome outcome = forge(game);
+
+        assertEquals(List.of(), outcome.hide());
+        assertEquals(List.of(), status(outcome).pending(),
+                "the CLI widened the range from the old lower bound, so only its stamp says it is done");
+    }
+
+    /** Runs the CLI's jar transform for {@code target}, as {@code retromod transform} does. */
+    private static void cliTransform(Path source, Path output, String target) throws Exception {
+        java.lang.reflect.Field targetField = com.retromod.cli.RetromodCli.class
+                .getDeclaredField("TARGET_MC_VERSION");
+        targetField.setAccessible(true);
+        Object saved = targetField.get(null);
+        java.lang.reflect.Method transform = com.retromod.cli.RetromodCli.class.getDeclaredMethod(
+                "transformJar", Path.class, Path.class, com.retromod.core.RetromodTransformer.class,
+                com.retromod.embedder.ModVersionInfo.class);
+        transform.setAccessible(true);
+        com.retromod.core.RetromodTransformer transformer = com.retromod.core.RetromodTransformer.getInstance();
+        try {
+            targetField.set(null, target);
+            transformer.clearRedirectsForTesting();
+            transform.invoke(null, source, output, transformer, new com.retromod.embedder.ModVersionInfo(
+                    "oldmod", "1.0.0", "1.19.2", "forge", null, java.util.Set.of(), java.util.Set.of(), false));
+        } finally {
+            targetField.set(null, saved);
+            transformer.clearRedirectsForTesting();
+        }
+    }
+
+    @Test
     @DisplayName("a jar translated for another Minecraft version is named and left as it is")
     void translatedForAnotherVersionIsNamed() throws IOException {
         Path game = game();
@@ -518,6 +625,64 @@ class DiscoveryEngineTest {
                 + "translated by Retromod for Minecraft 1.19.2")), log.toString());
         assertTrue(log.stream().noneMatch(line -> line.contains("here-retromod.jar was")),
                 "a jar translated for this version is not mentioned");
+    }
+
+    @Test
+    @DisplayName("a client holds back a copy a dedicated server translated; the server and an unknown side keep it")
+    void serverOnlyCopyIsHeldBackOnAClient() throws IOException {
+        Path game = game();
+        Path copy = game.resolve("mods/server-retromod.jar");
+        translatedFor(copy, "server", FORGE_HOST);
+        markServerOnly(copy);
+        Properties client = new Properties();
+        client.setProperty(InPlaceStatus.DIST_PROPERTY, InPlaceStatus.DIST_CLIENT);
+        Properties server = new Properties();
+        server.setProperty(InPlaceStatus.DIST_PROPERTY, InPlaceStatus.DIST_DEDICATED_SERVER);
+
+        assertEquals(List.of(copy), forge(game, client).hide(),
+                "its client-only methods are gone, so a client would fail on them later");
+        assertTrue(log.stream().anyMatch(line -> line.startsWith("warn: server-retromod.jar was translated "
+                + "by Retromod on a dedicated server")), log.toString());
+        assertEquals(List.of(), forge(game, server).hide());
+        assertEquals(List.of(), forge(game).hide(), "a launch that does not know its side changes nothing");
+    }
+
+    @Test
+    @DisplayName("a client in rewrite mode holds back a server-made jar a server wrote into mods/")
+    void serverOnlyRewriteOutputIsHeldBackOnAClient() throws IOException {
+        Path game = game();
+        Path copy = game.resolve("mods/server-retromod.jar");
+        translatedFor(copy, "server", FORGE_HOST);
+        markServerOnly(copy);
+        Properties rewriteClient = new Properties();
+        rewriteClient.setProperty(InPlaceSettings.SYSTEM_PROPERTY, "true");
+        rewriteClient.setProperty(InPlaceStatus.DIST_PROPERTY, InPlaceStatus.DIST_CLIENT);
+
+        DiscoveryEngine.Outcome outcome = forge(game, rewriteClient);
+
+        assertEquals(InPlaceStatus.MODE_REWRITE, outcome.mode());
+        assertEquals(List.of(copy), outcome.hide(), "rewrite mode's jars are the ones people copy between games");
+    }
+
+    /** Adds the marker ForgeModTransformer writes on a copy without its client-only code. */
+    private static void markServerOnly(Path file) throws IOException {
+        Manifest manifest;
+        Map<String, byte[]> entries = new java.util.LinkedHashMap<>();
+        try (java.util.jar.JarFile jar = new java.util.jar.JarFile(file.toFile())) {
+            manifest = jar.getManifest();
+            for (var entry : java.util.Collections.list(jar.entries())) {
+                if (entry.isDirectory() || entry.getName().equals("META-INF/MANIFEST.MF")) continue;
+                entries.put(entry.getName(), jar.getInputStream(entry).readAllBytes());
+            }
+        }
+        manifest.getMainAttributes().putValue(TranslatedJarMarkers.DIST, TranslatedJarMarkers.DEDICATED_SERVER);
+        try (java.util.jar.JarOutputStream out = new java.util.jar.JarOutputStream(Files.newOutputStream(file), manifest)) {
+            for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
+                out.putNextEntry(new java.util.jar.JarEntry(entry.getKey()));
+                out.write(entry.getValue());
+                out.closeEntry();
+            }
+        }
     }
 
     /** A jar stamped the way ForgeModTransformer stamps its output for {@code minecraft}. */
@@ -681,5 +846,35 @@ class DiscoveryEngineTest {
         assertEquals(InPlaceStatus.MODE_IN_PLACE, result.get("mode"));
         assertEquals(List.of(oldJar), result.get("hide"));
         assertInstanceOf(Path.class, result.get("statusFile"));
+    }
+
+    @Test
+    @DisplayName("a failed pass logs where it failed, so a report can be acted on")
+    void failedPassLogsWhereItFailed() throws IOException {
+        Path game = game();
+        Path oldJar = old(game, "failing.jar");
+        List<String> errors = new ArrayList<>();
+        Map<String, Object> request = new HashMap<>();
+        request.put("protocol", DiscoveryEngine.PROTOCOL);
+        request.put("gameDir", game);
+        request.put("modsDir", game.resolve("mods"));
+        request.put("modsListing", List.of(oldJar));
+        request.put("loader", "forge");
+        request.put("minecraft", FORGE_HOST);
+        request.put("loaderBuild", "47.4.26");
+        request.put("hostToml", ForgeModMetadata.FORGE_TOML);
+        request.put("serveStyle", "bogus");
+        request.put("properties", new Properties());
+        request.put("log", (BiConsumer<String, String>) (level, message) -> {
+            if (level.equals("error")) errors.add(message);
+        });
+
+        Map<String, Object> result = DiscoveryEngine.run(request);
+
+        assertEquals("error", result.get("mode"));
+        assertEquals(1, errors.size(), "one error for one failed pass: " + errors);
+        assertTrue(errors.get(0).contains("IllegalArgumentException"), errors.get(0));
+        assertTrue(errors.get(0).contains("at com.retromod.inplace.DiscoveryEngine"),
+                "the report must name the class and line that failed: " + errors.get(0));
     }
 }

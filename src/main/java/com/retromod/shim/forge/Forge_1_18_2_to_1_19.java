@@ -62,12 +62,6 @@ public class Forge_1_18_2_to_1_19 implements VersionShim {
             "net/minecraft/network/chat/TranslatableComponent",
             "net/minecraft/network/chat/MutableComponent"
         );
-        transformer.registerMethodRedirect(
-            "net/minecraft/server/level/ServerPlayer", "sendMessage",
-            "(Lnet/minecraft/network/chat/Component;Z)V",
-            "com/retromod/shim/forge/embedded/ChatShim", "sendMessage",
-            "(Ljava/lang/Object;Ljava/lang/Object;Z)V"
-        );
         LegacyForge119Bridge.register(transformer);
         com.retromod.shim.common.LegacyMinecraft119Bridge.register(transformer);
         com.retromod.shim.common.LegacyResourceApiBridge.register(transformer);

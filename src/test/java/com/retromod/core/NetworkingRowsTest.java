@@ -143,6 +143,29 @@ class NetworkingRowsTest {
         assertEquals(List.of(), undeclared, "rows the runtime does not own on " + host);
     }
 
+    // Forge Config API Port 21.1.6 builds its config sync packet with this call when a player joins.
+    @ParameterizedTest(name = "on {0}")
+    @ValueSource(strings = {"26.1", "26.3", "26.4"})
+    @DisplayName("The configuration-phase createS2CPacket(CustomPacketPayload) calls its 26.x name")
+    void configurationPacketFactoryIsRenamed(String host) {
+        prepare(host);
+        String owner = API + "networking/v1/ServerConfigurationNetworking";
+        byte[] fixture = call("fixture/n1/ConfigPacket", owner, "createS2CPacket",
+                "(Lnet/minecraft/class_8710;)Lnet/minecraft/class_2596;");
+
+        ClassNode node = new ClassNode();
+        new ClassReader(transformer.transformClass(fixture, "fixture/n1/ConfigPacket")).accept(node, 0);
+        List<String> calls = new ArrayList<>();
+        for (MethodNode method : node.methods) {
+            for (AbstractInsnNode insn : method.instructions) {
+                if (insn instanceof MethodInsnNode call) calls.add(call.owner + "." + call.name + call.desc);
+            }
+        }
+        assertEquals(List.of(owner + ".createClientboundPacket(Lnet/minecraft/network/protocol/common/custom/"
+                + "CustomPacketPayload;)Lnet/minecraft/network/protocol/Packet;"), calls,
+                "the old name is gone on " + host + ", so the call must name createClientboundPacket");
+    }
+
     // ---- Setup ------------------------------------------------------------------------------
 
     private void prepare(String host) {

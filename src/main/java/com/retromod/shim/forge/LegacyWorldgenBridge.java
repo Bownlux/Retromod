@@ -271,15 +271,17 @@ public final class LegacyWorldgenBridge {
         }
         method.instructions.add(new org.objectweb.asm.tree.FrameNode(F_FULL, locals.size(), locals.toArray(),
                 1, new Object[] {"java/lang/Throwable"}));
-        method.instructions.add(new org.objectweb.asm.tree.InsnNode(POP));
-        method.instructions.add(new org.objectweb.asm.tree.FieldInsnNode(GETSTATIC, "java/lang/System", "out",
-                "Ljava/io/PrintStream;"));
-        method.instructions.add(new org.objectweb.asm.tree.LdcInsnNode("[Retromod] Legacy worldgen: " + owner.replace('/', '.')
+        // Warn with the cause in the game log. It adds no local, so the frame above stays valid.
+        org.objectweb.asm.tree.MethodNode log = new org.objectweb.asm.tree.MethodNode();
+        com.retromod.util.GeneratedLog.pushLogger(log);
+        log.visitInsn(SWAP);
+        log.visitLdcInsn("[Retromod] Legacy worldgen: " + owner.replace('/', '.')
                 + " could not add its biomes to the overworld on this Minecraft version, so the overworld keeps"
-                + " vanilla's biomes"));
-        method.instructions.add(new org.objectweb.asm.tree.MethodInsnNode(INVOKEVIRTUAL, "java/io/PrintStream",
-                "println", "(Ljava/lang/String;)V", false));
-        method.instructions.add(new org.objectweb.asm.tree.InsnNode(RETURN));
+                + " vanilla's biomes");
+        log.visitInsn(SWAP);
+        com.retromod.util.GeneratedLog.warnWithCause(log);
+        log.visitInsn(RETURN);
+        method.instructions.add(log.instructions);
         method.tryCatchBlocks.add(new org.objectweb.asm.tree.TryCatchBlockNode(start, end, handler, "java/lang/Throwable"));
     }
 

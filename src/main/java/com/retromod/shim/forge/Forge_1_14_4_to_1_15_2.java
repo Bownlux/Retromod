@@ -47,18 +47,6 @@ public class Forge_1_14_4_to_1_15_2 implements VersionShim {
             "com/mojang/blaze3d/systems/RenderSystem", "disableBlend",
             "()V"
         );
-        transformer.registerMethodRedirect(
-            "net/minecraft/client/renderer/GlStateManager", "enableAlphaTest",
-            "()V",
-            "com/retromod/shim/forge/embedded/RenderShim", "enableAlphaTest",
-            "()V"
-        );
-        transformer.registerMethodRedirect(
-            "net/minecraft/client/renderer/GlStateManager", "disableAlphaTest",
-            "()V",
-            "com/retromod/shim/forge/embedded/RenderShim", "disableAlphaTest",
-            "()V"
-        );
         transformer.registerClassRedirect(
             "net/minecraft/client/renderer/Matrix4f",
             "net/minecraft/util/math/vector/Matrix4f"

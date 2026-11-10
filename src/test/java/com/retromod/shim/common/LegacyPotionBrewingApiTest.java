@@ -62,6 +62,26 @@ class LegacyPotionBrewingApiTest {
     }
 
     @Test
+    @DisplayName("The rebuilt table reads recipes through getRecipes(), which every 26.3 host has, not NeoForge's recipeMap()")
+    void readsRecipesThroughAMemberEveryHostHas() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        LegacyPotionBrewingApi.registerClasses(transformer);
+        ClassNode node = new ClassNode();
+        new ClassReader(transformer.getSyntheticClasses().get(NEW)).accept(node, 0);
+        List<String> calls = new ArrayList<>();
+        for (MethodNode method : node.methods) {
+            for (AbstractInsnNode insn : method.instructions) {
+                if (insn instanceof MethodInsnNode call) calls.add(call.owner + "." + call.name + call.desc);
+            }
+        }
+        String manager = "net/minecraft/world/item/crafting/RecipeManager";
+        assertTrue(calls.contains(manager + ".getRecipes()Ljava/util/Collection;"), calls.toString());
+        // Vanilla and Forge 26.3 keep the map in a private field, so this call fails to link there.
+        assertTrue(calls.stream().noneMatch(call -> call.startsWith(manager + ".recipeMap(")), calls.toString());
+    }
+
+    @Test
     @DisplayName("The rebuilt class keeps every public member 26.2's PotionBrewing gave old code")
     void rebuiltClassKeepsTheOldMembers() {
         RetromodTransformer transformer = RetromodTransformer.getInstance();

@@ -13,6 +13,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import com.retromod.util.JsonSecurity;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -146,7 +147,7 @@ public final class LegacyBlockStateMigrator implements ModResourceConverter {
             }
         }
         if (normalized > 0) {
-            LOGGER.info("Removed comments or trailing commas from {} blockstate, item, atlas, "
+            LOGGER.debug(RetromodLog.DETAIL, "Removed comments or trailing commas from {} blockstate, item, atlas, "
                     + "equipment or post effect file(s) that strict hosts reject", normalized);
         }
         return normalized;
@@ -255,17 +256,17 @@ public final class LegacyBlockStateMigrator implements ModResourceConverter {
         /** Logs what was converted, and what was left out or left alone and why. */
         private void report() {
             if (converted + itemModels > 0) {
-                LOGGER.info("Converted {} old blockstate(s) for Minecraft {}, with {} generated "
+                LOGGER.debug(RetromodLog.DETAIL, "Converted {} old blockstate(s) for Minecraft {}, with {} generated "
                                 + "model(s) and {} item model(s) from inventory variants",
                         converted, context.targetMcVersion(), generatedModels, itemModels);
             }
             if (!droppedVariants.isEmpty()) {
-                LOGGER.info("Left out old blockstate variants no {} host can load, by reason: {}",
+                LOGGER.debug(RetromodLog.DETAIL, "Left out old blockstate variants no {} host can load, by reason: {}",
                         context.targetMcVersion(), droppedVariants);
             }
             for (Map.Entry<String, List<String>> reason : leftAlone.entrySet()) {
                 List<String> files = reason.getValue();
-                LOGGER.info("Left {} old blockstate(s) unconverted because {}: {}{}", files.size(),
+                LOGGER.debug(RetromodLog.DETAIL, "Left {} old blockstate(s) unconverted because {}: {}{}", files.size(),
                         reason.getKey(), files.subList(0, Math.min(5, files.size())),
                         files.size() > 5 ? " and more" : "");
             }

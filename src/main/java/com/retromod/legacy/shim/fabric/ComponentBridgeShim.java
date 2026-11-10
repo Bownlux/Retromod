@@ -9,6 +9,7 @@
  */
 package com.retromod.legacy.shim.fabric;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -91,14 +92,14 @@ public class ComponentBridgeShim {
                 // New system: get custom data component
                 Object component = itemStackGetMethod.invoke(itemStack, customDataType);
                 if (component != null) {
-                    Method copyNbt = component.getClass().getMethod("copyNbt");
+                    Method copyNbt = LegacyPublicMethods.method(component.getClass(), "copyNbt");
                     return copyNbt.invoke(component);
                 }
                 // Create new NBT
                 return nbtCompoundClass.getDeclaredConstructor().newInstance();
             } else {
                 // Old system: direct NBT access
-                Method getOrCreateNbt = itemStack.getClass().getMethod("getOrCreateNbt");
+                Method getOrCreateNbt = LegacyPublicMethods.method(itemStack.getClass(), "getOrCreateNbt");
                 return getOrCreateNbt.invoke(itemStack);
             }
         } catch (Exception e) {
@@ -124,7 +125,7 @@ public class ComponentBridgeShim {
                 itemStackSetMethod.invoke(itemStack, customDataType, component);
             } else {
                 // Old system: direct NBT set
-                Method setNbt = itemStack.getClass().getMethod("setNbt", nbtCompoundClass);
+                Method setNbt = LegacyPublicMethods.method(itemStack.getClass(), "setNbt", nbtCompoundClass);
                 setNbt.invoke(itemStack, nbt);
             }
         } catch (Exception e) {
@@ -143,7 +144,7 @@ public class ComponentBridgeShim {
                 Object component = itemStackGetMethod.invoke(itemStack, customDataType);
                 return component != null;
             } else {
-                Method hasNbt = itemStack.getClass().getMethod("hasNbt");
+                Method hasNbt = LegacyPublicMethods.method(itemStack.getClass(), "hasNbt");
                 return (boolean) hasNbt.invoke(itemStack);
             }
         } catch (Exception e) {
@@ -185,7 +186,7 @@ public class ComponentBridgeShim {
     private static Method findMethod(Class<?> clazz, String... names) throws NoSuchMethodException {
         for (String name : names) {
             try {
-                for (Method m : clazz.getMethods()) {
+                for (Method m : LegacyPublicMethods.methods(clazz)) {
                     if (m.getName().equals(name) && m.getParameterCount() == 0) {
                         return m;
                     }
@@ -301,7 +302,7 @@ class WorldHeightShim {
     }
     
     private static Method findMethod(Class<?> clazz, String name) throws NoSuchMethodException {
-        for (Method m : clazz.getMethods()) {
+        for (Method m : LegacyPublicMethods.methods(clazz)) {
             if (m.getName().equals(name) && m.getParameterCount() == 0) {
                 return m;
             }
@@ -324,7 +325,7 @@ class ChunkHeightShim {
      */
     public static int getSectionCount(Object world) {
         try {
-            Method getHeight = world.getClass().getMethod("getHeight");
+            Method getHeight = LegacyPublicMethods.method(world.getClass(), "getHeight");
             int height = (int) getHeight.invoke(world);
             return height >> 4;
         } catch (Exception e) {
@@ -365,7 +366,7 @@ class WorldGenShim {
             
             // Unwrap if it's a Holder
             if (holder != null && holder.getClass().getSimpleName().contains("Holder")) {
-                Method value = holder.getClass().getMethod("value");
+                Method value = LegacyPublicMethods.method(holder.getClass(), "value");
                 return value.invoke(holder);
             }
             return holder;
@@ -391,7 +392,7 @@ class WorldGenShim {
     }
     
     private static Method findMethod(Class<?> clazz, String name) throws NoSuchMethodException {
-        for (Method m : clazz.getMethods()) {
+        for (Method m : LegacyPublicMethods.methods(clazz)) {
             if (m.getName().equals(name)) {
                 return m;
             }
@@ -488,7 +489,7 @@ class TextShim {
         if (text instanceof String) return (String) text;
         
         try {
-            Method getString = text.getClass().getMethod("getString");
+            Method getString = LegacyPublicMethods.method(text.getClass(), "getString");
             return (String) getString.invoke(text);
         } catch (Exception e) {
             return text.toString();
@@ -566,7 +567,7 @@ class RegistryShim {
      */
     public static Object get(Object registry, Object identifier) {
         try {
-            Method getMethod = registry.getClass().getMethod("get", identifier.getClass());
+            Method getMethod = LegacyPublicMethods.method(registry.getClass(), "get", identifier.getClass());
             return getMethod.invoke(registry, identifier);
         } catch (Exception e) {
             return null;
@@ -578,7 +579,7 @@ class RegistryShim {
      */
     public static Object getId(Object registry, Object entry) {
         try {
-            Method getIdMethod = registry.getClass().getMethod("getId", Object.class);
+            Method getIdMethod = LegacyPublicMethods.method(registry.getClass(), "getId", Object.class);
             return getIdMethod.invoke(registry, entry);
         } catch (Exception e) {
             return null;

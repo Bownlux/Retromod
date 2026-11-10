@@ -1,0 +1,7 @@
+# Vanilla data-generation classes that a mod built for 1.21.1 names and that later hosts no longer have.
+# Read from the 1.21.1 server jar. TagsProvider$TagAppender is absent from 1.21.11 and 26.1.2, IntrinsicHolderTagsProvider from 26.2.
+# Columns: kind (class, abstract, interface), the class, its superclass, its interfaces (comma separated, - for none),
+# and the first host Retromod gives it a stand-in on.
+abstract	net/minecraft/data/tags/IntrinsicHolderTagsProvider	net/minecraft/data/tags/TagsProvider	-	26.2
+class	net/minecraft/data/tags/IntrinsicHolderTagsProvider$IntrinsicTagAppender	net/minecraft/data/tags/TagsProvider$TagAppender	-	26.2
+class	net/minecraft/data/tags/TagsProvider$TagAppender	java/lang/Object	-	26.1

@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Array;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -47,7 +48,7 @@ public final class LegacyCreativeTabEvents {
                 tab = staticCall(calls, "build", builder);
                 TABS.put(key, tab);
             }
-            Object registry = event.getClass().getMethod("getRegistryKey").invoke(event);
+            Object registry = LegacyPublicMethods.method(event.getClass(), "getRegistryKey").invoke(event);
             if (Boolean.TRUE.equals(staticCall(calls, "isTabRegistry", registry)) && REGISTERED.add(key)) {
                 Object registered = tab;
                 registerMethod(event).invoke(event, registry, name, (Supplier<Object>) () -> registered);
@@ -73,12 +74,12 @@ public final class LegacyCreativeTabEvents {
         if (ids.isEmpty()) return;
         Object array = Array.newInstance(toId.getReturnType(), ids.size());
         for (int i = 0; i < ids.size(); i++) Array.set(array, i, ids.get(i));
-        builder.getClass().getMethod(method, array.getClass()).invoke(builder, array);
+        LegacyPublicMethods.method(builder.getClass(), method, array.getClass()).invoke(builder, array);
     }
 
     /** {@code RegisterEvent.register(registryKey, id, supplier)}. */
     private static Method registerMethod(Object event) throws NoSuchMethodException {
-        for (Method method : event.getClass().getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(event.getClass())) {
             Class<?>[] parameters = method.getParameterTypes();
             if (method.getName().equals("register") && parameters.length == 3 && parameters[2] == Supplier.class) {
                 return method;

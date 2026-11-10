@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.forge.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.Locale;
@@ -73,7 +74,7 @@ public final class Legacy1122Armor {
 
     /** The slot an armor type is worn in, in 1.12.2's order; body armor counts as the chest. */
     private static int slotIndex(Object armorType) throws ReflectiveOperationException {
-        String slot = String.valueOf(armorType.getClass().getMethod("getSlot").invoke(armorType));
+        String slot = String.valueOf(LegacyPublicMethods.method(armorType.getClass(), "getSlot").invoke(armorType));
         for (int i = 0; i < SLOTS.length; i++) {
             if (SLOTS[i].equalsIgnoreCase(slot)) return i;
         }
@@ -83,7 +84,7 @@ public final class Legacy1122Armor {
     private static Object genericEquipSound(Class<?> material) throws ReflectiveOperationException {
         Object holder = Class.forName("net.minecraft.sounds.SoundEvents", true, material.getClassLoader())
                 .getField("ARMOR_EQUIP_GENERIC").get(null);
-        return holder.getClass().getMethod("value").invoke(holder);
+        return LegacyPublicMethods.method(holder.getClass(), "value").invoke(holder);
     }
 
     private static Object emptyIngredient(Class<?> material) throws ReflectiveOperationException {

@@ -5,6 +5,7 @@
 package com.retromod.mixin;
 
 import com.retromod.core.RetromodVersion;
+import com.retromod.util.RetromodLog;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
@@ -196,7 +197,7 @@ public final class MixinAccessorFieldMigration {
         mixin.methods.removeIf(method -> {
             FieldMigration rule = migrated.get(method.name + method.desc);
             if (rule == null) return false;
-            LOGGER.info("Bridged accessor {}.{} for the removed field {}.{}",
+            LOGGER.debug(RetromodLog.DETAIL, "Bridged accessor {}.{} for the removed field {}.{}",
                     mixin.name, method.name, rule.target(), rule.field());
             return true;
         });
@@ -216,7 +217,7 @@ public final class MixinAccessorFieldMigration {
             FieldMigration rule = migrated.get(method.name + method.desc);
             if (rule == null) continue;
             makeBridgeCall(method, rule);
-            LOGGER.info("Bridged class Mixin accessor {}.{} for the removed field {}.{}",
+            LOGGER.debug(RetromodLog.DETAIL, "Bridged class Mixin accessor {}.{} for the removed field {}.{}",
                     mixin.name, method.name, rule.target(), rule.field());
         }
         return List.copyOf(new java.util.LinkedHashSet<>(migrated.values()));

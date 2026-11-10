@@ -4,6 +4,7 @@
  */
 package com.retromod.shim.fabric.embedded;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -99,7 +100,7 @@ public final class LegacyParticleSupport {
     }
 
     private static Method findMethod(Class<?> type, String name, Object[] args) {
-        for (Method method : type.getMethods()) {
+        for (Method method : LegacyPublicMethods.methods(type)) {
             if (method.getName().equals(name) && accepts(method.getParameterTypes(), args)) {
                 return method;
             }

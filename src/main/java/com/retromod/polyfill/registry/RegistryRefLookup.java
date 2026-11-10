@@ -4,6 +4,8 @@
  */
 package com.retromod.polyfill.registry;
 
+import com.retromod.shim.common.embedded.LegacyPublicMethods;
+import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -231,7 +233,7 @@ public final class RegistryRefLookup {
         Object value = doLookup(registryName, entryName);
         CACHE.put(cacheKey, value != null ? value : NULL_SENTINEL);
         if (value != null && RESOLVED_REGISTRIES.add(registryName)) {
-            LOGGER.info("Polyfill resolved {} registry - first hit on {} returned {}",
+            LOGGER.debug(RetromodLog.DETAIL, "Polyfill resolved {} registry - first hit on {} returned {}",
                     registryName, entryName, value.getClass().getName());
         }
         return value;
@@ -378,7 +380,7 @@ public final class RegistryRefLookup {
                 // holderLookup.get(ResourceKey<T>) -> Optional<Holder.Reference<T>>
                 Object holderOpt = null;
                 Method matchedGetMethod = null;
-                for (Method m : holderLookup.getClass().getMethods()) {
+                for (Method m : LegacyPublicMethods.methods(holderLookup.getClass())) {
                     if (!"get".equals(m.getName())) continue;
                     if (m.getParameterCount() != 1) continue;
                     if (m.getParameterTypes()[0] != resourceKeyCls
@@ -446,14 +448,14 @@ public final class RegistryRefLookup {
             try {
                 Object level = mcCls.getMethod("level").invoke(mc);
                 if (level != null) {
-                    return level.getClass().getMethod("registryAccess").invoke(level);
+                    return LegacyPublicMethods.method(level.getClass(), "registryAccess").invoke(level);
                 }
             } catch (Throwable ignored) {}
 
             try {
                 Object conn = mcCls.getMethod("getConnection").invoke(mc);
                 if (conn != null) {
-                    return conn.getClass().getMethod("registryAccess").invoke(conn);
+                    return LegacyPublicMethods.method(conn.getClass(), "registryAccess").invoke(conn);
                 }
             } catch (Throwable ignored) {}
         } catch (Throwable ignored) {}
@@ -466,7 +468,7 @@ public final class RegistryRefLookup {
      */
     private static Object invokeAndUnwrapOptional(Object receiver, String name, Object arg) {
         try {
-            for (Method m : receiver.getClass().getMethods()) {
+            for (Method m : LegacyPublicMethods.methods(receiver.getClass())) {
                 if (!name.equals(m.getName())) continue;
                 if (m.getParameterCount() != 1) continue;
                 if (!m.getParameterTypes()[0].isInstance(arg)) continue;
@@ -483,7 +485,7 @@ public final class RegistryRefLookup {
     /** Try a method that returns T directly (or throws if absent). */
     private static Object invokeUnwrap(Object receiver, String name, Object arg) {
         try {
-            for (Method m : receiver.getClass().getMethods()) {
+            for (Method m : LegacyPublicMethods.methods(receiver.getClass())) {
                 if (!name.equals(m.getName())) continue;
                 if (m.getParameterCount() != 1) continue;
                 if (!m.getParameterTypes()[0].isInstance(arg)) continue;
@@ -497,7 +499,7 @@ public final class RegistryRefLookup {
     private static Object unwrapHolder(Object value) {
         if (value == null) return null;
         try {
-            Method valueMethod = value.getClass().getMethod("value");
+            Method valueMethod = LegacyPublicMethods.method(value.getClass(), "value");
             return valueMethod.invoke(value);
         } catch (Throwable ignored) {
             return value;
@@ -525,7 +527,7 @@ public final class RegistryRefLookup {
 
     private static Method findRegistryGetter(Class<?> registryClass, Class<?> rl) {
         // newer MC: getValue(ResourceLocation) -> T
-        for (Method m : registryClass.getMethods()) {
+        for (Method m : LegacyPublicMethods.methods(registryClass)) {
             if ("getValue".equals(m.getName())
                     && m.getParameterCount() == 1
                     && m.getParameterTypes()[0] == rl) {
@@ -533,7 +535,7 @@ public final class RegistryRefLookup {
             }
         }
         // older MC: get(ResourceLocation) -> T (or Optional<T> in some versions)
-        for (Method m : registryClass.getMethods()) {
+        for (Method m : LegacyPublicMethods.methods(registryClass)) {
             if ("get".equals(m.getName())
                     && m.getParameterCount() == 1
                     && m.getParameterTypes()[0] == rl) {
