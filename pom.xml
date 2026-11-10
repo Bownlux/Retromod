@@ -689,6 +689,9 @@
                          turn it on themselves. -->
                     <systemPropertyVariables>
                         <retromod.loaderApiRuntime>false</retromod.loaderApiRuntime>
+                        <!-- Tests model a client unless they set the side themselves; a headless CI
+                             runner would otherwise be detected as a dedicated server. -->
+                        <retromod.inplace.dist>CLIENT</retromod.inplace.dist>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>
