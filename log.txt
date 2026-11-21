@@ -1,0 +1,2 @@
+[main] INFO Retromod-LoaderApi - Loader API runtime is on (auto: snapshot build 1.4.0-snapshot.4). Pass --loader-api-runtime=false to turn it off.
+Host jar not found: /net/neoforged/minecraft-client-patched/26.3.0.43-beta/minecraft-client-patched-26.3.0.43-beta.jar. Pass the path of a jar the target loader ships.
