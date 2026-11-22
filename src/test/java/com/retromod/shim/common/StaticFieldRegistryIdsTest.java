@@ -71,6 +71,41 @@ class StaticFieldRegistryIdsTest {
     }
 
     @Test
+    @DisplayName("a direct Registry.register under another class's static id field names the field (Lootr)")
+    void readsADirectRegistrationUnderAnIdField() {
+        // ModIds: static ResourceLocation id(String path) adds "xclass"; FOO_ID = id("foo");
+        // registerBlocks() { Registry.register(BLOCK, ModIds.FOO_ID, ModBlocks.FOO); }
+        String idClass = "test/xclass/ModIds";
+        String idDesc = "(Ljava/lang/String;)L" + RESOURCE_LOCATION + ";";
+        byte[] ids = classWith(idClass, cw -> {
+            idHelper(cw, "id", idDesc, null);
+            cw.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "FOO_ID",
+                    "L" + RESOURCE_LOCATION + ";", null, null).visitEnd();
+            MethodVisitor init = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+            init.visitCode();
+            init.visitLdcInsn("foo");
+            init.visitMethodInsn(Opcodes.INVOKESTATIC, idClass, "id", idDesc, false);
+            init.visitFieldInsn(Opcodes.PUTSTATIC, idClass, "FOO_ID", "L" + RESOURCE_LOCATION + ";");
+            init.visitInsn(Opcodes.RETURN);
+            init.visitMaxs(0, 0);
+            init.visitEnd();
+        });
+        byte[] loader = loader(mv -> {
+            mv.visitFieldInsn(Opcodes.GETSTATIC, BUILT_IN, "BLOCK", "L" + REGISTRY + ";");
+            mv.visitFieldInsn(Opcodes.GETSTATIC, idClass, "FOO_ID", "L" + RESOURCE_LOCATION + ";");
+            mv.visitFieldInsn(Opcodes.GETSTATIC, COMMON, "FOO", "L" + BLOCK + ";");
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, REGISTRY, "register",
+                    "(L" + REGISTRY + ";L" + RESOURCE_LOCATION + ";Ljava/lang/Object;)Ljava/lang/Object;", true);
+            mv.visitInsn(Opcodes.POP);
+        });
+
+        // The id class is read last, after the registration that names its field.
+        StaticFieldRegistryIds index = index(commonBlocks("FOO"), loader, ids);
+
+        assertArrayEquals(new String[]{"xclass", "foo"}, index.fieldsOf(COMMON).get("FOO"));
+    }
+
+    @Test
     @DisplayName("a field registered under two different names is left alone")
     void declinesTwoNames() {
         StaticFieldRegistryIds ids = index(commonBlocks("FOO"),

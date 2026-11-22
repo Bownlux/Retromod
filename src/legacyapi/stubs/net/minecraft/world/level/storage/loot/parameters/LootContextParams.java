@@ -14,4 +14,7 @@ public class LootContextParams {
     public static final ContextKey<Entity> ATTACKING_ENTITY = null;
     public static final ContextKey<Entity> DIRECT_ATTACKING_ENTITY = null;
     public static final ContextKey<Player> LAST_DAMAGE_PLAYER = null;
+    public static final ContextKey<net.minecraft.world.level.block.state.BlockState> BLOCK_STATE = null;
+    public static final ContextKey<net.minecraft.world.level.block.entity.BlockEntity> BLOCK_ENTITY = null;
+    public static final ContextKey<net.minecraft.world.entity.SlotProvider> CONTAINER = null;
 }

@@ -17,10 +17,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Retypes an accessor-interface {@code @Invoker} whose target method narrowed a parameter type.
+ * Retypes an accessor-interface {@code @Invoker} whose target method narrowed, dropped or widened parameters.
  *
  * <p>26.1 narrowed several level parameters from {@code Level} to {@code ServerLevel}, such as
- * {@code FlowingFluid.canConvertToSource}. An invoker still declared with {@code Level} names a
+ * {@code FlowingFluid.canConvertToSource}, and 26.3 moved {@code Block.spawnDestroyParticles} with a
+ * player to {@code spawnDestroyByEntityParticles} with any entity, which an invoker follows by name. An invoker still declared with {@code Level} names a
  * method the host no longer has, so the whole accessor fails to apply. Mixin builds an invoker's
  * target from the invoker's own descriptor and reads only the member name from the refmap
  * ({@code InvokerInfo.initTarget} and {@code TargetSelector.parseName}), so retyping the invoker
@@ -33,14 +34,23 @@ import java.util.Map;
  * because the target class never implemented the accessor at all.
  *
  * <p>Only instance invokers on an interface Mixin with one target are retyped, and only when the
- * indexed host proves exactly one same-named method whose parameters equal or narrow the old
- * ones, with the same return type. Anything else is left unchanged.
+ * indexed host proves exactly one same-named method with the same return type whose parameters
+ * equal or narrow the old ones, or are the old ones in order with one left out. Anything else
+ * is left unchanged.
  */
 final class MixinInvokerNarrowingRepair {
 
     private static final String MIXIN_DESC = "Lorg/spongepowered/asm/mixin/Mixin;";
     private static final String INVOKER_DESC = "Lorg/spongepowered/asm/mixin/gen/Invoker;";
     private static final String[] INVOKER_PREFIXES = {"call", "invoke"};
+
+    // 26.3 split Block.spawnDestroyParticles: the old one with a player became
+    // spawnDestroyByEntityParticles with any entity, and the old name now takes no entity at all.
+    static final Map<String, String[]> HOST_RENAMES = Map.of(
+            "spawnDestroyParticles(Lnet/minecraft/world/level/Level;Lnet/minecraft/world/entity/player/Player;"
+                    + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;)V",
+            new String[]{"spawnDestroyByEntityParticles", "(Lnet/minecraft/world/level/Level;Lnet/minecraft/world/entity/Entity;"
+                    + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;)V"});
 
     private MixinInvokerNarrowingRepair() {}
 
@@ -61,6 +71,16 @@ final class MixinInvokerNarrowingRepair {
             }
             String target = targetName(method, invoker);
             if (target == null || host.hasMethod(owner, target, method.desc)) continue;
+            // A method the host renamed and widened keeps its arguments, so the invoker follows it there.
+            String[] renamed = HOST_RENAMES.get(target + method.desc);
+            if (renamed != null && hasInHierarchy(host, owner, renamed[0], renamed[1])
+                    && !declares(node, method.name, renamed[1])) {
+                method.desc = renamed[1];
+                method.signature = null;
+                setAnnotationValue(invoker, "value", renamed[0]);
+                retyped = true;
+                continue;
+            }
             String narrowed = uniqueNarrowedDescriptor(host, owner, target, method.desc);
             if (narrowed == null || declares(node, method.name, narrowed)) continue;
 
@@ -73,8 +93,9 @@ final class MixinInvokerNarrowingRepair {
     }
 
     /**
-     * The one host descriptor with the old arity and return type whose parameters each equal
-     * or narrow the old ones, with at least one narrowed. Null when there is none or several.
+     * The one host descriptor with the old return type whose parameters each equal or narrow
+     * the old ones, with at least one narrowed, or keep all but one of the old ones in order. Null when
+     * there is none or several.
      */
     private static String uniqueNarrowedDescriptor(FuzzyMethodResolver host, String owner,
             String name, String oldDesc) {
@@ -87,7 +108,8 @@ final class MixinInvokerNarrowingRepair {
                     || !oldReturn.equals(Type.getReturnType(candidate.descriptor()))) {
                 continue;
             }
-            if (narrows(host, oldArgs, Type.getArgumentTypes(candidate.descriptor()))) {
+            Type[] newArgs = Type.getArgumentTypes(candidate.descriptor());
+            if (narrows(host, oldArgs, newArgs) || dropsSome(oldArgs, newArgs)) {
                 matches.putIfAbsent(candidate.descriptor(), candidate);
             }
         }
@@ -107,6 +129,37 @@ final class MixinInvokerNarrowingRepair {
             narrowedAny = true;
         }
         return narrowedAny;
+    }
+
+    /** Whether the new parameters are the old ones, in their order, with exactly one left out. */
+    private static boolean dropsSome(Type[] oldArgs, Type[] newArgs) {
+        // One dropped parameter is provable; more could pair the remaining arguments up wrongly.
+        if (newArgs.length != oldArgs.length - 1 || newArgs.length == 0) return false;
+        int kept = 0;
+        for (Type oldArg : oldArgs) {
+            if (kept < newArgs.length && oldArg.equals(newArgs[kept])) kept++;
+        }
+        return kept == newArgs.length;
+    }
+
+    private static boolean hasInHierarchy(FuzzyMethodResolver host, String owner, String name, String desc) {
+        for (FuzzyMethodResolver.MethodInfo candidate : host.getMethodsInHierarchy(owner)) {
+            if (candidate.name().equals(name) && candidate.descriptor().equals(desc)) return true;
+        }
+        return false;
+    }
+
+    /** Sets one annotation value, replacing the one already there. */
+    private static void setAnnotationValue(AnnotationNode annotation, String key, Object value) {
+        if (annotation.values == null) annotation.values = new ArrayList<>();
+        for (int i = 0; i < annotation.values.size(); i += 2) {
+            if (key.equals(annotation.values.get(i))) {
+                annotation.values.set(i + 1, value);
+                return;
+            }
+        }
+        annotation.values.add(key);
+        annotation.values.add(value);
     }
 
     /** The target member name: the annotation value, or Mixin's inflection of the method name. */

@@ -46,6 +46,24 @@ class SpawnerDataMigratorTest {
     }
 
     @Test
+    @DisplayName("A mod structure type's own spawn lists are rewritten for a mod that uses the game's spawn entry, and lookalikes stay as written")
+    void customStructureSpawnLists() {
+        String galleon = "{\"type\":\"supplementaries:galleon\",\"spawn_boxes\":[{\"category\":\"monster\","
+                + "\"spawns\":[{\"type\":\"minecraft:pillager\",\"maxCount\":1,\"minCount\":1,\"weight\":5}]}],"
+                + "\"other\":{\"spawns\":[{\"name\":\"not a spawn entry\"}]},\"spawn_overrides\":{}}";
+
+        assertEquals(galleon, migrated(STRUCTURE, galleon, "26.3"), "the per-file migration leaves a mod's own structure format alone");
+        String out = text(SpawnerDataMigrator.migrateNestedSpawns(STRUCTURE, bytes(galleon)));
+        assertTrue(out.contains("\"spawns\":[{\"type\":\"minecraft:pillager\",\"count\":1,\"weight\":5}]"), out);
+        assertTrue(out.contains("{\"name\":\"not a spawn entry\"}"), "an entry without the old fields is left alone");
+        assertTrue(SpawnerDataMigrator.namesSpawnerData("Lnet/minecraft/class_5483$class_1964;".getBytes()));
+        assertFalse(SpawnerDataMigrator.namesSpawnerData("Lmod/MySpawn;".getBytes()));
+        // Supplementaries' galleon implements Moonlight's spawn box structure, whose codec reads the game's entries.
+        assertTrue(SpawnerDataMigrator.namesSpawnerData(
+                "net/mehvahdjukaar/moonlight/api/worldgen/ISpawnBoxStructure".getBytes()));
+    }
+
+    @Test
     @DisplayName("A biome modifier's spawners are rewritten too")
     void biomeModifierSpawns() {
         String modifier = "{\"type\":\"neoforge:add_spawns\",\"biomes\":\"#minecraft:is_overworld\","

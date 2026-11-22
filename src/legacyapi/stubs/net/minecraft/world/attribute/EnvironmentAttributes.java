@@ -6,4 +6,5 @@ import net.minecraft.world.level.MoonPhase;
 public final class EnvironmentAttributes {
     public static final EnvironmentAttribute<Float> SUN_ANGLE = null;
     public static final EnvironmentAttribute<MoonPhase> MOON_PHASE = null;
+    public static final EnvironmentAttribute<Float> CLOUD_HEIGHT = null;
 }

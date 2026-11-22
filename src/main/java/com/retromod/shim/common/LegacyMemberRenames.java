@@ -50,6 +50,8 @@ public class LegacyMemberRenames implements MinecraftVersionedApiShim {
     public static final List<Rename> RENAMES = List.of(
             new Rename("net/minecraft/world/entity/LivingEntity", true,
                     "lastHurtByPlayerTime", "I", "lastHurtByPlayerMemoryTime"),
+            // Difficulty.getKey returned the same lowercase name its StringRepresentable getter returns.
+            new Rename("net/minecraft/world/Difficulty", false, "getKey", "()Ljava/lang/String;", "getSerializedName"),
             // After 1.21.1 the loot context's parameter calls were renamed when parameters became context keys.
             new Rename(LOOT_CONTEXT, false, "getParamOrNull", CONTEXT_KEY_GETTER, "getOptionalParameter"),
             new Rename(LOOT_CONTEXT, false, "getParam", CONTEXT_KEY_GETTER, "getParameter"),

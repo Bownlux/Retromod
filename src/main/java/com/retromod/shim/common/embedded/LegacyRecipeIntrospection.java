@@ -219,6 +219,27 @@ public final class LegacyRecipeIntrospection {
         }
     }
 
+    /**
+     * The first display's result as {@code {item holder, count, patch}} when it is an item stack template whose item has
+     * no bound components yet, or null. 26.1 binds item components after recipes first load, so resolving it would throw.
+     */
+    public static Object[] unboundResult(Object recipe) {
+        try {
+            List<?> displays = (List<?>) call(recipe, "display");
+            if (displays.isEmpty()) return null;
+            Object slot = call(displays.get(0), "result");
+            if (!slot.getClass().getName().endsWith("SlotDisplay$ItemStackSlotDisplay")) return null;
+            Object template = call(slot, "stack");
+            // 1.21.11's display holds a built stack, which has no item holder to ask.
+            if (!hasMethod(template, "item") || !hasMethod(template, "components")) return null;
+            Object holder = call(template, "item");
+            if (!hasMethod(holder, "areComponentsBound") || (Boolean) call(holder, "areComponentsBound")) return null;
+            return new Object[] {holder, call(template, "count"), call(template, "components")};
+        } catch (RuntimeException unreadable) {
+            return null;
+        }
+    }
+
     /** The context a slot display resolves in, holding the registries when there are any. */
     private static Object displayContext(Class<?> context, Object registries, ClassLoader loader) throws ReflectiveOperationException {
         Class<?> contextMap = Class.forName("net.minecraft.util.context.ContextMap", true, loader);

@@ -212,6 +212,9 @@ public final class StaticFieldRegistryIds {
     /** {@code accept(id, Owner.FIELD)} on the method's BiConsumer parameter {@code param}; the id is literal or a static id field. */
     private record ForwarderAccept(String method, int param, String field, IdShape id, String idField) {}
 
+    /** {@code Registry.register(registry, Ids.FOO, Owner.FIELD)}, whose id a static id field holds. */
+    private record FieldIdRegistration(Kind kind, String field, String idField) {}
+
     /** A deferred register's namespace and registry, read from where its field is filled. */
     private record DeferredRegister(String namespace, Kind kind) {}
 
@@ -234,6 +237,7 @@ public final class StaticFieldRegistryIds {
         private final List<DeferredCall> deferredCalls = new ArrayList<>();
         private final List<ForwardedHelper> forwardedHelpers = new ArrayList<>();
         private final List<ForwarderAccept> forwarderAccepts = new ArrayList<>();
+        private final List<FieldIdRegistration> fieldIdRegistrations = new ArrayList<>();
         /** {@code owner.field} of each static id field a class initializer fills with a known id. */
         private final Map<String, IdShape> idFields = new HashMap<>();
         private final Map<String, String> fieldSuppliers = new HashMap<>();
@@ -310,6 +314,13 @@ public final class StaticFieldRegistryIds {
                     if (id != null && id.path() != null) {
                         found.add(new Found(kind, accept.field(), id.namespace(), id.path()));
                     }
+                }
+            }
+            // A direct registration under a static id field counts once that field's initializer proved its id.
+            for (FieldIdRegistration registration : fieldIdRegistrations) {
+                IdShape id = idFields.get(registration.idField());
+                if (id != null && id.path() != null) {
+                    found.add(new Found(registration.kind(), registration.field(), id.namespace(), id.path()));
                 }
             }
             // Resolve each namespace now that every id helper is known.
@@ -399,7 +410,16 @@ public final class StaticFieldRegistryIds {
             AbstractInsnNode idProducer = throughLocal(m, frames, single(f.getStack(top - 2)));
             AbstractInsnNode object = throughCast(m, frames, single(f.getStack(top - 1)));
             IdShape id = idShape(m, frames, idProducer);
-            if (id == null) return;
+            if (id == null) {
+                // Lootr keeps its ids in fields of another class; that class may be read later.
+                Kind kind = registryKind(registry);
+                String field = jarStaticField(object);
+                String idField = jarStaticField(idProducer);
+                if (kind != null && field != null && idField != null) {
+                    fieldIdRegistrations.add(new FieldIdRegistration(kind, field, idField));
+                }
+                return;
+            }
             // A literal id, a known registry and a field of the jar: a direct registration.
             Kind kind = registryKind(registry);
             String field = jarStaticField(object);

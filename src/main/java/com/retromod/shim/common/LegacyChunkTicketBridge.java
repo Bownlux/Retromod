@@ -44,6 +44,8 @@ public final class LegacyChunkTicketBridge {
         // TicketType.create went when ticket types became registered records, so each old type becomes a new unregistered one.
         RebuiltApiClasses.registerTree(transformer, TYPES);
         redirectCreate(transformer, TICKET_TYPE, "create", "create", TYPES);
+        // The PLAYER and POST_TELEPORT constants went at the same time.
+        redirectRemovedTypes(transformer, TICKET_TYPE, "PLAYER", "POST_TELEPORT", TYPES);
     }
 
     /** The same calls in the intermediary names a Fabric 1.21.5 to 1.21.11 host runs. */
@@ -57,6 +59,7 @@ public final class LegacyChunkTicketBridge {
                 INTERMEDIARY_CACHE, "method_66010", newDesc);
         RebuiltApiClasses.registerTree(transformer, TYPES, INTERMEDIARY_NAMES);
         redirectCreate(transformer, INTERMEDIARY_TICKET_TYPE, "method_14291", "method_20628", INTERMEDIARY_TYPES);
+        redirectRemovedTypes(transformer, INTERMEDIARY_TICKET_TYPE, "field_14033", "field_19347", INTERMEDIARY_TYPES);
     }
 
     private static void redirectCreate(RetromodTransformer transformer, String type, String create, String createTimed, String helper) {
@@ -64,5 +67,12 @@ public final class LegacyChunkTicketBridge {
         String timedDesc = "(Ljava/lang/String;Ljava/util/Comparator;I)L" + type + ";";
         transformer.registerMethodRedirect(type, create, desc, helper, "create", desc);
         transformer.registerMethodRedirect(type, createTimed, timedDesc, helper, "create", timedDesc);
+    }
+
+    private static void redirectRemovedTypes(RetromodTransformer transformer, String type, String player, String postTeleport,
+            String helper) {
+        String getter = "()L" + type + ";";
+        transformer.registerStaticFieldBridge(type, player, helper, "player", getter, null, null);
+        transformer.registerStaticFieldBridge(type, postTeleport, helper, "postTeleport", getter, null, null);
     }
 }

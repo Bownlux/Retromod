@@ -139,6 +139,43 @@ class EntityTypeBuildKeyAdapterTest {
     }
 
     @Test
+    @DisplayName("Fabric API's old build() with no name is built under the registered id, which runs on the host")
+    void namelessBuildIsBuiltUnderTheRegisteredId() throws Exception {
+        officialBridge();
+        // Lootr: static Object register(String name, EntityType.Builder builder) {
+        //     return Registry.register(BuiltInRegistries.ENTITY_TYPE,
+        //             Identifier.fromNamespaceAndPath("mod", name), builder.build()); }
+        byte[] entities = classWith("test/fab/Nameless", cw -> {
+            MethodVisitor register = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "register",
+                    "(Ljava/lang/String;L" + BUILDER + ";)Ljava/lang/Object;", null, null);
+            register.visitCode();
+            register.visitFieldInsn(Opcodes.GETSTATIC, BUILT_IN, "ENTITY_TYPE", "L" + REGISTRY + ";");
+            register.visitLdcInsn("mod");
+            register.visitVarInsn(Opcodes.ALOAD, 0);
+            register.visitMethodInsn(Opcodes.INVOKESTATIC, IDENTIFIER, "fromNamespaceAndPath", ID_DESC, false);
+            register.visitVarInsn(Opcodes.ALOAD, 1);
+            register.visitMethodInsn(Opcodes.INVOKEVIRTUAL, BUILDER, "build", "()L" + ENTITY_TYPE + ";", false);
+            register.visitMethodInsn(Opcodes.INVOKESTATIC, REGISTRY, "register", REGISTER_DESC, true);
+            register.visitInsn(Opcodes.ARETURN);
+            register.visitMaxs(0, 0);
+            register.visitEnd();
+        });
+
+        byte[] transformed = transform(entities, "test/fab/Nameless");
+        MethodNode register = method(transformed, "register");
+        MethodInsnNode call = keyedBridgeCall(register, "buildOfficial");
+        assertInstanceOf(VarInsnNode.class, call.getPrevious().getPrevious(), "the registered id is read back from a local");
+        assertNull(constant(call.getPrevious().getPrevious().getPrevious()), "no name is passed, as before");
+        verifies(register, "test/fab/Nameless");
+
+        FakeMinecraftHost host = new FakeMinecraftHost(IDENTIFIER, "", Map.of("test/fab/Nameless", transformed));
+        Object built = host.type("test/fab/Nameless")
+                .getMethod("register", String.class, host.type(BUILDER))
+                .invoke(null, "loot_cart", host.builder());
+        assertEquals("ResourceKey[minecraft:entity_type / mod:loot_cart]", String.valueOf(built));
+    }
+
+    @Test
     @DisplayName("a type registered under a computed id is built under that id, which runs on the host")
     void directRegistrationUnderAComputedIdIsCaptured() throws Exception {
         officialBridge();

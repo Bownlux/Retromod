@@ -138,18 +138,32 @@ class LegacyEitherHolderBridgeTest {
     }
 
     @Test
-    @DisplayName("A jukebox component built from a bare key fails with a message naming the key")
-    void jukeboxRecordFromKeyExplainsItself() throws Exception {
+    @DisplayName("A jukebox component built from a song key becomes the host's jukebox property, which loads the song later")
+    void jukeboxRecordFromKeyBecomesTheJukeboxProperty() throws Exception {
         Fixture fixture = fixture();
+        Object properties = fixture.newInstance(PROPERTIES);
         Object key = fixture.newKey("minepathy:anthem");
 
-        InvocationTargetException failure = assertThrows(InvocationTargetException.class,
-                () -> fixture.call("jukeboxFromKey", key));
+        Object returned = fixture.call("jukeboxComponentFromKey", properties, fixture.newInstance(COMPONENT_TYPE), key);
 
-        assertInstanceOf(IllegalStateException.class, failure.getCause());
-        String message = failure.getCause().getMessage();
-        assertTrue(message.contains("JukeboxPlayable") && message.contains("minepathy:anthem")
-                && message.contains("26.1"), message);
+        assertSame(properties, returned);
+        assertEquals(List.of("jukeboxPlayable"), fixture.calls(properties));
+        assertSame(key, fixture.field(properties, "lastValue"));
+    }
+
+    @Test
+    @DisplayName("1.21.1's two-argument jukebox component takes the same path and drops its tooltip flag")
+    void oldTwoArgumentJukebox() throws Exception {
+        Fixture fixture = fixture();
+        Object properties = fixture.newInstance(PROPERTIES);
+        Object key = fixture.newKey("supplementaries:pirate");
+
+        fixture.call("oldJukeboxComponentFromKey", properties, fixture.newInstance(COMPONENT_TYPE), key);
+
+        assertEquals(List.of("jukeboxPlayable"), fixture.calls(properties));
+        assertSame(key, fixture.field(properties, "lastValue"));
+        Object holder = fixture.newHolder("minepathy:anthem");
+        assertSame(holder, fixture.field(fixture.call("oldJukeboxFromHolder", holder), "song"));
     }
 
     @Test
@@ -228,7 +242,23 @@ class LegacyEitherHolderBridgeTest {
                 m.visitMethodInsn(INVOKEVIRTUAL, PROPERTIES, "component", COMPONENT_DESC, false);
             });
             method(cw, "jukeboxFromHolder", "(L" + HOLDER + ";)Ljava/lang/Object;", m -> newJukebox(m, HOLDER));
-            method(cw, "jukeboxFromKey", "(L" + KEY + ";)Ljava/lang/Object;", m -> newJukebox(m, KEY));
+            method(cw, "jukeboxComponentFromKey", build + "L" + KEY + ";)Ljava/lang/Object;", m -> {
+                m.visitVarInsn(ALOAD, 0);
+                m.visitVarInsn(ALOAD, 1);
+                m.visitVarInsn(ALOAD, 2);
+                m.visitVarInsn(ASTORE, 0);
+                newJukebox(m, KEY);
+                m.visitMethodInsn(INVOKEVIRTUAL, PROPERTIES, "component", COMPONENT_DESC, false);
+            });
+            method(cw, "oldJukeboxComponentFromKey", build + "L" + KEY + ";)Ljava/lang/Object;", m -> {
+                m.visitVarInsn(ALOAD, 0);
+                m.visitVarInsn(ALOAD, 1);
+                m.visitVarInsn(ALOAD, 2);
+                m.visitVarInsn(ASTORE, 0);
+                oldJukebox(m, KEY);
+                m.visitMethodInsn(INVOKEVIRTUAL, PROPERTIES, "component", COMPONENT_DESC, false);
+            });
+            method(cw, "oldJukeboxFromHolder", "(L" + HOLDER + ";)Ljava/lang/Object;", m -> oldJukebox(m, HOLDER));
             method(cw, "bareKeyOfKey", "(L" + KEY + ";)Ljava/lang/Object;", m -> bareKey(m, KEY));
             method(cw, "bareKeyOfHolder", "(L" + HOLDER + ";)Ljava/lang/Object;", m -> bareKey(m, HOLDER));
             method(cw, "songKey", "(L" + JUKEBOX + ";)Ljava/lang/Object;", m -> {
@@ -268,6 +298,18 @@ class LegacyEitherHolderBridgeTest {
         m.visitVarInsn(ALOAD, 0);
         m.visitMethodInsn(INVOKESPECIAL, EITHER_HOLDER, "<init>", "(L" + argType + ";)V", false);
         m.visitMethodInsn(INVOKESPECIAL, JUKEBOX, "<init>", "(L" + EITHER_HOLDER + ";)V", false);
+    }
+
+    /** 1.21.1's {@code new JukeboxPlayable(new EitherHolder<>(arg), true)}. */
+    private static void oldJukebox(MethodVisitor m, String argType) {
+        m.visitTypeInsn(NEW, JUKEBOX);
+        m.visitInsn(DUP);
+        m.visitTypeInsn(NEW, EITHER_HOLDER);
+        m.visitInsn(DUP);
+        m.visitVarInsn(ALOAD, 0);
+        m.visitMethodInsn(INVOKESPECIAL, EITHER_HOLDER, "<init>", "(L" + argType + ";)V", false);
+        m.visitInsn(ICONST_1);
+        m.visitMethodInsn(INVOKESPECIAL, JUKEBOX, "<init>", "(L" + EITHER_HOLDER + ";Z)V", false);
     }
 
     private static byte[] writeClass(String name, java.util.function.Consumer<ClassWriter> body) {
@@ -374,6 +416,12 @@ class LegacyEitherHolderBridgeTest {
         public FakeProperties delayedHolderComponent(FakeComponentType type, FakeKey key) {
             calls.add("delayedHolderComponent");
             lastValue = key;
+            return this;
+        }
+
+        public FakeProperties jukeboxPlayable(FakeKey song) {
+            calls.add("jukeboxPlayable");
+            lastValue = song;
             return this;
         }
     }

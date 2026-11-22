@@ -124,6 +124,19 @@ class VanillaIdRenamesTest {
     }
 
     @Test
+    @DisplayName("26.2 removed the bed block entity type, so a block entity tag naming it keeps loading")
+    void blockEntityTagKeepsLoadingWithoutTheBed() {
+        // Lootr's convert blacklist names every vanilla block entity, the bed among them.
+        String blacklist = "data/lootr/tags/block_entity_type/convert/blacklist.json";
+        String tag = "{\"values\":[\"minecraft:banner\",\"minecraft:bed\"]}";
+        assertEquals("{\"values\":[\"minecraft:banner\",{\"id\":\"minecraft:bed\",\"required\":false}]}",
+                renamed(blacklist, tag, "1.21.1", "26.3"));
+        assertEquals(tag, renamed(blacklist, tag, "1.21.1", "26.1.2"), "26.1 still registers the bed block entity");
+        assertEquals("{\"values\":[\"minecraft:bed\"]}", renamed("data/mod/tags/block/beds.json",
+                "{\"values\":[\"minecraft:bed\"]}", "1.21.1", "26.3"), "only the block entity type left");
+    }
+
+    @Test
     @DisplayName("The table loads, lists each id once per registry, and never maps an id to itself")
     void tableIsWellFormed() {
         Set<String> seen = new HashSet<>();

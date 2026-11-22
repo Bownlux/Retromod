@@ -84,6 +84,7 @@ class NeoForgeStartupPathParityTest {
             Map<String, ClassNode> classes = jar.getValue();
             assertModConstructor(classes.get("ContextMod"), where);
             assertListeners(classes.get("Listeners"), where);
+            assertNoDataGeneration(classes.get("DataGen"), where);
             if (jar.getKey().equals("mod")) {
                 assertEmbedded(classes, "net/minecraftforge/versions/forge/ForgeVersion", where);
                 assertEmbedded(classes, "LegacyConfigSpecs", where);
@@ -114,6 +115,16 @@ class NeoForgeStartupPathParityTest {
         assertTrue(calls(config, "LegacyConfigSpecs", "setConfig"), "setConfig moves to the rebuilt helper: " + where);
         assertTrue(calls(config, "net/neoforged/fml/loading/FMLConfig", "defaultConfigPath"),
                 "FMLConfig is NeoForge's: " + where);
+    }
+
+    /** Every path runs the subscriber guard, so a data generation subscriber is never subscribed. */
+    private static void assertNoDataGeneration(ClassNode dataGen, String where) {
+        assertNotNull(dataGen, "data generation class missing: " + where);
+        assertTrue(dataGen.methods.stream().noneMatch(m -> m.name.equals("onGatherData")),
+                "the GatherDataEvent handler is dropped: " + where);
+        assertTrue(dataGen.visibleAnnotations == null || dataGen.visibleAnnotations.stream()
+                        .noneMatch(a -> a.desc.endsWith("EventBusSubscriber;")),
+                "a subscriber with nothing left is not subscribed: " + where);
     }
 
     private static void assertEmbedded(Map<String, ClassNode> classes, String suffix, String where) {
@@ -223,10 +234,12 @@ class NeoForgeStartupPathParityTest {
         lib.put("META-INF/mods.toml", modsToml("backroomslib"));
         lib.put("lib/ContextMod.class", contextMod("lib/ContextMod", "backroomslib"));
         lib.put("lib/Listeners.class", listeners("lib/Listeners"));
+        lib.put("lib/DataGen.class", dataGen("lib/DataGen"));
         Map<String, byte[]> mod = new LinkedHashMap<>();
         mod.put("META-INF/mods.toml", modsToml("mbackrooms"));
         mod.put("mod/ContextMod.class", contextMod("mod/ContextMod", "mbackrooms"));
         mod.put("mod/Listeners.class", listeners("mod/Listeners"));
+        mod.put("mod/DataGen.class", dataGen("mod/DataGen"));
         mod.put("META-INF/jarjar/lib.jar", LoaderApiFixtures.jar(lib));
         return LoaderApiFixtures.jar(mod);
     }
@@ -289,6 +302,22 @@ class NeoForgeStartupPathParityTest {
         config.visitInsn(Opcodes.ARETURN);
         config.visitMaxs(0, 0);
         config.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** A Forge subscriber whose only handler gathers data, as many mods' datagen classes are. */
+    private static byte[] dataGen(String name) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null);
+        cw.visitAnnotation("Lnet/minecraftforge/fml/common/Mod$EventBusSubscriber;", true).visitEnd();
+        MethodVisitor gather = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "onGatherData",
+                "(Lnet/minecraftforge/data/event/GatherDataEvent;)V", null, null);
+        gather.visitAnnotation("Lnet/minecraftforge/eventbus/api/SubscribeEvent;", true).visitEnd();
+        gather.visitCode();
+        gather.visitInsn(Opcodes.RETURN);
+        gather.visitMaxs(0, 0);
+        gather.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
     }

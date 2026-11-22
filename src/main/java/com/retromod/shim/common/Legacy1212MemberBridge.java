@@ -114,6 +114,8 @@ public final class Legacy1212MemberBridge {
         // Providers list their keys through listRegistryKeys, registry access answers lookup(key), and contexts
         // answer enabledFeatures(); Xaero's maps and Sophisticated Backpacks implement these themselves.
         LegacyRegistryProviderAdapter.registerProviderChanges(transformer);
+        // A holder whose tags are not bound yet throws for a tag check; 1.21.1 answered that it was in no tag.
+        LegacyHolderTagBridge.register(transformer);
         // Fake and virtual levels, and mixins into ServerLevel and ClientLevel, call Level's constructor.
         boolean level = registerLevelConstructor(transformer, MOJANG_LEVEL);
         // A container block a player opens angers nearby piglins, which now takes the server level.

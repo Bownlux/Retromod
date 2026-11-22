@@ -87,6 +87,14 @@ class LegacyLootGapsTest {
         Map<String, byte[]> classes = new HashMap<>(BridgeHarness.compile(dir, hostWithRegistry(), dfu.toString()));
         classes.put(STAND_IN, WorldgenTypeBridgeSynthetic.generateWrapper(STAND_IN));
         classes.put(TYPES, LegacyLootEntryTypeBridge.generateTypes());
+        // The function and condition readers name their own element types and stand-ins.
+        classes.putAll(BridgeHarness.compile(dir.resolve("readers"), Map.of(
+                "net/minecraft/world/level/storage/loot/functions/LootItemFunction.java",
+                "package net.minecraft.world.level.storage.loot.functions; public interface LootItemFunction {}",
+                "net/minecraft/world/level/storage/loot/predicates/LootItemCondition.java",
+                "package net.minecraft.world.level.storage.loot.predicates; public interface LootItemCondition {}")));
+        classes.put(WorldgenTypeBridgeSynthetic.LOOT_FUNCTION_WRAPPER, WorldgenTypeBridgeSynthetic.generateWrapper(WorldgenTypeBridgeSynthetic.LOOT_FUNCTION_WRAPPER));
+        classes.put(WorldgenTypeBridgeSynthetic.LOOT_CONDITION_WRAPPER, WorldgenTypeBridgeSynthetic.generateWrapper(WorldgenTypeBridgeSynthetic.LOOT_CONDITION_WRAPPER));
         String support = LegacyLootEntryTypeSupport.class.getName().replace('.', '/');
         try (InputStream in = LegacyLootEntryTypeSupport.class.getResourceAsStream("/" + support + ".class")) {
             classes.put(support, in.readAllBytes());

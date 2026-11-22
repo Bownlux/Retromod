@@ -68,6 +68,20 @@ public final class LegacyColorClasses {
         t.registerMethodRedirect(BLOCK_COLORS, "register", register, CALLS, "register",
                 "(" + colors + "L" + BLOCK_COLOR + ";" + BLOCK + ")V", true);
         t.limitRedirectToModsBefore(BLOCK_COLORS, "register", register, firstVersionWithout);
+        registerHostGetColor(t, firstVersionWithout);
+        // An older mod's item colors are drawn opaque, as its own item renderer drew them.
+        registerItemColorsOwner(t, ITEM_COLORS);
+        // Minecraft.getItemColors() went with ItemColors; item colors now live in the rebuilt table every copy shares.
+        String getItemColors = "()L" + OLD_ITEM_COLORS + ";";
+        t.registerMethodRedirect(MINECRAFT, "getItemColors", getItemColors, ITEM_COLORS, "legacyOf",
+                "(L" + MINECRAFT + ";)L" + ITEM_COLORS + ";", true);
+        t.limitRedirectToModsBefore(MINECRAFT, "getItemColors", getItemColors, firstVersionWithout);
+    }
+
+    /** BlockColors.getColor answered from the host's tint sources; Fabric needs only this part, since its loader API owns the color types. */
+    public static void registerHostGetColor(RetromodTransformer t, String firstVersionWithout) {
+        RebuiltApiClasses.registerTree(t, CALLS);
+        String colors = "L" + BLOCK_COLORS + ";";
         // BlockColors.getColor became getTintSource, which answers null past a block's last tint index.
         String getColor = "(" + COLOR_ARGS + ")I";
         String callsGetColor = "(" + colors + COLOR_ARGS + ")I";
@@ -77,13 +91,6 @@ public final class LegacyColorClasses {
         // this second step to the helper that answers it that way.
         t.registerMethodRedirect(CALLS, "getColor", callsGetColor, CALLS, "getColorRgb", callsGetColor);
         t.limitRedirectToModsBefore(CALLS, "getColor", callsGetColor, FIRST_ITEM_ALPHA_VERSION);
-        // An older mod's item colors are drawn opaque, as its own item renderer drew them.
-        registerItemColorsOwner(t, ITEM_COLORS);
-        // Minecraft.getItemColors() went with ItemColors; item colors now live in the rebuilt table every copy shares.
-        String getItemColors = "()L" + OLD_ITEM_COLORS + ";";
-        t.registerMethodRedirect(MINECRAFT, "getItemColors", getItemColors, ITEM_COLORS, "legacyOf",
-                "(L" + MINECRAFT + ";)L" + ITEM_COLORS + ";", true);
-        t.limitRedirectToModsBefore(MINECRAFT, "getItemColors", getItemColors, firstVersionWithout);
     }
 
     /** Sends an older mod's {@code register(ItemColor, ItemLike...)} on {@code owner}, a rebuilt class, to {@code registerOpaque}. */

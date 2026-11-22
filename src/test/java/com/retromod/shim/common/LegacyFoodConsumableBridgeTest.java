@@ -75,6 +75,17 @@ class LegacyFoodConsumableBridgeTest {
     }
 
     @Test
+    @DisplayName("a food made with 1.21.1's record constructor keeps its eat time, as Farmer's Delight's feasts do")
+    void recordConstructorKeepsTheEatTime() throws Exception {
+        byte[] mod = transformer.transformClass(recordMaker(), MOD_CLASS);
+        Object props = loaderWithStubs(mod).loadClass(MOD_CLASS.replace('/', '.')).getMethod("make").invoke(null);
+
+        assertEquals(12, field(field(props, "food"), "nutrition"));
+        assertEquals(2.4F, field(field(props, "consumable"), "seconds"), "the record's own eat time reaches the consumable");
+        assertNull(field(props, "convertsTo"), "an empty leftover adds none");
+    }
+
+    @Test
     @DisplayName("fast() becomes the old 0.8 second eating time")
     void fastSetsTheOldEatingTime() throws Exception {
         Object props = runModFood(false, true, false);
@@ -176,6 +187,34 @@ class LegacyFoodConsumableBridgeTest {
                 "()L" + LegacyFoodConsumableBridge.FOOD + ";", false);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, props, "food",
                 LegacyFoodConsumableBridge.FOOD_DESC, false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** {@code new Properties().food(new FoodProperties(12, 12f, false, 2.4f, Optional.empty(), List.of()))}. */
+    private static byte[] recordMaker() {
+        String food = LegacyFoodConsumableBridge.FOOD;
+        String props = LegacyFoodConsumableBridge.ITEM_PROPS;
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, MOD_CLASS, null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "make", "()L" + props + ";", null, null);
+        mv.visitCode();
+        mv.visitTypeInsn(Opcodes.NEW, props);
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, props, "<init>", "()V", false);
+        mv.visitTypeInsn(Opcodes.NEW, food);
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitIntInsn(Opcodes.BIPUSH, 12);
+        mv.visitLdcInsn(12.0F);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitLdcInsn(2.4F);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Optional", "empty", "()Ljava/util/Optional;", false);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/List", "of", "()Ljava/util/List;", true);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, food, "<init>", LegacyFoodConsumableBridge.OLD_RECORD_DESC, false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, props, "food", LegacyFoodConsumableBridge.FOOD_DESC, false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();
@@ -307,6 +346,7 @@ class LegacyFoodConsumableBridgeTest {
                         public class FoodProperties {
                             public final int nutrition;
                             FoodProperties(int nutrition) { this.nutrition = nutrition; }
+                            public FoodProperties(int nutrition, float saturation, boolean alwaysEdible) { this.nutrition = nutrition; }
                             public static class Builder {
                                 private int nutrition;
                                 public Builder nutrition(int n) { nutrition = n; return this; }

@@ -77,6 +77,28 @@ class LegacyFeatureBridgeTest {
         assertEquals(List.of(LegacyFeatureBridge.FEATURE), feature.interfaces);
     }
 
+    @Test
+    @DisplayName("old subclasses find Feature's block helpers on the base, and a feature hitting a missing API is skipped")
+    void helpersAndMissingApiGuard() {
+        ClassNode feature = new ClassNode();
+        new ClassReader(LegacyFeatureBridge.generateLegacyFeature()).accept(feature, 0);
+        String state = "Lnet/minecraft/world/level/block/state/BlockState;";
+        String pos = "Lnet/minecraft/core/BlockPos;";
+        List<String> helpers = List.of("isStone(" + state + ")Z static", "isDirt(" + state + ")Z static",
+                "isGrassOrDirt(Lnet/minecraft/world/level/LevelSimulatedReader;" + pos + ")Z static",
+                "setBlock(Lnet/minecraft/world/level/LevelWriter;" + pos + state + ")V",
+                "safeSetBlock(Lnet/minecraft/world/level/WorldGenLevel;" + pos + state + "Ljava/util/function/Predicate;)V",
+                "markAboveForPostProcessing(Lnet/minecraft/world/level/WorldGenLevel;" + pos + ")V");
+        for (String helper : helpers) {
+            assertTrue(feature.methods.stream().anyMatch(m -> helper.equals(m.name + m.desc
+                    + ((m.access & ACC_STATIC) != 0 ? " static" : ""))), "the base declares " + helper);
+        }
+        MethodNode place = feature.methods.stream().filter(m -> m.name.equals("place") && !m.tryCatchBlocks.isEmpty())
+                .findFirst().orElseThrow();
+        assertEquals("java/lang/LinkageError", place.tryCatchBlocks.get(0).type,
+                "only a missing API is caught, so a mod's own bug still surfaces");
+    }
+
     private static byte[] subclass(String name, String superName) {
         ClassWriter cw = new ClassWriter(0);
         cw.visit(V17, ACC_PUBLIC, name, null, superName, null);

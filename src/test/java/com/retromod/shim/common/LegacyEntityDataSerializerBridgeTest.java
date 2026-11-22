@@ -78,6 +78,37 @@ class LegacyEntityDataSerializerBridgeTest {
     }
 
     @Test
+    @DisplayName("on Fabric 26.x the first read registers the serializer with Fabric API once, and every read gets it")
+    void fabricRegistersOnFirstRead() throws Throwable {
+        Path work = Files.createTempDirectory(dir, "fabric");
+        Map<String, byte[]> mod = only(compile(work.resolve("old"), oldMod("net.minecraftforge.fml.common.Mod")), "mod/");
+        Map<String, String> hostSources = new HashMap<>(hostVanilla());
+        hostSources.put("net/fabricmc/fabric/api/object/builder/v1/entity/FabricEntityDataRegistry.java", """
+                package net.fabricmc.fabric.api.object.builder.v1.entity;
+                public final class FabricEntityDataRegistry {
+                    public static final java.util.Map<String, Object> REGISTERED = new java.util.LinkedHashMap<>();
+                    public static void register(net.minecraft.resources.Identifier id, net.minecraft.network.syncher.EntityDataSerializer<?> serializer) {
+                        if (REGISTERED.putIfAbsent(id.toString(), serializer) != null) throw new IllegalStateException("duplicate " + id);
+                    }
+                    public static net.minecraft.network.syncher.EntityDataSerializer<?> get(net.minecraft.resources.Identifier id) {
+                        return (net.minecraft.network.syncher.EntityDataSerializer<?>) REGISTERED.get(id.toString());
+                    }
+                }""");
+        Map<String, byte[]> host = compile(work.resolve("host"), hostSources);
+        Map<String, byte[]> out = transform("26.3", LegacyEntityDataSerializerBridge::registerFabric, mod);
+        Run run = new Run(host, out);
+
+        Object first = run.call("mod/CarryMod", "serializer");
+        Object second = run.call("mod/CarryMod", "serializer");
+
+        assertSame(first, second, "every read gets the one shared serializer");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> registered = (Map<String, Object>) run.loadClass(
+                "net.fabricmc.fabric.api.object.builder.v1.entity.FabricEntityDataRegistry").getField("REGISTERED").get(null);
+        assertEquals(Map.of("retromod:compound_tag", first), registered);
+    }
+
+    @Test
     @DisplayName("Fabric and Forge before 26.2 keep the old read, since no mod constructor can register it there")
     void otherHostsKeepTheRead() throws Exception {
         Map<String, byte[]> mod = only(compile(dir.resolve("old"), oldMod("net.minecraftforge.fml.common.Mod")), "mod/");

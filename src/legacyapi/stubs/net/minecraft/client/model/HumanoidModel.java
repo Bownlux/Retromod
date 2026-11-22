@@ -4,6 +4,8 @@ package net.minecraft.client.model;
 import net.minecraft.client.renderer.entity.state.HumanoidRenderState;
 
 public class HumanoidModel<T extends HumanoidRenderState> extends EntityModel<T> {
+    public HumanoidModel(net.minecraft.client.model.geom.ModelPart root) { super(root); }
+
     // Final on the host.
     public net.minecraft.client.model.geom.ModelPart head;
     public net.minecraft.client.model.geom.ModelPart hat;

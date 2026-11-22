@@ -2,6 +2,9 @@
 package net.minecraft.network;
 
 public class FriendlyByteBuf {
+    public String readUtf(int maxLength) { throw new UnsupportedOperationException(); }
+    public FriendlyByteBuf writeUtf(String value, int maxLength) { throw new UnsupportedOperationException(); }
+    public net.minecraft.nbt.Tag readNbt(net.minecraft.nbt.NbtAccounter accounter) { throw new UnsupportedOperationException(); }
     public int readVarInt() { throw new UnsupportedOperationException(); }
     public FriendlyByteBuf writeVarInt(int value) { throw new UnsupportedOperationException(); }
     public long readLong() { throw new UnsupportedOperationException(); }

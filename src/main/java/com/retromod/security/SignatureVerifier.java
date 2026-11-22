@@ -42,7 +42,7 @@ public final class SignatureVerifier {
      * <p>Empty in dev/source builds: status is then {@link Status#UNKNOWN} and the computed
      * hash is logged so a release build can embed it. See {@code docs/authenticity.md}.
      */
-    private static final String EXPECTED_SELF_HASH = "D42192272493F8C389995AB86AB196C6D81A4EB0FC9A2509038D07984343C38E";
+    private static final String EXPECTED_SELF_HASH = "8FB95667D8C98A4DD8319D881DC7E992A15FE08871CF30683C80EB7BBE3449F2";
 
     /** This class's own jar entry, excluded from the hash (it carries the hash). */
     private static final String SELF_ENTRY = "com/retromod/security/SignatureVerifier.class";
@@ -218,6 +218,7 @@ public final class SignatureVerifier {
         return name.startsWith("META-INF/services/")
                 || name.startsWith("retromod/")
                 || name.equals("intermediary-to-mojang.tsv")
+                || name.equals("intermediary-bridged-names.tsv")
                 || name.equals("mojang-class-moves-26.1.tsv")
                 || name.equals("retromod.mixins.json");
     }

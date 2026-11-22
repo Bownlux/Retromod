@@ -66,7 +66,7 @@ public final class RetroReloadScan {
                                 reader, MAX_JSON_CHARS, MAX_JSON_DEPTH, remainingChars);
                         Object json = fromJson.invoke(null, gson,
                                 new java.io.StringReader(content), jsonElementCls);
-                        if (json != null) {
+                        if (json != null && loadConditionsPass(json, directory, id, idCls)) {
                             out.put(id, json);
                         }
                     } finally {
@@ -80,6 +80,44 @@ public final class RetroReloadScan {
             // unresolvable API (or no Minecraft, as in a unit test): hand back what we have
         }
         return out;
+    }
+
+    /**
+     * Fabric API's {@code fabric:load_conditions} on one file, which Fabric API applied to an old listener's files
+     * before 1.21.5 made the listener codec based. Without Fabric API, or when the conditions cannot be read, the file
+     * loads. The check gets no registry lookup, so a condition that needs one answers as it does for a missing lookup.
+     */
+    static boolean loadConditionsPass(Object json, String directory, Object id, Class<?> idCls) {
+        Class<?> conditions;
+        Class<?> condition;
+        Class<?> jsonObject;
+        try {
+            conditions = Class.forName("net.fabricmc.fabric.api.resource.conditions.v1.ResourceConditions");
+            condition = Class.forName("net.fabricmc.fabric.api.resource.conditions.v1.ResourceCondition");
+            jsonObject = Class.forName(com.retromod.util.HostLibraryNames.binaryName(
+                    com.retromod.util.HostLibraryNames.GSON_PACKAGE + "/JsonObject"));
+        } catch (ClassNotFoundException | LinkageError noFabricApi) {
+            return true;
+        }
+        if (!jsonObject.isInstance(json)) return true;
+        try {
+            String key = (String) conditions.getField("CONDITIONS_KEY").get(null);
+            Object declared = jsonObject.getMethod("get", String.class).invoke(json, key);
+            if (declared == null) return true;
+            // CONDITION_CODEC reads one condition or a list of them, which must all pass, as Fabric API reads the key.
+            Object codec = condition.getField("CONDITION_CODEC").get(null);
+            Class<?> codecType = Class.forName("com.mojang.serialization.Codec");
+            Class<?> opsType = Class.forName("com.mojang.serialization.DynamicOps");
+            Object ops = Class.forName("com.mojang.serialization.JsonOps").getField("INSTANCE").get(null);
+            Object result = codecType.getMethod("parse", opsType, Object.class).invoke(codec, ops, declared);
+            Object parsed = ((java.util.Optional<?>) result.getClass().getMethod("result").invoke(result)).orElse(null);
+            // Conditions that do not parse keep the file, as the reload never drops data it could not judge.
+            if (parsed == null) return true;
+            Class<?> lookup = Class.forName("net.minecraft.resources.RegistryOps$RegistryInfoLookup");
+            return (Boolean) condition.getMethod("test", lookup).invoke(parsed, (Object) null);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unchecked) {
+            return true;
+        }
     }
 
     static String readBoundedJson(java.io.Reader reader, long maxChars, int maxDepth,

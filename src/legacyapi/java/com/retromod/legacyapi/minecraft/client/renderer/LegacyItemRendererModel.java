@@ -68,7 +68,7 @@ public final class LegacyItemRendererModel implements ItemModel {
         Object renderer = renderers.get(item);
         if (renderer == null) renderer = renderers.computeIfAbsent(item, any -> rendererOrNone(stack));
         // An item whose renderer is missing or failed shows its flat icon, as before Retromod drew old renderers.
-        if (renderer == NONE || BROKEN.contains(renderer.getClass())) {
+        if (renderer == NONE || BROKEN.contains(rendererType(renderer))) {
             if (fallback != null) fallback.update(renderState, stack, resolver, displayContext, level, owner, seed);
             return;
         }
@@ -96,6 +96,23 @@ public final class LegacyItemRendererModel implements ItemModel {
                     + extensions.getClass().getName() + " threw " + failure + ", so Retromod draws their items' flat icons");
             return NONE;
         }
+    }
+
+    /** A baked item model that runs its stack's old renderer, with {@code fallback} for a stack without one. */
+    public static ItemModel wrap(ModelRenderProperties properties, ItemModel fallback, Matrix4fc transformation) {
+        // Each resource reload wraps the models again, and a renderer that failed before gets another try.
+        BROKEN.clear();
+        return new LegacyItemRendererModel(properties, fallback, transformation);
+    }
+
+    /** A renderer that runs another object's code, whose class then stands for it when it fails. */
+    public interface DelegatingRenderer {
+        Object delegate();
+    }
+
+    // One failing renderer stops only its own items, even where an adapter class wraps every renderer of a mod.
+    private static Class<?> rendererType(Object renderer) {
+        return renderer instanceof DelegatingRenderer delegating ? delegating.delegate().getClass() : renderer.getClass();
     }
 
     /** The item model type path each mod's namespace gets; Retromod's item definitions name it. */
@@ -154,7 +171,7 @@ public final class LegacyItemRendererModel implements ItemModel {
                 drawn = collector;
             } catch (Exception | LinkageError failure) {
                 // Forge 1.20.1 stopped the game here; a renderer that reaches an API Minecraft removed now draws flat icons.
-                Class<?> type = draw.renderer().getClass();
+                Class<?> type = rendererType(draw.renderer());
                 BROKEN.add(type);
                 LegacyLog.warnOnce("item renderer " + type.getName(), "The old item renderer " + type.getName() + " threw " + failure
                         + " while drawing " + draw.stack().getItem() + ", so Retromod draws the flat icons of its items until the"

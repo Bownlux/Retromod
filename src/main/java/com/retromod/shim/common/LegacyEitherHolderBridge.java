@@ -16,6 +16,7 @@ import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.objectweb.asm.Opcodes.*;
 
@@ -37,7 +38,11 @@ import static org.objectweb.asm.Opcodes.*;
  * {@code Holder} on 26.1, so they accept a stand-in that holds a holder. A stand-in that holds only
  * a key cannot become a holder at that point, and it fails with a message naming the key. The same
  * goes for {@code EitherHolder.codec} and {@code streamCodec}, which have no 26.1 counterpart.
- * 1.21.1's two-argument {@code JukeboxPlayable(EitherHolder, boolean)} is not bridged.
+ * The jukebox component is the exception: a stand-in that holds only a song key makes a placeholder
+ * record, and handing that placeholder to {@code Item.Properties.component} becomes 26.1's
+ * {@code jukeboxPlayable(key)}, which resolves the song once the registries load. 1.21.1's
+ * two-argument {@code JukeboxPlayable(EitherHolder, boolean)} takes the same path; its tooltip flag
+ * has no counterpart in the record and is dropped.
  */
 public final class LegacyEitherHolderBridge {
 
@@ -63,6 +68,10 @@ public final class LegacyEitherHolderBridge {
     private static final String L_KEY = "L" + RESOURCE_KEY + ";";
     private static final String OPTIONAL = "java/util/Optional";
     private static final byte[] STAND_IN_BYTES = STAND_IN.getBytes(StandardCharsets.UTF_8);
+    private static final String JUKEBOX_FACTORY = "newJukeboxPlayable";
+    private static final String MAP = "java/util/Map";
+    // Placeholder jukebox records made from a song key, each waiting for Item.Properties.component.
+    private static final String PENDING_SONGS = "PENDING_SONGS";
 
     /** A 1.21.11 component record that held an {@code EitherHolder}, and its accessor. */
     private record HolderRecord(String owner, String accessor) {
@@ -82,12 +91,19 @@ public final class LegacyEitherHolderBridge {
     public static void register(RetromodTransformer t) {
         t.registerSyntheticClass(STAND_IN, generateStandIn());
         t.registerClassRedirect(EITHER_HOLDER, STAND_IN);
-        // Constructor and accessor keys are post-remap, so they name the stand-in.
-        for (HolderRecord record : HOLDER_RECORDS) {
-            t.registerConstructorRedirect(record.owner(), "(" + L_STAND_IN + ")V",
-                    STAND_IN, factoryName(record), "(" + L_STAND_IN + ")L" + record.owner() + ";");
-            t.registerMethodRedirect(record.owner(), record.accessor(), "()" + L_STAND_IN,
-                    STAND_IN, record.accessor(), "(L" + record.owner() + ";)" + L_STAND_IN, true);
+        // Keys are post-remap. A Fabric mod's intermediary holder can resolve only as far as EitherHolder
+        // when the call is matched, so both spellings are keyed.
+        for (String holder : List.of(L_STAND_IN, "L" + EITHER_HOLDER + ";")) {
+            for (HolderRecord record : HOLDER_RECORDS) {
+                t.registerConstructorRedirect(record.owner(), "(" + holder + ")V",
+                        STAND_IN, factoryName(record), "(" + L_STAND_IN + ")L" + record.owner() + ";");
+                t.registerMethodRedirect(record.owner(), record.accessor(), "()" + holder,
+                        STAND_IN, record.accessor(), "(L" + record.owner() + ";)" + L_STAND_IN, true);
+            }
+        }
+        for (String holder : List.of(L_STAND_IN, "L" + EITHER_HOLDER + ";")) {
+            t.registerConstructorRedirect(JUKEBOX_PLAYABLE, "(" + holder + "Z)V",
+                    STAND_IN, JUKEBOX_FACTORY, "(" + L_STAND_IN + "Z)L" + JUKEBOX_PLAYABLE + ";");
         }
     }
 
@@ -165,6 +181,8 @@ public final class LegacyEitherHolderBridge {
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, STAND_IN, null, "java/lang/Object", null);
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "holder", L_HOLDER, null, null).visitEnd();
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "key", L_KEY, null, null).visitEnd();
+        cw.visitField(ACC_PRIVATE | ACC_STATIC | ACC_FINAL, PENDING_SONGS, "L" + MAP + ";", null, null).visitEnd();
+        emitStaticInit(cw);
 
         emitConstructor(cw, "holder", L_HOLDER);
         emitConstructor(cw, "key", L_KEY);
@@ -181,9 +199,14 @@ public final class LegacyEitherHolderBridge {
         emitComponent(cw);
         emitRequireHolder(cw);
         for (HolderRecord record : HOLDER_RECORDS) {
-            emitRecordFactory(cw, record);
+            if (record.owner().equals(JUKEBOX_PLAYABLE)) {
+                emitJukeboxFactory(cw);
+            } else {
+                emitRecordFactory(cw, record);
+            }
             emitRecordAccessor(cw, record);
         }
+        emitOldJukeboxFactory(cw);
         emitUnsupported(cw, "codec", "(" + L_KEY + "Lcom/mojang/serialization/Codec;)"
                 + "Lcom/mojang/serialization/Codec;");
         emitUnsupported(cw, "streamCodec", "(" + L_KEY + "Lnet/minecraft/network/codec/StreamCodec;)"
@@ -447,6 +470,23 @@ public final class LegacyEitherHolderBridge {
                 "(L" + COMPONENT_TYPE + ";" + L_KEY + ")L" + PROPERTIES + ";", false);
         m.visitInsn(ARETURN);
         m.visitLabel(plain);
+        // A placeholder jukebox record made from a song key becomes the host's own jukebox property.
+        Label notPending = new Label();
+        m.visitVarInsn(ALOAD, 2);
+        m.visitTypeInsn(INSTANCEOF, JUKEBOX_PLAYABLE);
+        m.visitJumpInsn(IFEQ, notPending);
+        m.visitFieldInsn(GETSTATIC, STAND_IN, PENDING_SONGS, "L" + MAP + ";");
+        m.visitVarInsn(ALOAD, 2);
+        m.visitMethodInsn(INVOKEINTERFACE, MAP, "remove", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
+        m.visitVarInsn(ASTORE, 3);
+        m.visitVarInsn(ALOAD, 3);
+        m.visitJumpInsn(IFNULL, notPending);
+        m.visitVarInsn(ALOAD, 0);
+        m.visitVarInsn(ALOAD, 3);
+        m.visitTypeInsn(CHECKCAST, RESOURCE_KEY);
+        m.visitMethodInsn(INVOKEVIRTUAL, PROPERTIES, "jukeboxPlayable", "(" + L_KEY + ")L" + PROPERTIES + ";", false);
+        m.visitInsn(ARETURN);
+        m.visitLabel(notPending);
         m.visitVarInsn(ALOAD, 0);
         m.visitVarInsn(ALOAD, 1);
         m.visitVarInsn(ALOAD, 2);
@@ -488,6 +528,66 @@ public final class LegacyEitherHolderBridge {
         m.visitMethodInsn(INVOKESPECIAL, "java/lang/IllegalStateException", "<init>",
                 "(Ljava/lang/String;)V", false);
         m.visitInsn(ATHROW);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+    }
+
+    /** The placeholder map: identity keys, because two placeholders are equal records with a null song. */
+    private static void emitStaticInit(ClassWriter cw) {
+        MethodVisitor m = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null);
+        m.visitCode();
+        m.visitTypeInsn(NEW, "java/util/IdentityHashMap");
+        m.visitInsn(DUP);
+        m.visitMethodInsn(INVOKESPECIAL, "java/util/IdentityHashMap", "<init>", "()V", false);
+        m.visitMethodInsn(INVOKESTATIC, "java/util/Collections", "synchronizedMap",
+                "(L" + MAP + ";)L" + MAP + ";", false);
+        m.visitFieldInsn(PUTSTATIC, STAND_IN, PENDING_SONGS, "L" + MAP + ";");
+        m.visitInsn(RETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+    }
+
+    /** {@code newJukeboxPlayable(value)}: the record from a holder, or a placeholder that remembers a song key. */
+    private static void emitJukeboxFactory(ClassWriter cw) {
+        MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, JUKEBOX_FACTORY,
+                "(" + L_STAND_IN + ")L" + JUKEBOX_PLAYABLE + ";", null, null);
+        m.visitCode();
+        Label byKey = new Label();
+        m.visitVarInsn(ALOAD, 0);
+        m.visitFieldInsn(GETFIELD, STAND_IN, "holder", L_HOLDER);
+        m.visitJumpInsn(IFNULL, byKey);
+        m.visitTypeInsn(NEW, JUKEBOX_PLAYABLE);
+        m.visitInsn(DUP);
+        m.visitVarInsn(ALOAD, 0);
+        m.visitFieldInsn(GETFIELD, STAND_IN, "holder", L_HOLDER);
+        m.visitMethodInsn(INVOKESPECIAL, JUKEBOX_PLAYABLE, "<init>", "(" + L_HOLDER + ")V", false);
+        m.visitInsn(ARETURN);
+        m.visitLabel(byKey);
+        m.visitTypeInsn(NEW, JUKEBOX_PLAYABLE);
+        m.visitInsn(DUP);
+        m.visitInsn(ACONST_NULL);
+        m.visitMethodInsn(INVOKESPECIAL, JUKEBOX_PLAYABLE, "<init>", "(" + L_HOLDER + ")V", false);
+        m.visitVarInsn(ASTORE, 1);
+        m.visitFieldInsn(GETSTATIC, STAND_IN, PENDING_SONGS, "L" + MAP + ";");
+        m.visitVarInsn(ALOAD, 1);
+        m.visitVarInsn(ALOAD, 0);
+        m.visitFieldInsn(GETFIELD, STAND_IN, "key", L_KEY);
+        m.visitMethodInsn(INVOKEINTERFACE, MAP, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", true);
+        m.visitInsn(POP);
+        m.visitVarInsn(ALOAD, 1);
+        m.visitInsn(ARETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+    }
+
+    /** 1.21.1's {@code JukeboxPlayable(song, showInTooltip)}: the flag has no counterpart and is dropped. */
+    private static void emitOldJukeboxFactory(ClassWriter cw) {
+        MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, JUKEBOX_FACTORY,
+                "(" + L_STAND_IN + "Z)L" + JUKEBOX_PLAYABLE + ";", null, null);
+        m.visitCode();
+        m.visitVarInsn(ALOAD, 0);
+        m.visitMethodInsn(INVOKESTATIC, STAND_IN, JUKEBOX_FACTORY, "(" + L_STAND_IN + ")L" + JUKEBOX_PLAYABLE + ";", false);
+        m.visitInsn(ARETURN);
         m.visitMaxs(0, 0);
         m.visitEnd();
     }

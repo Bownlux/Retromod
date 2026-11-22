@@ -49,6 +49,9 @@ class LegacyBlockConstructorBridgeTest {
     private static final String SIGN = "net/minecraft/world/level/block/StandingSignBlock";
     private static final String SET_TYPE = "net/minecraft/world/level/block/state/properties/BlockSetType";
     private static final String WOOD_TYPE = "net/minecraft/world/level/block/state/properties/WoodType";
+    private static final String BLOCK = "net/minecraft/world/level/block/Block";
+    private static final String BLOCKS = "net/minecraft/world/level/block/Blocks";
+    private static final String FARMLAND = "net/minecraft/world/level/block/FarmlandBlock";
 
     private final RetromodTransformer transformer = RetromodTransformer.getInstance();
     private byte[] transformedCauldron;
@@ -87,6 +90,52 @@ class LegacyBlockConstructorBridgeTest {
         assertEquals(PROPERTIES.replace('/', '.'), button[2].getClass().getName());
         assertEquals(WOOD_TYPE.replace('/', '.'), sign[0].getClass().getName());
         assertEquals(PROPERTIES.replace('/', '.'), sign[1].getClass().getName());
+    }
+
+    @Test
+    @DisplayName("an old FarmlandBlock gets dirt, which 1.21.1's farmland turned into, ahead of its properties")
+    void farmlandTurnsBackIntoDirt() throws Exception {
+        HostStubs host = register(host1211());
+
+        Object[] args = args(run(host, "farmland"));
+
+        Object dirt = host.loadClass(BLOCKS.replace('/', '.')).getField("DIRT").get(null);
+        assertSame(dirt, args[0], "the host's own dirt block");
+        assertEquals(PROPERTIES.replace('/', '.'), args[1].getClass().getName());
+    }
+
+    @Test
+    @DisplayName("an offline NeoForge translation of a 1.21.1 mod gets the farmland rewrite from the 1.21.1 chain")
+    void offlineNeoForgeChainRewritesFarmland(@org.junit.jupiter.api.io.TempDir java.nio.file.Path hostDir) throws Exception {
+        java.nio.file.Path farmland = hostDir.resolve(FARMLAND + ".class");
+        java.nio.file.Files.createDirectories(farmland.getParent());
+        java.nio.file.Files.write(farmland, argsHolder(FARMLAND, "java/lang/Object", "(L" + BLOCK + ";" + L_PROPERTIES + ")V"));
+        String savedTarget = com.retromod.core.RetromodVersion.TARGET_MC_VERSION;
+        boolean savedNeoForge = com.retromod.util.McReflect.isForceNeoForge();
+        try (java.net.URLClassLoader hostJars = new java.net.URLClassLoader(new java.net.URL[] {hostDir.toUri().toURL()}, null)) {
+            com.retromod.core.ClassResourceInspector.setOfflineHost(hostJars);
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = "26.3";
+            com.retromod.util.McReflect.setForceNeoForge(true);
+            transformer.clearRedirectsForTesting();
+            new com.retromod.shim.neoforge.NeoForge_1_21_1_to_1_21_2().registerRedirects(transformer);
+
+            ClassNode out = new ClassNode();
+            new ClassReader(transformer.transformClass(modBlocks(), "test/ModBlocks.class")).accept(out, 0);
+            String desc = farmlandConstructor(out);
+            assertEquals("(L" + BLOCK + ";" + L_PROPERTIES + ")V", desc,
+                    "a mod built after 1.20.3 never passes the 1.20.3 shim, so the 1.21.1 chain must register the bridge");
+        } finally {
+            com.retromod.core.ClassResourceInspector.setOfflineHost(null);
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = savedTarget;
+            com.retromod.util.McReflect.setForceNeoForge(savedNeoForge);
+        }
+    }
+
+    private static String farmlandConstructor(ClassNode node) {
+        for (AbstractInsnNode insn : node.methods.stream().filter(m -> m.name.equals("farmland")).findFirst().orElseThrow().instructions) {
+            if (insn instanceof MethodInsnNode call && call.owner.equals(FARMLAND) && call.name.equals("<init>")) return call.desc;
+        }
+        return null;
     }
 
     @Test
@@ -189,6 +238,47 @@ class LegacyBlockConstructorBridgeTest {
     }
 
     @Test
+    @DisplayName("Supplementaries' read of CauldronInteraction.BANNER runs the host's banner behavior on 26.x")
+    void bannerBehaviorFieldRunsTheHostMethod() throws Exception {
+        Map<String, byte[]> classes = baseHost();
+        classes.put(CAULDRON, argsHolder(CAULDRON, "java/lang/Object",
+                "(" + L_PROPERTIES + "L" + DISPATCHER + ";)V"));
+        classes.put(INTERACTION, behaviorInterface(false));
+        classes.put(DISPATCHERS, privateBehaviors(DISPATCHERS));
+        HostStubs host = register(classes);
+        host.add(transformer.transformClass(behaviorReader(), "test/Behaviors.class"));
+        host.add(transformer.getSyntheticClasses().get(LegacyBlockConstructorBridge.BEHAVIORS));
+
+        Object banner = host.method("test/Behaviors", "banner").invoke(null);
+        assertSame(banner, host.method("test/Behaviors", "banner").invoke(null), "every read gets one stand-in");
+        assertTrue(host.load(INTERACTION).isInstance(banner));
+        assertEquals("bannerInteraction cleaned stack", host.method("test/Behaviors", "use").invoke(null, banner, "stack"),
+                "the stand-in runs the host's private banner method with the mod's arguments");
+    }
+
+    @Test
+    @DisplayName("1.21.2 to 1.21.11 keep the behavior methods in CauldronInteraction, and a host with the old fields is left alone")
+    void behaviorFieldsFollowTheHostShape() {
+        Map<String, byte[]> classes = new HashMap<>();
+        classes.put(INTERACTION, behaviorInterface(false));
+        classes.put(INTERACTION + "Methods", privateBehaviors(INTERACTION + "Methods"));
+        assertEquals(0, LegacyBlockConstructorBridge.register(transformer, reader(classes)),
+                "the methods must be on the interface or on CauldronInteractions");
+
+        ClassWriter cw = new ClassWriter(0);
+        new ClassReader(privateBehaviors(INTERACTION)).accept(cw, 0);
+        classes.put(INTERACTION, cw.toByteArray());
+        assertEquals(LegacyBlockConstructorBridge.BEHAVIOR_FIELDS.length,
+                LegacyBlockConstructorBridge.register(transformer, reader(classes)), "1.21.11 has them on the interface");
+
+        transformer.clearRedirectsForTesting();
+        classes.put(INTERACTION, behaviorInterface(true));
+        classes.put(DISPATCHERS, privateBehaviors(DISPATCHERS));
+        assertEquals(0, LegacyBlockConstructorBridge.register(transformer, reader(classes)),
+                "1.21.1 still has the fields");
+    }
+
+    @Test
     @DisplayName("a host that still has the old constructors gets no rewrite")
     void oldHostIsLeftAlone() {
         Map<String, byte[]> classes = new HashMap<>();
@@ -213,6 +303,70 @@ class LegacyBlockConstructorBridgeTest {
         return host;
     }
 
+    /** {@code test/Behaviors}: reads {@code CauldronInteraction.BANNER} and calls an interaction. */
+    private static byte[] behaviorReader() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, "test/Behaviors", null, "java/lang/Object", null);
+        MethodVisitor read = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "banner", "()Ljava/lang/Object;", null, null);
+        read.visitCode();
+        read.visitFieldInsn(GETSTATIC, INTERACTION, "BANNER", "L" + INTERACTION + ";");
+        read.visitInsn(ARETURN);
+        read.visitMaxs(0, 0);
+        read.visitEnd();
+        MethodVisitor use = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "use",
+                "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", null, null);
+        use.visitCode();
+        use.visitVarInsn(ALOAD, 0);
+        use.visitTypeInsn(CHECKCAST, INTERACTION);
+        for (int i = 0; i < 5; i++) use.visitInsn(ACONST_NULL);
+        use.visitVarInsn(ALOAD, 1);
+        use.visitMethodInsn(INVOKEINTERFACE, INTERACTION, "interact", BEHAVIOR_DESC, true);
+        use.visitInsn(ARETURN);
+        use.visitMaxs(0, 0);
+        use.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** The six arguments an interaction takes, as plain objects in these stand-ins. */
+    private static final String BEHAVIOR_DESC = "(" + "Ljava/lang/Object;".repeat(6) + ")Ljava/lang/Object;";
+
+    /** {@code CauldronInteraction} with its one abstract method, and the 1.21.1 fields when {@code oldFields}. */
+    private static byte[] behaviorInterface(boolean oldFields) {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(V17, ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT, INTERACTION, null, "java/lang/Object", null);
+        cw.visitMethod(ACC_PUBLIC | ACC_ABSTRACT, "interact", BEHAVIOR_DESC, null, null).visitEnd();
+        if (oldFields) {
+            for (String[] behavior : LegacyBlockConstructorBridge.BEHAVIOR_FIELDS) {
+                cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, behavior[0], "L" + INTERACTION + ";", null, null)
+                        .visitEnd();
+            }
+        }
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** A class with each behavior as a private static method answering its name and the stack it cleaned. */
+    private static byte[] privateBehaviors(String name) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        boolean iface = name.equals(INTERACTION);
+        cw.visit(V17, iface ? ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT : ACC_PUBLIC, name, null, "java/lang/Object", null);
+        if (iface) cw.visitMethod(ACC_PUBLIC | ACC_ABSTRACT, "interact", BEHAVIOR_DESC, null, null).visitEnd();
+        for (String[] behavior : LegacyBlockConstructorBridge.BEHAVIOR_FIELDS) {
+            MethodVisitor mv = cw.visitMethod(ACC_PRIVATE | ACC_STATIC, behavior[1], BEHAVIOR_DESC, null, null);
+            mv.visitCode();
+            mv.visitLdcInsn(behavior[1] + " cleaned ");
+            mv.visitVarInsn(ALOAD, 5);
+            mv.visitMethodInsn(INVOKESTATIC, "java/lang/String", "valueOf", "(Ljava/lang/Object;)Ljava/lang/String;", false);
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat", "(Ljava/lang/String;)Ljava/lang/String;", false);
+            mv.visitInsn(ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+        }
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
     /** {@code test/ModBlocks}: one static factory per old constructor call. */
     private static byte[] modBlocks() {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
@@ -231,6 +385,8 @@ class LegacyBlockConstructorBridgeTest {
                     properties(mv);
                 });
         factory(cw, "cauldron", "test/AcidCauldron", "(" + L_PROPERTIES + ")V", mv -> properties(mv));
+        // Farmer's Delight's rich soil farmland.
+        factory(cw, "farmland", FARMLAND, "(" + L_PROPERTIES + ")V", mv -> properties(mv));
         // Fossils and Archaeology's 1.20.1 buttons and signs.
         factory(cw, "button", BUTTON, "(" + L_PROPERTIES + "L" + SET_TYPE + ";IZ)V", mv -> {
             properties(mv);
@@ -336,7 +492,26 @@ class LegacyBlockConstructorBridgeTest {
         classes.put(WOOD_TYPE, HostStubs.plainClass(WOOD_TYPE, "java/lang/Object"));
         classes.put(BUTTON, argsHolder(BUTTON, "java/lang/Object", "(L" + SET_TYPE + ";I" + L_PROPERTIES + ")V"));
         classes.put(SIGN, argsHolder(SIGN, "java/lang/Object", "(L" + WOOD_TYPE + ";" + L_PROPERTIES + ")V"));
+        classes.put(BLOCK, HostStubs.plainClass(BLOCK, "java/lang/Object"));
+        classes.put(BLOCKS, blocksWithDirt());
+        classes.put(FARMLAND, argsHolder(FARMLAND, "java/lang/Object", "(L" + BLOCK + ";" + L_PROPERTIES + ")V"));
         return classes;
+    }
+
+    /** {@code Blocks} with only {@code DIRT}, one block made when the class loads. */
+    private static byte[] blocksWithDirt() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, BLOCKS, null, "java/lang/Object", null);
+        cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "DIRT", "L" + BLOCK + ";", null, null).visitEnd();
+        MethodVisitor clinit = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null);
+        clinit.visitCode();
+        instance(clinit, BLOCK);
+        clinit.visitFieldInsn(PUTSTATIC, BLOCKS, "DIRT", "L" + BLOCK + ";");
+        clinit.visitInsn(RETURN);
+        clinit.visitMaxs(0, 0);
+        clinit.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     private static Function<String, ClassNode> reader(Map<String, byte[]> classes) {

@@ -59,6 +59,8 @@ public final class LegacyRegistryNbtBridge {
     private static final String L_LIST = "L" + NON_NULL_LIST + ";";
 
     static final String OLD_LOAD = "(" + L_COMPOUND + ")V";
+    /** The name a Fabric 1.20.1 mod's {@code load(CompoundTag)} has after the intermediary remap. */
+    static final String FABRIC_LOAD = "loadAdditional";
     static final String NEW_NBT = "(" + L_COMPOUND + L_PROVIDER + ")V";
     static final String OLD_UPDATE_TAG = "()" + L_COMPOUND;
     static final String NEW_UPDATE_TAG = "(" + L_PROVIDER + ")" + L_COMPOUND;
@@ -238,8 +240,10 @@ public final class LegacyRegistryNbtBridge {
         int dataVersion = dataVersionOf(sourceVersion);
         ClassNode node = new ClassNode();
         new ClassReader(classBytes).accept(node, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        boolean blockEntity = (hasMethod(node, "load", OLD_LOAD) || hasMethod(node, "saveAdditional", OLD_LOAD)
-                || hasMethod(node, "getUpdateTag", OLD_UPDATE_TAG)) && inheritsFrom.test(node.name, BLOCK_ENTITY);
+        // A Fabric mod's old load arrives as loadAdditional(CompoundTag): the remap gives it the name its id has today.
+        boolean blockEntity = (hasMethod(node, "load", OLD_LOAD) || hasMethod(node, FABRIC_LOAD, OLD_LOAD)
+                || hasMethod(node, "saveAdditional", OLD_LOAD) || hasMethod(node, "getUpdateTag", OLD_UPDATE_TAG))
+                && inheritsFrom.test(node.name, BLOCK_ENTITY);
         boolean savedData = hasMethod(node, "save", OLD_DATA_SAVE) && inheritsFrom.test(node.name, SAVED_DATA);
         // Lootr's world data saves itself to a file in a folder it creates first; the host saves through the provider form.
         boolean savedFile = !valueIoHost && hasMethod(node, "save", OLD_FILE_SAVE) && hostSavesFileWithProvider()
@@ -265,7 +269,7 @@ public final class LegacyRegistryNbtBridge {
                         if (blockEntity && opcode == Opcodes.INVOKESPECIAL && modern != null
                                 && reachesMinecraft(owner, method, desc, modClasses)) {
                             // The parent reads 1.20.1 stacks and JSON names only once they are in today's shapes.
-                            if (valueIoHost && method.equals("load")) {
+                            if (valueIoHost && isOldLoad(method)) {
                                 super.visitLdcInsn(dataVersion);
                                 super.visitMethodInsn(Opcodes.INVOKESTATIC, MEMBERS, "forHost",
                                         "(" + L_COMPOUND + "I)" + L_COMPOUND, false);
@@ -311,6 +315,7 @@ public final class LegacyRegistryNbtBridge {
             public void visitEnd() {
                 if (blockEntity) {
                     addBridge(this, node, "load", OLD_LOAD, "loadAdditional", NEW_NBT);
+                    addBridge(this, node, FABRIC_LOAD, OLD_LOAD, "loadAdditional", NEW_NBT);
                     addBridge(this, node, "saveAdditional", OLD_LOAD, "saveAdditional", NEW_NBT);
                     addBridge(this, node, "getUpdateTag", OLD_UPDATE_TAG, "getUpdateTag", NEW_UPDATE_TAG);
                 }
@@ -378,9 +383,14 @@ public final class LegacyRegistryNbtBridge {
                 && inheritsFrom.test(owner, BLOCK_ENTITY);
     }
 
+    /** Whether {@code method} names the old one-argument block entity load, under its Forge or its Fabric name. */
+    private static boolean isOldLoad(String method) {
+        return method.equals("load") || method.equals(FABRIC_LOAD);
+    }
+
     /** The modern descriptor for a super call to a removed NBT method, or null. */
     private static String modernOf(String method, String desc) {
-        if ((method.equals("load") || method.equals("saveAdditional")) && desc.equals(OLD_LOAD)) {
+        if ((isOldLoad(method) || method.equals("saveAdditional")) && desc.equals(OLD_LOAD)) {
             return NEW_NBT;
         }
         if (method.equals("getUpdateTag") && desc.equals(OLD_UPDATE_TAG)) return NEW_UPDATE_TAG;

@@ -83,7 +83,7 @@ public final class LegacyLootModifierCodecs {
         invoke(register, event, registryKey, registering);
     }
 
-    /** What an old structure processor type's {@code codec()} returns, or null when the value is none or its codec cannot be read. */
+    /** What an old structure processor type's {@code codec()} returns, a codec that reports why when it cannot be read, or null for any other value. */
     public static Object processorTypeCodec(Object value) {
         // By name, so a host without the type never has to load it.
         return value != null && implementsNamed(value.getClass(), PROCESSOR_TYPE) ? typeCodec(value) : null;
@@ -98,7 +98,7 @@ public final class LegacyLootModifierCodecs {
         return false;
     }
 
-    /** What a type lambda's {@code codec()} returns, or null when it cannot be read. */
+    /** What a type lambda's {@code codec()} returns, or a codec that fails with the reason when it cannot be read. */
     private static Object typeCodec(Object type) {
         try {
             // The lambda's class is not public, and this copy shares the mod's module, so it may open the method.
@@ -106,16 +106,54 @@ public final class LegacyLootModifierCodecs {
             codec.setAccessible(true);
             return codec.invoke(type);
         } catch (InvocationTargetException failed) {
-            unread(type, failed.getCause());
+            return unread(type, failed.getCause());
         } catch (ReflectiveOperationException | RuntimeException failed) {
-            unread(type, failed);
+            return unread(type, failed);
         }
-        return null;
     }
 
-    private static void unread(Object type, Throwable cause) {
-        LegacyLog.warn("Could not read the codec of " + type.getClass().getName() + ", so it stays registered as the mod built it: "
-                + cause);
+    /** A map codec whose every read and write fails with the reason, or null when even that cannot be built. */
+    private static Object unread(Object type, Throwable cause) {
+        String reason = "Could not read the codec of " + type.getClass().getName() + ": " + rootCause(cause);
+        // The registry must hold a map codec. The old lambda left in its place broke every processor list that
+        // named any type; this one fails only the processors of this type, with the reason.
+        try {
+            ClassLoader loader = type.getClass().getClassLoader();
+            Class<?> mapCodec = Class.forName("com.mojang.serialization.MapCodec", false, loader);
+            Method error = Class.forName("com.mojang.serialization.DataResult", false, loader).getMethod("error", Supplier.class);
+            Function<Object, Object> fail = ignored -> invokeQuietly(error, (Supplier<String>) () -> reason);
+            Object unit = mapCodec.getMethod("unit", Object.class).invoke(null, (Object) null);
+            Object failing = mapCodec.getMethod("flatXmap", Function.class, Function.class).invoke(unit, fail, fail);
+            LegacyLog.warn(reason + ". Structures that use this processor type will not load.");
+            return failing;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            LegacyLog.warn(reason + ", so it stays registered as the mod built it");
+            return null;
+        }
+    }
+
+    private static Object invokeQuietly(Method method, Object argument) {
+        try {
+            return method.invoke(null, argument);
+        } catch (ReflectiveOperationException failed) {
+            throw new IllegalStateException(failed);
+        }
+    }
+
+    /** The innermost cause with the frame that threw it, since an initializer error alone does not say what failed. */
+    static String rootCause(Throwable failure) {
+        Throwable root = failure;
+        while (root.getCause() != null && root.getCause() != root) root = root.getCause();
+        // The first frame outside the JDK and DataFixerUpper names the code that built the failing value.
+        String where = "";
+        for (StackTraceElement frame : root.getStackTrace()) {
+            String owner = frame.getClassName();
+            if (!owner.startsWith("java.") && !owner.startsWith("com.mojang.serialization.") && !owner.startsWith("com.mojang.datafixers.")) {
+                where = " at " + frame;
+                break;
+            }
+        }
+        return root == failure ? failure + where : failure + ", caused by " + root + where;
     }
 
     /** The register event's helper, with each value it registers converted first. */

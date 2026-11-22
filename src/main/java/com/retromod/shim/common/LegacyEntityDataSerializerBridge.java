@@ -37,10 +37,19 @@ public final class LegacyEntityDataSerializerBridge {
     /** NeoForge from 1.21.9 and Forge from 26.2, whose own serializer registries the rebuilt serializer joins. */
     public static void register(RetromodTransformer transformer) {
         if (!hostLacksCompoundTag(ClassResourceInspector.read(SERIALIZERS))) return;
-        // Forge 1.21.9 to 1.21.11 run EventBus 6, which this registration does not reach, and Fabric has no mod
-        // constructor to start it from, so both keep the old field read.
+        // Forge 1.21.9 to 1.21.11 run EventBus 6, which this registration does not reach, so they keep the old field
+        // read. Fabric has no mod constructor to start it from and goes through registerFabric instead.
         if (!McReflect.isNeoForge() && !ForgeHostShape.matches(List.of(FORGE_BUS_GROUP), List.of())) return;
         registerRedirects(transformer);
+    }
+
+    /** Fabric on 26.1 and newer, where the rebuilt serializer registers itself with Fabric API on its first read. */
+    public static void registerFabric(RetromodTransformer transformer) {
+        if (!hostLacksCompoundTag(ClassResourceInspector.read(SERIALIZERS))) return;
+        RebuiltApiClasses.registerTree(transformer, REBUILT);
+        SyntheticEmbedder.registerClassResource(transformer, LEGACY_LOG, LegacyLog.class);
+        transformer.registerExactFieldRedirect(SERIALIZERS, "COMPOUND_TAG", SERIALIZER_DESC,
+                REBUILT, "get", "()" + SERIALIZER_DESC);
     }
 
     /** Whether the host's serializers lack the field; {@code serializers} is null offline, where the version decides. */

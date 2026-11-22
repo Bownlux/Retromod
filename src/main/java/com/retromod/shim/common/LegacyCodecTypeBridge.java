@@ -120,6 +120,7 @@ public final class LegacyCodecTypeBridge {
      * the generated method itself, so it passes through unchanged.
      */
     static void registerCodecBases(RetromodTransformer transformer) {
+        LegacyMapCodecsSynthetic.register(transformer);
         for (String[] base : CODEC_BASES) {
             if (!mapCodecOnHost(base[0])) continue;
             String[] constructors = java.util.Arrays.copyOfRange(base, 2, base.length);
@@ -174,9 +175,10 @@ public final class LegacyCodecTypeBridge {
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, MAP_CODEC_CODEC, "codec", NEW_SAM, false);
         mv.visitInsn(Opcodes.ARETURN);
         mv.visitLabel(notRecord);
+        // The same map codec the registration stored, so the registry finds the generator's codec by identity.
         mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, MAP_CODEC, "assumeMapUnsafe",
-                "(L" + CODEC + ";)L" + MAP_CODEC + ";", false);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, LegacyMapCodecsSynthetic.INTERNAL, "of", LegacyMapCodecsSynthetic.OF_DESC, false);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, MAP_CODEC);
         mv.visitInsn(Opcodes.ARETURN);
         end(mv);
         cw.visitEnd();

@@ -36,6 +36,10 @@ import java.util.function.Function;
  *   <li>{@code AbstractCauldronBlock(Properties, Map<Item, CauldronInteraction>)} took a named
  *       {@code InteractionMap} from 1.20.3 and a {@code Dispatcher} from 26.1. The mod's map is
  *       converted to whichever this host takes.</li>
+ *   <li>{@code FarmlandBlock(Properties)} later took the block it turns back into first. It gets
+ *       dirt, which 1.21.1's farmland always turned into.</li>
+ *   <li>The behaviors such as {@code CauldronInteraction.BANNER} became private methods in 1.21.2. A read
+ *       of the old field gets a stand-in that runs the host's own method.</li>
  *   <li>The vanilla tables {@code CauldronInteraction.EMPTY}, {@code WATER}, {@code LAVA} and
  *       {@code POWDER_SNOW}, which mods add their buckets to, stopped being plain maps at the same
  *       time. A read of the old map field gets a map that adds to the host's table.</li>
@@ -77,6 +81,14 @@ public final class LegacyBlockConstructorBridge {
     static final String[][] VANILLA_TABLES = {
             {"EMPTY", "empty"}, {"WATER", "water"}, {"LAVA", "lava"}, {"POWDER_SNOW", "powderSnow"}};
 
+    static final String INTERACTIONS = "net/minecraft/core/cauldron/CauldronInteractions";
+    static final String BEHAVIORS = "com/retromod/generated/LegacyCauldronBehaviors";
+    /** Each old behavior field and the host method that does its job, checked with javap on 1.21.11 and 26.1 to 26.3. */
+    static final String[][] BEHAVIOR_FIELDS = {
+            {"FILL_WATER", "fillWaterInteraction"}, {"FILL_LAVA", "fillLavaInteraction"},
+            {"FILL_POWDER_SNOW", "fillPowderSnowInteraction"}, {"SHULKER_BOX", "shulkerBoxInteraction"},
+            {"BANNER", "bannerInteraction"}, {"DYED_ITEM", "dyedItemIteration"}};
+
     private LegacyBlockConstructorBridge() {}
 
     public static void register(RetromodTransformer transformer) {
@@ -114,6 +126,13 @@ public final class LegacyBlockConstructorBridge {
             bridged++;
         }
         bridged += registerTypeFirstConstructors(transformer, host);
+        // properties -> the block farmland turns back into, properties. 1.21.1's farmland always turned
+        // into dirt, which is also what the host's own farmland passes.
+        bridged += reorder(transformer, host, BLOCKS + "FarmlandBlock", "(" + L_PROPERTIES + ")V",
+                "(L" + BLOCKS + "Block;" + L_PROPERTIES + ")V", mv -> {
+                    mv.visitFieldInsn(Opcodes.GETSTATIC, BLOCKS + "Blocks", "DIRT", "L" + BLOCKS + "Block;");
+                    mv.visitInsn(Opcodes.SWAP);
+                });
         ClassNode cauldron = host.apply(CAULDRON);
         String interactionsType = hostInteractionsType(cauldron);
         if (interactionsType != null && !hasConstructor(cauldron, CAULDRON_OLD)) {
@@ -135,7 +154,57 @@ public final class LegacyBlockConstructorBridge {
             }
             bridged += VANILLA_TABLES.length;
         }
+        bridged += registerBehaviorFields(transformer, host);
         return bridged;
+    }
+
+    /** The old behavior fields such as {@code CauldronInteraction.BANNER}, which 1.21.2 turned into private methods. */
+    private static int registerBehaviorFields(RetromodTransformer transformer, Function<String, ClassNode> host) {
+        ClassNode interaction = host.apply(INTERACTION);
+        if (interaction == null) return 0;
+        // 26.1 moved the methods to CauldronInteractions; 1.21.2 to 1.21.11 keep them in the interface.
+        ClassNode owner = host.apply(INTERACTIONS);
+        if (owner == null) owner = interaction;
+        int bridged = 0;
+        for (String[] behavior : BEHAVIOR_FIELDS) {
+            if (hasField(interaction, behavior[0]) || !hasBehavior(owner, behavior[1])) continue;
+            SyntheticEmbedder.registerClassResource(transformer, HELPER, LegacyCauldronInteractions.class);
+            transformer.registerSyntheticClass(BEHAVIORS, generateBehaviors());
+            transformer.registerStaticFieldBridge(INTERACTION, behavior[0], BEHAVIORS, behavior[0],
+                    "()L" + INTERACTION + ";", null, null);
+            bridged++;
+        }
+        return bridged;
+    }
+
+    private static boolean hasField(ClassNode node, String name) {
+        return node.fields.stream().anyMatch(field -> field.name.equals(name));
+    }
+
+    /** Whether the host has the static six-argument behavior method {@code name}. */
+    private static boolean hasBehavior(ClassNode owner, String name) {
+        return owner.methods.stream().anyMatch(method -> method.name.equals(name)
+                && (method.access & Opcodes.ACC_STATIC) != 0 && Type.getArgumentTypes(method.desc).length == 6);
+    }
+
+    /** One static getter per old behavior field, each asking the embedded helper for its stand-in. */
+    static byte[] generateBehaviors() {
+        org.objectweb.asm.ClassWriter cw = new org.objectweb.asm.ClassWriter(org.objectweb.asm.ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, BEHAVIORS, null,
+                "java/lang/Object", null);
+        for (String[] behavior : BEHAVIOR_FIELDS) {
+            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, behavior[0],
+                    "()L" + INTERACTION + ";", null, null);
+            mv.visitCode();
+            mv.visitLdcInsn(behavior[1]);
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, HELPER, "behavior", "(Ljava/lang/String;)Ljava/lang/Object;", false);
+            mv.visitTypeInsn(Opcodes.CHECKCAST, INTERACTION);
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+        }
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     /** The 1.20.3 constructors that put a block's type ahead of its properties. */

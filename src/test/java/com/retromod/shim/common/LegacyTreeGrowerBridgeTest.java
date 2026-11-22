@@ -75,6 +75,37 @@ class LegacyTreeGrowerBridgeTest {
         }
     }
 
+    @Test
+    void onA263HostTheStandInBuildsItsGrowerThroughTheRebuiltConstructor() throws Exception {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        registerRedirects(transformer, true);
+
+        ClassNode grower = node(transformer.getSyntheticClasses().get(GROWER));
+        MethodNode build = method(grower, "toTreeGrower");
+        boolean viaHelper = false;
+        for (AbstractInsnNode insn : build.instructions.toArray()) {
+            assertFalse(insn instanceof MethodInsnNode call && call.owner.equals(TREE_GROWER) && call.name.equals("<init>"),
+                    "26.3 has no TreeGrower(String, Optional, Optional, Optional) to call");
+            if (insn instanceof MethodInsnNode call && call.owner.equals(LegacyTreeGrowerConstructorBridge.HELPER)) viaHelper = true;
+        }
+        assertTrue(viaHelper, "the rebuilt constructor turns the keys into 26.3's weighted lists");
+        assertTrue(transformer.getSyntheticClasses().containsKey(LegacyTreeGrowerConstructorBridge.HELPER), "and travels with the mod");
+        new Analyzer<>(new BasicVerifier()).analyze(grower.name, build);
+    }
+
+    @Test
+    void beforeTheWeightedListsTheStandInKeepsTheOptionalKeyConstructor() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        registerRedirects(transformer, false);
+
+        MethodNode build = method(node(transformer.getSyntheticClasses().get(GROWER)), "toTreeGrower");
+        assertTrue(java.util.Arrays.stream(build.instructions.toArray()).anyMatch(insn -> insn instanceof MethodInsnNode call
+                && call.owner.equals(TREE_GROWER) && call.name.equals("<init>")), "26.2 still has the optional-key constructor");
+        assertFalse(transformer.getSyntheticClasses().containsKey(LegacyTreeGrowerConstructorBridge.HELPER));
+    }
+
     private static byte[] modGrower() {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/PalmTreeGrower", null, OLD_GROWER, null);

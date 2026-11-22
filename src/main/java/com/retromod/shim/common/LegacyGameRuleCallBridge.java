@@ -4,10 +4,14 @@
  */
 package com.retromod.shim.common;
 
+import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.MethodNode;
 
 import java.util.List;
 
@@ -43,22 +47,55 @@ public final class LegacyGameRuleCallBridge {
             "method_45162", "net/minecraft/class_7699", "method_76185",
             List.of("field_19404", "field_54909", "field_19422"));
 
+    /** The server's own rule getter, and the level data read that stands in for it where the getter is gone. */
+    record ServerRead(List<String> servers, String getter, String worldDataGetter, String worldData,
+            String worldDataRules) {}
+
+    // 1.21.11 dropped MinecraftServer.getGameRules(), which 26.1 brought back. The level data keeps
+    // the same rules the overworld reads. Checked with javap on NeoForge 21.11.42 and 26.1 to 26.3.
+    static final ServerRead MOJANG_SERVER = new ServerRead(List.of("net/minecraft/server/MinecraftServer",
+            "net/minecraft/server/dedicated/DedicatedServer", "net/minecraft/client/server/IntegratedServer"),
+            "getGameRules", "getWorldData", "net/minecraft/world/level/storage/WorldData", "getGameRules");
+
+    // The same read in Fabric 1.21.11's intermediary names, from the 1.21.11 intermediary table.
+    static final ServerRead INTERMEDIARY_SERVER = new ServerRead(List.of("net/minecraft/server/MinecraftServer",
+            "net/minecraft/class_3176", "net/minecraft/class_1132"),
+            "method_3767", "method_27728", "net/minecraft/class_5219", "method_146");
+
     private LegacyGameRuleCallBridge() {}
 
     /** Registers under the old and the moved class names, since either can be current when the redirect is asked. */
     public static void register(RetromodTransformer t) {
-        register(t, MOJANG);
+        register(t, LegacyGameRuleValueBridge.hostShape());
+    }
+
+    static void register(RetromodTransformer t, LegacyGameRuleValueBridge.Shape shape) {
+        ClassNode server = ClassResourceInspector.read(MOJANG_SERVER.servers().get(0));
+        register(t, MOJANG, shape.radius(), hostDroppedServerRules(server) ? MOJANG_SERVER : null);
+        // The old value objects from getRule, rebuilt as views over the same host rules.
+        LegacyGameRuleValueBridge.register(t, shape);
     }
 
     /** The same reads in the intermediary names a Fabric 1.21.11 host runs. */
     public static void registerIntermediary(RetromodTransformer t) {
         // The old key type became the rule type, so the rule fields and the mod's own locals take it.
         t.registerClassRedirect(INTERMEDIARY.oldKey(), INTERMEDIARY.rule());
-        register(t, INTERMEDIARY);
+        // Only 1.21.11 runs intermediary names with the new rules, and its server has no rule getter.
+        register(t, INTERMEDIARY, false, INTERMEDIARY_SERVER);
     }
 
-    private static void register(RetromodTransformer t, Names names) {
-        t.registerSyntheticClass(names.helper(), generate(names));
+    /** Whether the host's server lost its rule getter; offline, the 1.21.11 line before 26.1 lost it. */
+    static boolean hostDroppedServerRules(ClassNode server) {
+        if (server == null) return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.1") < 0;
+        String desc = "()L" + MOJANG.rules() + ";";
+        for (MethodNode method : server.methods) {
+            if (method.name.equals(MOJANG_SERVER.getter()) && method.desc.equals(desc)) return false;
+        }
+        return true;
+    }
+
+    private static void register(RetromodTransformer t, Names names, boolean radius, ServerRead serverRead) {
+        t.registerSyntheticClass(names.helper(), generate(names, radius, serverRead));
         String rules = "L" + names.rules() + ";";
         String levelHelper = "(L" + names.level() + ";)" + rules;
         // javac names the receiver's own type as the owner, so a client level's call is keyed too.
@@ -71,6 +108,16 @@ public final class LegacyGameRuleCallBridge {
         if (!names.serverGetter().equals(names.levelGetter())) {
             t.registerMethodRedirect(names.serverLevel(), names.levelGetter(), "()" + rules,
                     names.serverLevel(), names.serverGetter(), "()" + rules);
+        }
+        if (serverRead != null) {
+            // A server's own rule read becomes its level data's, under either return spelling.
+            String serverHelper = "(L" + serverRead.servers().get(0) + ";)" + rules;
+            for (String owner : serverRead.servers()) {
+                for (String returned : List.of(rules, "L" + names.oldRules() + ";")) {
+                    t.registerMethodRedirect(owner, serverRead.getter(), "()" + returned, names.helper(),
+                            "serverGameRules", serverHelper);
+                }
+            }
         }
         String[][] reads = {{names.booleanRead(), "getBoolean", "Z"}, {names.intRead(), "getInt", "I"}};
         for (String[] read : reads) {
@@ -87,6 +134,14 @@ public final class LegacyGameRuleCallBridge {
     }
 
     static byte[] generate(Names names) {
+        return generate(names, false, null);
+    }
+
+    /**
+     * With {@code radius}, the old fire tick switch, renamed to the fire spread radius, reads "on" while the radius is not 0.
+     * With {@code serverRead}, a server's rules are read from its level data.
+     */
+    static byte[] generate(Names names, boolean radius, ServerRead serverRead) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(V21, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, names.helper(), null, "java/lang/Object", null);
         String rulesDesc = "L" + names.rules() + ";";
@@ -112,19 +167,51 @@ public final class LegacyGameRuleCallBridge {
         rules.visitInsn(ARETURN);
         rules.visitMaxs(0, 0);
         rules.visitEnd();
+        if (serverRead != null) serverRules(cw, rulesDesc, serverRead);
 
         // Typed reads unbox the rule's value.
-        unboxedRead(cw, names, "getBoolean", "Z", "java/lang/Boolean", "booleanValue", names.negatedRules());
-        unboxedRead(cw, names, "getInt", "I", "java/lang/Integer", "intValue", List.of());
+        unboxedRead(cw, names, "getBoolean", "Z", "java/lang/Boolean", "booleanValue", names.negatedRules(), radius);
+        unboxedRead(cw, names, "getInt", "I", "java/lang/Integer", "intValue", List.of(), false);
         cw.visitEnd();
         return cw.toByteArray();
     }
 
+    /** {@code serverGameRules(server)}: {@code server.getWorldData().getGameRules()}. */
+    private static void serverRules(ClassWriter cw, String rulesDesc, ServerRead read) {
+        String server = read.servers().get(0);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "serverGameRules", "(L" + server + ";)" + rulesDesc,
+                null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEVIRTUAL, server, read.worldDataGetter(), "()L" + read.worldData() + ";", false);
+        mv.visitMethodInsn(INVOKEINTERFACE, read.worldData(), read.worldDataRules(), "()" + rulesDesc, true);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
     private static void unboxedRead(ClassWriter cw, Names names, String name, String primitive, String box,
-            String unbox, List<String> negated) {
+            String unbox, List<String> negated, boolean radius) {
         MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, name,
                 "(L" + names.rules() + ";L" + names.rule() + ";)" + primitive, null, null);
         mv.visitCode();
+        if (radius) {
+            Label notRadius = new Label();
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitFieldInsn(GETSTATIC, names.rules(), LegacyGameRuleValueBridge.RADIUS_RULE, "L" + names.rule() + ";");
+            mv.visitJumpInsn(IF_ACMPNE, notRadius);
+            Label stopped = new Label();
+            emitGet(mv, names, "I", "java/lang/Integer", "intValue");
+            mv.visitJumpInsn(IFEQ, stopped);
+            mv.visitInsn(ICONST_1);
+            mv.visitInsn(IRETURN);
+            mv.visitLabel(stopped);
+            mv.visitFrame(F_SAME, 0, null, 0, null);
+            mv.visitInsn(ICONST_0);
+            mv.visitInsn(IRETURN);
+            mv.visitLabel(notRadius);
+            mv.visitFrame(F_SAME, 0, null, 0, null);
+        }
         // Only an old mod reads through here, so a rule that became positive is read negated.
         Label negate = new Label();
         for (String field : negated) {

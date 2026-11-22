@@ -56,6 +56,7 @@ import com.retromod.testmod.tests.Test83OldBlockElements;
 import com.retromod.testmod.tests.Test84RefmapFollowsHandler;
 import com.retromod.testmod.tests.Test85RenamedMixinTarget;
 import com.retromod.testmod.tests.Test86OldGuiDrawing;
+import com.retromod.testmod.tests.Test89KeyBindingSubclass;
 import com.retromod.testmod.tests.Test27OwnOverrideMob;
 import com.retromod.testmod.tests.Test28LegacyProcedureMembers;
 import com.retromod.testmod.tests.Test29OwnDamageOverride;
@@ -159,7 +160,7 @@ public final class TestRunner {
         // Old key bindings and buttons need the started client too.
         return List.of(new Test13WindowHandleShim(), new Test23GlfwPolls(), new Test43ClientHostTints(),
                 new Test45ClientHudAndScreenEvents(), new Test60SmallClientMembers(), new Test79LegacyItemProperties(),
-                new Test86OldGuiDrawing());
+                new Test86OldGuiDrawing(), new Test89KeyBindingSubclass());
     }
 
     private static List<Test> buildWorldJoinSuite() {

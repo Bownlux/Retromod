@@ -83,7 +83,7 @@ class LegacyBiomeSourceBridgeTest {
         Object nether = stateType.getConstructor().newInstance();
         // Looked up by its exact type, so the members class's other methods need no stand-ins.
         java.lang.invoke.MethodHandle sampler = java.lang.invoke.MethodHandles.publicLookup().findStatic(
-                run.loadClass(LegacyWorldgenMembersBridge.MEMBERS.replace('/', '.')), "sampler",
+                run.loadClass(LegacyWorldgenMembersBridge.MEMBERS_263.replace('/', '.')), "sampler",
                 java.lang.invoke.MethodType.methodType(run.loadClass("net.minecraft.world.level.biome.Climate$Sampler"), stateType));
         Object first = sampler.invoke(overworld);
         assertSame(first, sampler.invoke(overworld));

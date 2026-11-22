@@ -126,6 +126,21 @@ public class Fabric_1_21_8_to_1_21_9 implements VersionShim {
                 "com/retromod/shim/fabric/embedded/KeyBindingShim", "createDefault",
                 "(Ljava/lang/String;ILjava/lang/String;)Ljava/lang/Object;"
             );
+            // A mod's own KeyBinding subclass passes the String to super(...), which no factory reaches.
+            // The category is the last argument, so it is converted on top of the stack.
+            String category = "net/minecraft/class_304$class_11900";
+            java.util.function.Consumer<org.objectweb.asm.MethodVisitor> toCategory = mv -> {
+                mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKESTATIC,
+                        "com/retromod/shim/fabric/embedded/KeyBindingShim", "category",
+                        "(Ljava/lang/String;)Ljava/lang/Object;", false);
+                mv.visitTypeInsn(org.objectweb.asm.Opcodes.CHECKCAST, category);
+            };
+            transformer.registerSuperConstructorAdapter("net/minecraft/class_304",
+                "(Ljava/lang/String;Lnet/minecraft/class_3675$class_307;ILjava/lang/String;)V",
+                "(Ljava/lang/String;Lnet/minecraft/class_3675$class_307;IL" + category + ";)V", toCategory);
+            transformer.registerSuperConstructorAdapter("net/minecraft/class_304",
+                "(Ljava/lang/String;ILjava/lang/String;)V",
+                "(Ljava/lang/String;IL" + category + ";)V", toCategory);
         }
 
         // BlockEntityRenderer moved to OrderedRenderCommandQueue; no redirect needed for the common cases.

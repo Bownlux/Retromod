@@ -2,5 +2,6 @@
 package net.minecraft.world.item.crafting;
 
 public final class RecipeHolder<T extends Recipe<?>> {
+    public RecipeHolder(net.minecraft.resources.ResourceKey<Recipe<?>> id, T value) { throw new UnsupportedOperationException(); }
     public T value() { throw new UnsupportedOperationException(); }
 }

@@ -17,8 +17,14 @@ public class Minecraft {
     public MultiPlayerGameMode gameMode;
     public LocalPlayer player;
     // Final on the host.
+    public net.minecraft.client.gui.components.debug.DebugScreenEntryList debugEntries;
+    // Final on the host.
     public LevelRenderer levelRenderer;
     public GameRenderer gameRenderer;
+    // Final on the host.
+    public net.minecraft.client.gui.Font font;
+    // Final on the host, from 26.2.
+    public net.minecraft.client.renderer.extract.LevelExtractor levelExtractor;
 
     public static Minecraft getInstance() { throw new UnsupportedOperationException(); }
     public ClientPacketListener getConnection() { throw new UnsupportedOperationException(); }
@@ -30,6 +36,7 @@ public class Minecraft {
     public DeltaTracker getDeltaTracker() { throw new UnsupportedOperationException(); }
     public net.minecraft.server.packs.resources.ResourceManager getResourceManager() { throw new UnsupportedOperationException(); }
     public net.minecraft.client.renderer.texture.TextureManager getTextureManager() { throw new UnsupportedOperationException(); }
+    public net.minecraft.client.resources.model.sprite.AtlasManager getAtlasManager() { throw new UnsupportedOperationException(); }
     public net.minecraft.client.resources.model.ModelManager getModelManager() { throw new UnsupportedOperationException(); }
     public net.minecraft.client.renderer.item.ItemModelResolver getItemModelResolver() { throw new UnsupportedOperationException(); }
     public net.minecraft.client.color.block.BlockColors getBlockColors() { throw new UnsupportedOperationException(); }

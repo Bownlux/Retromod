@@ -98,7 +98,7 @@ public final class IsOverloadBridgeSynthetic {
         // The 1.21.11 to 26.1 shims register this, so every chain to 26.1+ gets it on all three
         // loaders. The Fabric synthetic pass or the NeoForge and Forge SyntheticEmbedder puts the
         // class in the mod jar.
-        t.registerSyntheticClass(INTERNAL, generate());
+        t.registerSyntheticClass(INTERNAL, generate(LegacyJigsawBlockInfoBridge.hostRebuiltIt(com.retromod.core.ClassResourceInspector::read)));
         t.registerSyntheticClass(PREDICATE_SELECTOR_INTERNAL, generatePredicateSelector());
 
         // 26.1 removed the single-argument is(...) that nearly every mod calls, so a 1.21.x mod died
@@ -259,8 +259,13 @@ public final class IsOverloadBridgeSynthetic {
         };
     }
 
-    /** Builds the helper class; its is(...) helpers use only members present on 26.1 and 26.2. */
+    /** Builds the helper class for the host's jigsaw shape, read from the host or, offline, the target. */
     public static byte[] generate() {
+        return generate(LegacyJigsawBlockInfoBridge.hostRebuiltIt(com.retromod.core.ClassResourceInspector::read));
+    }
+
+    /** Builds the helper class; {@code jigsawRebuilt} is true on 26.3 and newer, whose jigsaw info has no block info. */
+    static byte[] generate(boolean jigsawRebuilt) {
         ClassWriter cw = newWriter();
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL, INTERNAL, null, "java/lang/Object", null);
 
@@ -300,8 +305,10 @@ public final class IsOverloadBridgeSynthetic {
         emitLevelGetNearbyEntities(cw);
         emitCameraOrientation(cw);
 
-        emitShuffledJigsawBlocks(cw);
-        emitJigsawCanAttach(cw);
+        emitShuffledJigsawBlocks(cw, jigsawRebuilt);
+        emitJigsawCanAttach(cw, jigsawRebuilt);
+        // 26.3 has no info(); the unwrap rebuilds the old block info here instead.
+        if (jigsawRebuilt) LegacyJigsawBlockInfoBridge.emitInfo(cw, "jigsawInfo", ACC_PRIVATE | ACC_STATIC);
 
         cw.visitEnd();
         return cw.toByteArray();
@@ -313,7 +320,7 @@ public final class IsOverloadBridgeSynthetic {
      * wrapped StructureBlockInfo (26.x wraps; 1.21.x callers cast the elements). Elements that are
      * not JigsawBlockInfo pass through, so the helper is harmless if the shape changes again.
      */
-    private static void emitShuffledJigsawBlocks(ClassWriter cw) {
+    private static void emitShuffledJigsawBlocks(ClassWriter cw, boolean jigsawRebuilt) {
         MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "shuffledJigsawBlocks",
                 "(L" + SPE + ";" + SHUFFLED_DESC.substring(1), null, null);
         m.visitCode();
@@ -343,7 +350,11 @@ public final class IsOverloadBridgeSynthetic {
         m.visitVarInsn(ALOAD, 6);
         m.visitVarInsn(ALOAD, 8);
         m.visitTypeInsn(CHECKCAST, JBI);
-        m.visitMethodInsn(INVOKEVIRTUAL, JBI, "info", "()L" + SBI + ";", false);
+        if (jigsawRebuilt) {
+            m.visitMethodInsn(INVOKESTATIC, INTERNAL, "jigsawInfo", "(L" + JBI + ";)L" + SBI + ";", false);
+        } else {
+            m.visitMethodInsn(INVOKEVIRTUAL, JBI, "info", "()L" + SBI + ";", false);
+        }
         m.visitMethodInsn(INVOKEVIRTUAL, "java/util/ArrayList", "add", "(Ljava/lang/Object;)Z", false);
         m.visitInsn(POP);
         m.visitJumpInsn(GOTO, loop);
@@ -361,15 +372,17 @@ public final class IsOverloadBridgeSynthetic {
     }
 
     /** static boolean jigsawCanAttach(SBI a, SBI b) = JigsawBlock.canAttach(of(a), of(b)). */
-    private static void emitJigsawCanAttach(ClassWriter cw) {
+    private static void emitJigsawCanAttach(ClassWriter cw, boolean jigsawRebuilt) {
+        // 26.3 renamed of to parse.
+        String parse = jigsawRebuilt ? "parse" : "of";
         String jigsawBlock = "net/minecraft/world/level/block/JigsawBlock";
         MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "jigsawCanAttach",
                 "(L" + SBI + ";L" + SBI + ";)Z", null, null);
         m.visitCode();
         m.visitVarInsn(ALOAD, 0);
-        m.visitMethodInsn(INVOKESTATIC, JBI, "of", "(L" + SBI + ";)L" + JBI + ";", false);
+        m.visitMethodInsn(INVOKESTATIC, JBI, parse, "(L" + SBI + ";)L" + JBI + ";", false);
         m.visitVarInsn(ALOAD, 1);
-        m.visitMethodInsn(INVOKESTATIC, JBI, "of", "(L" + SBI + ";)L" + JBI + ";", false);
+        m.visitMethodInsn(INVOKESTATIC, JBI, parse, "(L" + SBI + ";)L" + JBI + ";", false);
         m.visitMethodInsn(INVOKESTATIC, jigsawBlock, "canAttach",
                 "(L" + JBI + ";L" + JBI + ";)Z", false);
         m.visitInsn(IRETURN);

@@ -4,8 +4,12 @@
  */
 package com.retromod.shim.common.embedded;
 
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -31,6 +35,8 @@ public final class LegacyCauldronInteractions {
     private static final String ITEM = "net.minecraft.world.item.Item";
     private static final String DISPATCHERS = "net.minecraft.core.cauldron.CauldronInteractions";
     private static final AtomicInteger NEXT_NAME = new AtomicInteger();
+    /** One stand-in per old behavior field, so a mod comparing two reads of the same field sees one object. */
+    private static final Map<String, Object> BEHAVIORS = new ConcurrentHashMap<>();
 
     private LegacyCauldronInteractions() {}
 
@@ -66,6 +72,66 @@ public final class LegacyCauldronInteractions {
     /** The old {@code CauldronInteraction.POWDER_SNOW}. */
     public static Map<?, ?> powderSnow() {
         return vanillaTable("POWDER_SNOW");
+    }
+
+    /**
+     * The old behavior field whose vanilla behavior is the host method {@code hostMethod}, such as
+     * {@code CauldronInteraction.BANNER} for {@code bannerInteraction}. 1.21.2 made those behaviors
+     * private methods, and 26.1 moved them to {@code CauldronInteractions}.
+     */
+    public static Object behavior(String hostMethod) {
+        return BEHAVIORS.computeIfAbsent(hostMethod, LegacyCauldronInteractions::newBehavior);
+    }
+
+    private static Object newBehavior(String hostMethod) {
+        ClassLoader loader = LegacyCauldronInteractions.class.getClassLoader();
+        try {
+            Class<?> interaction = Class.forName(INTERACTION, false, loader);
+            Method target = hostBehavior(loader, interaction, hostMethod);
+            InvocationHandler handler = (proxy, method, args) -> {
+                // Only the one abstract method runs the host's behavior; the rest keep their usual meaning.
+                if (method.getName().equals("interact") && args != null && args.length == target.getParameterCount()) {
+                    try {
+                        return target.invoke(null, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                }
+                if (method.isDefault()) return InvocationHandler.invokeDefault(proxy, method, args);
+                return switch (method.getName()) {
+                    case "hashCode" -> System.identityHashCode(proxy);
+                    case "equals" -> proxy == args[0];
+                    case "toString" -> "cauldron behavior " + hostMethod;
+                    default -> throw new UnsupportedOperationException(method.getName());
+                };
+            };
+            return Proxy.newProxyInstance(interaction.getClassLoader(), new Class<?>[] {interaction}, handler);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            throw new IllegalStateException("Retromod could not find the vanilla cauldron behavior " + hostMethod, e);
+        }
+    }
+
+    /** The host's static behavior method, in {@code CauldronInteractions} from 26.1 or in the interface before. */
+    private static Method hostBehavior(ClassLoader loader, Class<?> interaction, String name)
+            throws ReflectiveOperationException {
+        Class<?> owner;
+        try {
+            owner = Class.forName(DISPATCHERS, false, loader);
+        } catch (ClassNotFoundException before26) {
+            owner = interaction;
+        }
+        for (Method method : owner.getDeclaredMethods()) {
+            if (method.getName().equals(name) && java.lang.reflect.Modifier.isStatic(method.getModifiers())
+                    && method.getParameterCount() == 6) {
+                try {
+                    method.setAccessible(true);
+                } catch (RuntimeException alreadyPublic) {
+                    // NeoForge makes these public; plain Minecraft keeps them private.
+                }
+                return method;
+            }
+        }
+        throw new NoSuchMethodException(owner.getName() + "." + name);
     }
 
     private static Map<?, ?> vanillaTable(String name) {

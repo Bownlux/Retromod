@@ -2,4 +2,5 @@
 package net.minecraft.util;
 
 public interface FormattedCharSequence {
+    boolean accept(FormattedCharSink sink);
 }

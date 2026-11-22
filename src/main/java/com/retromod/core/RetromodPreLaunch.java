@@ -650,12 +650,22 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                     // transformed unless they already target the host exactly.
                     new com.retromod.gui.ModComplexityAnalyzer().analyze(modJar);
 
-                    boolean needsTransform = declaredRanges.stream()
-                        .noneMatch(range -> isExactVersionMatch(range, targetVersion));
+                    // No Minecraft constraint, or one like "*", says nothing about age, so the jar's own classes
+                    // decide (Essential), as the CLI does for a source version it cannot read.
+                    boolean needsTransform = UnversionedJarEvidence.datesNothing(declaredRanges)
+                        ? !UnversionedJarEvidence.isBuiltForHost(modJar, targetVersion)
+                        : declaredRanges.stream().noneMatch(range -> isExactVersionMatch(range, targetVersion));
                     boolean quiltMod = QuiltModTransformer.isQuiltMod(modJar);
                     boolean completed = false;
 
-                    if (quiltMod) {
+                    // A current Fabric or Quilt jar is copied byte for byte, nested jars included.
+                    if (!needsTransform) {
+                        LOGGER.info("{} already targets Minecraft {}; copying it unchanged",
+                            fileName, targetVersion);
+                        FabricModTransformer.copyArchiveReplacingAtomically(
+                            modJar, outputFolder.resolve(fileName));
+                        completed = true;
+                    } else if (quiltMod) {
                         if (quiltTransformer == null) {
                             quiltTransformer = new QuiltModTransformer(targetVersion);
                         }
@@ -663,22 +673,13 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
                         Path transformed = quiltTransformer.transformMod(modJar, outputFolder, libraries);
                         if (transformed != null) {
                             libraries.add(transformed);
-                            if (!needsTransform) {
-                                LOGGER.info("{} already targets Minecraft {}; copying it unchanged",
-                                    fileName, targetVersion);
-                            } else if (!optedOut) {
+                            if (!optedOut) {
                                 LOGGER.info("Updated {} as {}", fileName,
                                     transformed.getFileName());
                                 transformedMods.add(fileName);
                             }
                             completed = true;
                         }
-                    } else if (!needsTransform) {
-                        LOGGER.info("{} already targets Minecraft {}; copying it unchanged",
-                            fileName, targetVersion);
-                        FabricModTransformer.copyArchiveReplacingAtomically(
-                            modJar, outputFolder.resolve(fileName));
-                        completed = true;
                     } else {
                         if (transformer == null) {
                             transformer = new FabricModTransformer(targetVersion);

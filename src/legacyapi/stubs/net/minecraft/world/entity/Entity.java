@@ -14,13 +14,20 @@ public class Entity {
     public EntityType<?> getType() { throw new UnsupportedOperationException(); }
     public final net.minecraft.world.phys.Vec3 position() { throw new UnsupportedOperationException(); }
     public net.minecraft.world.entity.item.ItemEntity spawnAtLocation(net.minecraft.server.level.ServerLevel level, net.minecraft.world.item.ItemStack stack) { throw new UnsupportedOperationException(); }
+    public net.minecraft.world.entity.item.ItemEntity spawnAtLocation(net.minecraft.server.level.ServerLevel level, net.minecraft.world.item.ItemStack stack, float offsetY) { throw new UnsupportedOperationException(); }
+    public net.minecraft.world.entity.item.ItemEntity spawnAtLocation(net.minecraft.server.level.ServerLevel level, net.minecraft.world.level.ItemLike item) { throw new UnsupportedOperationException(); }
     public float getYRot() { throw new UnsupportedOperationException(); }
+    public float getXRot() { throw new UnsupportedOperationException(); }
+    public Entity teleport(net.minecraft.world.level.portal.TeleportTransition transition) { throw new UnsupportedOperationException(); }
     public final double getX() { throw new UnsupportedOperationException(); }
     public final double getY() { throw new UnsupportedOperationException(); }
     public final double getZ() { throw new UnsupportedOperationException(); }
+    public float getBbHeight() { throw new UnsupportedOperationException(); }
+    public net.minecraft.commands.CommandSourceStack createCommandSourceStackForNameResolution(net.minecraft.server.level.ServerLevel level) { throw new UnsupportedOperationException(); }
     public Level level() { throw new UnsupportedOperationException(); }
     public java.util.Set<String> entityTags() { throw new UnsupportedOperationException(); }
     public boolean startRiding(Entity vehicle, boolean force, boolean sendEvents) { throw new UnsupportedOperationException(); }
+    public boolean onGround() { throw new UnsupportedOperationException(); }
     public BlockPos blockPosition() { throw new UnsupportedOperationException(); }
     public Entity getVehicle() { throw new UnsupportedOperationException(); }
     public boolean showVehicleHealth() { throw new UnsupportedOperationException(); }
@@ -29,4 +36,8 @@ public class Entity {
     public int getMaxAirSupply() { throw new UnsupportedOperationException(); }
     public boolean shouldShowName() { throw new UnsupportedOperationException(); }
     public boolean hasCustomName() { throw new UnsupportedOperationException(); }
+    public void setPos(double x, double y, double z) { throw new UnsupportedOperationException(); }
+    public final void setOldPosAndRot() { throw new UnsupportedOperationException(); }
+    public boolean canBeCollidedWith(Entity other) { throw new UnsupportedOperationException(); }
+    public boolean isPassenger() { throw new UnsupportedOperationException(); }
 }

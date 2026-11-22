@@ -75,7 +75,7 @@ class LegacyRecipeSerializerLogTest {
     }
 
     // The 26.x serializer record, its codecs as far as the bridge uses them, and a game logger that keeps every line it gets.
-    private static Map<String, String> hostSources() {
+    static Map<String, String> hostSources() {
         Map<String, String> sources = new HashMap<>(Map.of(
                 "com/mojang/serialization/DynamicOps.java", "package com.mojang.serialization; public interface DynamicOps<T> {}",
                 "com/mojang/serialization/MapLike.java", "package com.mojang.serialization; public interface MapLike<T> {}",

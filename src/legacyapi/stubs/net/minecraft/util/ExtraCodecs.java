@@ -5,6 +5,10 @@ public class ExtraCodecs {
     public static final com.mojang.serialization.Codec<Integer> NON_NEGATIVE_INT = null;
     public static final com.mojang.serialization.Codec<Integer> POSITIVE_INT = null;
 
+    public static <A> com.mojang.serialization.Codec<java.util.Optional<A>> optionalEmptyMap(com.mojang.serialization.Codec<A> codec) {
+        throw new UnsupportedOperationException();
+    }
+
     public static class LateBoundIdMapper<I, V> {
         public LateBoundIdMapper() {}
         public LateBoundIdMapper<I, V> put(I id, V value) { throw new UnsupportedOperationException(); }

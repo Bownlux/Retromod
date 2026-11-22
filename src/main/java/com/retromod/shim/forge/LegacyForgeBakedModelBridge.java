@@ -97,7 +97,8 @@ public final class LegacyForgeBakedModelBridge {
                 INSTALLER));
     }
 
-    private static void registerLocations(RetromodTransformer t) {
+    /** The old location's constructors, factories and accessors as Identifier helpers; NeoForge and Fabric 26.x share them. */
+    public static void registerLocations(RetromodTransformer t) {
         String location = "L" + OLD_MODEL_LOCATION + ";";
         // Forge 1.20.1's constructors, and Forge 1.21's record constructor, build the location's Identifier.
         String[][] constructors = {

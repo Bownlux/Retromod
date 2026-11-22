@@ -8,6 +8,8 @@ import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import org.objectweb.asm.Opcodes;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
@@ -24,6 +26,9 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
 
     /** Registers every vanilla and blaze3d move; loader API renames stay in each loader's shim. */
     public static void register(RetromodTransformer transformer) {
+        // Block properties' hasPostProcess setter went in 26.1; the helper keeps the old call harmless.
+        LegacyStatePredicateBridge.register(transformer);
+        LegacyItemSubPredicateBridge.register(transformer);
         // The Gson adapter that ResourceLocation.Serializer moves to, built on the game's own Gson.
         LegacyIdentifierSerializer.register(transformer);
         registerIdentifierMemberRenames(transformer);
@@ -40,6 +45,12 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         // pointing one at the nearest surviving name produced an inheritance error instead (#260).
         RemovedItemBaseBridge.register(transformer);
         RemovedBaseToParentBridge.register(transformer);
+        // Villager schedules became environment timelines; old schedule code builds a rebuilt plan.
+        LegacyScheduleBridge.register(transformer);
+        // Pack metadata is read through MetadataSectionType; the serializer interface and its stream reader are gone.
+        LegacyMetadataSectionBridge.register(transformer);
+        // RootsBlock became NetherRootsBlock, which also names the blocks the roots grow on.
+        LegacyReplacedBlockBridge.register(transformer, LegacyReplacedBlockBridge.NETHER_ROOTS);
 
         // Biome fog, sky, and water fog colors, particles, sounds, and music became environment
         // attributes in 1.21.11, so an old code-built biome lost its setters.
@@ -105,6 +116,12 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
             "net/minecraft/resources/ResourceKey", "location", "identifier");
         // Only a server level has game rules, and they are read with get(rule), not typed getters.
         LegacyGameRuleCallBridge.register(transformer);
+        // ComponentContents.Type is gone; a mod's own text content answers codec() through a stand-in.
+        LegacyComponentContentsBridge.register(transformer);
+        // Ingredient's old list codecs are gone; an old recipe serializer reads them from the ingredient codec.
+        LegacyIngredientCodecsBridge.register(transformer);
+        // RandomPatchConfiguration is gone; a mod's own patch feature keeps a rebuilt configuration.
+        LegacyRandomPatchBridge.register(transformer);
         // 26.1 moved the firework recipes' ingredient constants and shape table into recipe data.
         LegacyFireworkConstantBridge.register(transformer);
         // ItemStack.getItemHolder() is the typed instance's typeHolder() in 26.1.
@@ -166,6 +183,33 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         registerCorpus26xDescriptorAdaptations(transformer);
         LegacyGuiDrawBridge.register(transformer);
         LegacyGuiExtractBridge.register(transformer);
+        // Render getters, render targets, link screens, cycle buttons and chat characters, checked per host.
+        LegacyClientCallsBridge.register(transformer);
+        // Custom render types built from state shards, on 26.1 and 26.2; 26.3 registers from its own layer.
+        LegacyRenderTypeBridge.registerBefore263(transformer);
+        // DimensionSpecialEffects, which 26.1 replaced with environment attributes.
+        LegacyRenderStageBridge.registerDimensionEffects(transformer);
+        // BufferUploader, whose meshes are closed and not drawn, and the matrix projection calls, kept as stored values.
+        LegacyBufferUploaderBridge.register(transformer);
+        // ModelManager.getAtlas, answered by the client's atlas manager.
+        LegacyModelAtlasBridge.register(transformer);
+        // Sprite constructors, the missing texture, and sprite baking, each checked against the host.
+        LegacySpriteBridge.register(transformer);
+        // Single removed members that kept otherwise clean mods from linking.
+        LegacySmallCallsBridge.register(transformer);
+        LegacyOldModelsBridge.register(transformer);
+        // Shader getters, the PoseStack model view, the main render target, level renderer and texture calls.
+        LegacyRenderAccessBridge.register(transformer);
+        // The int[] BakedQuad getters and constructor, which Forge's model bridge also registers on Forge hosts.
+        LegacyQuadGettersBridge.register(transformer);
+        LegacyOptionsBridge.register(transformer);
+        LegacyGameDataShapesBridge.register(transformer);
+        LegacyClientGapsBridge.register(transformer);
+        LegacyScatteredMembersBridge.register(transformer);
+        // Members 1.20.1 mods call that later versions removed: respawn points, game profiles, portal targets.
+        Legacy1201MemberBridge.register(transformer);
+        // Removed members the big content mods call, rebuilt on their replacements.
+        LegacyContentCallsBridge.register(transformer);
         LegacyDepthBlendBridge.registerDepthState(transformer);
         // The chunk's moved flag, the spawn entry codec and the villager type constants, for every loader on 26.1.
         LegacyWorldgenMembersBridge.registerOlder(transformer);
@@ -234,12 +278,16 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
      * entry below was matched through the 1.21.11 intermediary mapping and verified on the 26.1.2
      * host class.
      *
-     * <p>Retromod refuses {@code RULE_DOFIRETICK}, whose boolean contract became a radius, and the
-     * three negative-to-positive rules {@code RULE_DISABLE_ELYTRA_MOVEMENT_CHECK},
-     * {@code RULE_DISABLE_PLAYER_MOVEMENT_CHECK}, and {@code RULE_DISABLE_RAIDS}. A field rename
-     * cannot preserve those values without an inversion adapter.</p>
+     * <p>{@code RULE_DOFIRETICK}, whose boolean became a radius, and the three negative-to-positive
+     * rules {@code RULE_DISABLE_ELYTRA_MOVEMENT_CHECK}, {@code RULE_DISABLE_PLAYER_MOVEMENT_CHECK},
+     * and {@code RULE_DISABLE_RAIDS} are renamed only when the host shape lets the old readers
+     * ({@code getBoolean}, {@code getRule}) translate their values. Anywhere else they stay unresolved.</p>
      */
     public static void registerGameRuleFieldRenames(RetromodTransformer transformer) {
+        registerGameRuleFieldRenames(transformer, LegacyGameRuleValueBridge.hostShape());
+    }
+
+    static void registerGameRuleFieldRenames(RetromodTransformer transformer, LegacyGameRuleValueBridge.Shape shape) {
         String owner = "net/minecraft/world/level/gamerules/GameRules";
         String descriptor = "Lnet/minecraft/world/level/gamerules/GameRule;";
         String[][] renames = {
@@ -299,7 +347,18 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         // way, and the pre-move entry also repoints the owner itself, so one rewrite does both.
         String legacyOwner = "net/minecraft/world/level/GameRules";
         String legacyDescriptor = "Lnet/minecraft/world/level/GameRules$Key;";
-        for (String[] rename : renames) {
+        List<String[]> all = new ArrayList<>(Arrays.asList(renames));
+        // The fire switch and the three inverted rules are renamed only where the game rule
+        // readers that translate their values (LegacyGameRuleValueBridge) can be built.
+        if (shape.radius()) all.add(new String[]{"RULE_DOFIRETICK", LegacyGameRuleValueBridge.RADIUS_RULE});
+        String[][] inverted = {
+            {"RULE_DISABLE_ELYTRA_MOVEMENT_CHECK", "ELYTRA_MOVEMENT_CHECK"},
+            {"RULE_DISABLE_PLAYER_MOVEMENT_CHECK", "PLAYER_MOVEMENT_CHECK"},
+            {"RULE_DISABLE_RAIDS", "RAIDS"}};
+        for (String[] rename : inverted) {
+            if (shape.views() && shape.inverted().contains(rename[1])) all.add(rename);
+        }
+        for (String[] rename : all) {
             transformer.registerFieldRedirect(
                     owner, rename[0], descriptor,
                     owner, rename[1], descriptor);
@@ -322,6 +381,12 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                 "(Ljava/lang/String;)Lnet/minecraft/world/entity/EntityType;",
                 "com/retromod/polyfill/minecraft/RetroEntityTypeBuild", "buildOfficial",
                 "(Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/Object;");
+        // Fabric API up to 1.21.1 gave the builder a build() that took no name; Fabric mods reach it here after the remap.
+        transformer.registerMethodRedirect(
+                "net/minecraft/world/entity/EntityType$Builder", "build",
+                "()Lnet/minecraft/world/entity/EntityType;",
+                "com/retromod/polyfill/minecraft/RetroEntityTypeBuild", "buildOfficial",
+                "(Ljava/lang/Object;)Ljava/lang/Object;");
     }
 
     /**
@@ -485,6 +550,8 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
 
         registerNbtApiAdaptations26x(t);
         registerTextEventBridges26x(t);
+        // VariantHolder is gone; old entities that implement it get a rebuilt interface.
+        LegacyVariantHolderBridge.register(t);
         registerKeyMappingBridges26x(t);
         registerReloadListenerBridge26x(t);
         registerClientStructureBridges26x(t);
@@ -494,6 +561,10 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         LegacyItemNameBridge.register26x(t);
         // Item stacks need bound components from 26.1, which a world's data binds; old mods build them earlier.
         LegacyEarlyItemStackBridge.register26x(t);
+        // Their item stack codecs read stacks the same way, since 26.3 loads recipes before binding.
+        LegacyItemStackCodecsBridge.register26x(t);
+        // Villager.MEMORY_TYPES and SENSOR_TYPES became the villager's brain provider.
+        LegacyVillagerBrainBridge.register(t);
     }
 
     /**
@@ -964,6 +1035,12 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
                 "(Lnet/minecraft/network/chat/HoverEvent$Action;Ljava/lang/Object;)V",
                 "com/retromod/polyfill/minecraft/RetroTextEvents", "hoverEvent",
                 "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+        // The old getters, read by codecs that encode a click event as an action and a value.
+        String click = "net/minecraft/network/chat/ClickEvent";
+        String action = "()L" + click + "$Action;";
+        t.registerMethodRedirect(click, "getAction", action, click, "action", action);
+        t.registerMethodRedirect(click, "getValue", "()Ljava/lang/String;",
+                "com/retromod/polyfill/minecraft/RetroTextEvents", "clickValue", "(Ljava/lang/Object;)Ljava/lang/String;", true);
     }
 
     /** Keybind constructors and quad loops whose 1.21.x shapes are gone on 26.x. */
@@ -1034,35 +1111,67 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
      */
     static void registerStringCategoryKeyMappingSubclasses(RetromodTransformer t) {
         String keyMapping = "net/minecraft/client/KeyMapping";
-        String category = "net/minecraft/client/KeyMapping$Category";
+        String category = "Lnet/minecraft/client/KeyMapping$Category;";
         String type = "Lcom/mojang/blaze3d/platform/InputConstants$Type;";
-        String helper = "com/retromod/polyfill/minecraft/RetroKeyMapping";
+        String key = "Lcom/mojang/blaze3d/platform/InputConstants$Key;";
+        String name = "Ljava/lang/String;";
         // (name, code, category): convert the category, then the code beneath it.
-        t.registerSuperConstructorAdapter(keyMapping, "(Ljava/lang/String;ILjava/lang/String;)V",
-                "(Ljava/lang/String;IL" + category + ";)V", mv -> {
-                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, helper, "category", "(Ljava/lang/String;)Ljava/lang/Object;", false);
+        t.registerSuperConstructorAdapter(keyMapping, "(" + name + "I" + name + ")V",
+                "(" + name + "I" + category + ")V", mv -> {
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, KEY_MAPPING_HELPER, "category", "(Ljava/lang/String;)Ljava/lang/Object;", false);
                     mv.visitInsn(Opcodes.SWAP);
-                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, helper, "hostKeyCode", "(I)I", false);
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, KEY_MAPPING_HELPER, "hostKeyCode", "(I)I", false);
                     mv.visitInsn(Opcodes.SWAP);
-                    mv.visitTypeInsn(Opcodes.CHECKCAST, category);
+                    mv.visitTypeInsn(Opcodes.CHECKCAST, "net/minecraft/client/KeyMapping$Category");
                 });
-        // (name, type, code, category): the code is translated by its input type, which sits two below the category.
-        t.registerSuperConstructorAdapter(keyMapping, "(Ljava/lang/String;" + type + "ILjava/lang/String;)V",
-                "(Ljava/lang/String;" + type + "IL" + category + ";)V", mv -> {
-                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, helper, "category", "(Ljava/lang/String;)Ljava/lang/Object;", false);
-                    // name, type, code, cat -> name, cat, type, code
-                    mv.visitInsn(Opcodes.DUP_X2);
-                    mv.visitInsn(Opcodes.POP);
-                    // -> name, cat, type, type, code
-                    mv.visitInsn(Opcodes.SWAP);
-                    mv.visitInsn(Opcodes.DUP_X1);
-                    mv.visitInsn(Opcodes.SWAP);
-                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, helper, "hostCode", "(Ljava/lang/Object;I)I", false);
-                    // name, cat, type, code -> name, type, code, cat
-                    mv.visitInsn(Opcodes.DUP2_X1);
-                    mv.visitInsn(Opcodes.POP2);
-                    mv.visitTypeInsn(Opcodes.CHECKCAST, category);
-                });
+        // (name, type, code, category): the code is translated by its input type.
+        t.registerSuperConstructorAdapter(keyMapping, "(" + name + type + "I" + name + ")V",
+                "(" + name + type + "I" + category + ")V",
+                Common_1_21_11_to_26_1_ClassMoves::typedCodeAndCategory);
+
+        // NeoForge's and Forge's conflict-context constructors lost their String category too. NeoForge's take the
+        // Category last; Forge's (checked on Forge 1.21.11 and 26.2) add an int sort order after it, which vanilla fills with 0.
+        String[][] loaders = {{"Lnet/neoforged/neoforge/client/settings/", ""},
+                {"Lnet/minecraftforge/client/settings/", "I"}};
+        for (String[] loader : loaders) {
+            String context = loader[0] + "IKeyConflictContext;";
+            String modifier = loader[0] + "KeyModifier;";
+            String order = loader[1];
+            // (name, context, [modifier,] type, code, category): the code and category, as above.
+            for (String prefix : new String[]{name + context, name + context + modifier}) {
+                t.registerSuperConstructorAdapter(keyMapping, "(" + prefix + type + "I" + name + ")V",
+                        "(" + prefix + type + "I" + category + order + ")V", mv -> {
+                            typedCodeAndCategory(mv);
+                            if (!order.isEmpty()) mv.visitInsn(Opcodes.ICONST_0);
+                        });
+                // (name, context, [modifier,] key, category): a Key already holds the host's code.
+                t.registerSuperConstructorAdapter(keyMapping, "(" + prefix + key + name + ")V",
+                        "(" + prefix + key + category + order + ")V", mv -> {
+                            mv.visitMethodInsn(Opcodes.INVOKESTATIC, KEY_MAPPING_HELPER, "category", "(Ljava/lang/String;)Ljava/lang/Object;", false);
+                            mv.visitTypeInsn(Opcodes.CHECKCAST, "net/minecraft/client/KeyMapping$Category");
+                            if (!order.isEmpty()) mv.visitInsn(Opcodes.ICONST_0);
+                        });
+            }
+        }
+    }
+
+    private static final String KEY_MAPPING_HELPER = "com/retromod/polyfill/minecraft/RetroKeyMapping";
+
+    /** Turns the top {@code (type, code, String)} of the stack into {@code (type, host code, Category)}. */
+    private static void typedCodeAndCategory(org.objectweb.asm.MethodVisitor mv) {
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, KEY_MAPPING_HELPER, "category", "(Ljava/lang/String;)Ljava/lang/Object;", false);
+        // type, code, cat -> cat, type, code
+        mv.visitInsn(Opcodes.DUP_X2);
+        mv.visitInsn(Opcodes.POP);
+        // -> cat, type, type, code
+        mv.visitInsn(Opcodes.SWAP);
+        mv.visitInsn(Opcodes.DUP_X1);
+        mv.visitInsn(Opcodes.SWAP);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, KEY_MAPPING_HELPER, "hostCode", "(Ljava/lang/Object;I)I", false);
+        // cat, type, code -> type, code, cat
+        mv.visitInsn(Opcodes.DUP2_X1);
+        mv.visitInsn(Opcodes.POP2);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, "net/minecraft/client/KeyMapping$Category");
     }
 
     /**

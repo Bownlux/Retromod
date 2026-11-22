@@ -64,7 +64,7 @@ public final class LegacyForgeHooksBridge {
 
     /** Unconditional registration for transform-shape tests. */
     static void registerRedirects(RetromodTransformer transformer, boolean tierCheck) {
-        transformer.registerSyntheticClass(HELPER, generateHelper());
+        transformer.registerSyntheticClass(HELPER, generateHelper(tierCheck));
         // Class first, so the member redirects below also match the renamed owner.
         transformer.registerClassRedirect(FORGE_HOOKS, COMMON_HOOKS);
         transformer.registerMethodRedirect(FORGE_HOOKS, "onLivingAttack", ATTACK_DESC,
@@ -82,6 +82,10 @@ public final class LegacyForgeHooksBridge {
     }
 
     static byte[] generateHelper() {
+        return generateHelper(true);
+    }
+
+    static byte[] generateHelper(boolean tierCheck) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
             @Override
             protected String getCommonSuperClass(String first, String second) {
@@ -128,6 +132,14 @@ public final class LegacyForgeHooksBridge {
         drops.visitInsn(Opcodes.IRETURN);
         end(drops);
 
+        // Only a host that still has Tier gets the tier check; elsewhere Tier becomes ToolMaterial, which lacks the getter.
+        if (tierCheck) emitTierCheck(cw);
+
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    private static void emitTierCheck(ClassWriter cw) {
         MethodVisitor tier = begin(cw, "isCorrectTierForDrops", TIER_DESC);
         Label incorrect = new Label();
         tier.visitVarInsn(Opcodes.ALOAD, 1);
@@ -142,9 +154,6 @@ public final class LegacyForgeHooksBridge {
         tier.visitInsn(Opcodes.ICONST_0);
         tier.visitInsn(Opcodes.IRETURN);
         end(tier);
-
-        cw.visitEnd();
-        return cw.toByteArray();
     }
 
     /** A fresh container for (source, amount) in slots 1 and 2. */

@@ -48,6 +48,7 @@ def is_hashed_entry(name: str) -> bool:
         or name.startswith("retromod/")
         or name in {
             "intermediary-to-mojang.tsv",
+            "intermediary-bridged-names.tsv",
             "mojang-class-moves-26.1.tsv",
             "retromod.mixins.json",
         }

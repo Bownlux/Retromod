@@ -5,4 +5,5 @@ public final class Weighted<T> {
     public Weighted(T value, int weight) { throw new UnsupportedOperationException(); }
     public T value() { throw new UnsupportedOperationException(); }
     public int weight() { throw new UnsupportedOperationException(); }
+    public static <E> com.mojang.serialization.Codec<Weighted<E>> codec(com.mojang.serialization.Codec<E> element) { throw new UnsupportedOperationException(); }
 }

@@ -404,6 +404,9 @@ public class FullAotCompiler {
             // A final host method the jar's own access transformer or widener opens can still be overridden.
             final java.util.Set<String> jarOpenedFinals =
                     com.retromod.shim.common.OpenedFinalMethods.read(jar, targetVersion);
+            // Handlers another class of the mod calls or references, which the subscriber guard keeps.
+            final java.util.Set<String> handlerReferences = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard
+                    .methodsReferencedAcrossClasses(classEntries.values());
             java.util.concurrent.atomic.AtomicReference<IOException> fatalFailure =
                     new java.util.concurrent.atomic.AtomicReference<>();
             
@@ -439,6 +442,8 @@ public class FullAotCompiler {
                                     mixinTransformer,
                                     transformed != null ? transformed : preparedMixin,
                                     className, refmapRepairs);
+                            transformed = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard.apply(transformed,
+                                    transformer.getSyntheticClasses()::containsKey, handlerReferences::contains);
 
                             if (transformed != null && transformed != original) {
                                 if (transformed.length > ZipSecurity.DEFAULT_MAX_ENTRY_SIZE) {

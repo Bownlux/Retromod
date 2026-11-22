@@ -15,6 +15,7 @@ public class ServerPlayer extends Player {
     public ServerPlayer(MinecraftServer server, ServerLevel level, GameProfile profile, ClientInformation information) {}
 
     public ServerLevel level() { throw new UnsupportedOperationException(); }
+    public net.minecraft.commands.CommandSourceStack createCommandSourceStack() { throw new UnsupportedOperationException(); }
     public void tick() { throw new UnsupportedOperationException(); }
     public void die(DamageSource source) { throw new UnsupportedOperationException(); }
     public boolean canHarmPlayer(Player other) { throw new UnsupportedOperationException(); }
@@ -22,4 +23,13 @@ public class ServerPlayer extends Player {
     public void awardStat(Stat<?> stat, int amount) { throw new UnsupportedOperationException(); }
     public void sendSystemMessage(Component message, boolean overlay) { throw new UnsupportedOperationException(); }
     public void updateOptions(ClientInformation information) { throw new UnsupportedOperationException(); }
+    public RespawnConfig getRespawnConfig() { throw new UnsupportedOperationException(); }
+    public void setRespawnPosition(RespawnConfig config, boolean sendMessage) { throw new UnsupportedOperationException(); }
+
+    // A record on the host.
+    public static final class RespawnConfig {
+        public RespawnConfig(net.minecraft.world.level.storage.LevelData.RespawnData respawnData, boolean forced) {}
+        public net.minecraft.world.level.storage.LevelData.RespawnData respawnData() { throw new UnsupportedOperationException(); }
+        public boolean forced() { throw new UnsupportedOperationException(); }
+    }
 }

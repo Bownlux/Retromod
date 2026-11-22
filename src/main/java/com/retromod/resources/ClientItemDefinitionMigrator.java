@@ -15,6 +15,7 @@ import com.google.gson.stream.JsonReader;
 import com.retromod.core.RetromodVersion;
 import com.retromod.shim.common.LegacyItemPropertiesBridge;
 import com.retromod.shim.common.LegacyItemRendererBridge;
+import com.retromod.shim.fabric.LegacyBuiltinItemRendererBridge;
 import com.retromod.shim.forge.ForgeHostShape;
 import com.retromod.shim.forge.LegacyForgeItemRendererBridge;
 import com.retromod.shim.neoforge.LegacyNeoForgeItemRendererBridge;
@@ -58,6 +59,8 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
     private static final String MAP_COLOR = "minecraft:map_color";
     private static final String SEPARATE_TRANSFORMS = "forge:separate_transforms";
     // The display contexts Forge 1.20.1 read in separate_transforms, which the 1.21.4 select reads under the same names.
+    /** The generated model kind holding a Fabric renderer's display transforms, at {@code <ns>:item/retromod/<kind>/<item>}. */
+    static final String FABRIC_TRANSFORMS = "item_renderer";
     private static final Set<String> DISPLAY_CONTEXTS = Set.of("none", "thirdperson_lefthand", "thirdperson_righthand",
             "firstperson_lefthand", "firstperson_righthand", "head", "gui", "ground", "fixed");
 
@@ -113,8 +116,40 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
         // Retromod's runtime adds the property type that reads old mods' ItemProperties functions from this host on.
         boolean modProperties = context.targetAtLeast(LegacyItemPropertiesBridge.firstHost(
                 context.targetLoader() == MigrationContext.Loader.NEOFORGE));
+        // A Fabric mod's old builtin item renderers run through item model wrapping, read the same way.
+        Supplier<Boolean> fabricRenderers = () -> fabricItemRenderers(context, classNames, readClass);
         return new Run(tree, context.targetMcVersion(), context.ownNamespaces(), translateOverrides,
-                shippedOverridesUnseen, forgeFamily(context), modProperties, classNames, readClass, itemColorMods, itemRendererMods).write();
+                shippedOverridesUnseen, forgeFamily(context), modProperties, classNames, readClass, itemColorMods, itemRendererMods,
+                fabricRenderers).write();
+    }
+
+    /** Whether a Fabric jar for a host without the registry names BuiltinItemRendererRegistry, old or rebuilt. */
+    static boolean fabricItemRenderers(MigrationContext context, Collection<String> classNames, Function<String, byte[]> readClass) {
+        MigrationContext.Loader loader = context.targetLoader();
+        if ((loader != MigrationContext.Loader.FABRIC && loader != MigrationContext.Loader.QUILT)
+                || !context.targetAtLeast(LegacyBuiltinItemRendererBridge.FIRST_HOST)) {
+            return false;
+        }
+        // The class pass may already have moved the name to the rebuilt registry, relocated into the jar's package.
+        byte[] oldName = LegacyBuiltinItemRendererBridge.OLD_REGISTRY.getBytes(StandardCharsets.ISO_8859_1);
+        byte[] rebuiltName = "/LegacyBuiltinItemRendererRegistry".getBytes(StandardCharsets.ISO_8859_1);
+        for (String name : classNames) {
+            if (!name.endsWith(".class")) continue;
+            byte[] bytes = readClass.apply(name);
+            if (bytes != null && (contains(bytes, oldName) || contains(bytes, rebuiltName))) return true;
+        }
+        return false;
+    }
+
+    private static boolean contains(byte[] haystack, byte[] needle) {
+        outer:
+        for (int start = 0; start <= haystack.length - needle.length; start++) {
+            for (int i = 0; i < needle.length; i++) {
+                if (haystack[start + i] != needle[i]) continue outer;
+            }
+            return true;
+        }
+        return false;
     }
 
     // Each loader's install adds the type from its own first host: Forge from 26.2, NeoForge from 26.1.
@@ -140,7 +175,7 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
         // A null ownNamespaces writes in every namespace but the shared ones.
         boolean modProperties = atLeast(targetMcVersion, LegacyItemPropertiesBridge.FIRST_HOST);
         return new Run(tree, targetMcVersion, ownNamespaces, true, false, false, modProperties, Set.of(), name -> null, () -> null,
-                () -> null).write();
+                () -> null, () -> false).write();
     }
 
     /** A model reference as a full id. */
@@ -169,6 +204,8 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
         private final Supplier<Set<String>> itemRendererModsSource;
         private Set<String> itemRendererMods;
         private boolean itemRendererModsRead;
+        private final Supplier<Boolean> fabricRenderersSource;
+        private Boolean fabricRenderers;
 
         private final Map<String, JsonObject> models = new HashMap<>();
         private SortedSet<String> names = new TreeSet<>();
@@ -196,7 +233,8 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
 
         Run(ResourceTree tree, String target, Set<String> ownNamespaces, boolean translateOverrides,
             boolean shippedOverridesUnseen, boolean forgeModels, boolean modProperties, Collection<String> classNames,
-            Function<String, byte[]> readClass, Supplier<Set<String>> itemColorMods, Supplier<Set<String>> itemRendererMods) {
+            Function<String, byte[]> readClass, Supplier<Set<String>> itemColorMods, Supplier<Set<String>> itemRendererMods,
+            Supplier<Boolean> fabricRenderers) {
             this.tree = tree;
             this.target = target;
             this.ownNamespaces = ownNamespaces;
@@ -208,6 +246,7 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
             this.readClass = readClass;
             this.itemColorModsSource = itemColorMods;
             this.itemRendererModsSource = itemRendererMods;
+            this.fabricRenderersSource = fabricRenderers;
         }
 
         /** Writes every definition and generated file, and returns how many files it wrote. */
@@ -368,7 +407,8 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
             // 1.21.4 removed builtin/entity. An old Forge or NeoForge mod's renderer runs through the item model type its
             // constructor adds; any other item shows a flat icon from its old model instead.
             if (chain.builtinEntity()) {
-                JsonObject drawn = forgeModels ? itemRendererNode(model, chain, item, tints) : null;
+                JsonObject drawn = forgeModels ? itemRendererNode(model, chain, item, tints)
+                        : fabricRenderers() ? fabricRendererNode(model, chain, item, tints) : null;
                 if (drawn != null) return drawn;
                 String icon = icon(model, chain, item);
                 String flat = icon == null ? null : generatedModel(model, item, "builtin_entity");
@@ -402,6 +442,49 @@ public final class ClientItemDefinitionMigrator implements ModResourceConverter 
                 node.add("fallback", plain(flat, tints));
             }
             drawnByRenderer.add(item);
+            return node;
+        }
+
+        private boolean fabricRenderers() {
+            if (fabricRenderers == null) fabricRenderers = fabricRenderersSource.get();
+            return fabricRenderers;
+        }
+
+        /**
+         * The item's flat icon, with the old display transforms at {@link #FABRIC_TRANSFORMS} under the item's own id, where a
+         * Fabric mod's registered renderer reads them. Without an icon the item shows only through its renderer.
+         */
+        private JsonObject fabricRendererNode(String model, Chain chain, String item, JsonArray tints) {
+            // Named after the item, which is all the renderer's model wrapping knows.
+            String transforms = generatedModel(namespace(item) + ":item/" + item.substring(item.indexOf(':') + 1), item,
+                    FABRIC_TRANSFORMS);
+            if (transforms == null) return null;
+            JsonObject json = transformsModel(model, chain);
+            // Every context is named, as a builtin entity model drew any it left out untransformed.
+            JsonObject display = json.get("display") instanceof JsonObject own ? own : new JsonObject();
+            for (String context : DISPLAY_CONTEXTS) {
+                if (!display.has(context)) display.add(context, new JsonObject());
+            }
+            // 1.21.9 added the shelf, which every host this runs on reads.
+            if (!display.has("on_shelf")) display.add("on_shelf", new JsonObject());
+            json.add("display", display);
+            // Builtin entity models lit their GUI view from the side.
+            if (!json.has("gui_light")) json.addProperty("gui_light", "side");
+            generated.putIfAbsent(modelFile(transforms), json(json));
+            drawnByRenderer.add(item);
+            String icon = icon(model, chain, item);
+            String flat = icon == null ? null : generatedModel(model, item, "builtin_entity");
+            if (flat == null) return plain(transforms, tints);
+            generated.putIfAbsent(modelFile(flat), json(iconModel(icon)));
+            icons.add(item);
+            // The definition shows the flat icon, and names the transforms in a branch no stack takes, so the game loads
+            // them for the renderer. Only the debug stick carries its state component.
+            JsonObject node = new JsonObject();
+            node.addProperty("type", "minecraft:condition");
+            node.addProperty("property", "minecraft:has_component");
+            node.addProperty("component", "minecraft:debug_stick_state");
+            node.add("on_true", plain(transforms, tints));
+            node.add("on_false", plain(flat, tints));
             return node;
         }
 

@@ -18,6 +18,8 @@ public class Forge_1_21_1_to_1_21_2 implements VersionShim {
         com.retromod.shim.common.RemovedRenderStateNeutralize.registerRemovedIn(transformer, "1.21.2");
         // Vanilla item bases removed in 1.21.2, rebased only on hosts that lost them.
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21.2");
+        // Reshaped vanilla block constructors, each only where the host has the new one and not the old.
+        com.retromod.shim.common.LegacyBlockConstructorBridge.register(transformer);
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerRegistryValueGetterRename(
                 transformer, "net/minecraft/resources/ResourceLocation");
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerSoundEventLocation(
@@ -30,6 +32,8 @@ public class Forge_1_21_1_to_1_21_2 implements VersionShim {
         // The holder's factories and getters, and new InteractionResultHolder(result, object).
         com.retromod.shim.common.LegacyInteractionResultHolderBridge.register(transformer);
         com.retromod.shim.common.LegacyBlockApiSynthetic.register(transformer);
+        // Chest boats stopped being Boats; inherited calls on a Boat variable go through AbstractBoat.
+        com.retromod.shim.common.LegacyBoatReceiverAdapter.register(transformer);
         com.retromod.shim.common.LegacyBlockMethodBridge.register(transformer);
         // The same release replaced Properties.lootFrom with a loot table override.
         LegacyLootFromBridge.register(transformer);
@@ -48,6 +52,8 @@ public class Forge_1_21_1_to_1_21_2 implements VersionShim {
         com.retromod.shim.common.Legacy1212MemberBridge.register(transformer);
         // The build height getters became inclusive under new names; the old ones answer one higher.
         com.retromod.shim.common.LegacyBuildHeightBridge.register(transformer);
+        // MultifaceBlock gained WATERLOGGED, which old subclasses added themselves.
+        com.retromod.shim.common.LegacyStateDefinitionBridge.register(transformer);
         // Reload listeners lost their two profilers; old listeners get the host's reload.
         com.retromod.shim.common.LegacyReloadListenerBridge.register(transformer);
         // 1.21.2 made armor materials plain records, with no registry to put them in.

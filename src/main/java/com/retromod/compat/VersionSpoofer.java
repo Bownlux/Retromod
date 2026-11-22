@@ -5,12 +5,13 @@
 package com.retromod.compat;
 
 import com.retromod.shim.common.embedded.LegacyPublicMethods;
-import com.retromod.util.RetromodLog;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.Marker;
+import org.slf4j.MarkerFactory;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -31,6 +32,9 @@ import java.util.Optional;
 public final class VersionSpoofer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-VersionSpoofer");
+    // RetromodLog.DETAIL_NAME spelled out: a mod's own copy of this class cannot reach RetromodLog,
+    // and javac still names the class when it inlines that constant.
+    private static final Marker DETAIL = MarkerFactory.getMarker("RETROMOD_DETAIL");
 
     private static final String SPOOF_RESOURCE = "/retromod/version-spoofs.json";
 
@@ -228,7 +232,7 @@ public final class VersionSpoofer {
         synchronized (VersionSpoofer.class) {
             if (spoofTable != null) return spoofTable;
             spoofTable = Collections.unmodifiableMap(loadTable());
-            LOGGER.debug(RetromodLog.DETAIL, "VersionSpoofer loaded {} spoof rule(s) from {}",
+            LOGGER.debug(DETAIL, "VersionSpoofer loaded {} spoof rule(s) from {}",
                     spoofTable.size(), SPOOF_RESOURCE);
             return spoofTable;
         }

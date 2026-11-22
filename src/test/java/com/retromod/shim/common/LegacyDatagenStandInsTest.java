@@ -67,9 +67,13 @@ class LegacyDatagenStandInsTest {
         ClassNode intrinsic = read(transformer.getSyntheticClasses().get(LegacyDatagenStandIns.ROOT + tags + "IntrinsicHolderTagsProvider"));
         assertEquals(tags + "TagsProvider", intrinsic.superName, "the host still has TagsProvider, so it is kept");
         assertTrue((intrinsic.access & ACC_ABSTRACT) != 0);
+        assertTrue(intrinsic.methods.stream().noneMatch(m -> m.name.equals("<init>")),
+                "TagsProvider has no no-argument constructor for a stand-in constructor to call");
         ClassNode appender = read(transformer.getSyntheticClasses().get(
                 LegacyDatagenStandIns.ROOT + tags + "IntrinsicHolderTagsProvider$IntrinsicTagAppender"));
         assertEquals(LegacyDatagenStandIns.ROOT + tags + "TagsProvider$TagAppender", appender.superName);
+        assertTrue(appender.methods.stream().anyMatch(m -> m.name.equals("<init>") && m.desc.equals("()V")),
+                "a stand-in over another stand-in keeps its constructor");
     }
 
     @Test

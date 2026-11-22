@@ -17,15 +17,21 @@ import org.objectweb.asm.tree.MethodNode;
 
 import java.nio.charset.StandardCharsets;
 
-/** Reads {@code server.getWorldData().worldGenOptions()} from the server's world gen settings, where 26.1 moved it. */
+/**
+ * Reads {@code server.getWorldData().worldGenOptions()} from the server's world gen settings, and
+ * {@code server.getWorldData().getGameRules()} from the server's own game rules, where 26.1 moved both.
+ */
 public final class LegacyWorldGenOptionsAdapter {
 
     public static final String FLAG = "legacy-world-gen-options";
+    public static final String RULES_FLAG = "legacy-world-data-game-rules";
     static final String SERVER = "net/minecraft/server/MinecraftServer";
     static final String WORLD_DATA = "net/minecraft/world/level/storage/WorldData";
     static final String SETTINGS = "net/minecraft/world/level/levelgen/WorldGenSettings";
     static final String OPTIONS_DESC = "()Lnet/minecraft/world/level/levelgen/WorldOptions;";
+    static final String RULES_DESC = "()Lnet/minecraft/world/level/gamerules/GameRules;";
     private static final byte[] NEEDLE = "worldGenOptions".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] RULES_NEEDLE = "getGameRules".getBytes(StandardCharsets.UTF_8);
 
     private LegacyWorldGenOptionsAdapter() {}
 
@@ -34,6 +40,15 @@ public final class LegacyWorldGenOptionsAdapter {
         ClassNode data = ClassResourceInspector.read(WORLD_DATA);
         ClassNode server = ClassResourceInspector.read(SERVER);
         if (hostMovedOptions(data, server)) t.enablePostProcess(FLAG);
+        if (hostMovedRules(data, server)) t.enablePostProcess(RULES_FLAG);
+    }
+
+    /** Whether the game rules left the level data for the server; offline, 26.1 and newer moved them. */
+    static boolean hostMovedRules(ClassNode data, ClassNode server) {
+        if (data == null || server == null) {
+            return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.1") >= 0;
+        }
+        return !declares(data, "getGameRules", RULES_DESC) && declares(server, "getGameRules", RULES_DESC);
     }
 
     /** Whether the options left the level data for the server; offline, 26.1 and newer moved them. */
@@ -47,7 +62,12 @@ public final class LegacyWorldGenOptionsAdapter {
 
     /** Rewrites each server read followed at once by the options read; a level data held elsewhere is left as it is. */
     public static byte[] apply(byte[] bytes) {
-        if (bytes == null || !contains(bytes, NEEDLE)) return bytes;
+        return apply(bytes, true, false);
+    }
+
+    /** The same for the options read, the game rules read, or both. */
+    public static byte[] apply(byte[] bytes, boolean options, boolean rules) {
+        if (bytes == null || !((options && contains(bytes, NEEDLE)) || (rules && contains(bytes, RULES_NEEDLE)))) return bytes;
         ClassNode node = new ClassNode();
         new ClassReader(bytes).accept(node, 0);
         boolean changed = false;
@@ -55,14 +75,22 @@ public final class LegacyWorldGenOptionsAdapter {
             for (AbstractInsnNode insn = method.instructions.getFirst(); insn != null; insn = insn.getNext()) {
                 if (!(insn instanceof MethodInsnNode read) || !isWorldDataRead(read)) continue;
                 AbstractInsnNode next = insn.getNext();
-                if (!(next instanceof MethodInsnNode options) || !isOptionsRead(options)) continue;
+                // The server's game rules stand for the level data's: one server in, the rules out.
+                if (rules && next instanceof MethodInsnNode ruleRead && isRulesRead(ruleRead)) {
+                    read.name = "getGameRules";
+                    read.desc = RULES_DESC;
+                    method.instructions.remove(ruleRead);
+                    changed = true;
+                    continue;
+                }
+                if (!options || !(next instanceof MethodInsnNode optionsRead) || !isOptionsRead(optionsRead)) continue;
                 // Both calls keep their stack shape: one server in, one value out.
                 read.name = "getWorldGenSettings";
                 read.desc = "()L" + SETTINGS + ";";
-                options.setOpcode(Opcodes.INVOKEVIRTUAL);
-                options.owner = SETTINGS;
-                options.name = "options";
-                options.itf = false;
+                optionsRead.setOpcode(Opcodes.INVOKEVIRTUAL);
+                optionsRead.owner = SETTINGS;
+                optionsRead.name = "options";
+                optionsRead.itf = false;
                 changed = true;
             }
         }
@@ -78,6 +106,10 @@ public final class LegacyWorldGenOptionsAdapter {
         return call.getOpcode() == Opcodes.INVOKEVIRTUAL && call.name.equals("getWorldData")
                 && call.desc.equals("()L" + WORLD_DATA + ";") && call.owner.startsWith("net/minecraft/")
                 && call.owner.endsWith("Server");
+    }
+
+    private static boolean isRulesRead(MethodInsnNode call) {
+        return call.owner.equals(WORLD_DATA) && call.name.equals("getGameRules") && call.desc.equals(RULES_DESC);
     }
 
     private static boolean isOptionsRead(MethodInsnNode call) {

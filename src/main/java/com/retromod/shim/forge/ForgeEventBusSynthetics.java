@@ -68,6 +68,7 @@ public final class ForgeEventBusSynthetics {
     private static final String BUS_GROUP = "net/minecraftforge/eventbus/api/bus/BusGroup";
     private static final String EVENT_BUS7 = "net/minecraftforge/eventbus/api/bus/EventBus";
     private static final String FMLJMLC = "net/minecraftforge/fml/javafmlmod/FMLJavaModLoadingContext";
+    private static final String FML_CONTAINER = "net/minecraftforge/fml/javafmlmod/FMLModContainer";
     private static final String DEFERRED_REG = "net/minecraftforge/registries/DeferredRegister";
     private static final String MINECRAFT_FORGE = "net/minecraftforge/common/MinecraftForge";
     private static final String LOOKUP = "java/lang/invoke/MethodHandles$Lookup";
@@ -147,6 +148,11 @@ public final class ForgeEventBusSynthetics {
         for (String ret : new String[]{L_LEB, L_OLD_BUS}) {
             t.registerMethodRedirect(FMLJMLC, "getModEventBus", "()" + ret,
                     LEB_IMPL, "modBus", "(L" + FMLJMLC + ";)" + L_LEB, true);
+        }
+        // A mod that reaches its bus through its container: EventBus 7's container has only getModBusGroup().
+        for (String ret : new String[]{L_LEB, L_OLD_BUS}) {
+            t.registerMethodRedirect(FML_CONTAINER, "getEventBus", "()" + ret,
+                    LEB_IMPL, "containerBus", "(L" + FML_CONTAINER + ";)" + L_LEB, true);
         }
         // DeferredRegister.register(IEventBus) -> registerDeferred(dr, bus) -> dr.register(group)
         for (String arg : new String[]{L_LEB, L_OLD_BUS}) {
@@ -558,6 +564,18 @@ public final class ForgeEventBusSynthetics {
         mb.visitInsn(ARETURN);
         mb.visitMaxs(0, 0);
         mb.visitEnd();
+
+        // static LegacyEventBus containerBus(FMLModContainer c) { return of(c.getModBusGroup()); }. Libraries ask other
+        // mods' containers for their bus, so unlike modBus it leaves the mod's own kept group alone.
+        MethodVisitor cb = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "containerBus",
+                "(L" + FML_CONTAINER + ";)" + L_LEB, null, null);
+        cb.visitCode();
+        cb.visitVarInsn(ALOAD, 0);
+        cb.visitMethodInsn(INVOKEVIRTUAL, FML_CONTAINER, "getModBusGroup", "()" + L_BG, false);
+        cb.visitMethodInsn(INVOKESTATIC, LEB_IMPL, "of", "(" + L_BG + ")" + L_LEB, false);
+        cb.visitInsn(ARETURN);
+        cb.visitMaxs(0, 0);
+        cb.visitEnd();
 
         // static void registerDeferred(DeferredRegister dr, LegacyEventBus bus) { dr.register(bus.group()); }
         MethodVisitor rd = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "registerDeferred",

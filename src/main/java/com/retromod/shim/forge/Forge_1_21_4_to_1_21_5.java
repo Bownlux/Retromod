@@ -27,10 +27,19 @@ public class Forge_1_21_4_to_1_21_5 implements VersionShim {
         com.retromod.shim.common.PatchouliSmithingAccessorBridge.register(transformer);
         // appendHoverText moved to TooltipDisplay + Consumer; keep old tooltip overrides called.
         com.retromod.shim.common.LegacyTooltipSynthetic.register(transformer);
+        // HIDE_ADDITIONAL_TOOLTIP went into the tooltip display component; old reads get a stand-in.
+        com.retromod.shim.common.LegacyHiddenTooltipBridge.register(transformer);
+        // SimpleWeightedRandomList became WeightedList, whose factories and lookup have new names.
+        com.retromod.shim.common.LegacyWeightedListBridge.register(transformer);
         // LeavesBlock became abstract with a (float, Properties) constructor.
         com.retromod.shim.common.LegacyLeavesBlockBridge.register(transformer);
         // ChestBlock's AABB constants went when block shapes were rebuilt.
         com.retromod.shim.common.LegacyChestShapesBridge.register(transformer);
+        // FenceGateBlock's shape constants went too, and SkullBlock's became private; the host's own blocks answer them.
+        com.retromod.shim.common.LegacyBlockShapesBridge.register(transformer);
+        // Block hooks that changed parameters here keep old overrides and super calls working.
+        com.retromod.shim.common.LegacyBlockOverridesAdapter.register(transformer);
+        com.retromod.shim.common.LegacyServerApiBridge.register(transformer);
         com.retromod.shim.common.LegacyMobEffectNames.register(transformer);
         // Region tickets became tickets with a radius and no value.
         com.retromod.shim.common.LegacyChunkTicketBridge.register(transformer);
@@ -46,6 +55,8 @@ public class Forge_1_21_4_to_1_21_5 implements VersionShim {
         com.retromod.shim.common.LegacyVillagerBridge.registerProfessionGetter(transformer);
         // ClickEvent and HoverEvent became interfaces, so their old constructors go through a factory.
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerTextEventBridges26x(transformer);
+        // Variants moved to data components and VariantHolder went away where the host proves it.
+        com.retromod.shim.common.LegacyVariantHolderBridge.register(transformer);
         // MultiPlayerGameMode.hasInfiniteItems() is gone; the player's own ability answers it.
         com.retromod.shim.common.LegacyClientInteractionSynthetic.registerInfiniteItemsCheck(transformer);
     }

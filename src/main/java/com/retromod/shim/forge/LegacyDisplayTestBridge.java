@@ -14,7 +14,7 @@ final class LegacyDisplayTestBridge {
     static final String FORGE_TEST = FORGE_POINT + "$DisplayTest";
     static final String NEO_POINT = "net/neoforged/fml/IExtensionPoint";
     static final String STAND_IN = RebuiltApiClasses.ROOT + "forge/fml/LegacyDisplayTest";
-    private static final String[] OWNERS = {"net/minecraftforge/fml/ModLoadingContext",
+    static final String[] OWNERS = {"net/minecraftforge/fml/ModLoadingContext",
             "net/neoforged/fml/ModLoadingContext", "net/minecraftforge/fml/ModContainer", "net/neoforged/fml/ModContainer",
             "net/minecraftforge/fml/javafmlmod/FMLJavaModLoadingContext", ForgeNeoForgeSynthetics.FMLJMLC};
 

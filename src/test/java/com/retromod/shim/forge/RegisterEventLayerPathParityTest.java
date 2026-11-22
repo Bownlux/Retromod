@@ -120,8 +120,8 @@ class RegisterEventLayerPathParityTest {
         expected.put("item color", "calls the embedded color helper");
         expected.put("flower", "builds through the holder constructor with the effect stashed");
         expected.put("flower effect", "wraps the effect through a registry whose class is not public");
-        // 26.3 folded configurations into features, so the old configuration has nothing to implement there.
-        expected.put("random patch", host.equals("26.2") ? "builds the embedded configuration" : "builds the removed class");
+        // 26.3 folded configurations into features; the rebuilt configuration implements the rebuilt feature model there.
+        expected.put("random patch", "builds the embedded configuration");
         if (!fabric) {
             expected.put("recipe holder", "implements the embedded interface with the old recipe methods");
             expected.put("food effect", "calls the embedded consumable helper with the supplier");

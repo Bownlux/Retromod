@@ -64,6 +64,21 @@ class Worldgen26_3MigratorTest {
     }
 
     @Test
+    @DisplayName("an old vanilla lake gets the replace checks the old lake made in code, as 26.3 requires them")
+    void lakeGetsTheOldChecks() {
+        assertJson("""
+                {"type": "minecraft:lake", "barrier": {"id": "minecraft:air"}, "fluid": {"id": "minecraft:lava"},
+                 "can_place_feature": {"type": "minecraft:true"},
+                 "can_replace_with_air_or_fluid": {"type": "minecraft:not",
+                     "predicate": {"type": "minecraft:matching_block_tag", "tag": "minecraft:features_cannot_replace"}},
+                 "can_replace_with_barrier": {"type": "minecraft:not",
+                     "predicate": {"type": "minecraft:matching_block_tag", "tag": "minecraft:lava_pool_stone_cannot_replace"}}}""",
+                """
+                {"type": "minecraft:lake", "config": {"barrier": {"type": "minecraft:simple_state_provider", "state": {"Name": "minecraft:air"}},
+                 "fluid": {"type": "minecraft:simple_state_provider", "state": {"Name": "minecraft:lava"}}}}""");
+    }
+
+    @Test
     @DisplayName("old noise keeps its exact output through the legacy normalization")
     void noiseUsesLegacyNormalization() {
         assertJson("""

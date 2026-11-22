@@ -3,4 +3,6 @@ package net.minecraft.client.renderer;
 
 public class LevelRenderer {
     private LevelRenderer() {}
+    public SectionOcclusionGraph sectionOcclusionGraph() { throw new UnsupportedOperationException(); }
+    public CloudRenderer cloudRenderer() { throw new UnsupportedOperationException(); }
 }

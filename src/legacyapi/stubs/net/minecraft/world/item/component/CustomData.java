@@ -5,4 +5,5 @@ import net.minecraft.nbt.CompoundTag;
 
 public final class CustomData {
     public CompoundTag copyTag() { throw new UnsupportedOperationException(); }
+    public boolean isEmpty() { throw new UnsupportedOperationException(); }
 }

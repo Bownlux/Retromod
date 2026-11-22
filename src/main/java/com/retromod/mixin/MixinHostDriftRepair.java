@@ -55,7 +55,7 @@ import java.util.function.Function;
  *       to a supertype (26.1 retyped {@code Camera.FORWARDS} from {@code Vector3f} to the
  *       read-only {@code Vector3fc}), is retyped and each read is cast back to the old type. The
  *       cast fails loudly if the host ever stores a different implementation.</li>
- *   <li>An {@code @Inject} handler whose target dropped, added, or retyped parameters is retyped
+ *   <li>An {@code @Inject} handler whose target, a constructor included, dropped, added, or retyped parameters is retyped
  *       when the handler never reads the changed slots, at any injection point, since every point
  *       passes the target's own arguments. Unread captures are dropped, inserted and appended
  *       parameters are added, and an unread callback is switched between {@code CallbackInfo} and
@@ -88,6 +88,11 @@ import java.util.function.Function;
  *       its table and the same 26.1 {@code extract...} rename across the GUI package.</li>
  *   <li>A handler on an overloaded name is retyped to the one overload its captured arguments
  *       fit, and the selector names that overload.</li>
+ *   <li>An {@code INVOKE} target that lost every parameter, as the movement input's
+ *       {@code tick(boolean, float)} did, is retargeted. A redirect or wrap handler drops the old
+ *       arguments when it only passes them on to the original call.</li>
+ *   <li>A compiler-made bridge method that only forwards to a host method the host no longer has is
+ *       removed; nothing calls it on the new host.</li>
  *   <li>A {@code @ModifyReturnValue} handler whose only target now returns another type is
  *       removed, because Mixin refuses it and the refusal leaves the target class half changed.</li>
  *   <li>An {@code @Inject} handler written for a void target that may cancel is removed when its only
@@ -182,15 +187,19 @@ public final class MixinHostDriftRepair {
                 + renameInjectorSelectors(classNode, target)
                 + dropRefusedReturnModifiers(classNode, target)
                 + dropCancellingHandlersOnObjectResults(classNode, target)
+                + renamePrefixedShadowFields(classNode, target)
                 + widenReadOnlyShadowFields(classNode, target)
+                + dropInheritedShadowMethods(classNode, target)
                 + dropUnreferencedShadowFields(classNode, target)
                 + bridgeSwingDuration(classNode, target)
                 + bridgeLifecycleRegisterSimple(classNode, target)
+                + dropDeadCompilerBridges(classNode, target)
                 // Last, so every bridge above has claimed the shadows it can still serve.
                 + dropUnreferencedShadowMethods(classNode, target);
         for (MethodNode method : classNode.methods) {
-            if (repairInjectHandler(method, target)) repairs++;
+            if (repairInjectHandler(method, target, mayBecomeInstance(classNode, method))) repairs++;
             if (repairGrownInvokeTarget(method)) repairs++;
+            if (repairShrunkInvokeTarget(method)) repairs++;
         }
         // After the retype, so only a handler it could not fit is removed.
         repairs += dropRefusedSugarInjects(classNode, target);
@@ -355,7 +364,8 @@ public final class MixinHostDriftRepair {
                         replacement = tableRenamedSelector(target, selector);
                         // An @Inject handler must fit the renamed method, as it is or once retyped.
                         if (replacement != null && INJECT_DESC.equals(injector.desc)
-                                && !handlerFollows(method, target, selector, replacement)) {
+                                && !handlerFollows(method, target, selector, replacement,
+                                        mayBecomeInstance(classNode, method))) {
                             continue;
                         }
                     }
@@ -386,7 +396,8 @@ public final class MixinHostDriftRepair {
      * Whether an {@code @Inject} handler fits the method {@code replacement} names: unchanged when
      * the descriptor stayed, otherwise as it is or after {@link #planInject}.
      */
-    private boolean handlerFollows(MethodNode handler, String target, String selector, String replacement) {
+    private boolean handlerFollows(MethodNode handler, String target, String selector, String replacement,
+            boolean mayBecomeInstance) {
         int paren = replacement.indexOf('(');
         String name = paren < 0 ? replacement : replacement.substring(0, paren);
         String desc = paren < 0 ? null : replacement.substring(paren);
@@ -401,7 +412,7 @@ public final class MixinHostDriftRepair {
         if (oldParen >= 0 && selector.substring(oldParen).equals(live.descriptor())) return true;
         boolean fits = MixinRefmapTargetRepair.fits(checkedArguments(handler),
                 (handler.access & Opcodes.ACC_STATIC) != 0, live);
-        return fits || (retypableInject(handler) != null && planInject(handler, live) != null);
+        return fits || (retypableInject(handler) != null && planInject(handler, live, mayBecomeInstance) != null);
     }
 
     /** The handler's parameters without MixinExtras sugar, which is what Mixin checks against the target. */
@@ -791,6 +802,72 @@ public final class MixinHostDriftRepair {
         return before - classNode.fields.size();
     }
 
+    /**
+     * Renames a {@code @Shadow} field the host gave the {@code MAP_} prefix, such as 26.1 renaming a loot
+     * function's {@code CODEC} to {@code MAP_CODEC}. Other prefixes often name a narrower or different
+     * value, such as {@code ItemTags.BUTTONS} beside {@code WOODEN_BUTTONS}, so they are left for the shadow gate.
+     */
+    private int renamePrefixedShadowFields(ClassNode classNode, String target) {
+        int renamed = 0;
+        for (FieldNode field : classNode.fields) {
+            if (!hasAnnotation(field.visibleAnnotations, field.invisibleAnnotations, SHADOW_DESC)
+                    || host.hasField(target, field.name, field.desc)) {
+                continue;
+            }
+            List<String> candidates = host.getDeclaredFields(target).stream()
+                    .filter(f -> f.descriptor().equals(field.desc) && f.name().equals("MAP_" + field.name))
+                    .map(FuzzyMethodResolver.FieldInfo::name).distinct().toList();
+            if (candidates.size() != 1) continue;
+            String oldName = field.name;
+            field.name = candidates.get(0);
+            for (MethodNode method : classNode.methods) {
+                for (AbstractInsnNode insn : method.instructions) {
+                    if (insn instanceof FieldInsnNode access && access.owner.equals(classNode.name) && access.name.equals(oldName)) {
+                        access.name = field.name;
+                    }
+                }
+            }
+            renamed++;
+        }
+        return renamed;
+    }
+
+    /**
+     * Drops a {@code @Shadow} method the host moved up to a superclass of the target, such as 26.2 moving
+     * {@code Slime.getSize()} to {@code AbstractCubeMob}. Mixin looks shadows up in the target alone, while the
+     * mixin's own calls, which Mixin points at the target, still reach the inherited method.
+     */
+    private int dropInheritedShadowMethods(ClassNode classNode, String target) {
+        // A copied nested class could call the shadow through a path Mixin does not rewrite.
+        if ((classNode.access & Opcodes.ACC_INTERFACE) != 0 || hasNestedClasses(classNode)) return 0;
+        int before = classNode.methods.size();
+        classNode.methods.removeIf(method ->
+                hasAnnotation(method.visibleAnnotations, method.invisibleAnnotations, SHADOW_DESC)
+                        && !method.name.startsWith("<")
+                        && !declaresMethod(target, method.name, method.desc)
+                        && inheritsReachable(target, method));
+        return before - classNode.methods.size();
+    }
+
+    private boolean declaresMethod(String owner, String name, String desc) {
+        return host.getDeclaredMethods(owner).stream().anyMatch(m -> m.name().equals(name) && m.descriptor().equals(desc));
+    }
+
+    /** Whether a superclass of the target declares the method, not private and with the shadow's staticness. */
+    private boolean inheritsReachable(String target, MethodNode shadow) {
+        boolean shadowStatic = (shadow.access & Opcodes.ACC_STATIC) != 0;
+        for (FuzzyMethodResolver.MethodInfo inherited : host.getMethodsInHierarchy(target)) {
+            if (inherited.owner().equals(target) || !inherited.name().equals(shadow.name)
+                    || !inherited.descriptor().equals(shadow.desc) || inherited.access() < 0) {
+                continue;
+            }
+            boolean isPrivate = (inherited.access() & Opcodes.ACC_PRIVATE) != 0;
+            boolean isStatic = (inherited.access() & Opcodes.ACC_STATIC) != 0;
+            if (!isPrivate && isStatic == shadowStatic) return true;
+        }
+        return false;
+    }
+
     /** Drops a {@code @Shadow} method the mixin never calls when the host has no such method. */
     private int dropUnreferencedShadowMethods(ClassNode classNode, String target) {
         // Such a shadow only fails validation, which takes the whole mixin down: Farmer's Delight
@@ -1024,6 +1101,47 @@ public final class MixinHostDriftRepair {
         return body;
     }
 
+    // ---- compiler bridges to removed host methods ---------------------------------------------
+
+    /**
+     * Removes each compiler-made bridge method of the mixin that only forwards to a host method the host no longer
+     * has, such as the {@code getShadowRadius(Entity)} bridge a mixin extending {@code LivingEntityRenderer} carried
+     * in 1.21.1. Javac adds such a bridge for the generic signature of the class the mixin extends; nothing calls it
+     * on the new host, where it would only fail to link.
+     */
+    private int dropDeadCompilerBridges(ClassNode classNode, String target) {
+        int dropped = 0;
+        for (java.util.Iterator<MethodNode> methods = classNode.methods.iterator(); methods.hasNext(); ) {
+            MethodNode method = methods.next();
+            int bridge = Opcodes.ACC_BRIDGE | Opcodes.ACC_SYNTHETIC;
+            if ((method.access & bridge) != bridge) continue;
+            // A bridge that still overrides a host method is called by host code, so it stays.
+            if (host.hasMethod(target, method.name, method.desc)) continue;
+            MethodInsnNode forwarded = forwardedHostCall(method);
+            // The call must miss on the host, counting library and JDK ancestors, and not land on the mixin's own method.
+            if (forwarded == null || host.hasMethod(forwarded.owner, forwarded.name, forwarded.desc)
+                    || findMethod(classNode, forwarded.name, forwarded.desc) != null) {
+                continue;
+            }
+            methods.remove();
+            dropped++;
+            LOGGER.debug("Removed the compiler bridge {}.{}{}, whose host method is gone", classNode.name, method.name, method.desc);
+        }
+        return dropped;
+    }
+
+    /** The bridge's one call when it names a Minecraft class the host has, or null. */
+    private MethodInsnNode forwardedHostCall(MethodNode bridge) {
+        MethodInsnNode only = null;
+        for (AbstractInsnNode insn : bridge.instructions) {
+            if (!(insn instanceof MethodInsnNode call)) continue;
+            if (only != null) return null;
+            only = call;
+        }
+        if (only == null || !only.owner.startsWith("net/minecraft/") || !host.hasClass(only.owner)) return null;
+        return only;
+    }
+
     // ---- INVOKE targets that gained trailing parameters -------------------------------------
 
     private static final String REDIRECT_DESC = "Lorg/spongepowered/asm/mixin/injection/Redirect;";
@@ -1083,6 +1201,205 @@ public final class MixinHostDriftRepair {
             return null;
         }
         return newDesc;
+    }
+
+    // ---- INVOKE targets that lost every parameter -----------------------------------------------
+
+    private static final String WRAP_OPERATION_DESC = "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;";
+    private static final String OPERATION = "com/llamalad7/mixinextras/injector/wrapoperation/Operation";
+    private static final String OPERATION_CALL = "([Ljava/lang/Object;)Ljava/lang/Object;";
+
+    /**
+     * Retargets an {@code @Inject}, {@code @Redirect} or {@code @WrapOperation} whose {@code INVOKE} target lost every
+     * parameter, as the movement input's {@code tick(boolean, float)} became {@code tick()} in 1.21.2. An {@code @Inject}
+     * only changes the target text. A redirect or wrap handler drops the old arguments when its only use of them is to
+     * hand them to the original call: its own pass-through call, or the array it gives {@code Operation.call}. Any
+     * other read of them declines, since nothing on the host can supply what they held.
+     */
+    private boolean repairShrunkInvokeTarget(MethodNode handler) {
+        AnnotationNode injector = annotation(handler, INJECT_DESC);
+        String kind = injector != null ? "inject" : null;
+        if (injector == null && (injector = annotation(handler, REDIRECT_DESC)) != null) kind = "redirect";
+        if (injector == null && (injector = annotation(handler, WRAP_OPERATION_DESC)) != null) kind = "wrap";
+        if (injector == null || Boolean.FALSE.equals(value(injector, "remap"))) return false;
+        List<AnnotationNode> points = atPoints(injector);
+        if (points.size() != 1 || !"INVOKE".equals(value(points.get(0), "value"))
+                || !(value(points.get(0), "target") instanceof String invoke)) {
+            return false;
+        }
+        int semicolon = invoke.indexOf(';');
+        int paren = invoke.indexOf('(');
+        if (!invoke.startsWith("L") || semicolon < 0 || paren < semicolon) return false;
+        String owner = invoke.substring(1, semicolon);
+        String name = invoke.substring(semicolon + 1, paren);
+        String oldDesc = invoke.substring(paren);
+        if (Type.getArgumentTypes(oldDesc).length == 0 || !host.hasClass(owner) || host.hasMethod(owner, name, oldDesc)) {
+            return false;
+        }
+        String newDesc = shrunkDescriptor(owner, name, oldDesc);
+        if (newDesc == null) return false;
+        if (!kind.equals("inject") && !dropPassedArguments(handler, kind.equals("wrap"), owner, name, oldDesc, newDesc)) {
+            return false;
+        }
+        put(points.get(0), "target", "L" + owner + ";" + name + newDesc);
+        return true;
+    }
+
+    /** The host's only same-named instance descriptor with no parameters and the old return, or null. */
+    private String shrunkDescriptor(String owner, String name, String oldDesc) {
+        Set<String> candidates = new java.util.LinkedHashSet<>();
+        for (FuzzyMethodResolver.MethodInfo method : host.getMethodsInHierarchy(owner)) {
+            if (method.name().equals(name) && (method.access() & Opcodes.ACC_STATIC) == 0) {
+                candidates.add(method.descriptor());
+            }
+        }
+        if (candidates.size() != 1) return null;
+        String newDesc = candidates.iterator().next();
+        boolean sameReturn = Type.getReturnType(newDesc).equals(Type.getReturnType(oldDesc));
+        return Type.getArgumentTypes(newDesc).length == 0 && sameReturn ? newDesc : null;
+    }
+
+    /**
+     * Drops the old call's arguments from a redirect or wrap handler, whose layout is the receiver, the old arguments,
+     * and for a wrap the operation. Each argument may only be loaded to pass it on; otherwise nothing changes.
+     */
+    private static boolean dropPassedArguments(MethodNode handler, boolean wrap, String owner, String name,
+            String oldDesc, String newDesc) {
+        Type[] oldArgs = Type.getArgumentTypes(oldDesc);
+        Type[] handlerArgs = Type.getArgumentTypes(handler.desc);
+        int expected = 1 + oldArgs.length + (wrap ? 1 : 0);
+        if ((handler.access & Opcodes.ACC_STATIC) != 0 || handlerArgs.length != expected
+                || handler.visibleParameterAnnotations != null || handler.invisibleParameterAnnotations != null
+                || !Arrays.equals(oldArgs, Arrays.copyOfRange(handlerArgs, 1, 1 + oldArgs.length))
+                || (wrap && !handlerArgs[expected - 1].getInternalName().equals(OPERATION))
+                || (!wrap && !Type.getReturnType(handler.desc).equals(Type.getReturnType(oldDesc)))) {
+            return false;
+        }
+        int[] slots = slots(handlerArgs, 1);
+        int receiver = slots[0];
+        int[] dropped = Arrays.copyOfRange(slots, 1, 1 + oldArgs.length);
+        // Find every load that only passes an old argument on; any other read of one declines.
+        List<AbstractInsnNode> removals = new ArrayList<>();
+        List<AbstractInsnNode> sizes = new ArrayList<>();
+        List<MethodInsnNode> calls = new ArrayList<>();
+        for (AbstractInsnNode insn : handler.instructions.toArray()) {
+            if (!(insn instanceof MethodInsnNode call)) continue;
+            if (!wrap && call.owner.equals(owner) && call.name.equals(name) && call.desc.equals(oldDesc)) {
+                List<AbstractInsnNode> loads = passThroughLoads(call, dropped);
+                if (loads == null) return false;
+                removals.addAll(loads);
+                calls.add(call);
+            } else if (wrap && call.owner.equals(OPERATION) && call.name.equals("call") && call.desc.equals(OPERATION_CALL)) {
+                AbstractInsnNode size = operationArray(call, receiver, dropped, removals);
+                if (size == null) return false;
+                sizes.add(size);
+            }
+        }
+        for (AbstractInsnNode insn : handler.instructions) {
+            if (insn instanceof VarInsnNode var && contains(dropped, var.var) && !removals.contains(insn)) return false;
+            if (insn instanceof IincInsnNode inc && contains(dropped, inc.var)) return false;
+        }
+        if (removals.isEmpty()) return false;
+        // Every check passed, so the handler is rewritten.
+        for (AbstractInsnNode insn : removals) handler.instructions.remove(insn);
+        for (MethodInsnNode call : calls) call.desc = newDesc;
+        for (AbstractInsnNode size : sizes) handler.instructions.set(size, new InsnNode(Opcodes.ICONST_1));
+        int oldParamEnd = parameterEnd(handlerArgs, slots);
+        int droppedSize = 0;
+        for (Type arg : oldArgs) droppedSize += arg.getSize();
+        Map<Integer, Integer> slotMap = new LinkedHashMap<>();
+        slotMap.put(0, 0);
+        slotMap.put(receiver, receiver);
+        if (wrap) slotMap.put(slots[expected - 1], slots[expected - 1] - droppedSize);
+        remapLocals(handler, slotMap, oldParamEnd, -droppedSize);
+        List<Type> kept = new ArrayList<>();
+        kept.add(handlerArgs[0]);
+        if (wrap) kept.add(handlerArgs[expected - 1]);
+        handler.desc = Type.getMethodDescriptor(Type.getReturnType(handler.desc), kept.toArray(new Type[0]));
+        handler.signature = wrap ? operationSignature(handler.signature, handlerArgs[0]) : null;
+        handler.maxLocals = Math.max(0, handler.maxLocals - droppedSize);
+        return true;
+    }
+
+    /** The wrap handler's new signature, keeping the operation's type argument, which MixinExtras may read; or null. */
+    private static String operationSignature(String signature, Type receiver) {
+        if (signature == null) return null;
+        int start = signature.indexOf("L" + OPERATION + "<");
+        int end = signature.indexOf(")", start);
+        if (start < 0 || end < 0) return null;
+        return "(" + receiver.getDescriptor() + signature.substring(start, end) + signature.substring(end);
+    }
+
+    /** The loads of the old arguments directly before a pass-through call, in order, or null when they are not there. */
+    private static List<AbstractInsnNode> passThroughLoads(MethodInsnNode call, int[] dropped) {
+        List<AbstractInsnNode> loads = new ArrayList<>();
+        AbstractInsnNode insn = call.getPrevious();
+        for (int i = dropped.length - 1; i >= 0; i--) {
+            while (insn != null && insn.getOpcode() < 0) insn = insn.getPrevious();
+            if (!(insn instanceof VarInsnNode var) || var.var != dropped[i]) return null;
+            loads.add(0, insn);
+            insn = insn.getPrevious();
+        }
+        return loads;
+    }
+
+    /**
+     * Checks that {@code Operation.call} gets an array of the receiver and then the old arguments, each stored as
+     * {@code dup, index, load, [box], aastore}, and adds the old arguments' stores to {@code removals}. Returns the
+     * array size instruction, or null when the array is built any other way.
+     */
+    private static AbstractInsnNode operationArray(MethodInsnNode call, int receiver, int[] dropped,
+            List<AbstractInsnNode> removals) {
+        List<List<AbstractInsnNode>> stores = new ArrayList<>();
+        AbstractInsnNode insn = call.getPrevious();
+        while (insn != null && insn.getOpcode() == Opcodes.AASTORE) {
+            List<AbstractInsnNode> store = new ArrayList<>();
+            AbstractInsnNode cursor = insn;
+            // Walk back over the store: aastore, an optional boxing call, the load, the index, dup.
+            store.add(0, cursor);
+            cursor = cursor.getPrevious();
+            if (cursor instanceof MethodInsnNode box && box.getOpcode() == Opcodes.INVOKESTATIC && box.name.equals("valueOf")) {
+                store.add(0, cursor);
+                cursor = cursor.getPrevious();
+            }
+            if (!(cursor instanceof VarInsnNode)) return null;
+            store.add(0, cursor);
+            cursor = cursor.getPrevious();
+            if (constant(cursor) < 0) return null;
+            store.add(0, cursor);
+            cursor = cursor.getPrevious();
+            if (cursor == null || cursor.getOpcode() != Opcodes.DUP) return null;
+            store.add(0, cursor);
+            stores.add(0, store);
+            insn = cursor.getPrevious();
+        }
+        if (!(insn instanceof TypeInsnNode array) || array.getOpcode() != Opcodes.ANEWARRAY
+                || !array.desc.equals("java/lang/Object")) {
+            return null;
+        }
+        AbstractInsnNode size = array.getPrevious();
+        if (constant(size) != 1 + dropped.length || stores.size() != 1 + dropped.length) return null;
+        for (int i = 0; i < stores.size(); i++) {
+            List<AbstractInsnNode> store = stores.get(i);
+            int slot = ((VarInsnNode) store.get(2)).var;
+            if (constant(store.get(1)) != i || slot != (i == 0 ? receiver : dropped[i - 1])) return null;
+            if (i > 0) removals.addAll(store);
+        }
+        return size;
+    }
+
+    /** The value of a small int constant instruction, or -1. */
+    private static int constant(AbstractInsnNode insn) {
+        if (insn == null) return -1;
+        int opcode = insn.getOpcode();
+        if (opcode >= Opcodes.ICONST_0 && opcode <= Opcodes.ICONST_5) return opcode - Opcodes.ICONST_0;
+        if (insn instanceof org.objectweb.asm.tree.IntInsnNode push && opcode == Opcodes.BIPUSH) return push.operand;
+        return -1;
+    }
+
+    private static boolean contains(int[] values, int value) {
+        for (int v : values) if (v == value) return true;
+        return false;
     }
 
     private static boolean regrowRedirectHandler(MethodNode handler, String owner, String name,
@@ -1237,6 +1554,37 @@ public final class MixinHostDriftRepair {
         return false;
     }
 
+    /**
+     * Whether a static handler may become an instance method: only a private one that nothing in the mixin calls or
+     * names through a method handle, since such a use keeps its static form.
+     */
+    private static boolean mayBecomeInstance(ClassNode classNode, MethodNode handler) {
+        if ((handler.access & Opcodes.ACC_STATIC) == 0) return true;
+        if ((handler.access & Opcodes.ACC_PRIVATE) == 0 || isCalledIn(classNode, handler)) return false;
+        for (MethodNode method : classNode.methods) {
+            for (AbstractInsnNode insn : method.instructions) {
+                if (insn instanceof InvokeDynamicInsnNode indy && namesHandler(classNode, handler, indy)) return false;
+                if (insn instanceof LdcInsnNode ldc && ldc.cst instanceof Handle handle && isHandler(classNode, handler, handle)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean namesHandler(ClassNode classNode, MethodNode handler, InvokeDynamicInsnNode indy) {
+        if (isHandler(classNode, handler, indy.bsm)) return true;
+        for (Object argument : indy.bsmArgs) {
+            if (argument instanceof Handle handle && isHandler(classNode, handler, handle)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isHandler(ClassNode classNode, MethodNode handler, Handle handle) {
+        return handle.getOwner().equals(classNode.name) && handle.getName().equals(handler.name)
+                && handle.getDesc().equals(handler.desc);
+    }
+
     private static boolean isCalledIn(ClassNode classNode, MethodNode handler) {
         for (MethodNode method : classNode.methods) {
             for (AbstractInsnNode insn : method.instructions) {
@@ -1255,12 +1603,13 @@ public final class MixinHostDriftRepair {
      * Retypes one {@code @Inject} handler to its live target's layout when the handler provably
      * does not depend on the parts that changed.
      */
-    private boolean repairInjectHandler(MethodNode handler, String target) {
+    private boolean repairInjectHandler(MethodNode handler, String target, boolean mayBecomeInstance) {
         AnnotationNode inject = retypableInject(handler);
         if (inject == null) return false;
-        FuzzyMethodResolver.MethodInfo live = soleLiveTarget(inject, target);
+        // A constructor can gain parameters too, as Inventory(Player) did in 1.21.5, so only here may it be the target.
+        FuzzyMethodResolver.MethodInfo live = soleLiveTarget(inject, target, true);
         if (live != null) {
-            InjectPlan plan = planInject(handler, live);
+            InjectPlan plan = planInject(handler, live, mayBecomeInstance);
             if (plan == null || !plan.changesHandler()) return false;
             applyInject(handler, inject, plan, false);
             return true;
@@ -1269,7 +1618,7 @@ public final class MixinHostDriftRepair {
         List<FuzzyMethodResolver.MethodInfo> overloads = overloads(inject, target);
         InjectPlan only = null;
         for (FuzzyMethodResolver.MethodInfo overload : overloads) {
-            InjectPlan plan = planInject(handler, overload);
+            InjectPlan plan = planInject(handler, overload, mayBecomeInstance);
             if (plan == null || !plan.keepsCaptures()) continue;
             if (only != null) return false;
             only = plan;
@@ -1282,12 +1631,12 @@ public final class MixinHostDriftRepair {
 
     /** How a handler is retyped to {@code live}: its new descriptor and where each parameter slot moves. */
     private record InjectPlan(FuzzyMethodResolver.MethodInfo live, String newDesc, boolean keepsCaptures,
-            boolean makeStatic, boolean callbackRetyped, Type liveCallback, Map<Integer, Integer> slotMap,
+            boolean makeStatic, boolean makeInstance, boolean callbackRetyped, Type liveCallback, Map<Integer, Integer> slotMap,
             int oldParamEnd, int newParamEnd, int callbackSlot, boolean changesHandler,
             int oldCallback, int newCallback, int sugarCount, int newCount) {}
 
     /** The retyping of {@code handler} to {@code live}, or {@code null} when the handler depends on what changed. */
-    private InjectPlan planInject(MethodNode handler, FuzzyMethodResolver.MethodInfo live) {
+    private InjectPlan planInject(MethodNode handler, FuzzyMethodResolver.MethodInfo live, boolean mayBecomeInstance) {
         Type[] handlerArgs = Type.getArgumentTypes(handler.desc);
         int callback = callbackIndex(handlerArgs);
         // Sugar parameters after the callback are filled by MixinExtras from the target, so they stay as they are.
@@ -1295,7 +1644,9 @@ public final class MixinHostDriftRepair {
 
         boolean handlerStatic = (handler.access & Opcodes.ACC_STATIC) != 0;
         boolean targetStatic = (live.access() & Opcodes.ACC_STATIC) != 0;
-        if (handlerStatic && !targetStatic) return null;
+        // A static handler has no this to read, so it follows a target that stopped being static.
+        boolean makeInstance = handlerStatic && !targetStatic;
+        if (makeInstance && !mayBecomeInstance) return null;
         boolean makeStatic = targetStatic && !handlerStatic;
         if (makeStatic && readsSlot(handler, 0)) return null;
 
@@ -1351,7 +1702,7 @@ public final class MixinHostDriftRepair {
         newArgs.addAll(Arrays.asList(sugar));
         Type[] newTypes = newArgs.toArray(new Type[0]);
         String newDesc = Type.getMethodDescriptor(Type.VOID_TYPE, newTypes);
-        int newBase = (handlerStatic || makeStatic) ? 0 : 1;
+        int newBase = targetStatic ? 0 : 1;
         int[] newSlots = slots(newTypes, newBase);
 
         Map<Integer, Integer> slotMap = new LinkedHashMap<>();
@@ -1368,13 +1719,13 @@ public final class MixinHostDriftRepair {
         int newParamEnd = parameterEnd(newTypes, newSlots);
         // Any other parameter slot the code names, such as the second half of a long, has no new home.
         if (namesUnmappedSlot(handler, slotMap, oldParamEnd)) return null;
-        boolean changes = !newDesc.equals(handler.desc) || makeStatic;
+        boolean changes = !newDesc.equals(handler.desc) || makeStatic || makeInstance;
         // MixinExtras reads a LocalRef's type argument from the Signature a retype drops, and a set
         // @Local index points at a slot the host's parameters may have moved.
-        if (changes && (hasGenericRef(sugar) || localIndexMayMove(handler, callback, sugar, captures, liveArgs, makeStatic))) {
+        if (changes && (hasGenericRef(sugar) || localIndexMayMove(handler, callback, sugar, captures, liveArgs, makeStatic || makeInstance))) {
             return null;
         }
-        return new InjectPlan(live, newDesc, keepCaptures, makeStatic, callbackRetyped, liveCallback, slotMap,
+        return new InjectPlan(live, newDesc, keepCaptures, makeStatic, makeInstance, callbackRetyped, liveCallback, slotMap,
                 oldParamEnd, newParamEnd, newSlots[newCallback], changes, callback, newCallback, sugar.length,
                 newTypes.length);
     }
@@ -1404,6 +1755,7 @@ public final class MixinHostDriftRepair {
             bareSelector(inject, plan.live());
         }
         if (plan.makeStatic()) handler.access |= Opcodes.ACC_STATIC;
+        if (plan.makeInstance()) handler.access &= ~Opcodes.ACC_STATIC;
         handler.maxLocals = Math.max(0, handler.maxLocals + plan.newParamEnd() - plan.oldParamEnd());
     }
 
@@ -1518,10 +1870,10 @@ public final class MixinHostDriftRepair {
 
     /** Whether a {@code @Local(index = ...)} may name another slot, because the target's parameters take a different number of slots. */
     private static boolean localIndexMayMove(MethodNode handler, int callback, Type[] sugar, Type[] captures,
-            Type[] liveArgs, boolean becameStatic) {
+            Type[] liveArgs, boolean staticChanged) {
         // Without captures the handler never said what the old parameters were, and a target that became
-        // static lost its this slot, which moves every local down by one.
-        boolean slotsChanged = captures.length == 0 || slotCount(captures) != slotCount(liveArgs) || becameStatic;
+        // static or stopped being static lost or gained its this slot, which moves every local by one.
+        boolean slotsChanged = captures.length == 0 || slotCount(captures) != slotCount(liveArgs) || staticChanged;
         if (!slotsChanged) return false;
         for (int i = 0; i < sugar.length; i++) {
             for (AnnotationNode annotation : parameterAnnotations(handler, callback + 1 + i)) {
@@ -1726,6 +2078,11 @@ public final class MixinHostDriftRepair {
     }
 
     private FuzzyMethodResolver.MethodInfo soleLiveTarget(AnnotationNode inject, String target) {
+        return soleLiveTarget(inject, target, false);
+    }
+
+    /** The one host method a lone selector names; {@code <init>} counts only when {@code constructors} is set. */
+    private FuzzyMethodResolver.MethodInfo soleLiveTarget(AnnotationNode inject, String target, boolean constructors) {
         Object selectors = value(inject, "method");
         if (!(selectors instanceof List<?> list) || list.size() != 1
                 || !(list.get(0) instanceof String selector)) {
@@ -1733,10 +2090,14 @@ public final class MixinHostDriftRepair {
         }
         int paren = selector.indexOf('(');
         String name = paren < 0 ? selector : selector.substring(0, paren);
-        if (name.isEmpty() || name.contains(";") || name.contains("*") || name.startsWith("<")) return null;
+        boolean constructor = constructors && name.equals("<init>");
+        if (name.isEmpty() || name.contains(";") || name.contains("*") || (name.startsWith("<") && !constructor)) {
+            return null;
+        }
         if (paren >= 0 && !namesOnlyHostTypes(selector.substring(paren))) return null;
         List<FuzzyMethodResolver.MethodInfo> matches = new ArrayList<>();
-        for (FuzzyMethodResolver.MethodInfo method : host.getDeclaredMethods(target)) {
+        // The host index keeps constructors apart from methods.
+        for (FuzzyMethodResolver.MethodInfo method : constructor ? host.getConstructors(target) : host.getDeclaredMethods(target)) {
             if (method.name().equals(name)) matches.add(method);
         }
         if (matches.size() != 1) return null;

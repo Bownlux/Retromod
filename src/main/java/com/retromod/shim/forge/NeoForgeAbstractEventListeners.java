@@ -47,12 +47,13 @@ public final class NeoForgeAbstractEventListeners {
     static final String SUBSCRIBE = "Lnet/neoforged/bus/api/SubscribeEvent;";
     static final String EVENT = "net/neoforged/bus/api/Event";
     static final String BUS = "net/neoforged/bus/api/IEventBus";
-    static final String HELPER = RebuiltApiClasses.ROOT + "neoforge/event/LegacyAbstractListeners";
+    public static final String HELPER = RebuiltApiClasses.ROOT + "neoforge/event/LegacyAbstractListeners";
     private static final String CONSUMER = "Ljava/util/function/Consumer;";
     private static final String PRIORITY = "Lnet/neoforged/bus/api/EventPriority;";
 
     // Forge posted these itself, once per stage or name tag. NeoForge 26.x split them by stage and by
     // the two steps of drawing a tag, and dropped the getters old listeners read, so they keep their own bridges.
+    static final String RENDER_STAGE = "net/neoforged/neoforge/client/event/RenderLevelStageEvent";
     static final Set<String> SPLIT_BY_NEOFORGE = Set.of(
             "net/neoforged/neoforge/client/event/RenderLevelStageEvent",
             "net/neoforged/neoforge/client/event/RenderNameTagEvent");
@@ -79,6 +80,17 @@ public final class NeoForgeAbstractEventListeners {
         String target = RetromodVersion.TARGET_MC_VERSION;
         return apply(classBytes, event -> event == null ? List.of() : HOST_CHILDREN.computeIfAbsent(target + " " + event,
                 key -> childrenOf(event, ClassResourceInspector::read, target)));
+    }
+
+    /** The class with each listener on NeoForge's abstract RenderLevelStageEvent moved to the stage events below it. */
+    public static byte[] applyRenderStages(byte[] classBytes) {
+        String target = RetromodVersion.TARGET_MC_VERSION;
+        return apply(classBytes, event -> !RENDER_STAGE.equals(event) ? List.of() : HOST_CHILDREN.computeIfAbsent(
+                target + " " + event, key -> listedChildren(event, ClassResourceInspector::read, target)));
+    }
+
+    static byte[] applyRenderStages(byte[] classBytes, Function<String, ClassNode> host, String target) {
+        return apply(classBytes, event -> !RENDER_STAGE.equals(event) ? List.of() : listedChildren(event, host, target));
     }
 
     static byte[] apply(byte[] classBytes, Function<String, ClassNode> host, String target) {
@@ -212,6 +224,12 @@ public final class NeoForgeAbstractEventListeners {
     /** The concrete events below an abstract one, as the host has them; empty when the event is not abstract there. */
     static List<String> childrenOf(String event, Function<String, ClassNode> host, String target) {
         if (event == null || SPLIT_BY_NEOFORGE.contains(event)) return List.of();
+        return listedChildren(event, host, target);
+    }
+
+    /** The table's concrete children of an abstract event, confirmed against the host when it can be read. */
+    private static List<String> listedChildren(String event, Function<String, ClassNode> host, String target) {
+        if (event == null) return List.of();
         Map<String, List<String>> section = section(target);
         List<String> listed = section == null ? null : section.get(event);
         if (listed == null) return List.of();

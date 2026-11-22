@@ -34,6 +34,8 @@ final class GeometryHostFixtures {
         // Named in the signatures of the bus bridge's generated helper, which reflection reads whole.
         sources.put("net/minecraftforge/fml/javafmlmod/FMLJavaModLoadingContext.java",
                 "package net.minecraftforge.fml.javafmlmod; public class FMLJavaModLoadingContext {}");
+        sources.put("net/minecraftforge/fml/javafmlmod/FMLModContainer.java",
+                "package net.minecraftforge.fml.javafmlmod; public class FMLModContainer {}");
         sources.put("com/mojang/logging/LogUtils.java", """
                 package com.mojang.logging;
                 public final class LogUtils {

@@ -24,6 +24,9 @@ public final class LegacyEarlyItemStackBridge {
     static final String[] CONSTRUCTORS = {"(" + ITEM_LIKE + ")V", "(" + ITEM_LIKE + "I)V", "(" + HOLDER + ")V",
             "(" + HOLDER + "I)V", "(" + HOLDER + "I" + PATCH + ")V"};
 
+    static final String POTION_CONTENTS = "net/minecraft/world/item/alchemy/PotionContents";
+    static final String CREATE_POTION_STACK = "(L" + ITEM + ";" + HOLDER + ")L" + ITEM_STACK + ";";
+
     private LegacyEarlyItemStackBridge() {}
 
     /** Registers the bridge on a host whose item components are bound only when a world's data loads. */
@@ -48,5 +51,17 @@ public final class LegacyEarlyItemStackBridge {
         t.registerWrappingMethodRedirect(ITEM, "getDefaultInstance", DEFAULT_INSTANCE,
                 HELPER, "defaultInstance", "(L" + ITEM + ";)L" + ITEM_STACK + ";");
         t.limitRedirectToModsBefore(ITEM, "getDefaultInstance", DEFAULT_INSTANCE, since);
+        // Moonlight swaps a recipe result to another wood's item this way while it generates its data pack.
+        String transmute = "(" + ITEM_LIKE + ")L" + ITEM_STACK + ";";
+        String transmuteCount = "(" + ITEM_LIKE + "I)L" + ITEM_STACK + ";";
+        t.registerWrappingMethodRedirect(ITEM_STACK, "transmuteCopy", transmute,
+                HELPER, "transmuteCopy", "(L" + ITEM_STACK + ";" + ITEM_LIKE + ")L" + ITEM_STACK + ";");
+        t.registerWrappingMethodRedirect(ITEM_STACK, "transmuteCopy", transmuteCount,
+                HELPER, "transmuteCopy", "(L" + ITEM_STACK + ";" + ITEM_LIKE + "I)L" + ITEM_STACK + ";");
+        t.limitRedirectToModsBefore(ITEM_STACK, "transmuteCopy", transmute, since);
+        t.limitRedirectToModsBefore(ITEM_STACK, "transmuteCopy", transmuteCount, since);
+        // Supplementaries builds its tipped arrows this way during setup, before a world binds components.
+        t.registerMethodRedirect(POTION_CONTENTS, "createItemStack", CREATE_POTION_STACK, HELPER, "potion", CREATE_POTION_STACK);
+        t.limitRedirectToModsBefore(POTION_CONTENTS, "createItemStack", CREATE_POTION_STACK, since);
     }
 }

@@ -83,6 +83,9 @@ public final class LegacyFoodConsumableBridge {
     private static final int CONSUMABLE_SLOT = 0;
     private static final int CONVERTS_TO_SLOT = 1;
 
+    /** 1.21.1's record constructor: nutrition, saturation, always edible, eat seconds, leftover stack, effects. */
+    static final String OLD_RECORD_DESC = "(IFZFLjava/util/Optional;Ljava/util/List;)V";
+
     /** Registers the helper and routes the removed builder calls through it. */
     public static void register(RetromodTransformer transformer) {
         if (!transformer.getSyntheticClasses().containsKey(INTERNAL)) {
@@ -104,6 +107,9 @@ public final class LegacyFoodConsumableBridge {
                 INTERNAL, "build", BUILD_HELPER_DESC);
         transformer.registerWrappingMethodRedirect(ITEM_PROPS, "food", FOOD_DESC,
                 INTERNAL, "food", FOOD_HELPER_DESC);
+        // A food built with the old record constructor keeps its eat time and leftover the same way.
+        transformer.registerConstructorRedirect(FOOD, OLD_RECORD_DESC, INTERNAL, "record",
+                OLD_RECORD_DESC.replace(")V", ")L" + FOOD + ";"));
     }
 
     public static byte[] generate() {
@@ -127,6 +133,7 @@ public final class LegacyFoodConsumableBridge {
         generateFast(cw);
         generateUsingConvertsTo(cw);
         generateBuild(cw);
+        generateRecord(cw);
         generateFood(cw);
         cw.visitEnd();
         return cw.toByteArray();
@@ -278,6 +285,60 @@ public final class LegacyFoodConsumableBridge {
         mv.visitVarInsn(ALOAD, 1);
         mv.visitInsn(AASTORE);
         mv.visitVarInsn(ALOAD, 0);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /**
+     * {@code record(nutrition, saturation, alwaysEdible, eatSeconds, leftover, effects)}: the host's food, with the
+     * old record's eat time and leftover kept for {@code food(food)}. A non-empty effect list names the removed
+     * {@code PossibleEffect} type, so a mod that passes one has already failed before this runs.
+     */
+    private static void generateRecord(ClassWriter cw) {
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "record",
+                OLD_RECORD_DESC.replace(")V", ")L" + FOOD + ";"), null, null);
+        mv.visitCode();
+        mv.visitTypeInsn(NEW, FOOD);
+        mv.visitInsn(DUP);
+        mv.visitVarInsn(ILOAD, 0);
+        mv.visitVarInsn(FLOAD, 1);
+        mv.visitVarInsn(ILOAD, 2);
+        mv.visitMethodInsn(INVOKESPECIAL, FOOD, "<init>", "(IFZ)V", false);
+        mv.visitVarInsn(ASTORE, 6);
+        // The settings are gathered under a fresh key, as a builder's would be, and then filed under the food.
+        mv.visitTypeInsn(NEW, "java/lang/Object");
+        mv.visitInsn(DUP);
+        mv.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        mv.visitVarInsn(ASTORE, 7);
+        // The record stored its eat time outright, so the consumable takes it as given.
+        mv.visitVarInsn(ALOAD, 7);
+        mv.visitMethodInsn(INVOKESTATIC, INTERNAL, "consumable", "(Ljava/lang/Object;)L" + CONSUMABLE_BUILDER + ";", false);
+        mv.visitVarInsn(FLOAD, 3);
+        mv.visitMethodInsn(INVOKEVIRTUAL, CONSUMABLE_BUILDER, "consumeSeconds", "(F)L" + CONSUMABLE_BUILDER + ";", false);
+        mv.visitInsn(POP);
+        Label noLeftover = new Label();
+        mv.visitVarInsn(ALOAD, 4);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/util/Optional", "isPresent", "()Z", false);
+        mv.visitJumpInsn(IFEQ, noLeftover);
+        mv.visitVarInsn(ALOAD, 7);
+        mv.visitMethodInsn(INVOKESTATIC, INTERNAL, "settings", "(Ljava/lang/Object;)[Ljava/lang/Object;", false);
+        pushInt(mv, CONVERTS_TO_SLOT);
+        mv.visitVarInsn(ALOAD, 4);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/util/Optional", "get", "()Ljava/lang/Object;", false);
+        mv.visitTypeInsn(CHECKCAST, "net/minecraft/world/item/ItemStack");
+        mv.visitMethodInsn(INVOKEVIRTUAL, "net/minecraft/world/item/ItemStack", "getItem", "()L" + ITEM + ";", false);
+        mv.visitInsn(AASTORE);
+        mv.visitLabel(noLeftover);
+        mv.visitFieldInsn(GETSTATIC, INTERNAL, BUILT, MAP_DESC);
+        mv.visitVarInsn(ALOAD, 6);
+        mv.visitFieldInsn(GETSTATIC, INTERNAL, PENDING, MAP_DESC);
+        mv.visitVarInsn(ALOAD, 7);
+        mv.visitMethodInsn(INVOKEINTERFACE, "java/util/Map", "remove", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
+        mv.visitMethodInsn(INVOKEINTERFACE, "java/util/Map", "put",
+                "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", true);
+        mv.visitInsn(POP);
+        mv.visitVarInsn(ALOAD, 6);
         mv.visitInsn(ARETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

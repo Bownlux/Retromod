@@ -8,4 +8,8 @@ import net.minecraft.world.level.storage.loot.LootContext;
 
 public interface LootItemCondition extends Predicate<LootContext> {
     Codec<Holder<LootItemCondition>> CODEC = null;
+
+    interface Builder {
+        LootItemCondition build();
+    }
 }

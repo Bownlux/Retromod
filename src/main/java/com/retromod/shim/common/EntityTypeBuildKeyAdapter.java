@@ -37,6 +37,8 @@ public final class EntityTypeBuildKeyAdapter {
     public static final String BRIDGE = "com/retromod/polyfill/minecraft/RetroEntityTypeBuild";
     private static final Set<String> BRIDGE_METHODS = Set.of("build", "buildOfficial");
     private static final String NAME_ONLY_DESC = "(Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/Object;";
+    /** Fabric API's old {@code build()}, which passed no name at all. */
+    private static final String UNNAMED_DESC = "(Ljava/lang/Object;)Ljava/lang/Object;";
     // 1.21.2 derives the type's translation key and loot table from the ResourceKey given to build.
     // Older versions took them from the registration and used the String only for the datafixer, and
     // old mods often pass a bare name, which alone would put the entity in Minecraft's namespace.
@@ -238,18 +240,20 @@ public final class EntityTypeBuildKeyAdapter {
             } else {
                 arguments.add(new InsnNode(Opcodes.ACONST_NULL));
             }
+            // A call without a name passes none, so the id and namespace alone decide.
+            if (UNNAMED_DESC.equals(site.call().desc)) arguments.insert(new InsnNode(Opcodes.ACONST_NULL));
             // Then push the namespace. Both go right before the call, which now takes them.
             arguments.add(site.namespace() != null ? new LdcInsnNode(site.namespace()) : new InsnNode(Opcodes.ACONST_NULL));
             m.instructions.insertBefore(site.call(), arguments);
             site.call().desc = KEYED_DESC;
         }
-        m.maxStack += 2;
+        m.maxStack += 3;
         return !captures.isEmpty();
     }
 
     private static boolean isNameOnlyBridgeCall(MethodInsnNode call) {
         return call.getOpcode() == Opcodes.INVOKESTATIC && BRIDGE.equals(call.owner)
-                && BRIDGE_METHODS.contains(call.name) && NAME_ONLY_DESC.equals(call.desc);
+                && BRIDGE_METHODS.contains(call.name) && (NAME_ONLY_DESC.equals(call.desc) || UNNAMED_DESC.equals(call.desc));
     }
 
     /** The next instruction that runs after {@code insn}, skipping casts of its result. */

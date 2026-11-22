@@ -8,6 +8,8 @@ public final class Registries {
     public static final ResourceKey<? extends Registry<?>> BIOME = null;
     public static final ResourceKey<? extends Registry<?>> ENCHANTMENT = null;
     public static final ResourceKey<? extends Registry<?>> ITEM = null;
+    public static final ResourceKey<Registry<net.minecraft.world.level.block.Block>> BLOCK = null;
     public static final ResourceKey<Registry<net.minecraft.world.level.storage.loot.LootTable>> LOOT_TABLE = null;
     public static final ResourceKey<Registry<net.minecraft.world.level.storage.loot.providers.number.ints.ContextIntProvider>> CONTEXT_INT_PROVIDER = null;
+    public static final net.minecraft.resources.ResourceKey<net.minecraft.core.Registry<net.minecraft.world.item.crafting.Recipe<?>>> RECIPE = null;
 }

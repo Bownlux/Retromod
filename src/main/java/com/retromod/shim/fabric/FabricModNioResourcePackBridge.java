@@ -28,6 +28,8 @@ public final class FabricModNioResourcePackBridge {
 
     static final String PACK = "net/fabricmc/fabric/impl/resource/loader/ModNioResourcePack";
     static final String FACTORY = "com/retromod/generated/LegacyModNioResourcePacks";
+    /** Where Fabric API for 26.1 and newer keeps the mod pack class; checked in its 26.1.2, 26.2 and 26.3 builds. */
+    static final String MOVED_PACK = "net/fabricmc/fabric/impl/resource/pack/ModNioPackResources";
     static final String OLD_PARAMS = "(Ljava/lang/String;Lnet/fabricmc/loader/api/ModContainer;"
             + "Ljava/lang/String;Lnet/minecraft/class_3264;"
             + "Lnet/fabricmc/fabric/api/resource/ResourcePackActivationType;";
@@ -44,6 +46,20 @@ public final class FabricModNioResourcePackBridge {
             return;
         }
         registerRedirects(transformer);
+    }
+
+    /**
+     * Points the old class at its new home where the installed Fabric API moved it, so a type check such as
+     * Moonlight's {@code pack instanceof ModNioResourcePack} loads and still finds mod packs. Calls into the old class
+     * keep failing as before, since the new one builds its packs differently.
+     */
+    public static void registerMovedClass(RetromodTransformer transformer) {
+        registerMovedClass(transformer, ClassResourceInspector::read);
+    }
+
+    static void registerMovedClass(RetromodTransformer transformer, java.util.function.Function<String, ClassNode> host) {
+        if (host.apply(PACK) != null || host.apply(MOVED_PACK) == null) return;
+        transformer.registerClassRedirect(PACK, MOVED_PACK);
     }
 
     /** Unconditional registration for offline transforms and transform-shape tests. */

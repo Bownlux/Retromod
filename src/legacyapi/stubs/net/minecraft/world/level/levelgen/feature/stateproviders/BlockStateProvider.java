@@ -8,6 +8,7 @@ import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.state.BlockState;
 
 public interface BlockStateProvider {
+    com.mojang.serialization.Codec<BlockStateProvider> DIRECT_CODEC = null;
     MapCodec<? extends BlockStateProvider> codec();
     BlockState getState(LevelAccessor level, RandomSource random, BlockPos pos);
 }

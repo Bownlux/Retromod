@@ -58,6 +58,14 @@ class MixinRefmapTargetRepairTest {
     private static final String POS = "Lnet/minecraft/core/BlockPos;";
     private static final String STATE = "Lnet/minecraft/world/level/block/state/BlockState;";
 
+    // 1.21.5 gave the Inventory constructor an EntityEquipment after the Player (Shifty Hotbar, #425).
+    private static final String INVENTORY = "net/minecraft/world/entity/player/Inventory";
+    private static final String PLAYER = "Lnet/minecraft/world/entity/player/Player;";
+    private static final String EQUIPMENT = "Lnet/minecraft/world/entity/EntityEquipment;";
+    private static final String OLD_INVENTORY_ENTRY = "L" + INVENTORY + ";<init>(" + PLAYER + ")V";
+    private static final String NEW_INVENTORY_ENTRY = "L" + INVENTORY + ";<init>(" + PLAYER + EQUIPMENT + ")V";
+    private static final String MENU = "net/minecraft/world/inventory/TwoConstructorMenu";
+
     @TempDir
     Path dir;
 
@@ -69,6 +77,11 @@ class MixinRefmapTargetRepairTest {
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
             put(out, hostClass(RELOADABLE, writer -> method(writer, Opcodes.ACC_STATIC, "loadResources",
                     "(" + NEW_ARGS + ")" + FUTURE)));
+            put(out, hostClass(INVENTORY, writer -> method(writer, 0, "<init>", "(" + PLAYER + EQUIPMENT + ")V")));
+            put(out, hostClass(MENU, writer -> {
+                method(writer, 0, "<init>", "(" + PLAYER + EQUIPMENT + ")V");
+                method(writer, 0, "<init>", "(I)V");
+            }));
             put(out, hostClass(BLOCK, writer -> {
                 method(writer, 0, "updateShape", "(" + STATE + POS + "ZZ)V");
                 method(writer, 0, "updateShape", "(" + STATE + ")V");
@@ -90,6 +103,28 @@ class MixinRefmapTargetRepairTest {
                 "the refmap names the method the repaired handler now fits");
         assertSame(refmap, apply(refmap, "mod/ReloadMixin", old),
                 "without the class repair the handler fits nothing, so the entry stays as it was");
+    }
+
+    @Test
+    void aConstructorEntryMovesToTheHostConstructorTheRepairedHandlerFits() {
+        byte[] old = mixin("mod/InventoryMixin", INVENTORY, writer ->
+                handler(writer, "init", 0, "(" + PLAYER + CI + ")V", "<init>", "RETURN"));
+        byte[] repaired = new MixinHostDriftRepair(host, Map.of(), Map.of()).apply(old);
+        String refmap = refmap("mod/InventoryMixin", "<init>", OLD_INVENTORY_ENTRY);
+
+        assertEquals("(" + CI + ")V", method(repaired, "init").desc, "the unread Player capture is dropped");
+        assertEquals(NEW_INVENTORY_ENTRY, entry(apply(refmap, "mod/InventoryMixin", repaired), "mod/InventoryMixin", "<init>"),
+                "the refmap names the one constructor the host still has");
+    }
+
+    @Test
+    void aCallbackOnlyHandlerLeavesAnOverloadedConstructorAlone() {
+        byte[] mixin = mixin("mod/MenuMixin", MENU, writer ->
+                handler(writer, "init", 0, "(" + CI + ")V", "<init>", "RETURN"));
+        String refmap = refmap("mod/MenuMixin", "<init>", "L" + MENU + ";<init>(" + PLAYER + ")V");
+
+        assertSame(refmap, apply(refmap, "mod/MenuMixin", mixin),
+                "the callback fits both constructors, so the entry cannot pick one");
     }
 
     @Test

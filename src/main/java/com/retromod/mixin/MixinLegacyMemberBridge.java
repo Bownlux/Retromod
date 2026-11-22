@@ -83,6 +83,12 @@ final class MixinLegacyMemberBridge {
     private static final String INVENTORY_SCREEN_INTERMEDIARY = "net/minecraft/class_490";
     private static final String OLD_EFFECTS_INVENTORY_SCREEN_INTERMEDIARY = "net/minecraft/class_485";
     private static final String CONTAINER_SCREEN_INTERMEDIARY = "net/minecraft/class_465";
+    // The same three classes under their Mojang names, which a Fabric mod carries on 26.x after the remap.
+    private static final String INVENTORY_SCREEN = "net/minecraft/client/gui/screens/inventory/InventoryScreen";
+    private static final String CREATIVE_SCREEN = "net/minecraft/client/gui/screens/inventory/CreativeModeInventoryScreen";
+    private static final String CREATIVE_SCREEN_INTERMEDIARY = "net/minecraft/class_481";
+    private static final String EFFECTS_IN_INVENTORY = "net/minecraft/client/gui/screens/inventory/EffectsInInventory";
+    private static final String CONTAINER_SCREEN = "net/minecraft/client/gui/screens/inventory/AbstractContainerScreen";
     private static final String CHAT_OPTIONS_SCREEN =
             "net/minecraft/client/gui/screens/options/ChatOptionsScreen";
     private static final String SIMPLE_OPTIONS_SCREEN =
@@ -146,8 +152,15 @@ final class MixinLegacyMemberBridge {
         if (targets.contains(SMITHING_TRANSFORM) && PATCHOULI_SMITHING_ACCESSOR.equals(classNode.name)) {
             modified |= bridgeOptionalSmithingIngredients(classNode, INGREDIENT, "template", "addition");
         }
-        if (targets.contains(INVENTORY_SCREEN_INTERMEDIARY)) {
-            modified |= rebaseLegacyInventoryScreenMixin(classNode);
+        // The survival and creative inventories both extended the effects screen in 1.21.1.
+        if (targets.contains(INVENTORY_SCREEN_INTERMEDIARY) || targets.contains(CREATIVE_SCREEN_INTERMEDIARY)) {
+            modified |= rebaseLegacyInventoryScreenMixin(classNode, OLD_EFFECTS_INVENTORY_SCREEN_INTERMEDIARY,
+                    CONTAINER_SCREEN_INTERMEDIARY);
+        }
+        // Intermediary class_485 was the effects screen in 1.21.1 and names the EffectsInInventory helper now, so an old
+        // mixin reaches 26.x extending a class that is not a screen. A current mod never puts that helper above a screen.
+        if (targets.contains(INVENTORY_SCREEN) || targets.contains(CREATIVE_SCREEN)) {
+            modified |= rebaseLegacyInventoryScreenMixin(classNode, EFFECTS_IN_INVENTORY, CONTAINER_SCREEN);
         }
         if (targets.size() == 1 && targets.contains(CHAT_OPTIONS_SCREEN)) {
             modified |= rebaseLegacyChatOptionsMixin(classNode);
@@ -295,18 +308,18 @@ final class MixinLegacyMemberBridge {
      * class before applying any mods. Rebase it to the nearest stable screen ancestor. Its old
      * constructor already has that ancestor's descriptor, so only the invocation owner changes.
      */
-    private static boolean rebaseLegacyInventoryScreenMixin(ClassNode classNode) {
-        if (!OLD_EFFECTS_INVENTORY_SCREEN_INTERMEDIARY.equals(classNode.superName)) return false;
+    private static boolean rebaseLegacyInventoryScreenMixin(ClassNode classNode, String oldSuper, String newSuper) {
+        if (!oldSuper.equals(classNode.superName)) return false;
 
-        classNode.superName = CONTAINER_SCREEN_INTERMEDIARY;
+        classNode.superName = newSuper;
+        if (classNode.signature != null) classNode.signature = classNode.signature.replace("L" + oldSuper + "<", "L" + newSuper + "<");
+        // Every inherited member moves with it: super calls such as the constructor and onClose, and fields such as width.
         for (MethodNode method : classNode.methods) {
-            if (!"<init>".equals(method.name)) continue;
             for (var instruction : method.instructions) {
-                if (instruction instanceof MethodInsnNode call
-                        && call.getOpcode() == Opcodes.INVOKESPECIAL
-                        && "<init>".equals(call.name)
-                        && OLD_EFFECTS_INVENTORY_SCREEN_INTERMEDIARY.equals(call.owner)) {
-                    call.owner = CONTAINER_SCREEN_INTERMEDIARY;
+                if (instruction instanceof MethodInsnNode call && oldSuper.equals(call.owner)) {
+                    call.owner = newSuper;
+                } else if (instruction instanceof FieldInsnNode field && oldSuper.equals(field.owner)) {
+                    field.owner = newSuper;
                 }
             }
         }

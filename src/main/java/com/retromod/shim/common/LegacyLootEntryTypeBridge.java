@@ -28,6 +28,15 @@ public final class LegacyLootEntryTypeBridge {
     static final String SUPPORT = "com/retromod/shim/common/embedded/LegacyLootEntryTypeSupport";
     static final String FIRST_HOST_WITHOUT = "26.1";
     static final String TYPE_OF_DESC = "(L" + CONTAINER + ";)L" + STAND_IN + ";";
+    private static final String LOOT = "net/minecraft/world/level/storage/loot/";
+
+    /** Each loot element whose getType() 26.1 replaced with codec(): element, old type, this mod's stand-in, getter. */
+    static final String[][] TYPE_READS = {
+            {CONTAINER, OLD_TYPE, STAND_IN, "typeOf"},
+            {LOOT + "functions/LootItemFunction", LOOT + "functions/LootItemFunctionType",
+                    WorldgenTypeBridgeSynthetic.LOOT_FUNCTION_WRAPPER, "functionTypeOf"},
+            {LOOT + "predicates/LootItemCondition", LOOT + "predicates/LootItemConditionType",
+                    WorldgenTypeBridgeSynthetic.LOOT_CONDITION_WRAPPER, "conditionTypeOf"}};
 
     /** Each removed constant with the id of the type it held; 1.20.1 named the nested table type REFERENCE. */
     static final String[][] CONSTANTS = {
@@ -46,8 +55,11 @@ public final class LegacyLootEntryTypeBridge {
         for (String[] constant : CONSTANTS) {
             t.registerStaticFieldBridge(CONSTANTS_OWNER, constant[0], TYPES, constant[0], "()L" + STAND_IN + ";", null, null);
         }
-        // getType() on any entry, vanilla or old. javac names the receiver's static type, often a subclass.
-        t.registerInheritedMethodRedirect(CONTAINER, "getType", "()L" + OLD_TYPE + ";", TYPES, "typeOf", TYPE_OF_DESC);
+        // getType() on any entry, function or condition, vanilla or old. javac names the receiver's static type, often a subclass.
+        for (String[] read : TYPE_READS) {
+            t.registerInheritedMethodRedirect(read[0], "getType", "()L" + read[1] + ";", TYPES, read[3],
+                    "(L" + read[0] + ";)L" + read[2] + ";");
+        }
     }
 
     /** Read from the host: 26.1 has no type constants. Offline, the target version decides. */
@@ -78,15 +90,17 @@ public final class LegacyLootEntryTypeBridge {
             mv.visitMaxs(0, 0);
             mv.visitEnd();
         }
-        MethodVisitor typeOf = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "typeOf", TYPE_OF_DESC, null, null);
-        typeOf.visitCode();
-        typeOf.visitLdcInsn(Type.getObjectType(STAND_IN));
-        typeOf.visitVarInsn(ALOAD, 0);
-        typeOf.visitMethodInsn(INVOKESTATIC, SUPPORT, "typeOf", "(Ljava/lang/Class;Ljava/lang/Object;)Ljava/lang/Object;", false);
-        typeOf.visitTypeInsn(CHECKCAST, STAND_IN);
-        typeOf.visitInsn(ARETURN);
-        typeOf.visitMaxs(0, 0);
-        typeOf.visitEnd();
+        for (String[] read : TYPE_READS) {
+            MethodVisitor typeOf = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, read[3], "(L" + read[0] + ";)L" + read[2] + ";", null, null);
+            typeOf.visitCode();
+            typeOf.visitLdcInsn(Type.getObjectType(read[2]));
+            typeOf.visitVarInsn(ALOAD, 0);
+            typeOf.visitMethodInsn(INVOKESTATIC, SUPPORT, "typeOf", "(Ljava/lang/Class;Ljava/lang/Object;)Ljava/lang/Object;", false);
+            typeOf.visitTypeInsn(CHECKCAST, read[2]);
+            typeOf.visitInsn(ARETURN);
+            typeOf.visitMaxs(0, 0);
+            typeOf.visitEnd();
+        }
         cw.visitEnd();
         return cw.toByteArray();
     }

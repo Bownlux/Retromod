@@ -57,10 +57,9 @@ public final class RetroTextEvents {
     }
 
     /**
-     * Old {@code new HoverEvent(HoverEvent.Action, Object)} -> the matching 26.x subtype. Only
-     * {@code SHOW_TEXT} maps from a legacy {@code (action, Object)} pair without the removed
-     * serializer plumbing (its value was a {@code Component}); {@code SHOW_ITEM}/{@code SHOW_ENTITY}
-     * took now-restructured value objects, so they fall through to the inert {@code null}.
+     * Old {@code new HoverEvent(HoverEvent.Action, Object)} -> the matching 26.x subtype. {@code SHOW_TEXT}
+     * takes its {@code Component}, and {@code SHOW_ITEM} the stack of the rebuilt {@code ItemStackInfo}.
+     * {@code SHOW_ENTITY} took a now-restructured value object, so it falls through to the inert {@code null}.
      */
     public static Object hoverEvent(Object action, Object value) {
         String name = enumName(action);
@@ -69,10 +68,50 @@ public final class RetroTextEvents {
             if ("SHOW_TEXT".equals(name)) {
                 return newInst(HOVER + "ShowText", Class.forName("net.minecraft.network.chat.Component"), value);
             }
+            if ("SHOW_ITEM".equals(name)) return showItem(value);
             return null;
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /**
+     * Old {@code ClickEvent.getValue()}: the single string the event carried. Each 26.x subtype record holds that
+     * value as its one component, a URI, path, command, page number or text, so it is read back as a string.
+     */
+    public static String clickValue(Object event) {
+        if (event == null) return null;
+        try {
+            java.lang.reflect.RecordComponent[] parts = event.getClass().getRecordComponents();
+            if (parts == null || parts.length != 1) return null;
+            java.lang.reflect.Method accessor = parts[0].getAccessor();
+            accessor.setAccessible(true);
+            Object value = accessor.invoke(event);
+            // A dialog holder or other new value has no old string form.
+            return value instanceof String || value instanceof java.net.URI || value instanceof Number ? String.valueOf(value) : null;
+        } catch (Throwable unreadable) {
+            return null;
+        }
+    }
+
+    /**
+     * {@code SHOW_ITEM} with the rebuilt {@code ItemStackInfo}: its stack, as the item template 26.1 shows, or as the
+     * stack itself where the hover still takes one. An empty stack shows nothing, as before.
+     */
+    private static Object showItem(Object info) throws Exception {
+        if (info == null) return null;
+        Object stack = info.getClass().getMethod("getItemStack").invoke(info);
+        if (stack == null || Boolean.TRUE.equals(stack.getClass().getMethod("isEmpty").invoke(stack))) return null;
+        Class<?> stackType = Class.forName("net.minecraft.world.item.ItemStack");
+        Class<?> showItem = Class.forName(HOVER + "ShowItem");
+        for (java.lang.reflect.Constructor<?> ctor : showItem.getConstructors()) {
+            Class<?>[] params = ctor.getParameterTypes();
+            if (params.length != 1) continue;
+            if (params[0] == stackType) return ctor.newInstance(stack);
+            Object template = params[0].getMethod("fromNonEmptyStack", stackType).invoke(null, stack);
+            return ctor.newInstance(template);
+        }
+        return null;
     }
 
     private static String enumName(Object action) {

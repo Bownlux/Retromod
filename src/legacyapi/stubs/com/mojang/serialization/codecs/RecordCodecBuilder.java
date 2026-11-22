@@ -25,6 +25,16 @@ public final class RecordCodecBuilder<O, F> implements App<RecordCodecBuilder.Mu
             throw new UnsupportedOperationException();
         }
 
+        public <T1, T2> Products.P2<RecordCodecBuilder.Mu<O>, T1, T2> group(App<RecordCodecBuilder.Mu<O>, T1> t1,
+                App<RecordCodecBuilder.Mu<O>, T2> t2) { throw new UnsupportedOperationException(); }
+
+        public <T1, T2, T3, T4, T5, T6, T7, T8, T9> Products.P9<RecordCodecBuilder.Mu<O>, T1, T2, T3, T4, T5, T6, T7, T8, T9> group(
+                App<RecordCodecBuilder.Mu<O>, T1> t1, App<RecordCodecBuilder.Mu<O>, T2> t2, App<RecordCodecBuilder.Mu<O>, T3> t3,
+                App<RecordCodecBuilder.Mu<O>, T4> t4, App<RecordCodecBuilder.Mu<O>, T5> t5, App<RecordCodecBuilder.Mu<O>, T6> t6,
+                App<RecordCodecBuilder.Mu<O>, T7> t7, App<RecordCodecBuilder.Mu<O>, T8> t8, App<RecordCodecBuilder.Mu<O>, T9> t9) {
+            throw new UnsupportedOperationException();
+        }
+
         public <T1, T2, T3, T4> Products.P4<RecordCodecBuilder.Mu<O>, T1, T2, T3, T4> group(App<RecordCodecBuilder.Mu<O>, T1> t1,
                 App<RecordCodecBuilder.Mu<O>, T2> t2, App<RecordCodecBuilder.Mu<O>, T3> t3, App<RecordCodecBuilder.Mu<O>, T4> t4) {
             throw new UnsupportedOperationException();

@@ -55,6 +55,14 @@ class MixinHostShapeRepairTest {
     private static final String CONTENTS = MixinContainerItemsAdapter.CONTENTS;
     private static final String NON_NULL_LIST = "net/minecraft/core/NonNullList";
     private static final String STACK = "net/minecraft/world/item/ItemStack";
+    private static final String BLOCK = "net/minecraft/world/level/block/Block";
+    private static final String OLD_PARTICLES = "(L" + LEVEL + ";Lnet/minecraft/world/entity/player/Player;"
+            + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;)V";
+    private static final String NEW_PARTICLES = "(L" + LEVEL + ";Lnet/minecraft/core/BlockPos;"
+            + "Lnet/minecraft/world/level/block/state/BlockState;)V";
+    private static final String ENTITY_PARTICLES = "(L" + LEVEL + ";Lnet/minecraft/world/entity/Entity;"
+            + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;)V";
+    private static final String OLD_FALL = "(L" + LEVEL + ";Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/core/BlockPos;)V";
 
     @TempDir
     Path tempDir;
@@ -72,6 +80,11 @@ class MixinHostShapeRepairTest {
                         NEW_CONVERT, null, null).visitEnd();
                 c.visitMethod(Opcodes.ACC_PROTECTED | Opcodes.ACC_ABSTRACT, "getDropOff",
                         "(L" + LEVEL + ";)I", null, null).visitEnd();
+            }));
+            put(out, hostClass(BLOCK, "java/lang/Object", c -> {
+                c.visitMethod(Opcodes.ACC_PUBLIC, "spawnDestroyParticles", NEW_PARTICLES, null, null).visitEnd();
+                c.visitMethod(Opcodes.ACC_PUBLIC, "spawnDestroyByEntityParticles", ENTITY_PARTICLES, null, null).visitEnd();
+                c.visitMethod(Opcodes.ACC_PUBLIC, "fallOn", "(L" + LEVEL + ";Lnet/minecraft/core/BlockPos;)V", null, null).visitEnd();
             }));
             put(out, hostClass(CONTENTS, "java/lang/Object", c -> c.visitField(
                     Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "items", "Ljava/util/List;", null,
@@ -112,6 +125,50 @@ class MixinHostShapeRepairTest {
 
         assertFalse(MixinInvokerNarrowingRepair.apply(accessor, host),
                 "only a host parameter that is a subtype of the old one is a provable narrowing");
+    }
+
+    @Test
+    void invokerFollowsATargetThe263HostRenamedAndWidened() {
+        // Lootr's accessor, as built for 1.21.1: 26.3 moved the player form to spawnDestroyByEntityParticles.
+        ClassNode accessor = accessor(BLOCK, "lootr$spawnDestroyParticles", OLD_PARTICLES, "spawnDestroyParticles");
+
+        assertTrue(MixinInvokerNarrowingRepair.apply(accessor, host));
+
+        MethodNode invoker = method(accessor, "lootr$spawnDestroyParticles", ENTITY_PARTICLES);
+        assertNotNull(invoker, "the invoker takes an entity, which every old caller's player is");
+        assertEquals(List.of("value", "spawnDestroyByEntityParticles"), invoker.visibleAnnotations.get(0).values,
+                "and names the renamed method, so it keeps the old effect");
+        assertEquals(1, accessor.methods.size());
+    }
+
+    @Test
+    void invokerFollowsATargetThatDroppedAParameter() {
+        ClassNode accessor = accessor(BLOCK, "invokeFallOn", OLD_FALL, null);
+
+        assertTrue(MixinInvokerNarrowingRepair.apply(accessor, host));
+
+        assertNotNull(method(accessor, "invokeFallOn", "(L" + LEVEL + ";Lnet/minecraft/core/BlockPos;)V"),
+                "the invoker takes the host's parameters, so Mixin finds its target");
+    }
+
+    @Test
+    void invokerWhoseTargetDroppedTwoParametersIsNotRetyped() {
+        String twoMore = "(L" + LEVEL + ";Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/world/entity/Entity;"
+                + "Lnet/minecraft/core/BlockPos;)V";
+        ClassNode accessor = accessor(BLOCK, "invokeFallOn", twoMore, null);
+
+        assertFalse(MixinInvokerNarrowingRepair.apply(accessor, host),
+                "with two left out, which arguments the rest are is no longer provable");
+    }
+
+    @Test
+    void invokerWhoseParametersWereReorderedIsNotRetyped() {
+        String reordered = "(Lnet/minecraft/core/BlockPos;L" + LEVEL + ";Lnet/minecraft/world/entity/player/Player;"
+                + "Lnet/minecraft/world/level/block/state/BlockState;)V";
+        ClassNode accessor = accessor(BLOCK, "invokeSpawnDestroyParticles", reordered, null);
+
+        assertFalse(MixinInvokerNarrowingRepair.apply(accessor, host),
+                "the host's parameters are not the old ones in order with some left out");
     }
 
     @Test
@@ -280,13 +337,20 @@ class MixinHostShapeRepairTest {
     }
 
     private static ClassNode accessor(String name, String desc) {
+        return accessor(FLOWING_FLUID, name, desc, null);
+    }
+
+    /** An accessor interface on {@code target} with one invoker, naming its member in the annotation when {@code member} is set. */
+    private static ClassNode accessor(String target, String name, String desc, String member) {
         ClassWriter cw = new ClassWriter(0);
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT,
-                "mod/FlowingFluidAccessor", null, "java/lang/Object", null);
-        mixinAnnotation(cw, FLOWING_FLUID);
+                "mod/Accessor", null, "java/lang/Object", null);
+        mixinAnnotation(cw, target);
         MethodVisitor invoker = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, name,
                 desc, null, null);
-        invoker.visitAnnotation(INVOKER, true).visitEnd();
+        AnnotationVisitor annotation = invoker.visitAnnotation(INVOKER, true);
+        if (member != null) annotation.visit("value", member);
+        annotation.visitEnd();
         invoker.visitEnd();
         cw.visitEnd();
         return node(cw.toByteArray());

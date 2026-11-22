@@ -58,6 +58,26 @@ class LegacyPackMetadataCodecBridgeTest {
         assertTrue(transformer.getSyntheticClasses().containsKey(REBUILT));
     }
 
+    @Test
+    @DisplayName("The old TYPE is rewritten only where the host split it into a type per pack type")
+    void sectionTypeFollowsTheHost() {
+        String type = "Lnet/minecraft/server/packs/metadata/MetadataSectionType;";
+        ClassNode split = new ClassNode();
+        split.name = METADATA;
+        for (String name : List.of("CLIENT_TYPE", "SERVER_TYPE", "FALLBACK_TYPE")) {
+            split.fields.add(new FieldNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, name, type, null, null));
+        }
+        registerOn("26.3", owner -> owner.equals(METADATA) ? split : null);
+        assertTrue(transformer.getSyntheticClasses().containsKey(LegacyPackSectionTypeAdapter.HELPER));
+
+        ClassNode single = new ClassNode();
+        single.name = METADATA;
+        single.fields.add(new FieldNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "TYPE", type, null, null));
+        registerOn("1.21.4", owner -> owner.equals(METADATA) ? single : null);
+        assertFalse(transformer.getSyntheticClasses().containsKey(LegacyPackSectionTypeAdapter.HELPER),
+                "a host that still has TYPE keeps it");
+    }
+
     private void registerOn(String target, Function<String, ClassNode> host) {
         RetromodVersion.TARGET_MC_VERSION = target;
         transformer.clearRedirectsForTesting();

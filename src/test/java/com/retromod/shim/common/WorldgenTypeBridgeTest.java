@@ -100,4 +100,19 @@ class WorldgenTypeBridgeTest {
         assertTrue(mi.itf, "a plain Methodref against the interface bridge dies "
                 + "IncompatibleClassChangeError at first registration (pre-1.19.3 mods)");
     }
+
+    @Test
+    @DisplayName("a 1.20.1 record codec registered as a chunk generator or biome source is converted on both layers")
+    void chunkGeneratorAndBiomeSourceAreConverted() {
+        for (boolean layer262 : new boolean[]{false, true}) {
+            ClassNode cn = new ClassNode();
+            new ClassReader(WorldgenTypeBridgeSynthetic.generate(layer262)).accept(cn, 0);
+            java.util.Set<String> registries = new java.util.HashSet<>();
+            cn.methods.stream().filter(m -> m.name.equals("convert")).findFirst().orElseThrow().instructions.forEach(in -> {
+                if (in instanceof org.objectweb.asm.tree.FieldInsnNode field) registries.add(field.name);
+            });
+            assertTrue(registries.contains("CHUNK_GENERATOR") && registries.contains("BIOME_SOURCE"),
+                    "both registries hold map codecs since 1.20.5: " + registries);
+        }
+    }
 }

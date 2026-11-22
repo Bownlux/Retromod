@@ -3,4 +3,7 @@ package net.minecraft.client.renderer.texture;
 
 public class OverlayTexture {
     public static final int NO_OVERLAY = 655360;
+    public static int u(float progress) { throw new UnsupportedOperationException(); }
+    public static int v(boolean hurt) { throw new UnsupportedOperationException(); }
+    public static int pack(int u, int v) { throw new UnsupportedOperationException(); }
 }

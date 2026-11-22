@@ -9,6 +9,7 @@ import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
@@ -19,6 +20,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -81,9 +83,29 @@ class LegacyClientInteractionSyntheticTest {
                 "a consumed action does not necessarily request a client swing");
     }
 
+    @Test
+    void swingDecisionReadsTheRenamedSourceOn263() {
+        ClassNode source262 = new ClassNode();
+        source262.fields.add(new FieldNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "CLIENT", "L" + RESULT + "$SwingSource;", null, null));
+        ClassNode source263 = new ClassNode();
+        source263.fields.add(new FieldNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "PREDICTED", "L" + RESULT + "$SwingSource;", null, null));
+        assertEquals("CLIENT", LegacyClientInteractionSynthetic.clientSwingName(source262, "26.3"));
+        assertEquals("PREDICTED", LegacyClientInteractionSynthetic.clientSwingName(source263, "26.2"));
+        assertEquals("PREDICTED", LegacyClientInteractionSynthetic.clientSwingName(null, "26.3"),
+                "offline, a 26.3 target has no CLIENT source to read");
+        assertEquals("CLIENT", LegacyClientInteractionSynthetic.clientSwingName(null, "26.2"));
+        MethodNode method = method(LegacyClientInteractionSynthetic.generate("PREDICTED"), "shouldSwing");
+        assertTrue(Arrays.stream(method.instructions.toArray()).anyMatch(instruction ->
+                instruction instanceof FieldInsnNode field && "PREDICTED".equals(field.name)));
+    }
+
     private static MethodNode method(String name) {
+        return method(LegacyClientInteractionSynthetic.generate("CLIENT"), name);
+    }
+
+    private static MethodNode method(byte[] bytes, String name) {
         ClassNode node = new ClassNode();
-        new ClassReader(LegacyClientInteractionSynthetic.generate()).accept(node, 0);
+        new ClassReader(bytes).accept(node, 0);
         return node.methods.stream().filter(method -> name.equals(method.name))
                 .findFirst().orElseThrow();
     }

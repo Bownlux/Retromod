@@ -96,6 +96,12 @@ public final class LegacyClientInteractionSynthetic {
     }
 
     public static byte[] generate() {
+        return generate(clientSwingName(com.retromod.core.ClassResourceInspector.read(SWING_SOURCE),
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION));
+    }
+
+    /** The helper with {@code swingName} as the swing source that asks for a local hand swing. */
+    static byte[] generate(String swingName) {
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
             @Override
             protected String getCommonSuperClass(String left, String right) {
@@ -107,7 +113,7 @@ public final class LegacyClientInteractionSynthetic {
         emitDisplayClientMessage(writer);
         emitInteract(writer);
         emitHasInfiniteItems(writer);
-        emitShouldSwing(writer);
+        emitShouldSwing(writer, swingName);
         writer.visitEnd();
         return writer.toByteArray();
     }
@@ -189,7 +195,20 @@ public final class LegacyClientInteractionSynthetic {
         method.visitEnd();
     }
 
-    private static void emitShouldSwing(ClassWriter writer) {
+    /**
+     * The swing source of a client-side success: 26.3 renamed {@code CLIENT} to {@code PREDICTED}. Offline, the target
+     * decides.
+     */
+    static String clientSwingName(org.objectweb.asm.tree.ClassNode swingSource, String target) {
+        if (swingSource == null) {
+            return target != null && com.retromod.core.RetromodVersion.compareMcVersions(target, "26.3") >= 0 ? "PREDICTED" : "CLIENT";
+        }
+        boolean client = swingSource.fields.stream().anyMatch(field -> field.name.equals("CLIENT"));
+        boolean predicted = swingSource.fields.stream().anyMatch(field -> field.name.equals("PREDICTED"));
+        return !client && predicted ? "PREDICTED" : "CLIENT";
+    }
+
+    private static void emitShouldSwing(ClassWriter writer, String swingName) {
         MethodVisitor method = writer.visitMethod(ACC_PUBLIC | ACC_STATIC,
                 "shouldSwing", "(L" + RESULT + ";)Z", null, null);
         method.visitCode();
@@ -201,7 +220,7 @@ public final class LegacyClientInteractionSynthetic {
         method.visitTypeInsn(CHECKCAST, SUCCESS);
         method.visitMethodInsn(INVOKEVIRTUAL, SUCCESS, "swingSource",
                 "()L" + SWING_SOURCE + ";", false);
-        method.visitFieldInsn(GETSTATIC, SWING_SOURCE, "CLIENT", "L" + SWING_SOURCE + ";");
+        method.visitFieldInsn(GETSTATIC, SWING_SOURCE, swingName, "L" + SWING_SOURCE + ";");
         method.visitJumpInsn(IF_ACMPNE, noSwing);
         method.visitInsn(ICONST_1);
         method.visitInsn(IRETURN);

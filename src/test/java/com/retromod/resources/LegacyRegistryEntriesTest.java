@@ -16,6 +16,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Registry entries from 1.21.x mods, rewritten for the release that renamed or rebuilt them. */
 class LegacyRegistryEntriesTest {
@@ -35,6 +36,43 @@ class LegacyRegistryEntriesTest {
                  "attribute":"minecraft:generic.step_height","id":"mod:step","operation":"add_value","amount":0.5}},
                  {"effect":{"type":"minecraft:attribute","attribute":"player.block_interaction_range",
                  "id":"mod:reach","operation":"add_value","amount":0.5}}]}}""", "1.21.1", "1.21.2"));
+    }
+
+    @Test
+    @DisplayName("an old smithing_trim recipe gets the pattern its template applies, from this jar's pattern files")
+    void smithingTrimGetsItsPattern() throws IOException {
+        String recipe = "data/supplementaries/recipe/blast_armor_trim_smithing_template_smithing_trim.json";
+        String vanilla = "data/supplementaries/recipe/coast_trim.json";
+        MapResourceTree tree = new MapResourceTree(new java.util.HashMap<>(Map.of(
+                "data/supplementaries/trim_pattern/coast.json", bytes("""
+                        {"asset_id":"supplementaries:blast","decal":false,
+                         "template_item":"supplementaries:blast_armor_trim_smithing_template"}"""),
+                recipe, bytes("""
+                        {"type":"minecraft:smithing_trim","addition":{"tag":"minecraft:trim_materials"},
+                         "base":{"tag":"minecraft:trimmable_armor"},
+                         "template":{"item":"supplementaries:blast_armor_trim_smithing_template"}}"""),
+                vanilla, bytes("""
+                        {"type":"minecraft:smithing_trim","addition":"#minecraft:trim_materials",
+                         "base":"#minecraft:trimmable_armor","template":"minecraft:coast_armor_trim_smithing_template"}"""))));
+        run(tree, context("1.21.1", "26.3"));
+        assertTrue(text(tree, recipe).contains("\"pattern\":\"supplementaries:coast\""), text(tree, recipe));
+        assertTrue(text(tree, vanilla).contains("\"pattern\":\"minecraft:coast\""), text(tree, vanilla));
+    }
+
+    @Test
+    @DisplayName("copy_components names the tooltip display where it listed the removed hide_additional_tooltip")
+    void copiedHiddenTooltipBecomesTooltipDisplay() throws IOException {
+        String flag = "data/supplementaries/loot_table/blocks/flag_black.json";
+        String old = """
+                {"pools":[{"entries":[{"type":"minecraft:item","name":"supplementaries:flag_black","functions":[
+                 {"function":"minecraft:copy_components","source":"block_entity","include":
+                  ["minecraft:custom_name","minecraft:hide_additional_tooltip","minecraft:banner_patterns"]}]}]}]}""";
+        assertJson("""
+                {"pools":[{"entries":[{"type":"minecraft:item","name":"supplementaries:flag_black","functions":[
+                 {"function":"minecraft:copy_components","source":"block_entity","include":
+                  ["minecraft:custom_name","minecraft:tooltip_display","minecraft:banner_patterns"]}]}]}]}""",
+                convert(flag, old, "1.21.1", "26.3"));
+        assertJson(old, convert(flag, old, "1.21.1", "1.21.4"));
     }
 
     @Test

@@ -154,8 +154,38 @@ public final class Worldgen26_3Migrator {
                 && isOldState(fluid)) {
             out.add("state", state(fluid, true));
         }
+        if ("minecraft:lake".equals(type)) addOldLakeChecks(out);
         if (type != null && TYPE_RENAMES.containsKey(type)) out.addProperty("type", TYPE_RENAMES.get(type));
         return out;
+    }
+
+    /**
+     * 26.3's lake requires the checks the old lake made in code: it never replaced blocks tagged
+     * {@code features_cannot_replace} with air or fluid, nor ones tagged {@code lava_pool_stone_cannot_replace} with its
+     * barrier, and it could be placed anywhere it fit. Keys the file already has are kept.
+     */
+    private static void addOldLakeChecks(JsonObject lake) {
+        if (!lake.has("can_place_feature")) {
+            JsonObject always = new JsonObject();
+            always.addProperty("type", "minecraft:true");
+            lake.add("can_place_feature", always);
+        }
+        if (!lake.has("can_replace_with_air_or_fluid")) {
+            lake.add("can_replace_with_air_or_fluid", notTagged("minecraft:features_cannot_replace"));
+        }
+        if (!lake.has("can_replace_with_barrier")) {
+            lake.add("can_replace_with_barrier", notTagged("minecraft:lava_pool_stone_cannot_replace"));
+        }
+    }
+
+    private static JsonObject notTagged(String tag) {
+        JsonObject tagged = new JsonObject();
+        tagged.addProperty("type", "minecraft:matching_block_tag");
+        tagged.addProperty("tag", tag);
+        JsonObject not = new JsonObject();
+        not.addProperty("type", "minecraft:not");
+        not.add("predicate", tagged);
+        return not;
     }
 
     private static String namespaced(String id) {

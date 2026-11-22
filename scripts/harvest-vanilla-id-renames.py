@@ -214,6 +214,13 @@ def pick(a, b, old, new, found):
     return winners[0] if best > 0 and len(winners) == 1 else None
 
 
+# Removals no client file shows, checked by hand against the registering class of each release.
+# Block entity types have no blockstate, model or language entry, so their ids are listed here.
+KNOWN_REMOVALS = [
+    ("block_entity_type", "minecraft:bed", "-", "26.2"),
+]
+
+
 def main():
     releases = []
     for arg in sys.argv[1:]:
@@ -251,6 +258,8 @@ def main():
     print("# the id was removed or split with no single successor. renamed_in is the first release in")
     print("# that list without the old id; the release before it in the list still has it.")
     for registry, old, new, version, before in rows:
+        print(f"{registry}\t{old}\t{new}\t{version}")
+    for registry, old, new, version in KNOWN_REMOVALS:
         print(f"{registry}\t{old}\t{new}\t{version}")
 
 

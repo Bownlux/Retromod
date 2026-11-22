@@ -431,11 +431,18 @@ public final class LegacyEquipmentBridge {
         return new Usage(found[0], found[1]);
     }
 
+    // The 1.21.1 intermediary names of DiggerItem's and SwordItem's createAttributes. 26.x has neither method,
+    // so the host-targeted remap table leaves a Fabric mod's call under these names.
+    private static final String DIGGER_ATTRIBUTES = "method_57346";
+    private static final String SWORD_ATTRIBUTES = "method_57394";
+
     /** Sends a 1.20.5 to 1.21.1 tool's {@code createAttributes(tier, damage, speed)}, removed in 1.21.5, to the helper. */
     public static byte[] retargetToolAttributes(byte[] classBytes) {
         // Tools called it on their own class. The descriptor names the generated tier, so no
         // current method shares it, whatever the owner.
-        if (classBytes == null || !new String(classBytes, StandardCharsets.ISO_8859_1).contains("createAttributes")) return classBytes;
+        if (classBytes == null) return classBytes;
+        String text = new String(classBytes, StandardCharsets.ISO_8859_1);
+        if (!text.contains("createAttributes") && !text.contains(DIGGER_ATTRIBUTES) && !text.contains(SWORD_ATTRIBUTES)) return classBytes;
         ClassNode node = new ClassNode();
         new ClassReader(classBytes).accept(node, 0);
         String modifiers = "Lnet/minecraft/world/item/component/ItemAttributeModifiers;";
@@ -443,7 +450,8 @@ public final class LegacyEquipmentBridge {
         for (MethodNode method : node.methods) {
             for (AbstractInsnNode insn : method.instructions.toArray()) {
                 if (!(insn instanceof MethodInsnNode call) || call.getOpcode() != Opcodes.INVOKESTATIC
-                        || !call.name.equals("createAttributes")) {
+                        || !(call.name.equals("createAttributes") || call.name.equals(DIGGER_ATTRIBUTES)
+                                || call.name.equals(SWORD_ATTRIBUTES))) {
                     continue;
                 }
                 // A digger took float damage, a sword int damage.

@@ -51,6 +51,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     private final Map<MethodKey, String> legacyOnlyRedirects = new ConcurrentHashMap<>();
     /** Class redirects kept for mods built before a version, by old class name. */
     private final Map<String, String> legacyOnlyClassRedirects = new ConcurrentHashMap<>();
+    // Interface replacements that only mods built before the version apply to, keyed by the replaced interface.
+    private final Map<String, String> legacyOnlyInterfaceRewrites = new ConcurrentHashMap<>();
     /** Class redirects a library translated with the mod turns off, by old class name: a class that library defines. */
     private final Map<String, String> libraryYieldingClassRedirects = new ConcurrentHashMap<>();
     /** Helper methods whose super calls go to another method on the same helper, by that name. */
@@ -415,6 +417,15 @@ public class RetromodTransformer implements ClassFileTransformer {
                     ids.fieldCount());
         }
         return ids;
+    }
+
+    /** A block or item still built with no id gets a placeholder, replaced where the mod registers it; last, after every id stamp. */
+    private byte[] deferRegistryIds(byte[] classBytes) {
+        if (!syntheticClasses.containsKey(com.retromod.shim.common.DeferredIdStamper.RUNTIME)) return classBytes;
+        // A mod built for 1.21.2 or newer sets its own ids, so only its registrations are checked for a library's object.
+        String source = limitVersion();
+        boolean setsOwnIds = source != null && RetromodVersion.compareMcVersions(source, "1.21.2") >= 0;
+        return com.retromod.shim.common.DeferredIdStamper.apply(classBytes, !setsOwnIds);
     }
 
     private boolean registryIdBridgeActive() {
@@ -989,6 +1000,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     private final Map<FieldKey, FieldStaticBridge> fieldStaticBridges = new ConcurrentHashMap<>(8);
     /** Removed static field read and written through static calls: GETSTATIC takes the getter, PUTSTATIC the setter. */
     private final Map<FieldKey, FieldStaticBridge> staticFieldBridges = new ConcurrentHashMap<>(4);
+    // Static field bridges a mod built for this version or newer skips, keyed like the bridges.
+    private final Map<FieldKey, String> legacyOnlyStaticFieldBridges = new ConcurrentHashMap<>(4);
     /** Static field bridges that stand in for a removed field only until another bridge claims the field. */
     private final Set<FieldKey> standInStaticFieldBridges = ConcurrentHashMap.newKeySet();
     /** The only descriptors a field static bridge applies to, for a field that kept its name but changed type. */
@@ -1268,6 +1281,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     public void setModSourceVersion(String declared) {
         // Each transform path sets it per mod and clears it afterwards. A declared range such as
         // ~1.20.1, >=1.21 <1.22 or [1.20.1,1.21) counts as its lowest version.
+        // Either call ends the mod before, so its disabled-Mixin summary is written now.
+        com.retromod.mixin.MixinShadowGate.finishMod();
         java.util.regex.Matcher version =
                 declared == null ? null : FIRST_VERSION_NUMBER.matcher(declared);
         modSourceVersion = version != null && version.find() ? version.group() : null;
@@ -1285,6 +1300,7 @@ public class RetromodTransformer implements ClassFileTransformer {
      * lag far behind the build, and the data the mod saved is read as data of the newest version the jar shows.
      */
     public void setModSourceJar(java.nio.file.Path jar) {
+        com.retromod.mixin.MixinShadowGate.startMod(jar == null ? null : String.valueOf(jar.getFileName()));
         modBuildVersion = jar == null ? null : ModVersionDetector.metadataOnly().buildVersion(jar, modSourceVersion);
         modLibraries = SyntheticLibraries.NONE;
     }
@@ -2216,6 +2232,23 @@ public class RetromodTransformer implements ClassFileTransformer {
         implementedInterfaceRewrites.put(iface, replacement);
     }
 
+    /** Applies the replacement of {@code iface} only to mods built before {@code firstVersionWithout}; an unknown version keeps it. */
+    public void limitInterfaceReplacementToModsBefore(String iface, String firstVersionWithout) {
+        if (!admitsType(iface)) return;
+        legacyOnlyInterfaceRewrites.put(iface, firstVersionWithout);
+    }
+
+    /** The interface rewrites the current mod takes: all of them, less any limited to mods older than it. */
+    private Map<String, String> interfaceRewritesForCurrentMod() {
+        String source = limitVersion();
+        if (legacyOnlyInterfaceRewrites.isEmpty() || source == null) return implementedInterfaceRewrites;
+        Map<String, String> taken = new HashMap<>(implementedInterfaceRewrites);
+        legacyOnlyInterfaceRewrites.forEach((iface, firstVersionWithout) -> {
+            if (RetromodVersion.compareMcVersions(source, firstVersionWithout) >= 0) taken.remove(iface);
+        });
+        return taken;
+    }
+
     /**
      * Gives each class that lists {@code iface} among its interfaces, after the rewrites above, a
      * concrete {@code name(desc)} that calls {@code iface.targetName(targetDesc)} on itself. A class
@@ -2503,11 +2536,42 @@ public class RetromodTransformer implements ClassFileTransformer {
         LOGGER.debug("Registered super ctor adapter: {}.{} -> {}", className, oldDesc, newDesc);
     }
 
+    /**
+     * The descriptor a constructor of {@code owner} has after the registered constructor changes, or {@code descriptor}
+     * when none applies. Access widener and access transformer entries use it to name the constructor the host has.
+     */
+    public String constructorDescriptorFor(String owner, String descriptor) {
+        if (owner == null || descriptor == null || superCtorRedirects.isEmpty()) return descriptor;
+        // The same lookup the class pass makes: the owner and descriptor after class redirects, then as written.
+        String resolvedOwner = redirectedClass(owner);
+        SuperCtorRedirect redirect = superCtorRedirects.get(new ConstructorKey(resolvedOwner, resolveDescriptor(descriptor)));
+        if (redirect == null) redirect = superCtorRedirects.get(new ConstructorKey(resolvedOwner, descriptor));
+        return redirect == null ? descriptor : redirect.newDesc();
+    }
+
     /** Answers {@code instanceof type} with {@code helperOwner.helperName(Object)Z}; {@code type} is the name after class redirects. */
     public void registerInstanceofHelper(String type, String helperOwner, String helperName) {
         // For a rebuilt class each mod embeds a copy of, so the check also accepts another mod's copy.
         instanceofHelpers.put(type, new InstanceofHelperAdapter.Helper(helperOwner, helperName));
         LOGGER.debug("Registered instanceof helper: {} -> {}.{}", type, helperOwner, helperName);
+    }
+
+    /**
+     * The same for a rebuilt interface the host's own objects no longer implement: every cast to
+     * {@code type} is dropped as well, so its calls must be redirected to static helpers too.
+     * Returns false, and registers nothing, unless {@code type} is a registered rebuilt interface.
+     */
+    public boolean registerInterfaceInstanceofHelper(String type, String helperOwner, String helperName) {
+        // Dropping a cast is only safe for an interface: the verifier takes any object there, never for a class.
+        byte[] bytes = syntheticClasses.get(type);
+        if (bytes == null || (new ClassReader(bytes).getAccess() & Opcodes.ACC_INTERFACE) == 0) {
+            LOGGER.warn("Retromod did not register the instanceof helper for {}: it is not a registered rebuilt interface. "
+                    + "Report this line with the Retromod version.", type);
+            return false;
+        }
+        instanceofHelpers.put(type, new InstanceofHelperAdapter.Helper(helperOwner, helperName, true));
+        LOGGER.debug("Registered interface instanceof helper: {} -> {}.{}", type, helperOwner, helperName);
+        return true;
     }
 
     /**
@@ -2568,6 +2632,37 @@ public class RetromodTransformer implements ClassFileTransformer {
         cachedRemapper = null; // Invalidate cached remapper
     }
 
+    /**
+     * Register an intermediary member name for one descriptor only, with no name-only entry, so
+     * every other shape of the id keeps whatever the flat table says (or stays unmapped). The
+     * mapping is keyed by the intermediary descriptor and by its form after the class redirects
+     * registered so far, since selectors reach the lookup in either form.
+     */
+    public void registerIntermediaryDescriptorMapping(
+            String name, String descriptor, String mojang, boolean isField) {
+        if (name == null || descriptor == null || mojang == null) {
+            throw new IllegalArgumentException("name, descriptor and mojang must not be null");
+        }
+        Map<String, String> byDesc = isField ? intermediaryFieldNamesByDesc : intermediaryMethodNamesByDesc;
+        Set<String> ambiguous = isField ? ambiguousIntermediaryFieldNames : ambiguousIntermediaryMethodNames;
+        byDesc.put(memberDescKey(name, descriptor), mojang);
+        byDesc.put(memberDescKey(name, remapDescriptorClasses(descriptor)), mojang);
+        ambiguous.add(name);
+        cachedRemapper = null;
+    }
+
+    /** The Mojang name of an intermediary member id for this descriptor, or null when none is known. */
+    public String intermediaryMemberName(String name, String descriptor, boolean isField) {
+        Map<String, String> flat = isField ? intermediaryFieldNames : intermediaryMethodNames;
+        Map<String, String> byDesc = isField ? intermediaryFieldNamesByDesc : intermediaryMethodNamesByDesc;
+        Set<String> ambiguous = isField ? ambiguousIntermediaryFieldNames : ambiguousIntermediaryMethodNames;
+        if (descriptor != null && !descriptor.isEmpty() && ambiguous.contains(name)) {
+            String exact = byDesc.get(memberDescKey(name, descriptor));
+            if (exact != null) return exact;
+        }
+        return flat.get(name);
+    }
+
     /** Key for the descriptor-qualified fallback maps. */
     private static String memberDescKey(String name, String descriptor) {
         return name + "|" + descriptor;
@@ -2625,6 +2720,39 @@ public class RetromodTransformer implements ClassFileTransformer {
             return null;
         }
         return srgFieldName(name);
+    }
+
+    /**
+     * The Mojang name for an SRG id an SRG-named mod passes as text, as it does to ObfuscationReflectionHelper or
+     * getDeclaredField; a host that runs Mojang names never finds the id. Any other text is returned as it is.
+     */
+    private String srgReflectionName(String text) {
+        if (text.length() < 4 || text.charAt(1) != '_' || !text.endsWith("_") || !renamesSrgText()) return text;
+        char kind = text.charAt(0);
+        if (kind != 'f' && kind != 'm') return text;
+        for (int i = 2; i < text.length() - 1; i++) {
+            if (!Character.isDigit(text.charAt(i))) return text;
+        }
+        String name = kind == 'f' ? srgFieldName(text) : srgMethodName(text);
+        return name != null ? name : text;
+    }
+
+    /**
+     * Whether SRG ids written as text are renamed: only for an SRG-named mod on a host that runs Mojang member names, which
+     * are 26.1 and newer, NeoForge from 1.20.2 and Forge from 1.20.6. A Forge 1.20 to 1.20.4 host still runs SRG names,
+     * and a Fabric host before 26.1 runs intermediary ones, so the text the mod wrote stays there.
+     */
+    private boolean renamesSrgText() {
+        if (srgFieldNames.isEmpty() && srgMethodNames.isEmpty()) return false;
+        if (!targetSrgFieldNames.isEmpty() || !targetSrgMethodNames.isEmpty()) return false;
+        String host = RetromodVersion.TARGET_MC_VERSION;
+        if (host == null) return false;
+        if (RetromodVersion.isUnobfuscatedTarget(host)) return true;
+        if (com.retromod.util.McReflect.isNeoForge()) return RetromodVersion.compareMcVersions(host, "1.20.2") >= 0;
+        if (com.retromod.util.McReflect.isForgeTarget() || com.retromod.util.McReflect.isForge()) {
+            return RetromodVersion.usesOfficialForgeRuntimeNames(host);
+        }
+        return false;
     }
 
     private String srgFieldName(String srgName) {
@@ -3432,6 +3560,20 @@ public class RetromodTransformer implements ClassFileTransformer {
                 bridgeOwner, getterName, getterDesc, setterName, setterDesc));
     }
 
+    /** Applies the static field bridge of {@code owner.name} only to mods built before {@code firstVersionWithout}. */
+    public void limitStaticFieldBridgeToModsBefore(String owner, String name, String firstVersionWithout) {
+        if (!admitsField(owner, name)) return;
+        // The host still has the field, and a mod written for it reads the host's own value.
+        legacyOnlyStaticFieldBridges.put(new FieldKey(owner, name), firstVersionWithout);
+    }
+
+    /** Whether the current mod skips a static field bridge limited to older mods. */
+    private boolean skipsStaticFieldBridge(FieldKey key) {
+        String firstVersionWithout = legacyOnlyStaticFieldBridges.isEmpty() ? null : legacyOnlyStaticFieldBridges.get(key);
+        String source = firstVersionWithout == null ? null : limitVersion();
+        return source != null && RetromodVersion.compareMcVersions(source, firstVersionWithout) >= 0;
+    }
+
     /**
      * Register a read-only static field bridge that stands in for a removed field, such as an empty registry for one
      * the host dropped. It yields to any other redirect of the same field, whichever registers first, because a
@@ -4077,6 +4219,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         fieldHopAccessors.clear();
         fieldStaticBridges.clear();
         staticFieldBridges.clear();
+        legacyOnlyStaticFieldBridges.clear();
         standInStaticFieldBridges.clear();
         fieldStaticBridgeTypes.clear();
         staticFieldTypeDrifts.clear();
@@ -4094,6 +4237,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         neutralizedMethods.clear();
         neutralizedMethodOwners.clear();
         implementedInterfaceRewrites.clear();
+        legacyOnlyInterfaceRewrites.clear();
         implementedMethodBridges.clear();
         interfaceDefaultBridges.clear();
         indyTypedRewrites.clear();
@@ -4424,7 +4568,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         // two consecutive passes produce byte-identical output, or MAX_TRANSFORM_ITERATIONS
         // (possible redirect cycle) is reached. Byte-equality is the stability signal rather
         // than a threaded "dirty" flag: ASM is deterministic, so same input = same output.
-        byte[] current = legacyModelLocationPrePass(legacyEventBasePrePass(legacyMaterialPrePass(originalBytes)));
+        byte[] current = legacyModelLocationPrePass(legacyEventBasePrePass(legacyMaterialPrePass(legacyWeightedListPrePass(originalBytes))));
         for (int pass = 1; pass <= MAX_TRANSFORM_ITERATIONS; pass++) {
             // Constructor rewrites are resolved against the fully remapped owner during the
             // first pass. Re-running the constructor pre-pass is both unnecessary and harmful:
@@ -4492,6 +4636,15 @@ public class RetromodTransformer implements ClassFileTransformer {
                 this::srgMethodName, this::srgFieldName);
     }
 
+    /** Rewrites the weighted list calls whose meaning depended on the old list type, while that type is still named. */
+    private byte[] legacyWeightedListPrePass(byte[] classBytes) {
+        if (!postProcessFlags.contains(com.retromod.shim.common.LegacyWeightedListPrePass.FLAG)) return classBytes;
+        String version = limitVersion();
+        // A mod built for 1.21.5 or newer names only WeightedList and means the host's members.
+        if (version != null && RetromodVersion.compareMcVersions(version, "1.21.5") >= 0) return classBytes;
+        return com.retromod.shim.common.LegacyWeightedListPrePass.apply(classBytes);
+    }
+
     /** Moves a mod's events from Forge 1.20.1's event base, which Forge 26.2 removed, onto the rebuilt one. */
     private byte[] legacyEventBasePrePass(byte[] classBytes) {
         if (!postProcessFlags.contains(com.retromod.shim.forge.LegacyEventBaseBridge.FLAG)) return classBytes;
@@ -4542,7 +4695,18 @@ public class RetromodTransformer implements ClassFileTransformer {
                     repaired, currentJarClassBytesProvider());
         }
         repaired = com.retromod.shim.common.LegacyInputEventCallAdapter.apply(repaired);
+        // An old `new` of a game class whose constructor the host made protected builds a generated public subclass.
+        repaired = com.retromod.shim.common.ProtectedConstructorBridge.apply(repaired, this);
+        // The registry holds an adapter for a legacy recipe serializer; a cast back to the mod's own class gets the original.
+        if (syntheticClasses.containsKey(com.retromod.shim.common.LegacyRecipeSerializerShim.BRIDGE)) {
+            repaired = com.retromod.shim.common.RecipeSerializerCastBridge.apply(repaired);
+        }
         repaired = addOwnOverrideHostMethods(repaired);
+        // Fabric mods name the missing-model fields by intermediary id before the remap, so they are answered here.
+        if (postProcessFlags.contains(com.retromod.shim.forge.LegacyModelLocationAdapter.FLAG)
+                && !keepsOldName(com.retromod.shim.forge.LegacyModelLocationAdapter.OLD_TYPE)) {
+            repaired = com.retromod.shim.forge.LegacyModelLocationAdapter.applyAfterRemap(repaired);
+        }
         // Only on hosts from 1.20.5 to 1.21.4, where Tier gained an abstract method.
         if (postProcessFlags.contains(com.retromod.shim.forge.LegacyTierBridge.FLAG)) {
             repaired = com.retromod.shim.forge.LegacyTierBridge.apply(repaired);
@@ -4576,6 +4740,16 @@ public class RetromodTransformer implements ClassFileTransformer {
                 com.retromod.shim.fabric.FabricRegistryIdSynthetic.INTERNAL)) {
             repaired = com.retromod.shim.fabric.FabricRegistryIdAdapter.apply(
                     repaired, currentJarRegistryIds());
+            // Registrations through a mod's own consumer or helper, as GlitchCore's shared code makes on every loader,
+            // get their id the same way as on NeoForge; the adapter's constructor stamp then reads it.
+            repaired = com.retromod.shim.common.ConsumerRegistrationIdStamper.apply(repaired,
+                    currentJarRegistryIds(), com.retromod.shim.fabric.FabricRegistryIdSynthetic.INTERNAL);
+            // What a mod's own registry queue builds from a supplier gets the key it registers it under.
+            repaired = com.retromod.shim.common.SupplierRegistrationIdStamper.apply(repaired, com.retromod.shim.fabric.FabricRegistryIdSynthetic.INTERNAL);
+            repaired = com.retromod.shim.common.LegacyServerApiBridge.stampTrimTemplates(repaired, com.retromod.shim.fabric.FabricRegistryIdSynthetic.INTERNAL);
+            repaired = com.retromod.shim.common.CallSiteIdStamper.apply(repaired,
+                    currentJarRegistryIds().namespace(), com.retromod.shim.fabric.FabricRegistryIdSynthetic.INTERNAL);
+            repaired = deferRegistryIds(repaired);
         } else if (postProcessFlags.contains(
                 com.retromod.shim.forge.RegistryIdBridgeSynthetic.STATIC_FIELDS_FLAG)) {
             // NeoForge 1.21.11 and newer, where the Properties factories read the deferred register's bridge.
@@ -4584,8 +4758,15 @@ public class RetromodTransformer implements ClassFileTransformer {
             // What a RegisterEvent consumer builds and registers gets its id while it is built.
             repaired = com.retromod.shim.common.ConsumerRegistrationIdStamper.apply(repaired,
                     currentJarRegistryIds(), com.retromod.shim.forge.RegistryIdBridgeSynthetic.INTERNAL);
+            // What a mod's own registry queue builds from a supplier gets the key it registers it under.
+            repaired = com.retromod.shim.common.SupplierRegistrationIdStamper.apply(repaired, com.retromod.shim.forge.RegistryIdBridgeSynthetic.INTERNAL);
+            repaired = com.retromod.shim.common.LegacyServerApiBridge.stampTrimTemplates(repaired, com.retromod.shim.forge.RegistryIdBridgeSynthetic.INTERNAL);
+            // A block or item built straight into a registration call takes the id of the name passed beside it.
+            repaired = com.retromod.shim.common.CallSiteIdStamper.apply(repaired,
+                    currentJarRegistryIds().namespace(), com.retromod.shim.forge.RegistryIdBridgeSynthetic.INTERNAL);
             repaired = com.retromod.shim.common.ConstructorIdStamper.apply(repaired,
                     com.retromod.shim.forge.RegistryIdBridgeSynthetic.INTERNAL);
+            repaired = deferRegistryIds(repaired);
         } else if (postProcessFlags.contains(
                 com.retromod.shim.forge.RegistryIdBridgeSynthetic.FORGE_STATIC_FIELDS_FLAG)) {
             // Forge 1.21.11 and newer, the same through Forge's own bridge.
@@ -4593,17 +4774,54 @@ public class RetromodTransformer implements ClassFileTransformer {
                     currentJarRegistryIds(), com.retromod.shim.forge.RegistryIdBridgeSynthetic.FORGE_INTERNAL);
             repaired = com.retromod.shim.common.ConsumerRegistrationIdStamper.apply(repaired,
                     currentJarRegistryIds(), com.retromod.shim.forge.RegistryIdBridgeSynthetic.FORGE_INTERNAL);
+            // What a mod's own registry queue builds from a supplier gets the key it registers it under.
+            repaired = com.retromod.shim.common.SupplierRegistrationIdStamper.apply(repaired, com.retromod.shim.forge.RegistryIdBridgeSynthetic.FORGE_INTERNAL);
+            repaired = com.retromod.shim.common.LegacyServerApiBridge.stampTrimTemplates(repaired, com.retromod.shim.forge.RegistryIdBridgeSynthetic.FORGE_INTERNAL);
+            // A block or item built straight into a registration call takes the id of the name passed beside it.
+            repaired = com.retromod.shim.common.CallSiteIdStamper.apply(repaired,
+                    currentJarRegistryIds().namespace(), com.retromod.shim.forge.RegistryIdBridgeSynthetic.FORGE_INTERNAL);
             repaired = com.retromod.shim.common.ConstructorIdStamper.apply(repaired,
                     com.retromod.shim.forge.RegistryIdBridgeSynthetic.FORGE_INTERNAL);
+            repaired = deferRegistryIds(repaired);
         }
         // Only where an EntityType.Builder.build(String) bridge is registered, which is 1.21.2 and newer.
         if (syntheticClasses.containsKey(com.retromod.shim.common.EntityTypeBuildKeyAdapter.BRIDGE)) {
             repaired = com.retromod.shim.common.EntityTypeBuildKeyAdapter.apply(repaired, currentJarRegistryIds());
         }
+        // Only where the old model bases are rebuilt: an old model's root() and renderToBuffer, which the host made final.
+        if (postProcessFlags.contains(com.retromod.shim.common.LegacyOldModelsBridge.FLAG)) {
+            repaired = com.retromod.shim.common.LegacyOldModelsBridge.renameFinalOverrides(repaired, currentJarClassBytesProvider());
+        }
+        // Only on hosts from 1.21.2, where chest boats stopped being Boats.
+        if (postProcessFlags.contains(com.retromod.shim.common.LegacyBoatReceiverAdapter.FLAG)) {
+            repaired = com.retromod.shim.common.LegacyBoatReceiverAdapter.apply(repaired);
+        }
         // Only when a 1.21.1 to 1.21.2 shim registered the helper, so newer mods are untouched.
         if (syntheticClasses.containsKey(
                 com.retromod.shim.common.LegacyBlockApiSynthetic.INTERNAL)) {
             repaired = com.retromod.shim.common.LegacyBlockApiAdapter.apply(repaired);
+        }
+        // Each block hook whose parameters the host changed keeps an old override running and an old super call linking.
+        repaired = com.retromod.shim.common.LegacyBlockOverridesAdapter.apply(repaired, postProcessFlags);
+        // Only where Fabric API's elytra interface is gone: an item that implements it gets the glider component.
+        if (postProcessFlags.contains(com.retromod.shim.fabric.LegacyFabricElytraItemBridge.FLAG)) {
+            repaired = com.retromod.shim.fabric.LegacyFabricElytraItemBridge.apply(repaired);
+        }
+        // Only where the old text content type is gone: a mod's own content class gains the codec() the host calls.
+        if (postProcessFlags.contains(com.retromod.shim.common.LegacyComponentContentsBridge.FLAG)) {
+            repaired = com.retromod.shim.common.LegacyComponentContentsBridge.apply(repaired);
+        }
+        // Only where the common members bridge registered: old boats' constructors and rule test overrides.
+        if (postProcessFlags.contains(com.retromod.shim.common.LegacyCommonMembersBridge.FLAG)) {
+            repaired = com.retromod.shim.common.LegacyCommonMembersBridge.apply(repaired);
+        }
+        // Only where the old movement input is gone: an old input's tick(boolean, float) is reached through tick().
+        if (postProcessFlags.contains(com.retromod.shim.common.LegacyClientGapsBridge.FLAG)) {
+            repaired = com.retromod.shim.common.LegacyClientGapsBridge.apply(repaired);
+        }
+        // Only where the host's target goals take a selector, so an old predicate is wrapped in one.
+        if (syntheticClasses.containsKey(com.retromod.shim.common.LegacyTargetSelectorBridge.WRAPPER)) {
+            repaired = com.retromod.shim.common.LegacyTargetSelectorBridge.apply(repaired);
         }
         // Only when the 1.19.4 shim registered the armor base, so newer mods are untouched.
         if (syntheticClasses.containsKey(com.retromod.shim.common.LegacyArmorBridge.ARMOR_ITEM_BASE)) {
@@ -4628,9 +4846,15 @@ public class RetromodTransformer implements ClassFileTransformer {
         if (syntheticClasses.containsKey(com.retromod.shim.common.LegacyKeyDispatchCodecBridge.HELPER)) {
             repaired = com.retromod.shim.common.LegacyKeyDispatchCodecBridge.adaptRegistrations(repaired);
         }
-        // Only on hosts from 26.1, where the world gen options moved from the level data to the server.
-        if (postProcessFlags.contains(com.retromod.shim.common.LegacyWorldGenOptionsAdapter.FLAG)) {
-            repaired = com.retromod.shim.common.LegacyWorldGenOptionsAdapter.apply(repaired);
+        // Only on hosts that split the pack metadata type per pack type: a comparison with the old single type.
+        if (postProcessFlags.contains(com.retromod.shim.common.LegacyPackSectionTypeAdapter.FLAG)) {
+            repaired = com.retromod.shim.common.LegacyPackSectionTypeAdapter.apply(repaired, limitVersion());
+        }
+        // Only on hosts from 26.1, where the world gen options and game rules moved from the level data to the server.
+        boolean worldGenOptions = postProcessFlags.contains(com.retromod.shim.common.LegacyWorldGenOptionsAdapter.FLAG);
+        boolean worldDataRules = postProcessFlags.contains(com.retromod.shim.common.LegacyWorldGenOptionsAdapter.RULES_FLAG);
+        if (worldGenOptions || worldDataRules) {
+            repaired = com.retromod.shim.common.LegacyWorldGenOptionsAdapter.apply(repaired, worldGenOptions, worldDataRules);
         }
         // Only where the 26.3 density function rebuild is registered: the axes an old function reads itself.
         if (syntheticClasses.containsKey(com.retromod.shim.common.LegacyDensityFunctionAxesAdapter.TYPE)) {
@@ -4712,6 +4936,18 @@ public class RetromodTransformer implements ClassFileTransformer {
             repaired = com.retromod.shim.common.LegacyRenderLayerAdapter.apply(repaired, modSourceVersion);
         }
         repaired = com.retromod.shim.common.LegacyParticleProviderAdapter.apply(repaired);
+        // Only on hosts from 1.21.5, where the old weighted wrapper became Weighted, which no entry type covers.
+        if (postProcessFlags.contains(com.retromod.shim.common.LegacyWeightedEntryErasure.FLAG)) {
+            repaired = com.retromod.shim.common.LegacyWeightedEntryErasure.apply(repaired);
+        }
+        // Only on hosts from 26.3, where BlockStateProvider.CODEC reads a holder and old mods need DIRECT_CODEC.
+        if (postProcessFlags.contains(com.retromod.shim.common.LegacyStateProviderCodecAdapter.FLAG)) {
+            repaired = com.retromod.shim.common.LegacyStateProviderCodecAdapter.apply(repaired, limitVersion());
+        }
+        // Only on NeoForge 21.2 to 26.2, whose furnaces call the fuel values form of an item's burn time.
+        if (postProcessFlags.contains(com.retromod.shim.common.LegacyBurnTimeOverrideAdapter.FLAG)) {
+            repaired = com.retromod.shim.common.LegacyBurnTimeOverrideAdapter.apply(repaired, limitVersion());
+        }
         // Only on hosts from 26.3, whose pack suppliers open metadata and resource streams instead of single packs.
         if (postProcessFlags.contains(com.retromod.shim.common.LegacyPackSupplierAdapter.FLAG)) {
             repaired = com.retromod.shim.common.LegacyPackSupplierAdapter.apply(repaired, limitVersion());
@@ -4719,6 +4955,11 @@ public class RetromodTransformer implements ClassFileTransformer {
         // Only on hosts from 26.3, where an old pack's base became the metadata-only AbstractPackMetadataResources.
         if (postProcessFlags.contains(com.retromod.shim.common.LegacyPackResourcesBaseAdapter.FLAG)) {
             repaired = com.retromod.shim.common.LegacyPackResourcesBaseAdapter.apply(repaired, limitVersion());
+        }
+        // Only on hosts from 26.3, whose bonemeal methods take a source, and only for mods built before 26.3.
+        if (postProcessFlags.contains(com.retromod.shim.common.LegacyBonemealOverrideAdapter.FLAG)) {
+            repaired = com.retromod.shim.common.LegacyBonemealOverrideAdapter.apply(repaired, limitVersion(),
+                    RetromodTransformer::readJarOrLibraryClassRemapped);
         }
         // Only where its texture helper is registered (26.1+), so the injected call can embed.
         if (syntheticClasses.containsKey(com.retromod.shim.common.LegacyLivingRendererAdapter.TEXTURES)) {
@@ -4732,6 +4973,12 @@ public class RetromodTransformer implements ClassFileTransformer {
         repaired = com.retromod.shim.common.FinalEyeHeightAdapter.apply(repaired);
         repaired = com.retromod.shim.common.FinalBaseConstructionAdapter.apply(repaired);
         repaired = com.retromod.shim.common.LegacyBreathingOverrideAdapter.apply(repaired);
+        // A mod's own chunk generator gets the steps the host calls: 26.3's terrain step, or the 1.21 noise step.
+        repaired = com.retromod.shim.common.LegacyChunkGeneratorAdapter.apply(repaired);
+        // Only on a host whose playerWillDestroy returns the block state, so a 1.20.1 host keeps the void form.
+        repaired = com.retromod.shim.common.LegacyPlayerWillDestroyAdapter.apply(repaired);
+        // Only on a host that moved the method, so an older host keeps the old override as it is.
+        repaired = com.retromod.shim.common.LegacyDestroyParticlesBridge.apply(repaired);
         // Matches intermediary names too, since pre-26.1 Fabric mods never reach the Mojang remap.
         repaired = com.retromod.shim.common.LegacyBlockUseAdapter.apply(repaired);
         // Same reason, and it reads the host's getValues() shape itself, so older hosts are untouched.
@@ -4751,6 +4998,10 @@ public class RetromodTransformer implements ClassFileTransformer {
                     postProcessFlags::contains, limitVersion());
         }
         // NeoForge refuses a listener on an abstract event, so an old one moves to the events below it.
+        // NeoForge 1.21.1 listeners on RenderLevelStageEvent, which 26.x split into one event class per stage.
+        if (postProcessFlags.contains(com.retromod.shim.common.LegacyRenderStageBridge.FLAG)) {
+            repaired = com.retromod.shim.forge.NeoForgeAbstractEventListeners.applyRenderStages(repaired);
+        }
         if (postProcessFlags.contains(com.retromod.shim.forge.NeoForgeAbstractEventListeners.FLAG)) {
             repaired = com.retromod.shim.forge.NeoForgeAbstractEventListeners.apply(repaired);
         }
@@ -4771,6 +5022,9 @@ public class RetromodTransformer implements ClassFileTransformer {
         // LayeredDraw layer, now a ForgeLayer, gets the extract method that calls its render.
         if (postProcessFlags.contains(com.retromod.shim.forge.LegacyGuiOverlayBridge.FLAG)) {
             repaired = com.retromod.shim.forge.LegacyGuiOverlayBridge.apply(repaired, modSourceVersion);
+        }
+        if (postProcessFlags.contains(com.retromod.shim.neoforge.LegacyNeoForgeGuiOverlayBridge.FLAG)) {
+            repaired = com.retromod.shim.neoforge.LegacyNeoForgeGuiOverlayBridge.apply(repaired);
         }
         // Forge 26.2 fires Pre and Post tick events; an old tick listener gets one of each.
         repaired = com.retromod.shim.forge.LegacyTickEventBridge.apply(repaired);
@@ -6692,11 +6946,12 @@ public class RetromodTransformer implements ClassFileTransformer {
             this.currentDirectInterfaces = interfaces != null ? Set.of(interfaces) : Set.of();
 
             // Before the superclass rebase, which emits the header itself and returns early.
-            if (ImplementedInterfaceRewrite.applies(interfaces, implementedInterfaceRewrites)) {
+            Map<String, String> interfaceRewrites = interfaceRewritesForCurrentMod();
+            if (ImplementedInterfaceRewrite.applies(interfaces, interfaceRewrites)) {
                 interfaces = ImplementedInterfaceRewrite.interfaces(
-                        name, interfaces, implementedInterfaceRewrites);
+                        name, interfaces, interfaceRewrites);
                 signature = ImplementedInterfaceRewrite.signature(
-                        signature, implementedInterfaceRewrites);
+                        signature, interfaceRewrites);
             }
             // A class gets concrete bridges; an interface gets defaults, from class file version 52.
             if ((access & Opcodes.ACC_INTERFACE) == 0) {
@@ -6877,7 +7132,9 @@ public class RetromodTransformer implements ClassFileTransformer {
                     && uniqueFieldGetters.isEmpty() && uniqueFieldStaticBridges.isEmpty()
                     && convertingRedirects.isEmpty() && singletonRedirects.isEmpty()
                     && lambdaAdapters.isEmpty() && staticFieldTypeDrifts.isEmpty()
-                    && libraryStaticFieldReaders.isEmpty()) {
+                    && libraryStaticFieldReaders.isEmpty()
+                    // SRG ids written as reflection text are renamed in the body too, where the host runs Mojang names.
+                    && !renamesSrgText()) {
                 return mv;
             }
             return new RetromodMethodVisitor(api, mv, currentClassName, currentSuperName,
@@ -7860,6 +8117,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                     if (aligned == null) continue;
                     descriptor = aligned;
                     bootstrapMethodArguments[i] = retargeted;
+                    widenInstantiatedReturn(bootstrapMethodArguments, retargeted);
                 }
             }
             super.visitInvokeDynamicInsn(name, descriptor, bootstrapMethodHandle, bootstrapMethodArguments);
@@ -7883,6 +8141,19 @@ public class RetromodTransformer implements ClassFileTransformer {
                     && t.getArgumentTypes()[0].getSort() == org.objectweb.asm.Type.OBJECT) {
                 pendingIndyConsumerType = t.getArgumentTypes()[0].getInternalName();
             }
+        }
+
+        /**
+         * A helper that returns Object stands for a removed type, such as Forge's old shader class, which the lambda's
+         * instantiated type still names. The metafactory resolves that type, so it is widened to Object where the
+         * interface method itself returns Object, as Supplier.get does.
+         */
+        private static void widenInstantiatedReturn(Object[] arguments, org.objectweb.asm.Handle retargeted) {
+            if (arguments.length < 3 || !(arguments[0] instanceof Type sam) || !(arguments[2] instanceof Type instantiated)) return;
+            Type object = Type.getType(Object.class);
+            if (!Type.getReturnType(retargeted.getDesc()).equals(object) || !sam.getReturnType().equals(object)) return;
+            if (instantiated.getReturnType().getSort() != Type.OBJECT || instantiated.getReturnType().equals(object)) return;
+            arguments[2] = Type.getMethodType(object, instantiated.getArgumentTypes());
         }
 
         /**
@@ -8478,7 +8749,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         public void visitLdcInsn(Object value) {
             pendingIndyConsumerType = null;
             // Don't flush; LDC is commonly a constructor argument
-            super.visitLdcInsn(value);
+            super.visitLdcInsn(value instanceof String text ? srgReflectionName(text) : value);
         }
 
         /**
@@ -8564,6 +8835,7 @@ public class RetromodTransformer implements ClassFileTransformer {
             // A removed static field that is read and written through a bridge's getter and setter.
             FieldStaticBridge staticBridge = (opcode == Opcodes.GETSTATIC || opcode == Opcodes.PUTSTATIC)
                     && !staticFieldBridges.isEmpty() ? staticFieldBridges.get(key) : null;
+            if (staticBridge != null && skipsStaticFieldBridge(key)) staticBridge = null;
             if (staticBridge != null) {
                 Type field = Type.getType(descriptor);
                 // A read-only bridge leaves a write as written.
@@ -9224,6 +9496,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                 legacyOnlyClassRedirects.remove(owner);
                 libraryYieldingClassRedirects.remove(owner);
                 implementedInterfaceRewrites.remove(owner);
+                legacyOnlyInterfaceRewrites.remove(owner);
                 implementedMethodBridges.remove(owner);
                 interfaceDefaultBridges.remove(owner);
                 superclassRedirects.remove(owner);

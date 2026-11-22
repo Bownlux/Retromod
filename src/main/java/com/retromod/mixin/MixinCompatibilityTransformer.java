@@ -67,6 +67,8 @@ public final class MixinCompatibilityTransformer {
                     && !target.owner().equals(transformer.getClassRedirects().get(key.owner()))) {
                 continue;
             }
+            // Nor does a Minecraft class Retromod rebuilds inside each mod: Minecraft's code never calls that copy.
+            if (key.owner().startsWith("net/minecraft/") && isRebuiltClass(target.owner())) continue;
 
             String oldRef = key.name();
             String newRef = target.name();
@@ -353,7 +355,64 @@ public final class MixinCompatibilityTransformer {
         bridged = new MixinHostDriftRepair(transformer.getFuzzyResolver(),
                 transformer.getMethodRedirects(), transformer.getClassRedirects(),
                 RetromodTransformer::readCurrentJarClassForAdapter).apply(bridged);
-        return deferStaticItemStacks(adaptValueIoHandlers(bridged));
+        bridged = retargetLambdaInjections(bridged);
+        return gateMissingShadows(softenMissingNewSites(deferStaticItemStacks(adaptValueIoHandlers(bridged))));
+    }
+
+    /** Moves an injection whose call the host moved into a lambda of the same method there, when the handler allows it. */
+    public byte[] retargetLambdaInjections(byte[] classBytes) {
+        if (classBytes == null) return null;
+        ClassNode outline = new ClassNode();
+        new ClassReader(classBytes).accept(outline, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        if (!isMixinClass(outline)) return classBytes;
+        ClassNode classNode = new ClassNode();
+        // Frames are rebuilt, since a moved handler's arguments change; Mixin never loads the mixin class itself.
+        new ClassReader(classBytes).accept(classNode, ClassReader.SKIP_FRAMES);
+        if (!MixinLambdaRetarget.apply(classNode, com.retromod.core.ClassResourceInspector::readWithCode)) return classBytes;
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
+            @Override
+            protected String getCommonSuperClass(String first, String second) {
+                return "java/lang/Object";
+            }
+        };
+        classNode.accept(cw);
+        return cw.toByteArray();
+    }
+
+    /** Lets an injector with an explicit require fail softly where no target method still constructs what it selects. */
+    public byte[] softenMissingNewSites(byte[] classBytes) {
+        if (classBytes == null) return null;
+        ClassNode outline = new ClassNode();
+        new ClassReader(classBytes).accept(outline, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        if (!isMixinClass(outline) || !MixinMissingNewSite.apply(outline, com.retromod.core.ClassResourceInspector::readWithCode)) {
+            return classBytes;
+        }
+        // Only handler annotations changed, so the full class is read again and given them.
+        ClassNode classNode = new ClassNode();
+        new ClassReader(classBytes).accept(classNode, 0);
+        for (int i = 0; i < classNode.methods.size(); i++) {
+            classNode.methods.get(i).visibleAnnotations = outline.methods.get(i).visibleAnnotations;
+        }
+        ClassWriter cw = new ClassWriter(0);
+        classNode.accept(cw);
+        return cw.toByteArray();
+    }
+
+    /** Disables a class mixin on targets that still lack a game member it shadows, after every repair has run. */
+    public byte[] gateMissingShadows(byte[] classBytes) {
+        // Drift repair and the ValueIO adapter may rename or drop shadows, so only what survives them is judged.
+        if (classBytes == null || !has1215Refactor()) return classBytes;
+        ClassNode outline = new ClassNode();
+        new ClassReader(classBytes).accept(outline, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        if (!isMixinClass(outline) || !MixinShadowGate.apply(outline, transformer.getFuzzyResolver())) return classBytes;
+        // Only the @Mixin annotation changed, so the full class is read again and given the new annotation.
+        ClassNode classNode = new ClassNode();
+        new ClassReader(classBytes).accept(classNode, 0);
+        classNode.visibleAnnotations = outline.visibleAnnotations;
+        classNode.invisibleAnnotations = outline.invisibleAnnotations;
+        ClassWriter cw = new ClassWriter(0);
+        classNode.accept(cw);
+        return cw.toByteArray();
     }
 
     /** Drops the targets the host turned into an interface for a class mixin, or into a class for an interface mixin. */
@@ -463,6 +522,10 @@ public final class MixinCompatibilityTransformer {
         MixinLinkCheck linkCheck = host != null && host.isIndexed() ? new MixinLinkCheck(host,
                 transformer.getClassRedirects(), RetromodTransformer::readCurrentJarClassForAdapter) : null;
         modified |= MixinMaterialRuleRepair.apply(classNode, linkCheck);
+        // 26.3 resolves biomes through createResolver; an old head handler on the removed lookup moves onto it.
+        modified |= MixinBiomeResolverRepair.apply(classNode);
+        // On 26.3 a server's dimension tags are bound after its constructor, so worldgen setup hooked there moves later.
+        modified |= MixinServerStartTiming.apply(classNode);
         if (MixinShadowFieldDemotion.handles(classNode.name)) {
             modified |= MixinShadowFieldDemotion.apply(classNode);
         }
@@ -596,6 +659,14 @@ public final class MixinCompatibilityTransformer {
             }
         }
 
+        // Any vanilla class whose redirects reach a class Retromod rebuilds inside each mod: Minecraft's own code never
+        // uses that copy, so a mixin on it changes nothing the mod expects. Decided by the redirect, so offline and at
+        // run time alike, where Retromod's jar also answers for the copy.
+        for (String target : targets) {
+            if (target.startsWith("net/minecraft/") && reachesRebuiltClass(target) && !hostKeeps(target, hostHasClass)) {
+                return target;
+            }
+        }
         // A removed Forge overlay class Retromod rebuilt inside each mod: its mixin would land on the mod's own copy,
         // and the methods it injects into exist in no form on the host. Decided by the redirect, so offline too.
         String rebuiltForgeClass = com.retromod.shim.forge.LegacyGuiOverlayBridge.removedMixinTarget(
@@ -690,11 +761,37 @@ public final class MixinCompatibilityTransformer {
     private String finalRedirect(String internal) {
         List<String> chain = redirectChain(internal);
         if (chain.size() == 1) return internal;
+        // A Minecraft class Retromod rebuilds inside each mod is never a mixin target or selector owner, even as the
+        // first hop: Minecraft's code still names the removed class, so the old name is kept and the target check
+        // declines it. Later hops already stop short of every Retromod class; loader API stand-ins keep their handling.
+        if (internal.startsWith("net/minecraft/") && isRebuiltClass(chain.get(1))) return internal;
         String resolved = chain.get(1);
         for (int hop = 2; hop < chain.size() && !chain.get(hop).startsWith("com/retromod/"); hop++) {
             resolved = chain.get(hop);
         }
         return resolved;
+    }
+
+    /** Whether the name is one of the classes Retromod rebuilds inside each mod that uses them. */
+    private static boolean isRebuiltClass(String internal) {
+        return internal.startsWith(com.retromod.shim.common.RebuiltApiClasses.ROOT);
+    }
+
+    /** Whether the host still has the class under one of its names before the rebuilt one, as when a redirect is only for older mods. */
+    private boolean hostKeeps(String target, java.util.function.Predicate<String> hostHasClass) {
+        for (String name : redirectChain(target)) {
+            if (isRebuiltClass(name)) return false;
+            if (hostHasClass.test(name.replace('/', '.'))) return true;
+        }
+        return false;
+    }
+
+    /** Whether a class's redirects, followed as the bytecode pass follows them, reach a class Retromod rebuilds. */
+    private boolean reachesRebuiltClass(String target) {
+        for (String name : redirectChain(target)) {
+            if (isRebuiltClass(name)) return true;
+        }
+        return false;
     }
 
     /**
@@ -1104,7 +1201,7 @@ public final class MixinCompatibilityTransformer {
     private boolean transformShadowAnnotation(AnnotationNode annotation, MethodNode method) {
         // for @Shadow the method name itself is the target
         String oldName = method.name;
-        String newName = remapMethodName(oldName);
+        String newName = remapMethodName(oldName, method.desc);
 
         if (!newName.equals(oldName)) {
             method.name = newName;
@@ -1131,7 +1228,7 @@ public final class MixinCompatibilityTransformer {
 
                 if ("value".equals(key) && value instanceof String s) {
                     hasExplicitValue = true;
-                    String redirected = remapMethodName(s);
+                    String redirected = remapMethodName(s, isInvoker ? method.desc : null);
                     if (!isInvoker && redirected.equals(s)) {
                         redirected = remapFieldName(s, accessorFieldDesc);
                     }
@@ -1161,7 +1258,7 @@ public final class MixinCompatibilityTransformer {
 
             if (target != null) {
                 String redirected = isInvoker
-                        ? remapMethodName(target)
+                        ? remapMethodName(target, method.desc)
                         : remapFieldName(target, accessorFieldDesc);
                 if (isInvoker && redirected.equals(target)) {
                     redirected = renamedInvokerTarget(target, method.desc);
@@ -1502,7 +1599,7 @@ public final class MixinCompatibilityTransformer {
 
             desc = remapDescriptorClasses(desc);
             String newMethod = transformer.remapQualifiedMethodName(
-                    newOwner, remapMethodName(methodName), desc);
+                    newOwner, remapMethodName(methodName, desc), desc);
 
             return "L" + newOwner + ";" + newMethod + desc;
         }
@@ -1594,7 +1691,7 @@ public final class MixinCompatibilityTransformer {
     }
 
     private String remapBareMethodName(String name, String descriptor) {
-        String r = remapMethodName(name);
+        String r = remapMethodName(name, descriptor);
         Set<String> targetOwners = currentTargetOwners.get();
         if (targetOwners.size() == 1 && !descriptor.isEmpty()) {
             String qualified = transformer.remapQualifiedMethodName(
@@ -1635,13 +1732,13 @@ public final class MixinCompatibilityTransformer {
     /**
      * Remap a method name using shim redirects first, then intermediary→Mojang mappings.
      */
-    private String remapMethodName(String methodName) {
+    private String remapMethodName(String methodName, String descriptor) {
         String redirected = methodTargetRedirects.get(methodName);
         if (redirected != null) return redirected;
 
-        if (methodName.startsWith("method_")) {
-            Map<String, String> intermediaryMethods = transformer.getIntermediaryMethodNames();
-            String mojang = intermediaryMethods.get(methodName);
+        // The descriptor picks an id's old name where its current member changed shape.
+        if (methodName.startsWith("method_") || methodName.startsWith("comp_")) {
+            String mojang = transformer.intermediaryMemberName(methodName, descriptor, false);
             if (mojang != null) return mojang;
         }
 
@@ -1668,7 +1765,7 @@ public final class MixinCompatibilityTransformer {
         // redirect, but an intermediary short name is still globally identifiable here. Record
         // component fields carry comp_ names instead of field_ ones.
         if (fieldName.startsWith("field_") || fieldName.startsWith("comp_")) {
-            String mojang = transformer.getIntermediaryFieldNames().get(fieldName);
+            String mojang = transformer.intermediaryMemberName(fieldName, descriptor, true);
             if (mojang != null) return mojang;
         }
         return fieldName;

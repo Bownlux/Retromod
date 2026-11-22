@@ -28,14 +28,39 @@ public final class CompoundTagSerializer implements EntityDataSerializer<Compoun
     static final String PATH = "compound_tag";
     private static final String[] REGISTRY_GETTERS = {"getRegistry", "getForgeRegistry", "getVanillaRegistry"};
 
+    private static final String FABRIC_REGISTRY = "net.fabricmc.fabric.api.object.builder.v1.entity.FabricEntityDataRegistry";
+
     private static boolean listening;
+    private static volatile boolean fabricChecked;
 
     private CompoundTagSerializer() {}
 
     /** The one serializer every translated mod shares, as the old field held one. */
     @SuppressWarnings("unchecked")
     public static EntityDataSerializer<CompoundTag> get() {
-        return LegacySharedSlots.get(SLOT, PROTOCOL, EntityDataSerializer.class, CompoundTagSerializer::new);
+        EntityDataSerializer<CompoundTag> serializer =
+                LegacySharedSlots.get(SLOT, PROTOCOL, EntityDataSerializer.class, CompoundTagSerializer::new);
+        if (!fabricChecked) registerOnFabric(serializer);
+        return serializer;
+    }
+
+    /** Fabric has no mod constructor to listen from, so the first read registers the serializer with Fabric API's registry. */
+    private static synchronized void registerOnFabric(EntityDataSerializer<CompoundTag> serializer) {
+        if (fabricChecked) return;
+        fabricChecked = true;
+        Class<?> registry = find(FABRIC_REGISTRY);
+        if (registry == null) return;
+        try {
+            Object id = identifier();
+            // Fabric API numbers modded serializers by id, so every copy registers the one shared serializer once.
+            if (registry.getMethod("get", id.getClass()).invoke(null, id) != null) return;
+            AtomicBoolean done = LegacySharedSlots.get(REGISTERED, PROTOCOL, AtomicBoolean.class, AtomicBoolean::new);
+            if (!done.compareAndSet(false, true)) return;
+            registry.getMethod("register", id.getClass(), EntityDataSerializer.class).invoke(null, id, serializer);
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException failure) {
+            LegacyLog.warnOnce("compound tag serializer fabric", "Retromod could not register the old compound tag"
+                    + " entity data serializer with Fabric API, so entities that sync one cannot be sent: " + failure);
+        }
     }
 
     /** Called from each {@code @Mod} constructor of a jar that names the old field, before any registry fills. */

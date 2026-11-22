@@ -21,7 +21,7 @@ import org.objectweb.asm.tree.MethodNode;
  *
  * <p>From 1.20.3 to 26.2 every block declared a {@code MapCodec}, and most mods filled theirs in a
  * static initializer with {@code simpleCodec(MyBlock::new)}. 26.3 dropped {@code codec()},
- * {@code simpleCodec} and {@code propertiesCodec} from {@code BlockBehaviour} and reads no block
+ * {@code simpleCodec} and {@code propertiesCodec} from {@code BlockBehaviour}, and {@code Properties.CODEC}, and reads no block
  * codec anywhere, so the call threw {@code NoSuchMethodError} while the block class initialized,
  * and every block and item the mod registered after it was lost.
  *
@@ -42,6 +42,7 @@ public final class LegacyBlockCodecBridge {
     static final String PROPERTIES = BLOCK_BEHAVIOUR + "$Properties";
     static final String MAP_CODEC = "com/mojang/serialization/MapCodec";
     static final String RECORD_BUILDER = "com/mojang/serialization/codecs/RecordCodecBuilder";
+    static final String CODEC = "com/mojang/serialization/Codec";
     static final String SIMPLE_CODEC = "(Ljava/util/function/Function;)L" + MAP_CODEC + ";";
     static final String PROPERTIES_CODEC = "()L" + RECORD_BUILDER + ";";
     static final String BUILT_IN_REGISTRIES = "net/minecraft/core/registries/BuiltInRegistries";
@@ -71,6 +72,8 @@ public final class LegacyBlockCodecBridge {
                 HELPER, "simpleCodec", SIMPLE_CODEC);
         transformer.registerInheritedMethodRedirect(BLOCK_BEHAVIOUR, "propertiesCodec", PROPERTIES_CODEC,
                 HELPER, "propertiesCodec", PROPERTIES_CODEC);
+        // Some blocks build their codec from Properties.CODEC directly, which went with the rest.
+        transformer.registerFieldRedirect(PROPERTIES, "CODEC", "L" + CODEC + ";", HELPER, "propertiesFieldCodec", "()L" + CODEC + ";");
         transformer.registerFieldRedirect(BUILT_IN_REGISTRIES, "BLOCK_TYPE", "L" + REGISTRY + ";",
                 HELPER, BLOCK_TYPES, "()L" + REGISTRY + ";");
         // A deferred register names the registry by its key, which 26.3 removed with it.
@@ -150,6 +153,18 @@ public final class LegacyBlockCodecBridge {
         properties.visitInsn(Opcodes.ARETURN);
         properties.visitMaxs(0, 0);
         properties.visitEnd();
+
+        // propertiesFieldCodec(): MapCodec.unit(helper).codec(), standing in for Properties.CODEC.
+        MethodVisitor field = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "propertiesFieldCodec", "()L" + CODEC + ";", null, null);
+        field.visitCode();
+        emitNewHelper(field);
+        field.visitMethodInsn(Opcodes.INVOKESTATIC, MAP_CODEC, "unit",
+                "(L" + SUPPLIER + ";)L" + MAP_CODEC + ";", false);
+        field.visitMethodInsn(Opcodes.INVOKEVIRTUAL, MAP_CODEC, "codec", "()L" + CODEC + ";", false);
+        field.visitInsn(Opcodes.ARETURN);
+        field.visitMaxs(0, 0);
+        field.visitEnd();
 
         // apply(block): the block's own properties, which is what the old getter returned.
         MethodVisitor apply = cw.visitMethod(Opcodes.ACC_PUBLIC, "apply",

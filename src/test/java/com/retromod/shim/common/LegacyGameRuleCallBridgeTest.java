@@ -45,6 +45,7 @@ class LegacyGameRuleCallBridgeTest {
     private static final String LEVEL = "net/minecraft/class_1937";
     private static final String SERVER_LEVEL = "net/minecraft/class_3218";
     private static final String CLIENT_LEVEL = "net/minecraft/class_638";
+    private static final String SERVER = "net/minecraft/server/MinecraftServer";
     private static final String MOD = "mod/AppleRules";
 
     @TempDir
@@ -106,7 +107,9 @@ class LegacyGameRuleCallBridgeTest {
         assertEquals(List.of(
                 gameRules, helper + ".getBoolean(L" + RULES + ";L" + RULE + ";)Z",
                 SERVER_LEVEL + ".method_64395()L" + RULES + ";", helper + ".getBoolean(L" + RULES + ";L" + RULE + ";)Z",
-                gameRules, helper + ".getInt(L" + RULES + ";L" + RULE + ";)I"), calls(transformed));
+                gameRules, helper + ".getInt(L" + RULES + ";L" + RULE + ";)I",
+                helper + ".serverGameRules(L" + SERVER + ";)L" + RULES + ";",
+                helper + ".getBoolean(L" + RULES + ";L" + RULE + ";)Z"), calls(transformed));
         for (String field : fieldDescriptors(transformed)) {
             assertEquals("L" + RULE + ";", field, "the rule fields take the 1.21.11 rule type");
         }
@@ -115,7 +118,7 @@ class LegacyGameRuleCallBridgeTest {
     @Test
     @DisplayName("the intermediary helper verifies")
     void generatedIntermediaryHelperVerifies() {
-        new ClassReader(LegacyGameRuleCallBridge.generate(INTERMEDIARY))
+        new ClassReader(LegacyGameRuleCallBridge.generate(INTERMEDIARY, false, LegacyGameRuleCallBridge.INTERMEDIARY_SERVER))
                 .accept(new CheckClassAdapter(new ClassWriter(0), true), 0);
     }
 
@@ -143,6 +146,43 @@ class LegacyGameRuleCallBridgeTest {
         assertEquals(true, run.call("regenerates", server), "a server level reads its own rules");
         assertEquals(false, run.call("raidsDisabled", server), "raids are on, so the old DISABLE_RAIDS reads false");
         assertEquals(3, run.call("tickSpeed", run.newInstance(CLIENT_LEVEL)), "a client level reads the defaults");
+        assertEquals(true, run.call("serverRegenerates", run.newInstance(SERVER)),
+                "a server's rules are read from its level data");
+    }
+
+    @Test
+    @DisplayName("a server's own rule read reaches its level data on a 1.21.11 host and stays on 26.3")
+    void serverRuleReadIsGatedOnTheHost() {
+        String server = "net/minecraft/server/MinecraftServer";
+        String[][] reads = {{server, "getGameRules", "()Lnet/minecraft/world/level/GameRules;"},
+                {"net/minecraft/server/dedicated/DedicatedServer", "getGameRules",
+                        "()Lnet/minecraft/world/level/gamerules/GameRules;"}};
+        String helper = LegacyGameRuleCallBridge.CALLS + ".serverGameRules(L" + server
+                + ";)Lnet/minecraft/world/level/gamerules/GameRules;";
+
+        RetromodVersion.TARGET_MC_VERSION = "1.21.11";
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        LegacyGameRuleCallBridge.register(transformer);
+        assertEquals(List.of(helper, helper), calls(transformer.transformClass(caller("mod/ServerRules", reads),
+                "mod/ServerRules.class")));
+
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        transformer.clearRedirectsForTesting();
+        LegacyGameRuleCallBridge.register(transformer);
+        for (String call : calls(transformer.transformClass(caller("mod/ServerRules", reads), "mod/ServerRules.class"))) {
+            assertTrue(call.contains(".getGameRules()"), "26.1 and newer have the server getter again: " + call);
+        }
+    }
+
+    @Test
+    @DisplayName("a server's rule read is gated on the host's own server class")
+    void serverRuleGateReadsTheHost() {
+        ClassNode server = new ClassNode();
+        assertTrue(LegacyGameRuleCallBridge.hostDroppedServerRules(server), "1.21.11's server has no rule getter");
+        server.methods.add(new MethodNode(ACC_PUBLIC, "getGameRules",
+                "()Lnet/minecraft/world/level/gamerules/GameRules;", null, null));
+        assertFalse(LegacyGameRuleCallBridge.hostDroppedServerRules(server), "26.x's server reads its own rules");
     }
 
     @Test
@@ -192,6 +232,15 @@ class LegacyGameRuleCallBridgeTest {
         read(cw, "regenerates", LEVEL, "field_19395", "method_8355", "Z");
         read(cw, "raidsDisabled", SERVER_LEVEL, "field_19422", "method_8355", "Z");
         read(cw, "tickSpeed", CLIENT_LEVEL, "field_19399", "method_8356", "I");
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "serverRegenerates", "(L" + SERVER + ";)Z", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEVIRTUAL, SERVER, "method_3767", "()L" + RULES + ";", false);
+        mv.visitFieldInsn(GETSTATIC, RULES, "field_19395", "L" + OLD_KEY + ";");
+        mv.visitMethodInsn(INVOKEVIRTUAL, RULES, "method_8355", "(L" + OLD_KEY + ";)Z", false);
+        mv.visitInsn(IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
     }
@@ -303,7 +352,17 @@ class LegacyGameRuleCallBridgeTest {
                         }""",
                 "net/minecraft/class_638.java", """
                         package net.minecraft;
-                        public class class_638 extends class_1937 {}"""));
+                        public class class_638 extends class_1937 {}""",
+                "net/minecraft/class_5219.java", """
+                        package net.minecraft;
+                        public interface class_5219 { class_1928 method_146(); }""",
+                "net/minecraft/server/MinecraftServer.java", """
+                        package net.minecraft.server;
+                        import net.minecraft.*;
+                        public class MinecraftServer {
+                            private final class_1928 rules = new class_1928(null);
+                            public class_5219 method_27728() { return () -> rules; }
+                        }"""));
     }
 
     /** The transformed mod class, Retromod's generated helpers and the stand-ins in one loader. */

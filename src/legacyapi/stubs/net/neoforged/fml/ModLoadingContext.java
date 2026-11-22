@@ -4,4 +4,5 @@ package net.neoforged.fml;
 public class ModLoadingContext {
     public static ModLoadingContext get() { throw new UnsupportedOperationException(); }
     public ModContainer getActiveContainer() { throw new UnsupportedOperationException(); }
+    public String getActiveNamespace() { throw new UnsupportedOperationException(); }
 }

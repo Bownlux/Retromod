@@ -67,7 +67,29 @@ public final class RemovedRenderStateNeutralize {
             new Removed("1.21.6", "enableScissor", "(IIII)V"),
             new Removed("1.21.6", "disableScissor", "()V"),
             new Removed("1.21.6", "setShaderColor", "(FFFF)V"),
-            new Removed("1.21.11", "lineWidth", "(F)V"));
+            new Removed("1.21.11", "lineWidth", "(F)V"),
+            // Gone by 1.21.11 at the latest (checked against 1.21.11 to 26.3): clears, texture units, the
+            // viewport, the texture matrix, the fog range and the two light directions all live on the
+            // pipeline or in uniform buffers now. The exact earlier release was not checked, so they
+            // carry the version that was.
+            new Removed("1.21.11", "clear", "(IZ)V"),
+            new Removed("1.21.11", "bindTexture", "(I)V"),
+            new Removed("1.21.11", "activeTexture", "(I)V"),
+            new Removed("1.21.11", "viewport", "(IIII)V"),
+            new Removed("1.21.11", "resetTextureMatrix", "()V"),
+            new Removed("1.21.11", "setShaderFogStart", "(F)V"),
+            new Removed("1.21.11", "setShaderFogEnd", "(F)V"),
+            new Removed("1.21.11", "setShaderLights", "(Lorg/joml/Vector3f;Lorg/joml/Vector3f;)V"));
+
+    // RenderTarget keeps its Mojang name only on unobfuscated hosts, so these go to 26.x alone.
+    // Mods call them through the subclass they hold as often as through RenderTarget itself.
+    private static final List<String> RENDER_TARGETS = List.of("com/mojang/blaze3d/pipeline/RenderTarget",
+            "com/mojang/blaze3d/pipeline/TextureTarget");
+
+    /** RenderTarget's own clear and clear color, which moved onto command encoders; absent on 26.1 to 26.3. */
+    private static final List<Removed> RENDER_TARGET_REMOVED = List.of(
+            new Removed("26.1", "clear", "(Z)V"),
+            new Removed("26.1", "setClearColor", "(FFFF)V"));
 
     /** The same calls as 26.1 shapes them, after its class moves and the Identifier rename. */
     private static final List<Removed> SHAPES_26_1 = List.of(
@@ -79,6 +101,11 @@ public final class RemovedRenderStateNeutralize {
     public static void register(RetromodTransformer transformer) {
         for (Removed removed : REMOVED) neutralize(transformer, removed);
         for (Removed removed : SHAPES_26_1) neutralize(transformer, removed);
+        for (String owner : RENDER_TARGETS) {
+            for (Removed removed : RENDER_TARGET_REMOVED) {
+                transformer.registerRemovedMethodNeutralize(owner, removed.name(), removed.desc());
+            }
+        }
     }
 
     /** The setters the given version removed, called from that version's shim so the host gate holds. */

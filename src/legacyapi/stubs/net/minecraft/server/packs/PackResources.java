@@ -6,6 +6,6 @@ import java.util.function.BiConsumer;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.resources.IoSupplier;
 
-public interface PackResources {
+public interface PackResources extends PackMetadataResources {
     interface ResourceOutput extends BiConsumer<Identifier, IoSupplier<InputStream>> {}
 }

@@ -141,7 +141,7 @@ class LegacyLootSingletonHostTest {
     }
 
     @Test
-    @DisplayName("the removed villager schedule registry reads as an empty, frozen registry under its old key")
+    @DisplayName("the removed villager schedule registry reads as one empty registry under its old key, open for old mods' schedules")
     void removedScheduleRegistryIsEmpty() throws Exception {
         List<URL> host = new ArrayList<>();
         for (String jar : HOST) {
@@ -154,7 +154,7 @@ class LegacyLootSingletonHostTest {
             assertThrows(NoSuchFieldException.class, () -> mc.type("net.minecraft.core.registries.BuiltInRegistries").getField("SCHEDULE"),
                     "26.3 has no schedule registry, which is why the stand-in exists");
             ClassLoader withSupport = new SupportLoader(game, com.retromod.shim.common.embedded.LegacyRemovedRegistrySupport.class,
-                    com.retromod.shim.common.embedded.LegacyPublicMethods.class);
+                    com.retromod.shim.common.embedded.LegacyPublicMethods.class, com.retromod.shim.common.embedded.LegacyRegistries.class);
             Class<?> support = withSupport.loadClass(com.retromod.shim.common.embedded.LegacyRemovedRegistrySupport.class.getName());
 
             Object registry = support.getMethod("registry", String.class).invoke(null, "schedule");

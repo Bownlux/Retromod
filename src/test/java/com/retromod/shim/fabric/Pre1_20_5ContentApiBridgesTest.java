@@ -340,6 +340,21 @@ class Pre1_20_5ContentApiBridgesTest {
     }
 
     @Test
+    @DisplayName("Moonlight's instanceof ModNioResourcePack reaches the class Fabric API for 26.x moved it to, and only there")
+    void movedModPackClassFollowsTheHost() {
+        ClassNode moved = new ClassNode();
+        FabricModNioResourcePackBridge.registerMovedClass(transformer,
+                name -> name.equals(FabricModNioResourcePackBridge.MOVED_PACK) ? moved : null);
+        assertEquals(FabricModNioResourcePackBridge.MOVED_PACK,
+                transformer.getClassRedirects().get(FabricModNioResourcePackBridge.PACK));
+
+        transformer.clearRedirectsForTesting();
+        FabricModNioResourcePackBridge.registerMovedClass(transformer, name -> moved);
+        assertNull(transformer.getClassRedirects().get(FabricModNioResourcePackBridge.PACK),
+                "a Fabric API that still has the old class keeps it");
+    }
+
+    @Test
     @DisplayName("The five-argument ModNioResourcePack.create gains the modBundled flag")
     void modNioResourcePackCreateIsBridged() {
         FabricModNioResourcePackBridge.registerRedirects(transformer);

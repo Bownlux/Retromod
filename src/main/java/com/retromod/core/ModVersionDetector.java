@@ -85,6 +85,11 @@ public class ModVersionDetector {
         defaultPreferredLoader = loaderName(loader);
     }
 
+    /** The loader every detector prefers when built without one, as the CLI's --target-loader set it, or null. */
+    public static String defaultPreferredLoader() {
+        return defaultPreferredLoader;
+    }
+
     /** A known loader name in lower case, or null. */
     private static String loaderName(String loader) {
         if (loader == null) return null;

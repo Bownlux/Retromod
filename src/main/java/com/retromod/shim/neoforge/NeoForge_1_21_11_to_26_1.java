@@ -55,6 +55,8 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
         // both the CLI/audit path and the runtime even if the mapper isn't loaded.
         // Double-registration with the same target is an idempotent Map.put. (#64)
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.register(transformer);
+        // ModifyDefaultComponentsEvent's patch-consumer calls became initializers.
+        LegacyDefaultComponentsBridge.register(transformer);
         com.retromod.shim.forge.LegacyTradeBridge.register(transformer);
 
         // EntityType.BOAT/CHEST_BOAT split into per-wood types in 26.1; OAK is the
@@ -195,6 +197,8 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
         LegacyNeoForgeRegisterAdditionalBridge.register(transformer);
         // NeoForge 1.21.5 removed the dynamic model API with BakedModel, which old models and their callers still name.
         LegacyNeoForgeBakedModelBridge.register(transformer);
+        // ModelResourceLocation became a plain Identifier, and ModelManager.getModel is answered from block state models.
+        com.retromod.shim.common.LegacyModelLocationBridge.register(transformer);
         // NeoForge keys AddLayers player renderers by model type, and its getSkins() returns those types.
         LegacyNeoForgeAddLayersBridge.register(transformer);
         // NeoForge 26.1 replaced the block color event with block tint sources, and 1.21.4 removed the item color event.
@@ -206,6 +210,9 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
             "net/neoforged/neoforge/event/level/BlockEvent$BreakEvent",
             "net/neoforged/neoforge/event/level/block/BreakBlockEvent"
         );
+
+        // NeoForge 1.21.1's stage-filtered RenderLevelStageEvent, on the per-stage events.
+        com.retromod.shim.common.LegacyRenderStageBridge.registerStages(transformer);
 
         // RenderLevelStageEvent stage-inner renames (26.1 render-pipeline pass split).
         // $AfterTripwireBlocks was removed with no successor, left unmapped. NeoForge

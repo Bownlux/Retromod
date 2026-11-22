@@ -22,6 +22,10 @@ public class Fabric_1_21_4_to_1_21_5 implements VersionShim {
         if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(
                 com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
             com.retromod.shim.common.LegacyTooltipSynthetic.register(transformer);
+            // HIDE_ADDITIONAL_TOOLTIP went into the tooltip display component; old reads get a stand-in.
+            com.retromod.shim.common.LegacyHiddenTooltipBridge.register(transformer);
+            // SimpleWeightedRandomList became WeightedList, whose factories and lookup have new names.
+            com.retromod.shim.common.LegacyWeightedListBridge.register(transformer);
             // RenderTarget.bindWrite went too, and DynamicTexture's constructors gained a debug label.
             com.retromod.shim.common.LegacyRenderCallBridge.registerMainTargetBind(transformer);
             com.retromod.shim.common.LegacyRenderCallBridge.registerDynamicTextureLabels(transformer);
@@ -29,6 +33,11 @@ public class Fabric_1_21_4_to_1_21_5 implements VersionShim {
             com.retromod.shim.common.LegacyLeavesBlockBridge.register(transformer);
             // ChestBlock's AABB constants went when block shapes were rebuilt.
             com.retromod.shim.common.LegacyChestShapesBridge.register(transformer);
+            // FenceGateBlock's shape constants went too, and SkullBlock's became private; the host's own blocks answer them.
+            com.retromod.shim.common.LegacyBlockShapesBridge.register(transformer);
+            // Block hooks that changed parameters here keep old overrides and super calls working.
+            com.retromod.shim.common.LegacyBlockOverridesAdapter.register(transformer);
+            com.retromod.shim.common.LegacyServerApiBridge.register(transformer);
             com.retromod.shim.common.LegacyMobEffectNames.register(transformer);
             // Region tickets became tickets with a radius and no value.
             com.retromod.shim.common.LegacyChunkTicketBridge.register(transformer);

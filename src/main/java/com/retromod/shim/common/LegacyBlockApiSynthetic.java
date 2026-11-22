@@ -33,6 +33,8 @@ public final class LegacyBlockApiSynthetic {
         if (!transformer.getSyntheticClasses().containsKey(INTERNAL)) {
             transformer.registerSyntheticClass(INTERNAL, generate());
         }
+        LegacyBlockOverridesAdapter.register(transformer);
+        LegacyServerApiBridge.register(transformer);
     }
 
     public static byte[] generate() {

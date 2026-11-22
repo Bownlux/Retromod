@@ -416,12 +416,23 @@ public final class RetroKeyMapping {
         return true;
     }
 
+    /** A keybind subclass cannot be built without a category, so the failure names it and where to report it. */
+    private static IllegalStateException categoryFailed(String category, Throwable cause) {
+        return new IllegalStateException("Retromod could not turn the key category '" + category + "' into a "
+                + "Minecraft key category on this version, so the mod's keybind cannot be created. Report it at "
+                + "https://github.com/Bownlux/Retromod/issues with the mod and Minecraft version.", cause);
+    }
+
     /** The host's {@code Category} for an old category string; a subclass's adapted {@code super(...)} call uses it too. */
     public static Object category(String category) {
         try {
-            return resolveCategory(Class.forName(CATEGORY), category);
+            Object resolved = resolveCategory(Class.forName(CATEGORY), category);
+            if (resolved != null) return resolved;
+            throw categoryFailed(category, null);
+        } catch (IllegalStateException failed) {
+            throw failed;
         } catch (Throwable t) {
-            return null;
+            throw categoryFailed(category, t);
         }
     }
 

@@ -3,6 +3,12 @@ package net.minecraft.core.component;
 
 public final class DataComponentPatch {
     public SplitResult split() { throw new UnsupportedOperationException(); }
+    public static Builder builder() { throw new UnsupportedOperationException(); }
+
+    public static class Builder {
+        public <T> Builder set(DataComponentType<T> type, T value) { throw new UnsupportedOperationException(); }
+        public DataComponentPatch build() { throw new UnsupportedOperationException(); }
+    }
 
     // A record on the host.
     public static final class SplitResult {

@@ -43,6 +43,7 @@ import java.util.Set;
  *       {@code Recipe.CommonInfo}, a {@code CraftingBookInfo} for crafting, optional smithing
  *       ingredients, and an {@code ItemStackTemplate} result.</li>
  *   <li>{@code CustomRecipe} lost its {@code CraftingBookCategory} constructor.</li>
+ *   <li>The cooking recipes take a {@code CookingBookInfo}, and the stonecutter recipe keeps no group.</li>
  *   <li>The {@code result} field became a private template, and the smithing ingredient fields
  *       became private optionals with public accessors.</li>
  *   <li>{@code assemble} dropped its {@code HolderLookup.Provider} parameter, so an old override
@@ -65,6 +66,10 @@ public final class LegacyRecipeSubclassAdapter {
     static final String SHAPELESS = CRAFTING + "ShapelessRecipe";
     static final String SMITHING = CRAFTING + "SmithingTransformRecipe";
     static final String CUSTOM = CRAFTING + "CustomRecipe";
+    // The cooking recipes share one constructor shape, and the stonecutter is the one single-item recipe.
+    static final Set<String> COOKING = Set.of(CRAFTING + "AbstractCookingRecipe", CRAFTING + "SmeltingRecipe",
+            CRAFTING + "BlastingRecipe", CRAFTING + "SmokingRecipe", CRAFTING + "CampfireCookingRecipe");
+    static final Set<String> SINGLE_ITEM = Set.of(CRAFTING + "SingleItemRecipe", CRAFTING + "StonecutterRecipe");
     private static final String COMMON_INFO = CRAFTING + "Recipe$CommonInfo";
     private static final String BOOK_INFO = CRAFTING + "CraftingRecipe$CraftingBookInfo";
     private static final String CATEGORY = CRAFTING + "CraftingBookCategory";
@@ -95,12 +100,24 @@ public final class LegacyRecipeSubclassAdapter {
     private static final String NEW_SMITHING_CTOR = "(L" + COMMON_INFO + ";L" + OPTIONAL + ";"
             + L_INGREDIENT + "L" + OPTIONAL + ";L" + TEMPLATE + ";)V";
     private static final String OLD_CUSTOM_CTOR = "(L" + CATEGORY + ";)V";
+    private static final String COOKING_CATEGORY = CRAFTING + "CookingBookCategory";
+    private static final String COOKING_BOOK_INFO = CRAFTING + "AbstractCookingRecipe$CookingBookInfo";
+    private static final String OLD_COOKING_CTOR = "(Ljava/lang/String;L" + COOKING_CATEGORY + ";" + L_INGREDIENT
+            + L_STACK + "FI)V";
+    private static final String NEW_COOKING_CTOR = "(L" + COMMON_INFO + ";L" + COOKING_BOOK_INFO + ";" + L_INGREDIENT
+            + "L" + TEMPLATE + ";FI)V";
+    // 26.1 keeps no group for single-item recipes, so the old group is dropped.
+    private static final String OLD_SINGLE_ITEM_CTOR = "(Ljava/lang/String;" + L_INGREDIENT + L_STACK + ")V";
+    private static final String NEW_SINGLE_ITEM_CTOR = "(L" + COMMON_INFO + ";" + L_INGREDIENT + "L" + TEMPLATE + ";)V";
     // 1.20.1's constructors also took the recipe id, which a 26.1 recipe leaves to its holder.
     private static final String ID = "Lnet/minecraft/resources/Identifier;";
     private static final String NON_NULL_LIST = "net/minecraft/core/NonNullList";
     private static final String GRID_SHAPED_CTOR = "(" + ID + "Ljava/lang/String;L" + CATEGORY + ";IIL" + NON_NULL_LIST + ";" + L_STACK + ")V";
     private static final String ID_SHAPELESS_CTOR = "(" + ID + OLD_SHAPELESS_CTOR.substring(1);
     private static final String ID_SMITHING_CTOR = "(" + ID + OLD_SMITHING_CTOR.substring(1);
+    private static final String ID_COOKING_CTOR = "(" + ID + OLD_COOKING_CTOR.substring(1);
+    private static final String ID_SINGLE_ITEM_CTOR = "(" + ID + OLD_SINGLE_ITEM_CTOR.substring(1);
+    private static final String ID_CUSTOM_CTOR = "(" + ID + OLD_CUSTOM_CTOR.substring(1);
     // 1.20.1 recipes read a crafting container with the registry access; 26.1 hands a crafting input.
     private static final String CRAFTING_CONTAINER = "net/minecraft/world/inventory/CraftingContainer";
     private static final String CRAFTING_INPUT = CRAFTING + "CraftingInput";
@@ -126,16 +143,22 @@ public final class LegacyRecipeSubclassAdapter {
         } catch (RuntimeException unreadable) {
             return classBytes;
         }
-        if ((node.access & Opcodes.ACC_INTERFACE) != 0 || node.name.startsWith("net/minecraft/")
-                || SyntheticEmbedder.isRetromodClass(node.name)) {
+        if (node.name.startsWith("net/minecraft/") || SyntheticEmbedder.isRetromodClass(node.name)) {
             return classBytes;
         }
+        // A mod's recipe interface with a default old assemble gets the new one as a default too.
+        boolean itf = (node.access & Opcodes.ACC_INTERFACE) != 0;
+        if (itf && node.interfaces.stream().noneMatch(i -> i.startsWith(CRAFTING))) return classBytes;
         boolean changed = false;
-        for (MethodNode method : node.methods) {
-            changed |= rewriteCalls(node.name, method);
+        if (!itf) {
+            // A constructor reference such as ShapelessRecipe::new becomes a factory whose call the loop below converts.
+            changed |= ConstructorReferenceExpander.expand(node, LegacyRecipeSubclassAdapter::isLegacyConstructor) > 0;
+            for (MethodNode method : node.methods) {
+                changed |= rewriteCalls(node.name, method);
+            }
         }
         changed |= addCurrentAssembleOverrides(node);
-        changed |= addCraftingInputOverrides(node);
+        if (!itf) changed |= addCraftingInputOverrides(node);
         if (!changed) {
             return classBytes;
         }
@@ -152,7 +175,15 @@ public final class LegacyRecipeSubclassAdapter {
     private static boolean mentionsRecipeApi(byte[] classBytes) {
         String text = new String(classBytes, java.nio.charset.StandardCharsets.ISO_8859_1);
         return text.contains(PROVIDER) || text.contains(SHAPED) || text.contains(SHAPELESS)
-                || text.contains(SMITHING) || text.contains(CUSTOM) || text.contains(CRAFTING_CONTAINER);
+                || text.contains(SMITHING) || text.contains(CUSTOM) || text.contains(CRAFTING_CONTAINER)
+                || text.contains(COOKING_CATEGORY) || text.contains(CRAFTING + "StonecutterRecipe")
+                || text.contains(CRAFTING + "SingleItemRecipe");
+    }
+
+    /** A pre-26.1 recipe constructor this adapter converts, which a constructor reference may name too. */
+    static boolean isLegacyConstructor(String owner, String desc) {
+        if (CUSTOM.equals(owner)) return OLD_CUSTOM_CTOR.equals(desc) || ID_CUSTOM_CTOR.equals(desc);
+        return resultArgument(owner, desc) >= 0;
     }
 
     /**
@@ -214,13 +245,21 @@ public final class LegacyRecipeSubclassAdapter {
     /** Index of the old {@code ItemStack} result argument, or -1 for any other call. */
     private static int resultArgument(MethodInsnNode call) {
         if (call.getOpcode() != Opcodes.INVOKESPECIAL || !"<init>".equals(call.name)) return -1;
-        if (SHAPED.equals(call.owner) && OLD_SHAPED_CTOR.equals(call.desc)) return 3;
-        if (SHAPED.equals(call.owner) && OLD_SHAPED_NOTIFY_CTOR.equals(call.desc)) return 3;
-        if (SHAPELESS.equals(call.owner) && OLD_SHAPELESS_CTOR.equals(call.desc)) return 2;
-        if (SMITHING.equals(call.owner) && OLD_SMITHING_CTOR.equals(call.desc)) return 3;
-        if (SHAPED.equals(call.owner) && GRID_SHAPED_CTOR.equals(call.desc)) return 6;
-        if (SHAPELESS.equals(call.owner) && ID_SHAPELESS_CTOR.equals(call.desc)) return 3;
-        if (SMITHING.equals(call.owner) && ID_SMITHING_CTOR.equals(call.desc)) return 4;
+        return resultArgument(call.owner, call.desc);
+    }
+
+    private static int resultArgument(String owner, String desc) {
+        if (SHAPED.equals(owner) && OLD_SHAPED_CTOR.equals(desc)) return 3;
+        if (SHAPED.equals(owner) && OLD_SHAPED_NOTIFY_CTOR.equals(desc)) return 3;
+        if (SHAPELESS.equals(owner) && OLD_SHAPELESS_CTOR.equals(desc)) return 2;
+        if (SMITHING.equals(owner) && OLD_SMITHING_CTOR.equals(desc)) return 3;
+        if (SHAPED.equals(owner) && GRID_SHAPED_CTOR.equals(desc)) return 6;
+        if (SHAPELESS.equals(owner) && ID_SHAPELESS_CTOR.equals(desc)) return 3;
+        if (SMITHING.equals(owner) && ID_SMITHING_CTOR.equals(desc)) return 4;
+        if (COOKING.contains(owner) && OLD_COOKING_CTOR.equals(desc)) return 3;
+        if (COOKING.contains(owner) && ID_COOKING_CTOR.equals(desc)) return 4;
+        if (SINGLE_ITEM.contains(owner) && OLD_SINGLE_ITEM_CTOR.equals(desc)) return 2;
+        if (SINGLE_ITEM.contains(owner) && ID_SINGLE_ITEM_CTOR.equals(desc)) return 3;
         return -1;
     }
 
@@ -321,8 +360,34 @@ public final class LegacyRecipeSubclassAdapter {
             pushOptional(convert, base + 3);
             pushTemplate(convert, base + 4, resultIsTemplate);
             call.desc = NEW_SMITHING_CTOR;
-        } else if (CUSTOM.equals(call.owner) && OLD_CUSTOM_CTOR.equals(call.desc)) {
-            // 26.1 asks the recipe for its category instead of storing one.
+        } else if (COOKING.contains(call.owner)
+                && (OLD_COOKING_CTOR.equals(call.desc) || ID_COOKING_CTOR.equals(call.desc))) {
+            // group, category, ingredient, result, experience, cooking time; 1.20.1 put the id first.
+            int head = ID_COOKING_CTOR.equals(call.desc) ? 1 : 0;
+            int base = reserveLocals(method, head + 6);
+            convert.add(new VarInsnNode(Opcodes.ISTORE, base + head + 5));
+            convert.add(new VarInsnNode(Opcodes.FSTORE, base + head + 4));
+            storeArguments(convert, base, head + 4);
+            pushCommonInfo(convert);
+            pushCookingBookInfo(convert, base + head, base + head + 1);
+            convert.add(new VarInsnNode(Opcodes.ALOAD, base + head + 2));
+            pushTemplate(convert, base + head + 3, resultIsTemplate);
+            convert.add(new VarInsnNode(Opcodes.FLOAD, base + head + 4));
+            convert.add(new VarInsnNode(Opcodes.ILOAD, base + head + 5));
+            call.desc = NEW_COOKING_CTOR;
+        } else if (SINGLE_ITEM.contains(call.owner)
+                && (OLD_SINGLE_ITEM_CTOR.equals(call.desc) || ID_SINGLE_ITEM_CTOR.equals(call.desc))) {
+            // group, ingredient, result; 1.20.1 put the id first.
+            int head = ID_SINGLE_ITEM_CTOR.equals(call.desc) ? 1 : 0;
+            int base = reserveLocals(method, head + 3);
+            storeArguments(convert, base, head + 3);
+            pushCommonInfo(convert);
+            convert.add(new VarInsnNode(Opcodes.ALOAD, base + head + 1));
+            pushTemplate(convert, base + head + 2, resultIsTemplate);
+            call.desc = NEW_SINGLE_ITEM_CTOR;
+        } else if (CUSTOM.equals(call.owner) && (OLD_CUSTOM_CTOR.equals(call.desc) || ID_CUSTOM_CTOR.equals(call.desc))) {
+            // 26.1 asks the recipe for its category instead of storing one; 1.20.1 also passed the id, which is gone too.
+            if (ID_CUSTOM_CTOR.equals(call.desc)) convert.add(new InsnNode(Opcodes.POP));
             convert.add(new InsnNode(Opcodes.POP));
             call.desc = "()V";
         } else {
@@ -447,19 +512,20 @@ public final class LegacyRecipeSubclassAdapter {
             }
             String input = Type.getArgumentTypes(method.desc)[0].getInternalName();
             String current = currentAssemble(method.desc);
+            boolean itf = (node.access & Opcodes.ACC_INTERFACE) != 0;
             if (!declares(node, added, "assemble", current)) {
-                added.add(forwardToLegacy(node.name, input, method.desc, current));
+                added.add(forwardToLegacy(node.name, itf, input, method.desc, current));
             }
             String erased = "(L" + RECIPE_INPUT + ";)" + L_STACK;
             if (!RECIPE_INPUT.equals(input) && !declares(node, added, "assemble", erased)) {
-                added.add(erasedBridge(node.name, input, current, erased));
+                added.add(erasedBridge(node.name, itf, input, current, erased));
             }
         }
         node.methods.addAll(added);
         return !added.isEmpty();
     }
 
-    private static MethodNode forwardToLegacy(String owner, String input, String legacyDesc,
+    private static MethodNode forwardToLegacy(String owner, boolean itf, String input, String legacyDesc,
             String currentDesc) {
         MethodNode m = new MethodNode(Opcodes.ACC_PUBLIC, "assemble", currentDesc, null, null);
         m.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
@@ -467,21 +533,21 @@ public final class LegacyRecipeSubclassAdapter {
         m.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC, INTERNALS, "registries",
                 "()Ljava/lang/Object;", false));
         m.instructions.add(new TypeInsnNode(Opcodes.CHECKCAST, PROVIDER));
-        m.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, owner, "assemble",
-                legacyDesc, false));
+        m.instructions.add(new MethodInsnNode(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL, owner, "assemble",
+                legacyDesc, itf));
         m.instructions.add(new InsnNode(Opcodes.ARETURN));
         return m;
     }
 
-    private static MethodNode erasedBridge(String owner, String input, String currentDesc,
+    private static MethodNode erasedBridge(String owner, boolean itf, String input, String currentDesc,
             String erasedDesc) {
         MethodNode m = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_BRIDGE
                 | Opcodes.ACC_SYNTHETIC, "assemble", erasedDesc, null, null);
         m.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
         m.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
         m.instructions.add(new TypeInsnNode(Opcodes.CHECKCAST, input));
-        m.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, owner, "assemble",
-                currentDesc, false));
+        m.instructions.add(new MethodInsnNode(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL, owner, "assemble",
+                currentDesc, itf));
         m.instructions.add(new InsnNode(Opcodes.ARETURN));
         return m;
     }
@@ -548,6 +614,17 @@ public final class LegacyRecipeSubclassAdapter {
                 "(Ljava/lang/String;)Ljava/lang/String;", false));
         list.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, BOOK_INFO, "<init>",
                 "(L" + CATEGORY + ";Ljava/lang/String;)V", false));
+    }
+
+    private static void pushCookingBookInfo(InsnList list, int groupLocal, int categoryLocal) {
+        list.add(new TypeInsnNode(Opcodes.NEW, COOKING_BOOK_INFO));
+        list.add(new InsnNode(Opcodes.DUP));
+        list.add(new VarInsnNode(Opcodes.ALOAD, categoryLocal));
+        list.add(new VarInsnNode(Opcodes.ALOAD, groupLocal));
+        list.add(new MethodInsnNode(Opcodes.INVOKESTATIC, INTERNALS, "group",
+                "(Ljava/lang/String;)Ljava/lang/String;", false));
+        list.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, COOKING_BOOK_INFO, "<init>",
+                "(L" + COOKING_CATEGORY + ";Ljava/lang/String;)V", false));
     }
 
     private static void pushTemplate(InsnList list, int resultLocal, boolean alreadyTemplate) {

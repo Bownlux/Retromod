@@ -15,6 +15,8 @@ import org.objectweb.asm.tree.MethodNode;
 public final class LegacyWorldgenMembersBridge {
 
     static final String MEMBERS = RebuiltApiClasses.ROOT + "minecraft/world/level/levelgen/LegacyWorldgenMembers";
+    // The members only 26.3 links, kept apart so an older host never embeds calls it lacks.
+    static final String MEMBERS_263 = MEMBERS + "263";
 
     static final String CHUNK = "net/minecraft/world/level/chunk/ChunkAccess";
     static final String BLOCK_POS = "Lnet/minecraft/core/BlockPos;";
@@ -30,6 +32,15 @@ public final class LegacyWorldgenMembersBridge {
     static final String SAMPLER = "Lnet/minecraft/world/level/biome/Climate$Sampler;";
     static final String BIOME_SOURCE = "net/minecraft/world/level/biome/BiomeSource";
     static final String NOISE_BIOME_OLD = "(III" + SAMPLER + ")Lnet/minecraft/core/Holder;";
+    static final String PAIR = "Lcom/mojang/datafixers/util/Pair;";
+    static final String SEARCH = "Ljava/util/function/Predicate;Lnet/minecraft/util/RandomSource;";
+    static final String FIND_SHORT_OLD = "(IIII" + SEARCH + SAMPLER + ")" + PAIR;
+    static final String FIND_LONG_OLD = "(IIIII" + SEARCH + "Z" + SAMPLER + ")" + PAIR;
+    static final String CREATE_OLD = "(Lnet/minecraft/world/level/levelgen/NoiseGeneratorSettings;Lnet/minecraft/core/HolderGetter;J)L"
+            + "net/minecraft/world/level/levelgen/RandomState;";
+    static final String CREATE_NEW = "(Lnet/minecraft/core/HolderGetter;JLnet/minecraft/world/level/levelgen/NoiseGeneratorSettings;)L"
+            + "net/minecraft/world/level/levelgen/RandomState;";
+    static final String RANDOM_FACTORY = "Lnet/minecraft/world/level/levelgen/PositionalRandomFactory;";
     static final String LEGACY_BIOME_SOURCE = RebuiltApiClasses.ROOT + "minecraft/world/level/biome/LegacyBiomeSource";
     /** The base the codec bridge moves biome sources onto, generated in {@link LegacyCodecTypeBridge}. */
     static final String CODEC_BIOME_SOURCE = "com/retromod/generated/LegacyBiomeSource";
@@ -89,22 +100,52 @@ public final class LegacyWorldgenMembersBridge {
         boolean configuredGone = ClassResourceInspector.read(CONFIGURED_FEATURE) == null
                 && LegacyFeatureBridge.hostHasFeatureInterface();
         register263(t, samplerGone, noiseBiomeGone, configuredGone);
+        boolean findGone = source == null || !hasMethod(source, "findBiomeHorizontal", FIND_LONG_OLD);
+        boolean namedRandomsGone = randomState == null || !hasMethod(randomState, "oreRandom", "()" + RANDOM_FACTORY);
+        registerSearches263(t, findGone, namedRandomsGone);
+        boolean createReordered = randomState == null || (!hasMethod(randomState, "create", CREATE_OLD) && hasMethod(randomState, "create", CREATE_NEW));
+        if (createReordered) registerCreate263(t);
+    }
+
+    /** RandomState.create(settings, noises, seed), which 26.3 takes as (noises, seed, settings). */
+    static void registerCreate263(RetromodTransformer t) {
+        RebuiltApiClasses.registerTree(t, MEMBERS_263);
+        t.registerMethodRedirect(RANDOM_STATE, "create", CREATE_OLD, MEMBERS_263, "createRandomState", CREATE_OLD);
+    }
+
+    /** The biome search that took a sampler, and the ore and aquifer randoms, which 26.3 makes on request by name. */
+    static void registerSearches263(RetromodTransformer t, boolean findGone, boolean namedRandomsGone) {
+        if (findGone || namedRandomsGone) RebuiltApiClasses.registerTree(t, MEMBERS_263);
+        if (findGone) {
+            for (String owner : BIOME_SOURCES) {
+                t.registerMethodRedirect(owner, "findBiomeHorizontal", FIND_SHORT_OLD, MEMBERS_263, "findBiomeHorizontal",
+                        "(L" + BIOME_SOURCE + ";" + FIND_SHORT_OLD.substring(1), true);
+                t.registerMethodRedirect(owner, "findBiomeHorizontal", FIND_LONG_OLD, MEMBERS_263, "findBiomeHorizontal",
+                        "(L" + BIOME_SOURCE + ";" + FIND_LONG_OLD.substring(1), true);
+            }
+        }
+        if (namedRandomsGone) {
+            for (String name : new String[]{"oreRandom", "aquiferRandom"}) {
+                t.registerMethodRedirect(RANDOM_STATE, name, "()" + RANDOM_FACTORY,
+                        MEMBERS_263, name, "(L" + RANDOM_STATE + ";)" + RANDOM_FACTORY, true);
+            }
+        }
     }
 
     /** Unconditional registration for transform-shape tests. */
     static void register263(RetromodTransformer t, boolean samplerGone, boolean noiseBiomeGone, boolean configuredGone) {
-        if (samplerGone || noiseBiomeGone) RebuiltApiClasses.registerTree(t, MEMBERS);
+        if (samplerGone || noiseBiomeGone) RebuiltApiClasses.registerTree(t, MEMBERS_263);
         // The climate sampler is now built for a sampling context.
         if (samplerGone) {
             t.registerMethodRedirect(RANDOM_STATE, "sampler", "()" + SAMPLER,
-                    MEMBERS, "sampler", "(L" + RANDOM_STATE + ";)" + SAMPLER, true);
+                    MEMBERS_263, "sampler", "(L" + RANDOM_STATE + ";)" + SAMPLER, true);
         }
         // A biome lookup now goes through the resolver a source builds for a sampler. Only vanilla sources are
         // redirected, because a mod's own source still declares the old method.
         if (noiseBiomeGone) {
             for (String owner : BIOME_SOURCES) {
                 t.registerMethodRedirect(owner, "getNoiseBiome", NOISE_BIOME_OLD,
-                        MEMBERS, "getNoiseBiome", "(L" + BIOME_SOURCE + ";III" + SAMPLER + ")Lnet/minecraft/core/Holder;",
+                        MEMBERS_263, "getNoiseBiome", "(L" + BIOME_SOURCE + ";III" + SAMPLER + ")Lnet/minecraft/core/Holder;",
                         true);
             }
         }

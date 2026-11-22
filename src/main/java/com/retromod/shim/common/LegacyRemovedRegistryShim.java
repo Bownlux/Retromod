@@ -71,6 +71,9 @@ public class LegacyRemovedRegistryShim implements MinecraftVersionedApiShim {
         }
         if (registries.isEmpty() && keys.isEmpty()) return;
         SyntheticEmbedder.registerClassResource(transformer, SUPPORT, LegacyRemovedRegistrySupport.class);
+        // Removed registries that mods still add entries to are shared through LegacyRegistries.
+        SyntheticEmbedder.registerClassResource(transformer, LegacyBlockCodecBridge.REGISTRIES_HELPER,
+                com.retromod.shim.common.embedded.LegacyRegistries.class);
         transformer.registerSyntheticClass(GETTERS, generateGetters(registries, keys));
         // Bookshelf builds a codec helper for every built-in registry in one static block; one missing
         // field failed the whole class, and every codec of the mod with it. A stand-in yields to a real

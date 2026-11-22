@@ -64,6 +64,8 @@ public class RetromodTestModNeoForge {
         modBus.addListener(this::checkMobAttributes);
         // A block built in a common class and registered from this loader class by id.
         modBus.addListener(CrossClassRegistration::register);
+        // Blocks and items built before their ids are known, as Moonlight's block sets build them.
+        modBus.addListener(DeferredIdCase::register);
         // An entity type built from its bare name in a deferred register's supplier.
         EntityTypeKeys.register(modBus);
         // #366: bedrock gets an old item handler, tank, and energy storage through the old capabilities.
@@ -111,6 +113,13 @@ public class RetromodTestModNeoForge {
             LOG.info("{} a 1.21.1 single loot entry type registered while the mod constructs: fail: {}: {}", PREFIX,
                     t.getClass().getSimpleName(), t.getMessage());
         }
+        // A recipe serializer reading item stacks with the 1.21.1 codecs, which 26.3 decodes before components are bound.
+        try {
+            RecipeStackCodecCase.register(modBus);
+        } catch (Throwable t) {
+            LOG.info("{} a 1.21.1 recipe serializer registered while the mod constructs: fail: {}: {}", PREFIX,
+                    t.getClass().getSimpleName(), t.getMessage());
+        }
         // Old block and item color events, which NeoForge 26.1 replaced with tint sources. Client only.
         if (FMLEnvironment.dist.isClient()) ColorHandlersCase.register(modBus);
         // A COMMON and a SERVER config, which FancyModLoader 12.0.8 renamed to LOCAL and SYNCED.
@@ -152,6 +161,8 @@ public class RetromodTestModNeoForge {
                 serverResult(() -> LegacyItemNbtCase.run(event.getServer().registryAccess())));
         LOG.info("{} Item stacks built while constructing stack with and save as new ones: {}", PREFIX,
                 serverResult(() -> EarlyStackCase.matchOnServer(event.getServer().registryAccess())));
+        LOG.info("{} items built before their ids are known read the name and stack size of those ids (server started): {}",
+                PREFIX, serverResult(DeferredIdCase::checkOnServer));
         // Component.Serializer's JSON text statics, which 1.21.6 removed.
         LOG.info("{} Component.Serializer reads and writes styled JSON text with the server's registries: {}", PREFIX,
                 serverResult(() -> TextJsonCase.run(event.getServer().registryAccess())));
@@ -167,6 +178,8 @@ public class RetromodTestModNeoForge {
                 + "registry (server started): {}", PREFIX, serverResult(() -> LegacyLootReadsCase.run(event.getServer())));
         LOG.info("{} 1.21.1 placement modifiers and a block state provider on the bases 26.3 made interfaces register "
                 + "their types, place and pick (server started): {}", PREFIX, serverResult(PlacementTypesCase::run));
+        LOG.info("{} a data recipe whose 1.21.1 serializer reads item stacks with STRICT_CODEC and OPTIONAL_CODEC loads, "
+                + "and its stacks read bound components (server started): {}", PREFIX, serverResult(RecipeStackCodecCase::run));
     }
 
     private static String serverResult(java.util.concurrent.Callable<String> check) {

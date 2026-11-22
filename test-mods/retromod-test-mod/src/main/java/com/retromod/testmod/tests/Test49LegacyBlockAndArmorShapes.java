@@ -8,18 +8,22 @@ import com.retromod.testmod.Test;
 import com.retromod.testmod.TestResult;
 import net.minecraft.block.AbstractBlock;
 import net.minecraft.block.AmethystClusterBlock;
+import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.ExperienceDroppingBlock;
 import net.minecraft.item.ArmorMaterial;
 import net.minecraft.item.ArmorMaterials;
+import net.minecraft.registry.Registries;
+import net.minecraft.registry.Registry;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.intprovider.UniformIntProvider;
 
 /**
  * #283: block constructors 1.20.3 reshaped, a vanilla armor material read as the old interface,
  * and a block's menu provider asked through another block, which 1.21 made protected. Each one
- * stopped Scorched Guns' registration. Blocks built outside registration only prove linkage.
+ * stopped Scorched Guns' registration. The blocks are registered under test ids only to prove linkage.
  */
 public final class Test49LegacyBlockAndArmorShapes implements Test {
 
@@ -49,9 +53,15 @@ public final class Test49LegacyBlockAndArmorShapes implements Test {
     /** Holds the calls, so a type a host lacks fails this test instead of loading the suite. */
     private static final class Shapes {
         static void buildOldBlocks() {
-            new ExperienceDroppingBlock(AbstractBlock.Settings.create());
-            new ExperienceDroppingBlock(AbstractBlock.Settings.create(), UniformIntProvider.create(2, 5));
-            new AmethystClusterBlock(3, 4, AbstractBlock.Settings.create());
+            // Registered, because a block built and never registered stops the game when its registry freezes.
+            register("linkage_xp_block", new ExperienceDroppingBlock(AbstractBlock.Settings.create()));
+            register("linkage_xp_range_block",
+                    new ExperienceDroppingBlock(AbstractBlock.Settings.create(), UniformIntProvider.create(2, 5)));
+            register("linkage_amethyst_cluster", new AmethystClusterBlock(3, 4, AbstractBlock.Settings.create()));
+        }
+
+        private static void register(String path, Block block) {
+            Registry.register(Registries.BLOCK, new Identifier("retromod_test_mod", path), block);
         }
 
         static boolean vanillaArmorIsAMaterial() {

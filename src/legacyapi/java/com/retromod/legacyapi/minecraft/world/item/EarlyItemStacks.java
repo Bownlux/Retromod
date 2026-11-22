@@ -16,9 +16,12 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponentMap;
 import net.minecraft.core.component.DataComponentPatch;
 import net.minecraft.core.component.DataComponentType;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.component.PatchedDataComponentMap;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.alchemy.Potion;
+import net.minecraft.world.item.alchemy.PotionContents;
 import net.minecraft.world.level.ItemLike;
 
 import java.lang.reflect.Constructor;
@@ -81,6 +84,27 @@ public final class EarlyItemStacks {
     public static ItemStack of(Holder<Item> holder, int count, DataComponentPatch patch) {
         ItemStack early = patch == null ? null : deferred(unbound(holder), count, patch);
         return early != null ? early : new ItemStack(holder, count, patch);
+    }
+
+    /** {@code PotionContents.createItemStack(item, potion)}: the item's stack carrying that potion. */
+    public static ItemStack potion(Item item, Holder<Potion> potion) {
+        if (unbound(item) == null) return PotionContents.createItemStack(item, potion);
+        ItemStack stack = of(item);
+        stack.set(DataComponents.POTION_CONTENTS, new PotionContents(potion));
+        return stack;
+    }
+
+    /** {@code stack.transmuteCopy(item)}: the stack's count and components on another item. */
+    public static ItemStack transmuteCopy(ItemStack stack, ItemLike item) {
+        return transmuteCopy(stack, item, stack.getCount());
+    }
+
+    /** {@code stack.transmuteCopy(item, count)}, which builds the copy with the target item's components. */
+    public static ItemStack transmuteCopy(ItemStack stack, ItemLike item, int count) {
+        Holder.Reference<Item> holder = unbound(item);
+        if (holder == null || stack.isEmpty()) return stack.transmuteCopy(item, count);
+        ItemStack early = deferred(holder, count, stack.getComponentsPatch());
+        return early != null ? early : stack.transmuteCopy(item, count);
     }
 
     /** {@code item.getDefaultInstance()}: before binding, the plain stack of the item rather than the empty stack. */

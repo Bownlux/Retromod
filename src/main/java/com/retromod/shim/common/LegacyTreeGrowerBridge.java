@@ -81,9 +81,15 @@ public final class LegacyTreeGrowerBridge {
                 && ClassResourceInspector.exists(SAPLING);
     }
 
-    /** Unconditional registration for transform-shape tests. */
+    /** Unconditional registration for transform-shape tests; the host's TreeGrower constructors pick the grower's shape. */
     static void registerRedirects(RetromodTransformer transformer) {
-        transformer.registerSyntheticClass(GROWER, generateGrower());
+        registerRedirects(transformer, LegacyTreeGrowerConstructorBridge.hostReplacedIt(ClassResourceInspector.read(TREE_GROWER)));
+    }
+
+    static void registerRedirects(RetromodTransformer transformer, boolean weightedGrower) {
+        // 26.3 dropped the optional-key constructor, so the stand-in builds its grower through the rebuilt one.
+        if (weightedGrower) RebuiltApiClasses.registerTree(transformer, LegacyTreeGrowerConstructorBridge.HELPER);
+        transformer.registerSyntheticClass(GROWER, generateGrower(weightedGrower));
         transformer.registerSyntheticClass(MEGA_GROWER, generateMegaGrower());
         transformer.registerSyntheticClass(SAPLING_FACTORY, generateSaplingFactory());
         transformer.registerClassRedirect(OLD_GROWER, GROWER);
@@ -97,6 +103,10 @@ public final class LegacyTreeGrowerBridge {
     }
 
     static byte[] generateGrower() {
+        return generateGrower(false);
+    }
+
+    static byte[] generateGrower(boolean weightedGrower) {
         ClassWriter cw = writer();
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT | Opcodes.ACC_SUPER,
                 GROWER, null, "java/lang/Object", null);
@@ -117,7 +127,7 @@ public final class LegacyTreeGrowerBridge {
         grow.visitMaxs(0, 0);
         grow.visitEnd();
 
-        emitToTreeGrower(cw);
+        emitToTreeGrower(cw, weightedGrower);
         cw.visitEnd();
         return cw.toByteArray();
     }
@@ -126,7 +136,7 @@ public final class LegacyTreeGrowerBridge {
      * {@code toTreeGrower(grower)}: built once per grower from its normal, flowering and mega keys.
      * The protected abstract methods are callable here because this class declares them.
      */
-    private static void emitToTreeGrower(ClassWriter cw) {
+    private static void emitToTreeGrower(ClassWriter cw, boolean weightedGrower) {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "toTreeGrower",
                 "(L" + GROWER + ";)" + L_TREE_GROWER, null, null);
         mv.visitCode();
@@ -164,8 +174,10 @@ public final class LegacyTreeGrowerBridge {
         mv.visitLabel(megaDone);
 
         mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitTypeInsn(Opcodes.NEW, TREE_GROWER);
-        mv.visitInsn(Opcodes.DUP);
+        if (!weightedGrower) {
+            mv.visitTypeInsn(Opcodes.NEW, TREE_GROWER);
+            mv.visitInsn(Opcodes.DUP);
+        }
         // A unique name per grower class: TreeGrower registers itself by name for its codec.
         mv.visitLdcInsn("retromod_legacy/");
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -183,8 +195,13 @@ public final class LegacyTreeGrowerBridge {
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, OPTIONAL, "ofNullable",
                     "(Ljava/lang/Object;)" + L_OPTIONAL, false);
         }
-        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, TREE_GROWER, "<init>",
-                "(Ljava/lang/String;" + L_OPTIONAL + L_OPTIONAL + L_OPTIONAL + ")V", false);
+        String keysDesc = "(Ljava/lang/String;" + L_OPTIONAL + L_OPTIONAL + L_OPTIONAL + ")";
+        if (weightedGrower) {
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, LegacyTreeGrowerConstructorBridge.HELPER, "create",
+                    keysDesc + L_TREE_GROWER, false);
+        } else {
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, TREE_GROWER, "<init>", keysDesc + "V", false);
+        }
         mv.visitFieldInsn(Opcodes.PUTFIELD, GROWER, "converted", L_TREE_GROWER);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitFieldInsn(Opcodes.GETFIELD, GROWER, "converted", L_TREE_GROWER);

@@ -5,9 +5,10 @@
 package com.retromod.polyfill.registry;
 
 import com.retromod.shim.common.embedded.LegacyPublicMethods;
-import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.Marker;
+import org.slf4j.MarkerFactory;
 
 import java.lang.reflect.Method;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,6 +35,9 @@ import java.util.Map;
 public final class RegistryRefLookup {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Retromod-RegistryLookup");
+    // RetromodLog.DETAIL_NAME spelled out: a mod's own copy of this class cannot reach RetromodLog,
+    // and javac still names the class when it inlines that constant.
+    private static final Marker DETAIL = MarkerFactory.getMarker("RETROMOD_DETAIL");
 
     private static final String ENCHANTMENT_REGISTRY = "ENCHANTMENT";
     private static final String MOB_EFFECT_REGISTRY  = "MOB_EFFECT";
@@ -233,7 +237,7 @@ public final class RegistryRefLookup {
         Object value = doLookup(registryName, entryName);
         CACHE.put(cacheKey, value != null ? value : NULL_SENTINEL);
         if (value != null && RESOLVED_REGISTRIES.add(registryName)) {
-            LOGGER.debug(RetromodLog.DETAIL, "Polyfill resolved {} registry - first hit on {} returned {}",
+            LOGGER.debug(DETAIL, "Polyfill resolved {} registry - first hit on {} returned {}",
                     registryName, entryName, value.getClass().getName());
         }
         return value;

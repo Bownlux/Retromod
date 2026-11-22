@@ -6,4 +6,5 @@ import net.minecraft.resources.Identifier;
 public final class MissingTextureAtlasSprite {
     private MissingTextureAtlasSprite() {}
     public static Identifier getLocation() { throw new UnsupportedOperationException(); }
+    public static com.mojang.blaze3d.platform.NativeImage generateMissingImage() { throw new UnsupportedOperationException(); }
 }

@@ -50,6 +50,7 @@ public class LegacyRecipeSerializerShim implements MinecraftVersionedApiShim {
     private static final String EMBEDDED = "com/retromod/shim/common/embedded/";
     public static final String BRIDGE = EMBEDDED + "LegacyRecipeSerializerBridge";
     public static final String SAFE_CODEC = EMBEDDED + "LegacyRecipeMapCodec";
+    private static final String SAFE_CODEC_INIT = "(Lcom/mojang/serialization/MapCodec;Ljava/lang/String;Ljava/lang/Object;)V";
     public static final String SIMPLE_SERIALIZER = EMBEDDED + "LegacySimpleCraftingRecipeSerializer";
     public static final String SIMPLE_FACTORY = SIMPLE_SERIALIZER + "$Factory";
     public static final String CATEGORY_GETTER = SIMPLE_SERIALIZER + "$CategoryGetter";
@@ -193,8 +194,47 @@ public class LegacyRecipeSerializerShim implements MinecraftVersionedApiShim {
         emitCodecAccessor(cw, "codec", L_MAP_CODEC, MAP_CODEC);
         emitCodecAccessor(cw, "streamCodec", L_STREAM_CODEC, STREAM_CODEC);
         emitInvokeNoArg(cw);
+        emitOriginal(cw);
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    /** {@code original(o)}: the mod's own serializer behind an adapted one, otherwise o itself. */
+    private static void emitOriginal(ClassWriter cw) {
+        MethodVisitor m = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "original", "(Ljava/lang/Object;)Ljava/lang/Object;",
+                null, null);
+        m.visitCode();
+        Label same = new Label();
+        m.visitVarInsn(ALOAD, 0);
+        m.visitTypeInsn(INSTANCEOF, RECIPE_SERIALIZER);
+        m.visitJumpInsn(IFEQ, same);
+        // Only an adapter carries Retromod's codec, a Callable whose class, in any mod's copy, is LegacyRecipeMapCodec.
+        m.visitVarInsn(ALOAD, 0);
+        m.visitTypeInsn(CHECKCAST, RECIPE_SERIALIZER);
+        m.visitMethodInsn(INVOKEVIRTUAL, RECIPE_SERIALIZER, "codec", "()" + L_MAP_CODEC, false);
+        m.visitVarInsn(ASTORE, 1);
+        m.visitVarInsn(ALOAD, 1);
+        m.visitTypeInsn(INSTANCEOF, "java/util/concurrent/Callable");
+        m.visitJumpInsn(IFEQ, same);
+        m.visitVarInsn(ALOAD, 1);
+        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Object", "getClass", "()Ljava/lang/Class;", false);
+        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Class", "getName", "()Ljava/lang/String;", false);
+        m.visitLdcInsn(".LegacyRecipeMapCodec");
+        m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "endsWith", "(Ljava/lang/String;)Z", false);
+        m.visitJumpInsn(IFEQ, same);
+        m.visitVarInsn(ALOAD, 1);
+        m.visitTypeInsn(CHECKCAST, "java/util/concurrent/Callable");
+        m.visitMethodInsn(INVOKEINTERFACE, "java/util/concurrent/Callable", "call", "()Ljava/lang/Object;", true);
+        m.visitVarInsn(ASTORE, 2);
+        m.visitVarInsn(ALOAD, 2);
+        m.visitJumpInsn(IFNULL, same);
+        m.visitVarInsn(ALOAD, 2);
+        m.visitInsn(ARETURN);
+        m.visitLabel(same);
+        m.visitVarInsn(ALOAD, 0);
+        m.visitInsn(ARETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
     }
 
     private static void emitAdapt(ClassWriter cw) {
@@ -296,8 +336,9 @@ public class LegacyRecipeSerializerShim implements MinecraftVersionedApiShim {
                 false);
         m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Class", "getName", "()Ljava/lang/String;",
                 false);
-        m.visitMethodInsn(INVOKESPECIAL, SAFE_CODEC, "<init>",
-                "(Lcom/mojang/serialization/MapCodec;Ljava/lang/String;)V", false);
+        // The codec keeps the mod's own serializer, so a cast back to the mod's type can find it.
+        m.visitVarInsn(ALOAD, 0);
+        m.visitMethodInsn(INVOKESPECIAL, SAFE_CODEC, "<init>", SAFE_CODEC_INIT, false);
         m.visitVarInsn(ALOAD, 3);
         m.visitMethodInsn(INVOKESPECIAL, RECIPE_SERIALIZER, "<init>",
                 "(Lcom/mojang/serialization/MapCodec;Lnet/minecraft/network/codec/StreamCodec;)V",
@@ -373,14 +414,15 @@ public class LegacyRecipeSerializerShim implements MinecraftVersionedApiShim {
      */
     public static byte[] generateSafeCodec() {
         ClassWriter cw = newWriter();
+        // Callable hands back the mod's serializer through a JDK type, since each mod embeds its own copy of this class.
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, SAFE_CODEC, null, MAP_CODEC,
-                new String[]{"java/util/function/Supplier"});
+                new String[]{"java/util/function/Supplier", "java/util/concurrent/Callable"});
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "delegate", L_MAP_CODEC, null, null).visitEnd();
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "serializer", "Ljava/lang/String;", null,
                 null).visitEnd();
         cw.visitField(ACC_PRIVATE | ACC_VOLATILE, "reported", "Z", null, null).visitEnd();
-        MethodVisitor init = cw.visitMethod(ACC_PUBLIC, "<init>",
-                "(Lcom/mojang/serialization/MapCodec;Ljava/lang/String;)V", null, null);
+        cw.visitField(ACC_PRIVATE | ACC_FINAL, "legacy", "Ljava/lang/Object;", null, null).visitEnd();
+        MethodVisitor init = cw.visitMethod(ACC_PUBLIC, "<init>", SAFE_CODEC_INIT, null, null);
         init.visitCode();
         init.visitVarInsn(ALOAD, 0);
         init.visitMethodInsn(INVOKESPECIAL, MAP_CODEC, "<init>", "()V", false);
@@ -390,9 +432,19 @@ public class LegacyRecipeSerializerShim implements MinecraftVersionedApiShim {
         init.visitVarInsn(ALOAD, 0);
         init.visitVarInsn(ALOAD, 2);
         init.visitFieldInsn(PUTFIELD, SAFE_CODEC, "serializer", "Ljava/lang/String;");
+        init.visitVarInsn(ALOAD, 0);
+        init.visitVarInsn(ALOAD, 3);
+        init.visitFieldInsn(PUTFIELD, SAFE_CODEC, "legacy", "Ljava/lang/Object;");
         init.visitInsn(RETURN);
         init.visitMaxs(0, 0);
         init.visitEnd();
+        MethodVisitor call = cw.visitMethod(ACC_PUBLIC, "call", "()Ljava/lang/Object;", null, null);
+        call.visitCode();
+        call.visitVarInsn(ALOAD, 0);
+        call.visitFieldInsn(GETFIELD, SAFE_CODEC, "legacy", "Ljava/lang/Object;");
+        call.visitInsn(ARETURN);
+        call.visitMaxs(0, 0);
+        call.visitEnd();
         MethodVisitor get = cw.visitMethod(ACC_PUBLIC, "get", "()Ljava/lang/Object;", null, null);
         get.visitCode();
         get.visitLdcInsn("Retromod: recipe serializer ");

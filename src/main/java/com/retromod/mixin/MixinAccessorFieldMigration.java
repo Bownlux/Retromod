@@ -88,6 +88,10 @@ public final class MixinAccessorFieldMigration {
     private static final String MULTIMAP = "Lcom/google/common/collect/Multimap;";
     private static final String LOOT = "net/minecraft/world/level/storage/loot/";
     private static final String LOOT_BRIDGE = RUNTIME + "LootConditionFieldsBridge";
+    private static final String LOOT_STRUCTURE_BRIDGE = RUNTIME + "LootStructureFieldsBridge";
+    private static final String RECIPE_BRIDGE = RUNTIME + "RecipeManagerFieldsBridge";
+    // Retromod's stand-in for the NumberProvider 26.3 removed, as an old pool accessor's type reads after the class pass.
+    private static final String LEGACY_NUMBER_PROVIDER = "Lcom/retromod/shim/common/embedded/LegacyNumberProvider;";
 
     /**
      * The tool and armor items that kept their default attribute modifiers in a Guava
@@ -164,7 +168,31 @@ public final class MixinAccessorFieldMigration {
                     "26.3", LOOT_BRIDGE, "terms", "setTerms", List.of(LOOT_BRIDGE)),
             new FieldMigration(LOOT + "predicates/InvertedLootItemCondition", "term",
                     "L" + LOOT + "predicates/LootItemCondition;", "26.3", LOOT_BRIDGE, "term", null,
-                    List.of(LOOT_BRIDGE)));
+                    List.of(LOOT_BRIDGE)),
+            // 26.3 also gave tables and pools one optional modifier and condition holder, and tag and
+            // nested-table entries holder sets; the old lists, tag key and either are read back from them.
+            new FieldMigration(LOOT + "LootTable", "functions", "Ljava/util/List;", "26.3",
+                    LOOT_STRUCTURE_BRIDGE, "functions", null, List.of(LOOT_STRUCTURE_BRIDGE)),
+            new FieldMigration(LOOT + "LootPool", "functions", "Ljava/util/List;", "26.3",
+                    LOOT_STRUCTURE_BRIDGE, "functions", null, List.of(LOOT_STRUCTURE_BRIDGE)),
+            new FieldMigration(LOOT + "LootPool", "conditions", "Ljava/util/List;", "26.3",
+                    LOOT_STRUCTURE_BRIDGE, "conditions", null, List.of(LOOT_STRUCTURE_BRIDGE)),
+            new FieldMigration(LOOT + "entries/TagEntry", "tag", "Lnet/minecraft/tags/TagKey;", "26.3",
+                    LOOT_STRUCTURE_BRIDGE, "tag", null, List.of(LOOT_STRUCTURE_BRIDGE)),
+            new FieldMigration(LOOT + "entries/NestedLootTable", "contents", "Lcom/mojang/datafixers/util/Either;",
+                    "26.3", LOOT_STRUCTURE_BRIDGE, "contents", null, List.of(LOOT_STRUCTURE_BRIDGE)),
+            // The flag moved up to ExpandableContainerBase, where an accessor on TagEntry cannot see it.
+            new FieldMigration(LOOT + "entries/TagEntry", "expand", "Z", "26.3",
+                    LOOT_STRUCTURE_BRIDGE, "expand", null, List.of(LOOT_STRUCTURE_BRIDGE)),
+            // The rolls became int provider holders, which no old NumberProvider can stand for. Their
+            // accessors go, so the pool's other accessors still apply; a call to one of them throws.
+            new FieldMigration(LOOT + "LootPool", "rolls", LEGACY_NUMBER_PROVIDER, "26.3",
+                    LOOT_STRUCTURE_BRIDGE, "rolls", null, List.of(LOOT_STRUCTURE_BRIDGE)),
+            new FieldMigration(LOOT + "LootPool", "bonusRolls", LEGACY_NUMBER_PROVIDER, "26.3",
+                    LOOT_STRUCTURE_BRIDGE, "bonusRolls", null, List.of(LOOT_STRUCTURE_BRIDGE)),
+            // 1.21.2 moved the recipes into a RecipeMap, which keeps the same multimap by type.
+            new FieldMigration("net/minecraft/world/item/crafting/RecipeManager", "byType", MULTIMAP, "1.21.2",
+                    RECIPE_BRIDGE, "byType", null, List.of(RECIPE_BRIDGE)));
 
     private static List<FieldMigration> withItemModifiers(FieldMigration... migrations) {
         List<FieldMigration> all = new ArrayList<>(List.of(migrations));

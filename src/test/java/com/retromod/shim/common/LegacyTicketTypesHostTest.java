@@ -106,6 +106,13 @@ class LegacyTicketTypesHostTest {
             assertEquals(false, call(chunky, "persist"));
             assertEquals(false, call(chunky, "shouldKeepDimensionActive"), "only forced chunks kept a dimension running before");
             assertEquals(false, call(chunky, "hasTimeout"));
+            // The vanilla types 1.21.5 removed, with their old values; every read is the same type.
+            Object postTeleport = helper.getMethod("postTeleport").invoke(null);
+            assertEquals(5L, call(postTeleport, "timeout"));
+            assertEquals(2 | 4 | 16, call(postTeleport, "flags"));
+            assertSame(postTeleport, helper.getMethod("postTeleport").invoke(null));
+            assertEquals(6, call(helper.getMethod("player").invoke(null), "flags"));
+            assertEquals(0L, call(helper.getMethod("player").invoke(null), "timeout"));
             Object lootr = create(helper, "lootr_entity_tick_ticket", 300);
             assertEquals(300L, call(lootr, "timeout"));
             assertEquals(true, call(lootr, "canExpireIfUnloaded"));

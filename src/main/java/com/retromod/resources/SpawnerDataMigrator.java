@@ -12,6 +12,7 @@ import com.google.gson.JsonPrimitive;
 import com.retromod.core.RetromodVersion;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 
 /** Rewrites mob spawn entries in a mod's data for 26.3. */
@@ -71,6 +72,60 @@ final class SpawnerDataMigrator {
         boolean changed = false;
         for (Map.Entry<String, JsonElement> category : overrides.entrySet()) {
             if (category.getValue() instanceof JsonObject override) changed |= entries(override.get("spawns"));
+        }
+        return changed;
+    }
+
+    // The spawn entry class, under its Mojang and its intermediary names, as a mod's classes are read as shipped.
+    // Moonlight's spawn box structure reads the spawn lists of a mod built on it, such as Supplementaries'
+    // galleon, with the game's spawn entry codec, so a mod naming that interface counts as well. That entry is a
+    // library allowlist: add another library only when its codec is checked to read the game's spawn entries.
+    private static final List<byte[]> SPAWNER_DATA = List.of(
+            "net/minecraft/world/level/biome/MobSpawnSettings$SpawnerData".getBytes(StandardCharsets.UTF_8),
+            "net/minecraft/class_5483$class_1964".getBytes(StandardCharsets.UTF_8),
+            "net/mehvahdjukaar/moonlight/api/worldgen/ISpawnBoxStructure".getBytes(StandardCharsets.UTF_8));
+
+    /**
+     * Rewrites the old-shape entries in every list named {@code spawns} in a mod's structure file, as Supplementaries'
+     * galleon keeps them in its spawn_boxes. Called only for a mod whose classes use the game's spawn entry, so a
+     * mod's own lookalike format, which its own code reads, is left as written.
+     */
+    static byte[] migrateNestedSpawns(String entryName, byte[] json) {
+        if (!entryName.contains("/worldgen/structure/")) return json;
+        JsonElement root;
+        try {
+            root = JsonParser.parseString(new String(json, StandardCharsets.UTF_8));
+        } catch (RuntimeException unparsable) {
+            return json;
+        }
+        return nestedSpawnLists(root) ? root.toString().getBytes(StandardCharsets.UTF_8) : json;
+    }
+
+    /** Whether a class names the game's spawn entry, or a library type known to read spawn lists with it. */
+    static boolean namesSpawnerData(byte[] classBytes) {
+        if (classBytes == null) return false;
+        for (byte[] name : SPAWNER_DATA) {
+            outer:
+            for (int i = 0; i + name.length <= classBytes.length; i++) {
+                for (int j = 0; j < name.length; j++) {
+                    if (classBytes[i + j] != name[j]) continue outer;
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Rewrites every list named {@code spawns} below {@code element}. */
+    private static boolean nestedSpawnLists(JsonElement element) {
+        boolean changed = false;
+        if (element instanceof JsonObject object) {
+            for (Map.Entry<String, JsonElement> field : object.entrySet()) {
+                changed |= field.getKey().equals("spawns") && field.getValue() instanceof JsonArray
+                        ? entries(field.getValue()) : nestedSpawnLists(field.getValue());
+            }
+        } else if (element instanceof JsonArray list) {
+            for (JsonElement item : list) changed |= nestedSpawnLists(item);
         }
         return changed;
     }

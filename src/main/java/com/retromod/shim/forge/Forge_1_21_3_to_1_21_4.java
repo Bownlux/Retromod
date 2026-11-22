@@ -16,6 +16,8 @@ public class Forge_1_21_3_to_1_21_4 implements VersionShim {
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
         Mc1_21_3To1_21_4CoreMoves.register(transformer);
+        // 1.21.4 folded the pack metadata serializer into MetadataSectionType; the bridge checks the host.
+        com.retromod.shim.common.LegacyMetadataSectionBridge.register(transformer);
     }
     @Override public String[] getShimClasses() { return new String[0]; }
 }

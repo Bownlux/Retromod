@@ -19,7 +19,22 @@ public final class LegacyTicketTypes {
     // 1.21.5 to 1.21.8 take a TicketUse instead of flags, whose third constant is LOADING_AND_SIMULATION.
     private static final int LOADING_AND_SIMULATION = 2;
 
+    // No 26.x type keeps both removed types' flags and lifetimes: PLAYER_LOADING does not tick its chunks,
+    // and ENDER_PEARL lasts 40 ticks and keeps an empty dimension running. Each is rebuilt with its old values.
+    private static final TicketType PLAYER = create("player", null);
+    private static final TicketType POST_TELEPORT = create("post_teleport", null, 5);
+
     private LegacyTicketTypes() {}
+
+    /** {@code TicketType.PLAYER}, which 1.21.5 removed: tickets that keep their chunks loaded and ticking until removed. */
+    public static TicketType player() {
+        return PLAYER;
+    }
+
+    /** {@code TicketType.POST_TELEPORT}, which 1.21.5 removed: tickets that keep their chunks loaded and ticking for 5 ticks. */
+    public static TicketType postTeleport() {
+        return POST_TELEPORT;
+    }
 
     /** {@code TicketType.create(name, comparator)}: tickets that keep their chunks loaded and ticking until they are removed. */
     public static TicketType create(String name, Comparator<?> comparator) {

@@ -31,16 +31,40 @@ public final class Mc26_2To26_3CoreMoves {
         registerRemovedToolBases(t);
         // SignItem and BedItem went the same way; rebuilt, a mod's signs and beds still place.
         LegacyRemovedBlockItems.register(t);
+        // TryFindWaterGoal was removed; old water mobs get a rebuilt goal of the same shape.
+        LegacyTryFindWaterGoalBridge.register(t);
+        // DirtPathBlock became PathBlock, which also names the block a path turns back into.
+        LegacyReplacedBlockBridge.register(t, LegacyReplacedBlockBridge.DIRT_PATH);
+        // FlowerBedBlock's constructor became protected and takes a shape height.
+        LegacyFlowerBedBlockBridge.register(t);
         // 26.3 also deleted much of the worldgen configuration system (FeatureConfiguration,
         // ConfiguredFeature, SurfaceRules, BlockStateProviderType, PlacementModifierType). A deleted
         // class has no move target, so it gets a bridge or needs a real port.
         LegacyFeatureBridge.register(t);
         LegacyPlacementModifierBridge.register(t);
         LegacyBlockStateProviderBridge.register(t);
+        // BlockStateProvider.CODEC now decodes a holder; old codecs that build providers read DIRECT_CODEC.
+        LegacyStateProviderCodecAdapter.register(t);
         // The noise sampler, biome lookups and configured features 26.3 reshaped.
         LegacyWorldgenMembersBridge.register263(t);
+        // Custom render types built from state shards, resolved onto 26.3 pipelines.
+        LegacyRenderTypeBridge.register(t);
         // Structure placements became an interface keyed by codec, and their type was removed.
         LegacyStructurePlacementBridge.register(t);
+        // Biome lookup goes through createResolver; an old head handler on the removed lookup needs a wrapper to run in.
+        com.retromod.mixin.MixinBiomeResolverRepair.registerClasses(t);
+        // StructurePieceAccessor was deleted; old piece code adds and finds pieces on the builder.
+        LegacyStructurePieceAccessorBridge.register(t);
+        // TreeGrower takes weighted lists of tree features instead of optional configured feature keys.
+        LegacyTreeGrowerConstructorBridge.register(t);
+        // The carving engine is gone; old carver classes become carver types that carve nothing.
+        LegacyCarverBridge.register(t);
+        // TreeFeature, LakeFeature and their configurations became final records; old subclasses get rebuilt bases.
+        LegacyVanillaFeatureBridge.register(t);
+        // RegistrySetBuilder's bootstrap callback became SingleRegistryBootstrap, and add lost its lifecycle.
+        LegacyRegistryBootstrapBridge.register(t);
+        // JigsawBlockInfo now holds a position and a state, not a block info.
+        LegacyJigsawBlockInfoBridge.register(t);
         // KeyDispatchDataCodec went too; mods built for any version up to 26.2 name it. Material
         // rules, conditions and density functions now return a map codec from codec().
         LegacyKeyDispatchCodecBridge.registerRemovedClass(t);
@@ -57,6 +81,12 @@ public final class Mc26_2To26_3CoreMoves {
         LegacyCommandSourceBridge.register(t);
         // BlockPos lost its Vec3i constructor; the coordinates still go to the int one.
         LegacyBlockPosBridge.register(t);
+        // Block properties' view-blocking predicate now also receives a box, which an old one ignores.
+        LegacyViewBlockingBridge.register(t);
+        // emissiveRendering (26.2) and hasPostProcess (26.1) lost their StatePredicate setters too.
+        LegacyStatePredicateBridge.register(t);
+        // Block.spawnDestroyParticles with a player became spawnDestroyByEntityParticles.
+        LegacyDestroyParticlesBridge.register(t);
         registerConsumeEffectConstructors(t);
         // 26.3 made the axe, hoe and shovel sounds holders. The 1.20.5 shims register this bridge
         // too, but a mod built for 1.21.2 to 26.2 never passes through them.
@@ -73,6 +103,8 @@ public final class Mc26_2To26_3CoreMoves {
         LegacyAnimalFoodBridge.register(t);
         // Pack suppliers now open metadata and a stream of packs; old ones answer through openPrimary and openFull.
         LegacyPackSupplierAdapter.register(t);
+        // Bonemeal methods take a source now; old overrides answer through the new ones, and old calls pass one.
+        LegacyBonemealOverrideAdapter.register(t);
     }
 
     /**
@@ -797,6 +829,8 @@ public final class Mc26_2To26_3CoreMoves {
                     "(Lnet/minecraft/world/item/Item$Properties;)V");
         }
         LegacyEquipmentBridge.register(t);
+        // Their stripping, path and tilling tables went with them; old reads and puts reach the block transformers.
+        LegacyToolTablesBridge.register(t);
     }
 
     /**

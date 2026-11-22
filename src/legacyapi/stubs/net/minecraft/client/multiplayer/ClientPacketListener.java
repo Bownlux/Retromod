@@ -5,4 +5,7 @@ import net.minecraft.core.RegistryAccess;
 
 public class ClientPacketListener extends ClientCommonPacketListenerImpl {
     public RegistryAccess.Frozen registryAccess() { throw new UnsupportedOperationException(); }
+    public void sendCommand(String command) { throw new UnsupportedOperationException(); }
+    public com.mojang.brigadier.CommandDispatcher<ClientSuggestionProvider> getCommands() { throw new UnsupportedOperationException(); }
+    public ClientSuggestionProvider getSuggestionsProvider() { throw new UnsupportedOperationException(); }
 }

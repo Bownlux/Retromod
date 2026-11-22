@@ -349,6 +349,9 @@ public class ForgeEventApiShim implements MinecraftVersionedApiShim {
              "net/neoforged/neoforge/event/tick/LevelTickEvent"},
             {"net/minecraftforge/event/TickEvent$PlayerTickEvent",
              "net/neoforged/neoforge/event/tick/PlayerTickEvent"},
+            // The render tick became the frame event, split the same way.
+            {"net/minecraftforge/event/TickEvent$RenderTickEvent",
+             "net/neoforged/neoforge/client/event/RenderFrameEvent"},
         };
 
         transformer.registerSyntheticClass(
@@ -401,6 +404,16 @@ public class ForgeEventApiShim implements MinecraftVersionedApiShim {
                 "net/neoforged/neoforge/event/tick/LevelTickEvent$Post"}) {
             transformer.registerFieldAccessorRedirect(
                     owner, "level", "getLevel", levelDesc, "getLevel", levelDesc);
+        }
+
+        // RenderTickEvent.renderTickTime, a public field on Forge, is the frame's partial tick on NeoForge.
+        String renderTicks = com.retromod.shim.common.RebuiltApiClasses.ROOT + "neoforge/client/LegacyRenderTicks";
+        com.retromod.shim.common.RebuiltApiClasses.registerTree(transformer, renderTicks);
+        for (String owner : new String[]{"net/minecraftforge/event/TickEvent$RenderTickEvent",
+                "net/neoforged/neoforge/client/event/RenderFrameEvent",
+                "net/neoforged/neoforge/client/event/RenderFrameEvent$Post"}) {
+            transformer.registerFieldStaticBridge(owner, "renderTickTime", renderTicks, "renderTickTime",
+                    "(Ljava/lang/Object;)F", null, null);
         }
 
         LOGGER.debug("Registered the Forge tick event split (listener -> Post, phase -> bridge)");

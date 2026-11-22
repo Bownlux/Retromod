@@ -36,6 +36,8 @@ import com.retromod.testmod.tests.Test73EarlyItemStacks;
 import com.retromod.testmod.tests.Test75OldEnchantmentRegistry;
 import com.retromod.testmod.tests.Test77OldTextJson;
 import com.retromod.testmod.tests.Test78OldTextAdapterSubclass;
+import com.retromod.testmod.tests.Test87DeferredRegistryIds;
+import com.retromod.testmod.tests.Test88ConstructorInjectFollowsHost;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 
@@ -57,7 +59,9 @@ public class RetromodTestModServer implements ModInitializer {
                 new Test63IdentifierBufferAndFormatting(), new Test64ChunkKeysWeightsAndProfessions(),
                 new Test65OldSurfaceRules(), new Test69OldDensityFunctions(),
                 // Item stacks built here, before a 26.x world binds item components; checked once the server starts.
-                new Test73EarlyItemStacks()));
+                new Test73EarlyItemStacks(),
+                // Registers a block and items built before their ids, so before the registries freeze.
+                new Test87DeferredRegistryIds()));
         try {
             // The server cases wait for the server to start, because they need its worlds.
             ServerLifecycleEvents.SERVER_STARTED.register(server -> TestPhases.run("server-started", List.of(
@@ -67,7 +71,10 @@ public class RetromodTestModServer implements ModInitializer {
                     new Test59SmallVanillaMembersOnServer(server), new Test66SurfaceRulesOnHost(server),
                     new Test68SurfaceRuleAccessorOnHost(server), new Test70RegistryTagPairs(),
                     Test73EarlyItemStacks.checkOnServer(server), new Test75OldEnchantmentRegistry(),
-                    new Test77OldTextJson(), new Test78OldTextAdapterSubclass())));
+                    new Test77OldTextJson(), new Test78OldTextAdapterSubclass(),
+                    Test87DeferredRegistryIds.checkOnServer(server),
+                    // Players hold an inventory, so a dedicated server applies this mixin too.
+                    new Test88ConstructorInjectFollowsHost())));
         } catch (NoClassDefFoundError e) {
             System.err.println("[Retromod-Test] Fabric API not installed - server-started test phase skipped ("
                     + e.getMessage() + ")");

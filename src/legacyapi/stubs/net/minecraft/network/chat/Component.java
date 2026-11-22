@@ -4,6 +4,8 @@ package net.minecraft.network.chat;
 public interface Component {
     static MutableComponent literal(String text) { throw new UnsupportedOperationException(); }
     static MutableComponent empty() { throw new UnsupportedOperationException(); }
+    static MutableComponent translatable(String key) { throw new UnsupportedOperationException(); }
     Style getStyle();
+    default ComponentContents getContents() { throw new UnsupportedOperationException(); }
     default MutableComponent copy() { throw new UnsupportedOperationException(); }
 }
