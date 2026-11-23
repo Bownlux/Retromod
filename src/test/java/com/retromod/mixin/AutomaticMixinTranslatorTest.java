@@ -56,6 +56,9 @@ class AutomaticMixinTranslatorTest {
             "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;";
     private static final String LOCAL =
             "Lcom/llamalad7/mixinextras/sugar/Local;";
+    private static final String MODIFY_ARG = "Lorg/spongepowered/asm/mixin/injection/ModifyArg;";
+    private static final String MODIFY_ARGS = "Lorg/spongepowered/asm/mixin/injection/ModifyArgs;";
+    private static final String ARGS = "Lorg/spongepowered/asm/mixin/injection/invoke/arg/Args;";
     private static final String START_CONNECTING_OLD_ARGS =
             "Lnet/minecraft/client/gui/screens/Screen;"
             + "Lnet/minecraft/client/Minecraft;"
@@ -391,6 +394,68 @@ class AutomaticMixinTranslatorTest {
                 "the complete target capture must remain after the intercepted Vec3 value");
         assertEquals(4, firstVar(handler(output), Opcodes.ALOAD),
                 "the first captured Entity must move past both slots of the added long");
+    }
+
+    @Test
+    @DisplayName("A @ModifyArg on a call that gained a leading parameter follows its argument to the new index")
+    void modifyArgIndexFollowsPrependedParameter() {
+        byte[] input = argumentMixin("ModifyArgMixin", MODIFY_ARG, "L" + TARGET + ";prepend(Ljava/lang/String;)V", 0,
+                "(Ljava/lang/String;)Ljava/lang/String;", false);
+
+        byte[] output = translator.translate(input);
+
+        AnnotationNode injector = annotation(handler(output), MODIFY_ARG);
+        assertEquals("L" + TARGET + ";prepend(JLjava/lang/String;)V", atTarget(injector));
+        assertEquals(1, annotationValue(injector, "index"), "the string is now the second argument");
+    }
+
+    @Test
+    @DisplayName("A refmap-linked @ModifyArg keeps its lookup key and moves its index and its argument sugar")
+    void refmapModifyArgMovesIndexAndArgsOnlyLocal() {
+        String source = "Lyarn/Target;oldCall(Ljava/lang/String;)V";
+        byte[] input = argumentMixin("RefmapModifyArgMixin", MODIFY_ARG, source, 0,
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", true);
+        MixinRefmapRepairIndex index = MixinRefmapRepairIndex.builder()
+                .put("test/mixin/RefmapModifyArgMixin", source, new MixinRefmapRepairIndex.Repair(
+                        TARGET, "(Ljava/lang/String;)V", "(JLjava/lang/String;)V", Opcodes.ACC_PUBLIC,
+                        List.of(new MixinHandlerResignature.ParamInsert(0, "J"))))
+                .put("test/mixin/RefmapModifyArgMixin", "outer(Ljava/lang/String;)V", new MixinRefmapRepairIndex.Repair(
+                        TARGET, "(Ljava/lang/String;)V", "(ILjava/lang/String;)V", Opcodes.ACC_PUBLIC,
+                        List.of(new MixinHandlerResignature.ParamInsert(0, "I"))))
+                .build();
+
+        byte[] output = translator.translate(input, index);
+
+        AnnotationNode injector = annotation(handler(output), MODIFY_ARG);
+        assertEquals(source, atTarget(injector), "the refmap still looks the call up by its old text");
+        assertEquals(1, annotationValue(injector, "index"));
+        AnnotationNode local = handler(output).invisibleParameterAnnotations[1].get(0);
+        assertEquals(2, annotationValue(local, "index"), "slot 1 of the outer method moved past the new int");
+    }
+
+    @Test
+    @DisplayName("A @ModifyArgs handler's constant Args indices follow the moved arguments")
+    void modifyArgsConstantsFollowPrependedParameter() {
+        byte[] input = argumentMixin("ModifyArgsMixin", MODIFY_ARGS, "L" + TARGET + ";prepend(Ljava/lang/String;)V", null,
+                "(" + ARGS + ")V", false);
+
+        byte[] output = translator.translate(input);
+
+        List<Integer> indices = new ArrayList<>();
+        for (AbstractInsnNode insn : handler(output).instructions) {
+            if (insn.getOpcode() >= Opcodes.ICONST_0 && insn.getOpcode() <= Opcodes.ICONST_5) indices.add(insn.getOpcode() - Opcodes.ICONST_0);
+        }
+        assertEquals(List.of(1, 1), indices, "get(0) and set(0, ...) both read the string, now at 1");
+    }
+
+    @Test
+    @DisplayName("A @ModifyArg without an index is left alone when two old arguments have the handler's type")
+    void modifyArgWithoutUniqueTypeIsDeclined() {
+        byte[] input = argumentMixin("AmbiguousModifyArgMixin", MODIFY_ARG,
+                "L" + TARGET + ";twice(Ljava/lang/String;Ljava/lang/String;)V", null,
+                "(Ljava/lang/String;)Ljava/lang/String;", false);
+
+        assertArrayEquals(input, translator.translate(input));
     }
 
     @Test
@@ -800,6 +865,7 @@ class AutomaticMixinTranslatorTest {
         writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
                 TARGET, null, "java/lang/Object", null);
         abstractMethod(writer, "prepend", "(JLjava/lang/String;)V");
+        abstractMethod(writer, "twice", "(JLjava/lang/String;Ljava/lang/String;)V");
         abstractMethod(writer, "append", "(Ljava/lang/String;I)V");
         abstractMethod(writer, "play", "(Ljava/lang/String;)I");
         abstractMethod(writer, "playDelayed", "(Ljava/lang/String;I)V");
@@ -1071,6 +1137,51 @@ class AutomaticMixinTranslatorTest {
         handler.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
                 "java/lang/String", "length", "()I", false);
         handler.visitInsn(Opcodes.IRETURN);
+        handler.visitMaxs(0, 0);
+        handler.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
+    /** A @ModifyArg or @ModifyArgs on a call in {@code outer}; with {@code argsOnly} its second parameter is {@code @Local(argsOnly, index = 1)}. */
+    private static byte[] argumentMixin(String simpleName, String injectorDesc, String callTarget, Integer index,
+            String handlerDesc, boolean argsOnly) {
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/mixin/" + simpleName, null, "java/lang/Object", null);
+        addMixinTarget(writer);
+        MethodVisitor handler = writer.visitMethod(Opcodes.ACC_PRIVATE, "handler", handlerDesc, null, null);
+        AnnotationVisitor injector = handler.visitAnnotation(injectorDesc, true);
+        AnnotationVisitor methods = injector.visitArray("method");
+        methods.visit(null, "outer(Ljava/lang/String;)V");
+        methods.visitEnd();
+        AnnotationVisitor at = injector.visitAnnotation("at", AT);
+        at.visit("value", "INVOKE");
+        at.visit("target", callTarget);
+        at.visitEnd();
+        if (index != null) injector.visit("index", index);
+        injector.visitEnd();
+        if (argsOnly) {
+            AnnotationVisitor local = handler.visitParameterAnnotation(1, LOCAL, false);
+            local.visit("argsOnly", true);
+            local.visit("index", 1);
+            local.visitEnd();
+        }
+        handler.visitCode();
+        if (injectorDesc.equals(MODIFY_ARGS)) {
+            String args = ARGS.substring(1, ARGS.length() - 1);
+            handler.visitVarInsn(Opcodes.ALOAD, 1);
+            handler.visitVarInsn(Opcodes.ALOAD, 1);
+            handler.visitInsn(Opcodes.ICONST_0);
+            handler.visitMethodInsn(Opcodes.INVOKEVIRTUAL, args, "get", "(I)Ljava/lang/Object;", false);
+            handler.visitVarInsn(Opcodes.ASTORE, 2);
+            handler.visitInsn(Opcodes.ICONST_0);
+            handler.visitVarInsn(Opcodes.ALOAD, 2);
+            handler.visitMethodInsn(Opcodes.INVOKEVIRTUAL, args, "set", "(ILjava/lang/Object;)V", false);
+            handler.visitInsn(Opcodes.RETURN);
+        } else {
+            handler.visitVarInsn(Opcodes.ALOAD, 1);
+            handler.visitInsn(Opcodes.ARETURN);
+        }
         handler.visitMaxs(0, 0);
         handler.visitEnd();
         writer.visitEnd();

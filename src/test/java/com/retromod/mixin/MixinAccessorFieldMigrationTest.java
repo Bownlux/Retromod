@@ -82,6 +82,53 @@ class MixinAccessorFieldMigrationTest {
     }
 
     @Test
+    void bridgesTheLootTablePoolAndEntryFieldsThat26_3Rebuilt() {
+        // Bookshelf's AccessorLootTable, AccessorLootPool, AccessorTagEntry and AccessorNestedLootTable.
+        String loot = "net/minecraft/world/level/storage/loot/";
+        for (String[] rule : new String[][]{{loot + "LootTable", "functions", "()Ljava/util/List;"},
+                {loot + "LootPool", "functions", "()Ljava/util/List;"}, {loot + "LootPool", "conditions", "()Ljava/util/List;"},
+                {loot + "entries/TagEntry", "tag", "()Lnet/minecraft/tags/TagKey;"},
+                {loot + "entries/NestedLootTable", "contents", "()Lcom/mojang/datafixers/util/Either;"},
+                {loot + "entries/TagEntry", "expand", "()Z"},
+                {loot + "LootPool", "rolls", "()Lcom/retromod/shim/common/embedded/LegacyNumberProvider;"}}) {
+            ClassNode onNewHost = read(singleAccessorMixin(rule[0], rule[1], rule[2]));
+            assertEquals(1, MixinAccessorFieldMigration.removeMigratedAccessors(onNewHost, "26.3").size(),
+                    rule[0] + "." + rule[1] + " changed in 26.3, so its old accessor must be bridged");
+            assertTrue(MixinAccessorFieldMigration.removeMigratedAccessors(
+                    read(singleAccessorMixin(rule[0], rule[1], rule[2])), "26.2").isEmpty(),
+                    "26.2 still has " + rule[1] + " as written");
+        }
+        ClassNode holderSet = read(singleAccessorMixin(loot + "entries/TagEntry", "tag", "()Lnet/minecraft/core/HolderSet;"));
+        assertTrue(MixinAccessorFieldMigration.removeMigratedAccessors(holderSet, "26.3").isEmpty(),
+                "an accessor written for 26.3's own HolderSet field is left alone");
+    }
+
+    @Test
+    void bridgesRecipeManagerByTypeFrom1_21_2() {
+        String manager = "net/minecraft/world/item/crafting/RecipeManager";
+        String multimap = "()Lcom/google/common/collect/Multimap;";
+        assertEquals(1, MixinAccessorFieldMigration.removeMigratedAccessors(
+                read(singleAccessorMixin(manager, "byType", multimap)), "1.21.2").size());
+        assertTrue(MixinAccessorFieldMigration.removeMigratedAccessors(
+                read(singleAccessorMixin(manager, "byType", multimap)), "1.21.1").isEmpty());
+    }
+
+    /** {@code @Mixin(target) interface Accessor { @Accessor(field) <desc> get(); }} */
+    private static byte[] singleAccessorMixin(String target, String field, String desc) {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT | Opcodes.ACC_INTERFACE,
+                "com/example/mixin/LootAccessor", null, "java/lang/Object", null);
+        AnnotationVisitor mixin = cw.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        AnnotationVisitor targets = mixin.visitArray("value");
+        targets.visit(null, Type.getObjectType(target));
+        targets.visitEnd();
+        mixin.visitEnd();
+        accessor(cw, "bookshelf$" + field, desc, field);
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    @Test
     void ignoresAnAccessorOfTheSameNameOnAnotherTarget() {
         ClassNode mixin = read(accessorMixin("com/example/OtherCloud", "effects"));
         assertTrue(MixinAccessorFieldMigration.removeMigratedAccessors(mixin, "1.21.1").isEmpty(),

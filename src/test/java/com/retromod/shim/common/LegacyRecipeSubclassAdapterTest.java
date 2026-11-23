@@ -8,11 +8,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Handle;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
+import org.objectweb.asm.tree.InvokeDynamicInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.analysis.Analyzer;
@@ -187,6 +190,29 @@ class LegacyRecipeSubclassAdapterTest {
     }
 
     @Test
+    @DisplayName("a 1.20.1 custom recipe drops its id and its category")
+    void customRecipeFrom1201DropsIdAndCategory() {
+        String oldCtor = "(Lnet/minecraft/resources/Identifier;L" + CRAFTING + "CraftingBookCategory;)V";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "mod/GlobeRecipe", null, CUSTOM, null);
+        MethodVisitor ctor = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", oldCtor, null, null);
+        ctor.visitCode();
+        ctor.visitVarInsn(Opcodes.ALOAD, 0);
+        ctor.visitVarInsn(Opcodes.ALOAD, 1);
+        ctor.visitVarInsn(Opcodes.ALOAD, 2);
+        ctor.visitMethodInsn(Opcodes.INVOKESPECIAL, CUSTOM, "<init>", oldCtor, false);
+        ctor.visitInsn(Opcodes.RETURN);
+        ctor.visitMaxs(0, 0);
+        ctor.visitEnd();
+        cw.visitEnd();
+
+        ClassNode fixed = adapt(cw.toByteArray());
+        assertTrue(calls(method(fixed, "<init>", oldCtor)).stream().anyMatch(c -> c.owner.equals(CUSTOM) && c.desc.equals("()V")),
+                "the super call must reach the no-argument constructor 26.1 kept");
+        verify(fixed);
+    }
+
+    @Test
     @DisplayName("a smithing wrapper reads the optional ingredients through their accessors")
     void smithingWrapperUsesAccessors() {
         String ingredient = "L" + CRAFTING + "Ingredient;";
@@ -346,6 +372,151 @@ class LegacyRecipeSubclassAdapterTest {
         assemble.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    @Test
+    @DisplayName("a mod recipe interface's default old assemble gets a default 26.1 assemble that calls it through the interface")
+    void recipeInterfaceGetsCurrentAssemble() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT | Opcodes.ACC_INTERFACE, "mod/CodecRecipe", null,
+                "java/lang/Object", new String[]{CRAFTING + "Recipe"});
+        String legacy = "(L" + CRAFTING + "RecipeInput;" + PROVIDER + ")" + STACK;
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "assemble", legacy, null, null);
+        mv.visitCode();
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        ClassNode fixed = adapt(cw.toByteArray());
+        MethodNode current = method(fixed, "assemble", "(L" + CRAFTING + "RecipeInput;)" + STACK);
+        assertEquals(0, current.access & Opcodes.ACC_ABSTRACT, "a default method");
+        MethodInsnNode call = calls(current).stream().filter(c -> c.desc.equals(legacy)).findFirst().orElseThrow();
+        assertEquals(Opcodes.INVOKEINTERFACE, call.getOpcode());
+        assertTrue(call.itf);
+        verify(fixed);
+    }
+
+    @Test
+    @DisplayName("a ShapelessRecipe::new reference builds through the 26.1 constructor")
+    void shapelessConstructorReferenceUsesCurrentConstructor() {
+        ClassNode fixed = adapt(moonlightTemplates());
+
+        InvokeDynamicInsnNode indy = indy(method(fixed, "shapeless", "()Lmod/Factory;"));
+        Handle handle = (Handle) indy.bsmArgs[1];
+        assertEquals(Opcodes.H_INVOKESTATIC, handle.getTag(), "the reference points at a factory in the mod's class");
+        assertEquals("mod/Templates", handle.getOwner());
+        MethodNode factory = method(fixed, handle.getName(), handle.getDesc());
+        MethodInsnNode build = calls(factory).stream().filter(c -> c.name.equals("<init>")
+                && c.owner.equals(CRAFTING + "ShapelessRecipe")).findFirst().orElseThrow();
+        assertEquals("(L" + CRAFTING + "Recipe$CommonInfo;L" + CRAFTING + "CraftingRecipe$CraftingBookInfo;"
+                + "Lnet/minecraft/world/item/ItemStackTemplate;Ljava/util/List;)V", build.desc);
+        assertEquals(Type.getMethodType("(Ljava/lang/String;" + CATEGORY + STACK + NON_NULL_LIST + ")L"
+                + CRAFTING + "ShapelessRecipe;"), indy.bsmArgs[2], "the lambda's own shape is unchanged");
+        verify(fixed);
+    }
+
+    @Test
+    @DisplayName("smelting and stonecutter constructors take the 26.1 book info and template")
+    void cookingAndStonecutterUseCurrentConstructors() {
+        ClassNode fixed = adapt(moonlightTemplates());
+
+        MethodInsnNode smelting = calls(method(fixed, "smelting", SMELTING_HELPER)).stream()
+                .filter(c -> c.name.equals("<init>") && c.owner.equals(CRAFTING + "SmeltingRecipe")).findFirst().orElseThrow();
+        assertEquals("(L" + CRAFTING + "Recipe$CommonInfo;L" + CRAFTING + "AbstractCookingRecipe$CookingBookInfo;"
+                + INGREDIENT + "Lnet/minecraft/world/item/ItemStackTemplate;FI)V", smelting.desc);
+        MethodInsnNode stonecutter = calls(method(fixed, "stonecutter", STONECUTTER_HELPER)).stream()
+                .filter(c -> c.name.equals("<init>") && c.owner.equals(CRAFTING + "StonecutterRecipe")).findFirst().orElseThrow();
+        assertEquals("(L" + CRAFTING + "Recipe$CommonInfo;" + INGREDIENT + "Lnet/minecraft/world/item/ItemStackTemplate;)V",
+                stonecutter.desc, "26.1 keeps no stonecutter group, so it is dropped");
+        verify(fixed);
+    }
+
+    @Test
+    @DisplayName("1.20.1 cooking and stonecutter constructors drop the recipe id")
+    void idTakingCookingAndStonecutterConstructors() {
+        String id = "Lnet/minecraft/resources/Identifier;";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "mod/OldRecipes", null, "java/lang/Object", null);
+        emitBuild(cw, "blasting", CRAFTING + "BlastingRecipe", "(" + id + "Ljava/lang/String;" + COOKING_CATEGORY + INGREDIENT
+                + STACK + "FI)V");
+        emitBuild(cw, "cutting", CRAFTING + "StonecutterRecipe", "(" + id + "Ljava/lang/String;" + INGREDIENT + STACK + ")V");
+        cw.visitEnd();
+
+        ClassNode fixed = adapt(cw.toByteArray());
+
+        assertTrue(calls(fixed.methods.get(0)).stream().anyMatch(c -> c.name.equals("<init>")
+                && c.desc.contains("AbstractCookingRecipe$CookingBookInfo;")), "blasting reaches the 26.1 constructor");
+        assertTrue(calls(fixed.methods.get(1)).stream().anyMatch(c -> c.name.equals("<init>")
+                && c.desc.equals("(L" + CRAFTING + "Recipe$CommonInfo;" + INGREDIENT
+                        + "Lnet/minecraft/world/item/ItemStackTemplate;)V")), "the stonecutter reaches the 26.1 constructor");
+        verify(fixed);
+    }
+
+    private static final String CATEGORY = "L" + CRAFTING + "CraftingBookCategory;";
+    private static final String COOKING_CATEGORY = "L" + CRAFTING + "CookingBookCategory;";
+    private static final String INGREDIENT = "L" + CRAFTING + "Ingredient;";
+    private static final String NON_NULL_LIST = "Lnet/minecraft/core/NonNullList;";
+    private static final String SMELTING_HELPER = "(Ljava/lang/String;" + COOKING_CATEGORY + INGREDIENT + STACK + "FI)L"
+            + CRAFTING + "SmeltingRecipe;";
+    private static final String STONECUTTER_HELPER = "(Ljava/lang/String;" + INGREDIENT + STACK + ")L"
+            + CRAFTING + "StonecutterRecipe;";
+
+    /**
+     * Moonlight's {@code RecipeTemplate}: {@code ShapelessRecipe::new} as a recipe factory, and lambdas that build
+     * smelting and stonecutter recipes with the 1.21.x constructors.
+     */
+    private static byte[] moonlightTemplates() {
+        String shapeless = CRAFTING + "ShapelessRecipe";
+        String oldShapeless = "(Ljava/lang/String;" + CATEGORY + STACK + NON_NULL_LIST + ")V";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "mod/Templates", null, "java/lang/Object", null);
+        MethodVisitor factory = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "shapeless", "()Lmod/Factory;",
+                null, null);
+        factory.visitCode();
+        factory.visitInvokeDynamicInsn("create", "()Lmod/Factory;", METAFACTORY,
+                Type.getMethodType("(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"),
+                new Handle(Opcodes.H_NEWINVOKESPECIAL, shapeless, "<init>", oldShapeless, false),
+                Type.getMethodType(oldShapeless.replace(")V", ")L" + shapeless + ";")));
+        factory.visitInsn(Opcodes.ARETURN);
+        factory.visitMaxs(0, 0);
+        factory.visitEnd();
+        emitBuild(cw, "smelting", CRAFTING + "SmeltingRecipe", SMELTING_HELPER.substring(0, SMELTING_HELPER.indexOf(')') + 1) + "V");
+        emitBuild(cw, "stonecutter", CRAFTING + "StonecutterRecipe",
+                STONECUTTER_HELPER.substring(0, STONECUTTER_HELPER.indexOf(')') + 1) + "V");
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    private static final Handle METAFACTORY = new Handle(Opcodes.H_INVOKESTATIC, "java/lang/invoke/LambdaMetafactory",
+            "metafactory", "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;"
+                    + "Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)"
+                    + "Ljava/lang/invoke/CallSite;", false);
+
+    /** {@code static Owner name(args) { return new Owner(args); }} */
+    private static void emitBuild(ClassWriter cw, String name, String owner, String ctorDesc) {
+        String desc = ctorDesc.replace(")V", ")L" + owner + ";");
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, name, desc, null, null);
+        mv.visitCode();
+        mv.visitTypeInsn(Opcodes.NEW, owner);
+        mv.visitInsn(Opcodes.DUP);
+        int slot = 0;
+        for (Type argument : Type.getArgumentTypes(ctorDesc)) {
+            mv.visitVarInsn(argument.getOpcode(Opcodes.ILOAD), slot);
+            slot += argument.getSize();
+        }
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, owner, "<init>", ctorDesc, false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    private static InvokeDynamicInsnNode indy(MethodNode m) {
+        for (AbstractInsnNode insn : m.instructions) {
+            if (insn instanceof InvokeDynamicInsnNode indy) return indy;
+        }
+        throw new AssertionError("no invokedynamic in " + m.name);
     }
 
     private static ClassNode adapt(byte[] original) {

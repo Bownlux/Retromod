@@ -2,6 +2,288 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
+## [1.4.0-snapshot.5] - 2026-11-20
+
+Fifth 1.4.0 snapshot.
+
+### Fixed
+
+- Fixes boat items from mods built before 1.21.2 on Minecraft 26.2 and newer. The oak boat they fall back to moved to `EntityTypes`, so registering such an item stopped the game with `NoSuchFieldError`.
+- Fixes saplings from 1.20.1 mods on Minecraft 26.3. Their tree grower now builds through 26.3's weighted tree lists instead of a constructor 26.3 removed.
+- Lets Forge 1.20.1 and 1.21.1 mods that ask a mod container for its event bus start on Forge 26.2 and newer.
+- Embeds only the worldgen, block property, and damage hook helpers each Minecraft version can link, so older hosts no longer carry calls that exist only on 26.3.
+- Copies the Retromod helper classes a translated mod calls into the mod itself, so jars from `transform`, `batch`, `aot`, and `export` no longer stop with `NoClassDefFoundError` in a game without Retromod.
+- Keeps a mod's bonemealable blocks growing on 26.3, which added a bonemeal source to the three bonemeal methods. An old override answers the new method, and an old call passes the source a player's bone meal uses.
+- Moves old structure code from the structure piece accessor that Minecraft 26.3 deleted onto the piece builder that replaced it. Mods that build their own structure pieces link again, and their piece overrides still run when the game assembles a structure.
+- Rebuilds the old profile cache on the name and id cache that replaced it, so `getProfileCache()` lookups by name or id answer with game profiles again.
+- Rebuilds `FlyingMob` for mods' own flying mobs, and an old `instanceof FlyingMob` check still matches the ghast and the phantom.
+- Rebuilds `MossBlock`, so a mod's moss blocks register again.
+- Bridges `Saddleable` onto the saddle slot, so old saddle checks and calls work on vanilla's saddled mobs and on a mod's own mounts.
+- Keeps a block's old `isViewBlocking` predicate working on 26.3, which also hands it a box that an old predicate ignores.
+- Updates a mixin accessor's invoker when the host dropped one of the target method's parameters, so the accessor still applies.
+- Bridges the `PLAYER` and `POST_TELEPORT` chunk ticket types that 1.21.5 removed. Each becomes a rebuilt type with its old lifetime, because no current type both loads and ticks its chunks for the same time.
+- Keeps a block entity type tag that names the bed loading on 26.2 and newer, which no longer give beds a block entity.
+- Gives Fabric blocks and items their registry id when the mod registers them under an id kept in another class's field.
+- Maps Fabric API's block view API to the block getter API that replaced it on 26.x.
+- Bridges Fabric API's old `EntityType.Builder.build()`, which took no name, on 1.21.2 and newer. The type is built under the id it is registered with.
+- Keeps Fabric built-in packs that a mod registered with a sub path loading on 26.x.
+- Moves a block's old `spawnDestroyParticles` with a player onto 26.3's `spawnDestroyByEntityParticles`, so old calls and old overrides keep their break effects.
+- Points a mixin accessor that invoked the old `spawnDestroyParticles` at `spawnDestroyByEntityParticles`, together with the mod's calls through it.
+- Updates a mixin invoker only when the host dropped exactly one of its parameters.
+- Keeps Fabric API's own entity type `build()` on a host whose Fabric API still has it.
+- Logs one warning that names the pack when a Fabric mod's built-in pack cannot be registered.
+- Bridges Fabric API's old two-argument chunk load callback on 26.x, where an old listener stopped chunk loading and the server never finished starting.
+- Keeps a Fabric mod's own Fabric Loader floor instead of lowering it to 0.14.0, so Fabric Loader gives its mixins the compatibility level they were built for, such as enum extensions from 0.19.0. Only an upper bound, or a floor above the Fabric Loader the game has, is relaxed.
+- Leaves `fabricloader` out of the `overrides` command's generated `fabric_loader_dependencies.json`, for the same reason.
+- Answers the item component that hid an item's extra tooltip lines, which Minecraft 1.21.5 removed, so mods built before it no longer store an unrelated component in its place. The old setting is dropped, so those lines now show.
+- Reports why an old structure processor type's codec could not be read, and fails only the structures that use that type instead of every structure that lists processors.
+- Keeps old jigsaw structure code working on Minecraft 26.3, which rebuilt the jigsaw block record around a position and a state. Code that read the old block info gets one rebuilt with the jigsaw's name, pool, target, joint and priorities, and the old factory, copy and constructor calls reach their 26.3 forms.
+- Disables an old mixin on a target that no longer has a game field or method the mixin relies on, when the game jar is indexed. The target class then loads without it, instead of failing and taking world generation or another system down with it. A mixin with several targets keeps the targets that still have the member.
+- Answers the weighted list factories and lookup that Minecraft 1.21.5 renamed, so mods built before it can build and draw from their spawn and loot lists again.
+- Keeps the two weighted lists of Minecraft 1.21.4 and older apart after 1.21.5 merged them. A simple list's random pick still comes with its weight, and a list of entries is still built, read and decoded from each entry's own weight.
+- Answers the old wrapped list codec, which reads and writes the same entries as the current one.
+- Moves registry bootstrap callbacks that mods built before Minecraft 26.3 define onto 26.3's single-registry bootstrap, and drops the lifecycle argument 26.3 removed from adding one.
+- Stops subscribing a translated NeoForge mod's data generation handlers. They run only in data runs, and loading their class on a normal launch failed the whole mod when it built old worldgen registries.
+- Stops subscribing a translated mod's data generation handlers on Forge hosts too, as on NeoForge, so a data class that builds old worldgen registries no longer loads and fails the mod on every launch. A handler that another class of the mod calls or passes as a method reference is kept.
+- Applies the same subscriber repairs to bundled libraries and to precompiled (AOT) mods that the regular translation applies, so a library's data generation or removed-event handlers no longer fail the mod at startup.
+- Gives a block or item the registry id it needs from 1.21.2 when a mod builds it straight into its own registration helper with a constant name, as mods built on GlitchCore do.
+- Keeps the block property setters for emissive rendering and post-processing that 26.1 and 26.2 changed, and lets an old block add a state property its vanilla base class now adds itself, such as waterlogging on multiface blocks.
+- Keeps old tree growers working on 26.3, which builds them from weighted lists of tree features.
+- Lets old mods that add their own tree features, lakes and coral features register on 26.3, on rebuilt bases that place their trees with decorators and leaf distances.
+- Rebuilds the tree, lake and large dripstone configurations 26.3 deleted, so old feature data still loads.
+- Loads old custom cave carvers on 26.3 as carvers that carve nothing, and logs one line naming each one.
+- Keeps old flower bed blocks constructible on 26.3, where the constructor takes a shape height.
+- Gives registry ids to blocks an old mod builds in a small helper method before registering them.
+- Fixes a verification failure in old boat items on 1.21.2 and newer, where chest boats stopped being boats.
+- Keeps item sub-predicates from mods built before 1.21.5 registering on 1.21.11 and newer, where the predicate type became an interface. Their type is built as the host's own concrete type, the registry is reached under its new name, and the game's component check reaches the mod's old item test.
+- Keeps old loot table, pool and entry accessors working on 26.3, which rebuilt them around holders: functions, conditions, tags, nested tables and the expand flag are read back in their old shapes, so a mod's other accessors on the same class apply again.
+- Keeps old `RecipeManager.byType` accessors working from 1.21.2, where the recipes moved into a recipe map.
+- Keeps old mods that read or fill the axe stripping, shovel path and hoe tilling tables working on 26.3, which removed the tool items that held them.
+- Registers what old mods add to those tables with the loader, so axes, shovels and hoes use it: through Fabric API's block transformer helper on Fabric and Quilt, and through NeoForge's tool transform table on NeoForge.
+- Rebuilds the old hoe helpers for tilling into a state, tilling with a drop, and the air-above check.
+- Reads old block state provider codecs the way old mods wrote them, since 26.3 made the provider codec read a holder.
+- Fills the replace checks 26.3 requires on old vanilla lake features with the checks the old lake made.
+- Gives old armor trim materials the palette id 26.3 requires, with their palette copied to the folder 26.3 reads.
+- Keeps biome mods built on TerraBlender placing their biomes on 26.3, which looks biomes up through resolvers instead of the per-position lookup TerraBlender hooked.
+- Runs an old mixin's head handler on that removed lookup before each resolver lookup, and keeps the host's answer when the handler sets none.
+- Fixes old generic code over weighted entries on 1.21.5 and newer, which failed a cast once the old wrapper became the host's weighted value. This stopped TerraBlender's region layer and froze world generation.
+- Drops old RenderSystem calls that 1.21.11 and 26.x removed, such as `clear`, `bindTexture`, `activeTexture`, `viewport`, the fog range setters, and the two-vector `setShaderLights`, plus `RenderTarget.clear` and `setClearColor` on 26.x, so mods that call them load.
+- Answers removed render getters such as `getShaderFogStart`, `getShaderColor`, and `RenderTarget.getColorTextureId`, and maps the old three-argument `RenderTarget.resize` to the current one.
+- Builds old `new TextureTarget(width, height, useDepth, clearError)` calls with the constructor the host has, on 1.21.11, 26.1, 26.2, and 26.3.
+- Repairs the old `CycleButton.builder(Function)` and `withInitialValue` pair. A button with no initial value starts on its first value, as before.
+- Repairs the `ConfirmLinkScreen` constructors that took the link as a string on 26.3. A link with spaces or other characters a URI does not allow is quoted instead of refused.
+- Repairs `StringUtil.isAllowedChatCharacter(char)`.
+- Keeps translating every class when the machine is busy. In Java agent mode a moment of high CPU or memory use made Retromod load the class untranslated, which later failed with errors such as `NoSuchMethodError`.
+- Reports a performance problem in the log once per launch instead of in a dialog, which could block the game and keep Minecraft from exiting.
+- Keeps old mods that call `BufferUploader` loading on 26.x, and on Forge and NeoForge 1.21.11, which removed it.
+- Closes every mesh an old mod hands to `BufferUploader`, so its buffer memory is freed.
+- Keeps the old `RenderSystem.setProjectionMatrix(Matrix4f, VertexSorting)`, `getProjectionMatrix`, and `getVertexSorting` working as stored values, so mods that save and restore the projection load.
+- Fixes worlds freezing on 26.3 while generating chunks where an old mod's trees grow, such as Biomes O' Plenty's redwood and maple forests.
+- Gives old world features the block helpers they inherited from the old feature base: setting and safely setting blocks, marking blocks above for updates, and the stone, dirt and tree position checks.
+- Skips an old world feature that calls a game API 26.3 no longer has, and logs one line naming it, instead of leaving its chunk unfinished.
+- Gives registry ids to blocks and items Fabric mods register through their own helpers or consumers on 26.x, as NeoForge mods already got.
+- Keeps old Fabric mods' multiface blocks that add the waterlogged property themselves constructible on 26.x.
+- Sends old Fabric mods' fire odds to Fabric API's flammable block registry on 26.x, where the fire block's own setter is private and no longer widened.
+- Moves an old mod's worldgen setup from the end of the server constructor to the start of level loading on 26.3, where the dimension tags it reads are bound. This lets biome mods built on TerraBlender generate their biomes.
+- Rebuilds `ModelResourceLocation` for NeoForge and Fabric mods on 26.x, as an id whose path keeps the variant, so its constructors, `inventory`, `standalone`, `id`, and `variant` work as before.
+- Answers `ModelManager.getModel` and `getMissingModel` for those mods from the game's block state models. A location that names a block state returns that state's model, and `getMissingModel` answers null before the game's models load, as it did.
+- Answers `ModelBakery.MISSING_MODEL_LOCATION` and `MISSING_MODEL_VARIANT` for Fabric mods on 26.x the same way as for NeoForge and Forge mods.
+- Repairs the old `ModelManager.getAtlas(id)` on 1.21.11 and 26.x. It takes an atlas texture such as `TextureAtlas.LOCATION_BLOCKS` (`minecraft:textures/atlas/blocks.png`), as old code passed, or a current atlas id such as `minecraft:blocks`.
+- Keeps old code that reads the difficulty's name working on 26.x, where the getter took the name of its string form.
+- Keeps old click event codecs working from 1.21.5 on Forge and NeoForge and on 26.x by bridging the event's action and value getters.
+- Rebuilds the water-seeking mob goal 26.3 removed, so old water mobs still return to water.
+- Keeps old entities that implement the removed variant holder interface loading from 1.21.5 on Forge and NeoForge and on 26.x.
+- Follows the lily pad block's 26.1 rename for old mods.
+- Repairs custom `TextureAtlasSprite` subclasses and direct sprite construction on 1.21.11 and 26.x, which now take a padding value. Old sprites get none, as before.
+- Updates access widener and access transformer entries that opened an old constructor Retromod adapts, such as the sprite constructor, so they open the constructor the game has now.
+- Repairs the old `SpriteContents` constructor that took a whole `ResourceMetadata`, by passing its animation and texture sections to the current constructor.
+- Restores `MissingTextureAtlasSprite.getTexture()` with a texture of the purple and black image.
+- Repairs NeoForge's `QuadBakingVertexConsumer.setSprite(sprite)` and Fabric API's `spriteBake` on 26.x by baking the sprite as a material that is not forced translucent.
+- Lets old mods keep creating game objects whose constructor the host made protected, through both `new` calls and constructor references.
+- Keeps old dirt path blocks working on 26.3, which replaced the dirt path block with a path block that names the block it turns back into. Old ones turn back into dirt, as before.
+- Keeps old nether roots blocks working on 26.1 and newer, which replaced them with roots that name the blocks they grow on. Old ones grow on the same blocks as before, unless a data pack changes the tag.
+- Checks the game's own access for each constructor, so NeoForge and Fabric, which already widen many of them, see no change.
+- Lets old mods read their own recipe serializers back from the registry on 26.1 and newer. The registry holds the game's serializer built from the mod's codecs, and a cast to the mod's own serializer class gets the mod's object.
+- Keeps old recipes loading on NeoForge 1.21.2 and newer and on Fabric 26.1 and newer, as Forge recipes already did. A recipe that never answered the recipe book's questions gets the old defaults, including recipes that implement a library's recipe interface.
+- Repairs old Fabric mods that add blocks to a block entity type with `addSupportedBlock`, which Fabric API renamed to `addValidBlock`.
+- Repairs `RenderSystem.renderThreadTesselator()` on 26.2 and newer, which now hands out Retromod's tesselator.
+- Repairs Fabric API's level render context `consumers()` on 26.2 and newer. It returns a shared buffer source whose draws are dropped with one warning, because 26.2 replaced that buffer source with render submission.
+- Repairs several single removed calls on 1.21.11 and 26.x: `Options.setKey`, `AbstractWidget.clicked`, `Entity.spawnAtLocation` with a stack, a raised stack, an item, or a raised item, `LivingEntity.getAllSlots()` and `getArmorSlots()`, `PlayerList.isOp(profile)`, `StringWidget.setColor`, the old `ParticleProvider.createParticle` without a random source, and `RenderSystem.maxSupportedTextureSize()`.
+- Repairs `SystemToast.multiline` and the old `OptionInstance.createBoolean` with a plain listener on 26.2 and newer, and `Pack.open()` on 26.3.
+- Repairs `@ModifyArg` and `@ModifyArgs` mixins on a call that gained parameters, such as `LivingEntity.actuallyHurt` gaining a leading `ServerLevel`. The handler's argument index follows its argument, and so does a `@Local(argsOnly = true)` slot when the injected method gained parameters too.
+- Keeps old villager schedule code loading on 26.1 and newer, which replaced schedules with environment timelines. Old schedules build and register, and a mod's own schedule is accepted but not applied to villagers.
+- Keeps old pack metadata readers working on Forge and NeoForge 1.21.4 and newer and on 26.1 and newer, which folded the metadata serializer into the metadata section type. A pack file the reader cannot load gives no section, as before.
+- Keeps old Fabric mods' v2 loot table events running on 26.x, through the v3 events that replaced them.
+- Repairs reads of a loot function's or condition's type on 26.1 and newer, which replaced the type objects with codecs.
+- Gives blocks and items that a mod's own registry queue builds from a supplier the id they are registered under, as 26.x requires before they are built.
+- Keeps blocks that read `BlockBehaviour.Properties.CODEC` loading on 26.3, which removed block codecs.
+- Rebuilds custom render types that old mods assemble from render state shards on 26.3. The shards and `CompositeState` are kept as plain values, and `RenderType.create` turns them into a 26.3 render type over the closest vanilla pipeline, with the mod's texture, lightmap, overlay, crumbling, sorting, outline and view-offset settings.
+- Keeps classes that extend the old `RenderType` loading on 26.3, with their constructor, shard constants and `create`, and answers `bufferSize()` and `mode()` on render types.
+- Extends the rebuilt custom render types to 26.1 and 26.2. Old render types built from state shards now become 26.1 and 26.2 render types too, over the closest vanilla pipeline, with their output target where the game still has it and, on 26.1, their buffer size.
+- Falls back to a vanilla render type with the same vertex layout when an old render type cannot be rebuilt, so its geometry still draws, and keeps render types that share a name but not their layout or settings apart.
+- Repairs NeoForge 1.21.1 handlers on `RenderLevelStageEvent` on NeoForge 26.x. A handler on the old event is subscribed to each per-stage event, and `getStage()` answers the old stage that now falls in that event, so stage checks still match. `getCamera()`, `getPartialTick()`, `getModelViewMatrix()`, `getProjectionMatrix()` and `getRenderTick()` are answered from the game.
+- Rebuilds `DimensionSpecialEffects` on 26.x as values read from the game: the sky kind, ground and bright lightmap from the dimension's skybox, constant ambient light from its lighting type, and the cloud height from the level's environment attributes. `ClientLevel.effects()` answers from the same reads, so datapack dimensions report their own settings.
+- Extends the rebuilt custom render types to Forge and NeoForge 1.21.11, which already render through pipelines and render setups. Old render types built from state shards become 1.21.11 render types over the closest vanilla pipeline, using 1.21.11's own pipeline names.
+- Repairs `RenderLevelStageEvent.getFrustum()` for NeoForge 1.21.1 handlers on NeoForge 26.x by reading the camera's culling frustum from the level render state.
+- Keeps old fence gate and skull blocks loading on 1.21.5 and newer, which removed `FenceGateBlock`'s shape constants and made `SkullBlock.SHAPE` private. Each constant is read from the game's own block, not written down.
+- Repairs mixins that shadow a method the game moved to a superclass, such as `Slime.getSize()`, and shadow fields the game renamed with a prefix, such as a loot function's `CODEC` becoming `MAP_CODEC`.
+- Gives blocks and items built through a constructor reference, such as `Block::new`, the registry id they are registered under, as the game requires from 1.21.2.
+- Maps Fabric API's removed `FabricEntityTypeBuilder` calls onto the game's own entity type builder on 26.x, and builds a nameless entity type under the id it is registered with.
+- Repairs old Fabric tools that call `createAttributes` on 26.x, where that method no longer exists.
+- Keeps a mixin aimed at a removed game class that Retromod rebuilds on its old target, so it is declined the same way on every path instead of attaching to Retromod's copy.
+- Repairs more single removed calls on Forge and NeoForge 1.21.11 and on 26.x: the old lead sounds `LEASH_KNOT_BREAK` and `LEASH_KNOT_PLACE`, `CycleButton.booleanBuilder` without an initial value, `Screen.renderWithTooltip`, `User.getType()` with its `User.Type`, and the minecart constructors that took a position.
+- Repairs Fabric API's `positionMatrix()` on the level render context on 26.x by reading the camera's view rotation.
+- Keeps old block overrides running where the game changed a block hook's parameters: `neighborChanged` from 1.21.2, and `onRemove`, `getCloneItemStack`, `fallOn` and `entityInside` from 1.21.5. An old super call to one of these reaches the current hook.
+- Repairs old calls to `Containers.dropContentsOnDestroy`, which 1.21.5 removed: a container block entity that is still there drops its items, and comparators update.
+- Keeps old entity code that reads or sets `hasImpulse`, `hurtMarked` and the float `fallDistance` working where the game moved the first two onto its newer sync flags and made the fall distance a double.
+- Repairs old calls to `explode` and `playSound` on a level, which changed their result and their first parameter, and old reads and writes of a vector on a network buffer.
+- Repairs old target goals and targeting conditions built with an entity predicate, which 1.21.2 replaced with a selector that also takes the level.
+- Repairs old dust particles and crafting remainders where the game changed them.
+- Builds old armor trim templates through the game's current factory, with the registry id the item is registered under.
+- Gives old explosion subclasses the position, level, size, source and fire fields they read.
+- Repairs calls that content mods make on Forge and NeoForge 1.21.11 and on 26.x: `Biome.getPrecipitationAt`, `coldEnoughToSnow` and `warmEnoughToRain` without a sea level, `new RecipeHolder(id, recipe)`, the shaped and shapeless recipe builders without an item lookup, `ModelPart.copyFrom`, `Screen.init(minecraft, width, height)`, the `Screen.isCopy`, `isCut`, `isPaste` and `isSelectAll` key checks, and `StringSplitter.componentStyleAtWidth`.
+- Repairs `new ItemParticleOption(type, stack)` on 26.1 and newer, and the sign text getters `getFrontText`, `getBackText` and `getText(front)` on 26.3.
+- Repairs `BlockColors.getColor(state, level, pos, tintIndex)` for Fabric mods on 26.x by reading the block's tint source for that index, the same way Forge and NeoForge mods already get it.
+- Repairs old calls that ask a block for its pick-block item from outside the block, through the block state's current form.
+- Repairs old entity code that looks up an entity type by name, loads an entity from saved data, teleports an entity or player, or reads a container opener count, where 1.21.2 to 26.3 changed those calls.
+- Keeps old boats and chest boats building on 26.x, which made the boat's item a constructor argument. An old boat subclass still drops the item its own `getDropItem` names.
+- Repairs old reads of an item's equipment slot, a block's loot table, an item stack's custom data, and a crafting recipe's leftover items.
+- Repairs old item predicates built from a tag or items, dyed leather colors, dye item lookups, and rule tests that structures and ore features use.
+- Repairs more single removed calls on 26.x: the old cow sound constants, `ModelPart.getAllParts()` as a stream, the static `LivingEntityRenderer.getOverlayCoords` that read the entity, `Entity.canBeCollidedWith()` without an argument, and `EntityType.updateCustomEntityTag` with custom data.
+- Repairs rising particle subclasses on 1.21.11 and 26.x, which now pass their sprite when built.
+- Repairs the biome search that took a climate sampler and the ore and aquifer randoms on 26.3, which keeps them under names it makes on request.
+- Repairs calls to Fabric API's `getAppearance` on a block state or a block on 26.x, which now reads a light getter.
+- Fixes a crash on 26.x when a block with a container from an old mod was replaced, where Retromod's own drop helper called a check the game no longer has.
+- Repairs old game rule reads and writes on Forge and NeoForge 1.21.11 and on every 26.x loader. `getRule(rule).get()` and `.set(value, server)` now read and write the world's current rules, and a write with a server still reaches players.
+- Maps the old fire tick rule to the fire spread radius. It reads as on while the radius is not 0. Turning it off sets the radius to 0, and turning it back on restores the default radius.
+- Maps the old disable-raids, disable-elytra-movement-check, and disable-player-movement-check rules to their positive replacements, read and written negated.
+- Repairs old boss bars on 26.x, which now take an id when built. Each gets a random id, as the old constructor gave itself.
+- Repairs more single removed client calls on 1.21.11 and 26.x: `ClientPacketListener.sendUnsignedCommand`, `CommonInputs.selected`, `ItemStack.getDescriptionId`, the `StringWidget` alignment calls, `BlockModelRotation.X0_Y0`, and the solid, cutout and culled translucent block sheets from `Sheets`.
+- Repairs `VertexFormat.getOffset` on 26.2 and 26.3, read from the format's own element of the same name.
+- Repairs old Fabric inventory screen mixins on 26.x that extended the removed effects screen, which now sit on the container screen.
+- Rebuilds `HierarchicalModel` and `AgeableListModel` on 1.21.11 and 26.x, so old entity models built on them load again. The host draws them, and each frame they are posed from their entity through the old `setupAnim`, `prepareMobModel` and keyframe `animate` calls, with the old baby head and body scaling.
+- Repairs old calls that draw a model without a color on 26.2 and newer, which draw it in white as the removed call did.
+- Repairs old Fabric mixins on the survival and creative inventory screens on 26.x that extended the removed effects screen, including their reads of the screen's fields.
+- Registers game rules that old mods add as real rules on Forge and NeoForge 1.21.11 and on every 26.x loader. Their values save with the world and show in `/gamerule`.
+- Runs an old rule's change callback whenever the rule changes, including through `/gamerule`.
+- Rebuilds Fabric API's removed game rule registry and rule factory for old Fabric mods on 26.x, with the same bounds on integer rules.
+- Makes two old game rule values for the same rule in the same world compare equal.
+- Repairs `Options.graphicsMode()` on 1.21.11 and 26.x. It answers fast, fancy or fabulous from the graphics preset, setting it picks that preset, and the old mode numbers still read and look up.
+- Repairs old code that builds an option with a consumer on 26.2 and newer, which take a value listener.
+- Repairs old block entities that read their implicit components on 1.21.11 and 26.x, which now arrive through the component getter.
+- Repairs the block state loot condition builder on 26.3, which builds the block-matching condition that replaced it.
+- Repairs show-item hover events from old code on 1.21.11 and 26.x, which now show the item.
+- Repairs old code that reads or sets the player's movement input on 1.21.11 and 26.x, including old input subclasses. The held keys and impulses are read from and written to the client input that replaced it, and an old input's own tick runs when the game ticks the input.
+- Rebuilds the GUI sprite manager on 26.x, so old code can look up GUI sprites and their scaling from the GUI atlas.
+- Accepts the entity camera override old screens set before drawing an entity on 1.21.11 and 26.x, where a screen already gives its entity a camera that faces it.
+- Repairs old code that lists every game rule through the old visitor or the old rule type map, and old code that creates an empty game rule set. Each sees vanilla rules and rules that old mods registered.
+- Repairs an old rule type's `createRule()`, which now gives a value at the rule's default, apart from any world's rules.
+- Registers an old mod rule whose new id a vanilla rule already uses under the `retromod` namespace instead, with one warning, so the game still starts. Two old mod rules that turn into the same id still stop the game, as two rules with the same name did before.
+- Keeps an old mod rule's value when a world from 1.21.1 opens on 1.21.11 or newer. The value saved under the rule's old name moves to its new id the first time the server starts, unless the rule was already changed since the upgrade.
+- Repairs old mixins at a call whose target lost all its parameters, as the movement input's tick did. An injection only changes its target, and a redirect or wrap drops the old arguments when it only passes them on to the original call.
+- Repairs old wall-mounted block items, such as Supplementaries' buntings, that extend `StandingAndWallBlockItem`, on Forge and NeoForge 1.21.11 and on 26.x. Minecraft moved the attachment direction before the item properties after 1.21.1.
+- Repairs old music disc items that name their song by key, including 1.21.1's two-argument jukebox component. The song is looked up once the registries load.
+- Keeps an old item's registry-key component values working when the mod also used the 1.21.4 hidden tooltip component.
+- Rewrites old mob spawn entries inside a mod's own structure types, when the mod uses the game's spawn entries, as well as in vanilla spawn overrides, for 26.3's spawn count.
+- Reads the weight of an old weighted spawn list entry from beside the entry, where 26.x keeps it.
+- Keeps old Fabric elytra items that implement Fabric API's removed `FabricElytraItem` loading and gliding, by giving them the glider component and the chest slot.
+- Keeps a mod's own text content type, `ComponentContents.Type`, working on 1.21.11 and newer through the `codec()` that replaced it.
+- Repairs more single removed members on 26.x: a team's chat color from 26.2, a resolvable profile's properties, the old cloud setting read, `CONSUME_PARTIAL`, `HoverEvent.getValue`, `BlockEntityType.getKey`, the blend switches, the display refresh rate, the camera's look vector, a block getter's face shade, and an item's crafting remainder.
+- Repairs old code that reads the game rules from the level data on 26.x, which now reads the server's own game rules.
+- Removes compiler-made bridge methods from old mixins when they only forward to a method the game no longer has, such as the old shadow radius on entity renderers.
+- Repairs old farmland blocks, such as Farmer's Delight's rich soil, on every loader. They now pass dirt as the block farmland turns back into, as 1.21.1's farmland did.
+- Repairs old recipe serializers that read their ingredients with NeoForge 1.21.1's `Ingredient.LIST_CODEC` or `LIST_CODEC_NONEMPTY`.
+- Repairs old NeoForge loot modifiers that extend `AddTableLootModifier`, using a rebuilt table modifier on 26.3's loot modifier base.
+- Keeps a mod's own patch feature registering on 26.x by rebuilding `RandomPatchConfiguration`. Vanilla's own random patch feature is not rebuilt.
+- Keeps foods made with 1.21.1's `FoodProperties` record constructor, including their eat time and leftover item.
+- Keeps block properties copied from a vanilla crop usable for a mod's own block on NeoForge and Forge. 26.3's wheat map color reads its age, which the mod's block may not have.
+- Repairs NeoForge 1.21.1's `ModifyDefaultComponentsEvent.modify` and `modifyMatching` calls, which edited a component patch, on 26.1 and newer.
+- Repairs Fabric mods built for 1.21.1 and 1.21.11 that call or override a Minecraft member by an id whose 26.x member changed shape or was removed. Such a call now reaches the member's old name, where Retromod's bridge for it applies, so `Camera.getLookVector`, a resolvable profile's properties, the old renderer `submit` overrides, and fields such as `ServerLevel.sleepStatus` work again.
+- Repairs mixin selectors that name such an id with its old descriptor.
+- Repairs the camera's old up and left vectors on 26.x for every loader.
+- Keeps the current name for every other use of the same id, so mods built for the current game are not changed.
+- Loads old recipes whose serializers read item stacks with `ItemStack.CODEC`, `STRICT_CODEC`, `OPTIONAL_CODEC`, or the single item codecs on 26.x, which loads recipes before item components are bound. The stack reads its components once they are bound.
+- Builds the crafting remainder an old recipe reads while it loads, such as a bowl for a stew, the same way.
+- Repairs 1.21.1 NeoForge `neoforge:compound`, `neoforge:difference`, and other custom ingredients in recipe data, which NeoForge now reads from the `neoforge:ingredient_type` key. A list that mixes tags or custom ingredients becomes a compound ingredient.
+- Repairs mixins on 26.2's static `FarmlandBlock.turnToDirt`, which 26.3 renamed to the instance method `turnToBaseBlock`, so a mixin that keeps a mod's farmland from being trampled applies again.
+- Repairs more single removed members on 1.21.11 and 26.x: the scroll position of world and server lists, the world list's screen, the entity hitbox switch, a player's sweep effect, an entity's command source, the villager type of a biome, and a potion's name key.
+- Repairs the client level data's rain read and the local player's client level on 26.x.
+- Repairs the container screen position getters on NeoForge 26.3, which renamed them.
+- Repairs the `ConfirmLinkScreen.confirmLink` and `confirmLinkNow` calls that take the link as a string on 26.3.
+- Repairs `RandomState.create` calls on 26.3, which takes the same arguments in a new order.
+- Applies the full version chain to Fabric mods that declare a pre-release floor such as `>=1.21-rc.1`. Before, those mods got only part of their repairs.
+- Repairs NeoForge 21.1's `getBurnTime(RecipeType)` reads on the stack and the item. On NeoForge 21.2 to 26.2 they ask the host with the world's fuel values, and on 26.3 they read the cooking fuel item component.
+- Keeps a mod item's own `getBurnTime(ItemStack, RecipeType)` answering those reads, and its `super` call reads what the item would give without it.
+- Lets NeoForge 21.2 to 26.2 furnaces use that override. A negative answer still means the default, as it did before.
+- Repairs old `openPrimary` calls on a pack supplier on 26.3, which split it into `openMetadata` and `openResources`. The call gets the primary pack that `openMetadata` opens.
+- Repairs old `Sheets` getters and maps that 26.1 renamed from materials to sprites, such as `getBannerMaterial`, where the host still has the sprite form.
+- Lets old mods build a block or item before they know its registry id, as Moonlight's block sets build Supplementaries' sign posts, on Fabric 26.1 and newer and on Forge and NeoForge 1.21.11 and newer. The object gets a placeholder id while it is built, and the mod's own register call gives it its real description, name, model, components, and loot table.
+- Keeps a block item named after its block when both were built that way.
+- Repairs old crafting remainder reads on 1.21.5 to 1.21.11 hosts, which read the item's remainder stack there instead of the 26.x template, so mods that read one no longer stop the server with `NoSuchMethodError`.
+- Registers the compound tag entity data serializer that 1.21.9 removed on Fabric 26.1 and newer too, through Fabric API, so old Fabric mods whose entities sync a compound tag get past their entity setup.
+- Repairs `server.getGameRules()` from 1.21.1 mods on Forge, NeoForge, and Fabric 1.21.11, which dropped that getter. The read now takes the level data's game rules, the same rules the overworld uses, so it no longer stops with `NoSuchMethodError`. 26.1 and newer keep the server's own getter.
+- Keeps old cauldron behaviors such as `CauldronInteraction.BANNER`, `DYED_ITEM`, and `SHULKER_BOX` working on Forge and NeoForge 1.21.2 and newer and on Fabric 26.1 and newer. Each one runs the game's own behavior, which 1.21.2 made private.
+- Converts a value a mod registers straight into a writable registry, as Moonlight does, the same way as one registered through `Registry.register`. An old structure processor type is now read as its codec, and an old recipe serializer is adapted.
+- Updates spawn entries in structures built on Moonlight's spawn boxes, such as Supplementaries' galleon, to the single count 26.3 reads.
+- Names the boat a mod's worldgen data spawns by its wood, since 1.21.2 split `minecraft:boat` into one entity per wood. A boat with no wood becomes the oak boat it was before. A boat with a wood the game does not know is left as written.
+- Reads the old single pack metadata type, which 1.21.9 split by pack type, so packs a mod builds at runtime, such as Moonlight's generated data packs, load again.
+- Moves an injection into the lambda that now makes the call it injected at, when the handler ignores the old method's arguments. Moonlight's generated data pack is built again on 26.1 and newer, where `WorldLoader.load` became asynchronous.
+- Lets a required mixin at a constructor call fail softly when the game's target method no longer builds that class, as Supplementaries' shulker shell wrap in `Items` does on 26.3. NeoForge 26.3 no longer stops at that mixin.
+- Points Fabric API's old mod pack class at the class Fabric API for 26.1 and newer moved it to, and gives Fabric API's old tag check inside a resource condition the registry lookup of that condition's test.
+- Keeps the loaders' own condition lists inside a mod's loot condition in the format each loader reads, renames `minecraft:hide_additional_tooltip` in `copy_components` to the tooltip display, and gives an old `smithing_trim` recipe the pattern its template applies.
+- Reads `Recipe.CODEC` from mods built before 26.3 as the recipe codec, since 26.3 made `CODEC` read a recipe holder.
+- Converts a constructor reference to an old recipe constructor, such as Moonlight's `ShapelessRecipe::new`, the same way as a direct call. Moonlight's recipe templates no longer stop with `NoSuchMethodError` on 26.1 and newer.
+- Converts the 1.21.x and 1.20.1 smelting, blasting, smoking, campfire, and stonecutter recipe constructors to the 26.1 ones. A stonecutter recipe loses its group, which 26.1 no longer keeps.
+- Gives a block or item built through a constructor reference, such as `Block::new`, its registry id on Forge and NeoForge, as a direct constructor call already got. Supplementaries' block sets no longer stop NeoForge 26.3 with "Block id not set".
+- Keeps Fabric API's own resource condition when a mod registers one under the same `fabric:` id, as Moonlight does with `fabric:false`, which Fabric API for 26.1 and newer ships.
+- Answers a 1.21.1 mod's tag check on a holder whose tags are not loaded yet with "not in the tag", as 1.21.1 did, instead of stopping with "Tags not bound". Mods built for 1.21.2 or newer keep the host's behavior. This covers Forge and NeoForge from 1.21.2 and Fabric from 26.1.
+- Builds the item stacks an old mod makes with `PotionContents.createItemStack` or `ItemStack.transmuteCopy` before a world binds item components, on 26.1 and newer. Supplementaries' tipped arrows no longer stop Moonlight's common setup on Fabric 26.3.
+- Reads an old recipe's result item from its template when the item's components are not bound yet, so Moonlight's generated sign post and cannon boat recipes are built again on 26.1 and newer.
+- Gives a Fabric mod's custom ingredient written for Fabric API 1.21.1 to 1.21.11 the methods Fabric API for 26.1 and newer calls, so Moonlight's block type swap ingredient is written and read again.
+- Keeps an old mod's reads and changes of `Villager.MEMORY_TYPES` and `SENSOR_TYPES` working on 26.1 and newer, where the villager's brain provider holds them. A change reaches every villager made after it.
+- Drops a recipe advancement on 26.3 when every recipe it rewards is one of the mod's own that the mod does not ship, or when it rewards none and every recipe its unlock criteria wait for is such a recipe, as Supplementaries' `way_sign_oak/minecraft/acacia` advancements are. Older versions never awarded those recipes or fired those criteria, so the file did nothing, and 26.3 refused the whole data load over it. Advancements under both the `recipe` and `recipes` folders are checked.
+- Keeps NeoForge's old `FlowerPotBlock.addPlant` working on NeoForge 26.3, which removed it. The full pot goes into the table NeoForge 26.3 reads full pots from.
+- Reads a tag's holder set as empty for a mod built before 1.21.2 while the tag is not bound yet, as 1.21.1 did, instead of stopping with "Trying to access unbound tag". Moonlight's burn times on Fabric 26.3 read item tags this way while data reloads.
+- Reads an old mod's trade costs through `ItemCost.CODEC` before item components are bound, on 26.1 and newer. Moonlight reads its villager trade files this way while data reloads.
+- Applies Fabric API's `fabric:load_conditions` to the files an old JSON reload listener reads, as Fabric API did before 1.21.5. Supplementaries' trades for an absent add-on, such as Supplementaries Squared's copper lantern, are skipped again.
+- Repairs 1.20.1 immediate-mode drawing on Fabric 26.2 and newer. `Tesselator.getBuilder()` no longer turns into a `begin` call without its arguments, which left whole classes untransformed, and the old builder's `begin` and `end` calls link on every loader.
+- Rebuilds the respawn and world spawn members 1.20.1 mods read, such as `isRespawnForced`, `getRespawnPosition`, `setRespawnPosition`, `getSharedSpawnPos`, and the static `findRespawnPositionAndUseSpawnBlock`, on the respawn data 26.x keeps.
+- Rebuilds `NbtUtils.readGameProfile` and `writeGameProfile`, `User.getGameProfile`, `Minecraft.getProfiler`, `NbtIo` file reads and writes that took a `File`, and `FriendlyByteBuf.readAnySizeNbt`.
+- Rebuilds the 1.20.1 portal target and Fabric API's `FabricDimensions.teleport` on `TeleportTransition`, so an old dimension teleport moves the entity again.
+- Keeps 1.20.1 block entity saves working on Fabric 26.x, as on Forge and NeoForge, and finds the registries for old NBT calls on a Fabric dedicated server too: old `load` and `saveAdditional` overrides run from the host's save, and `ItemStack.of`, `ItemStack.save`, `ContainerHelper`, and named world data calls reach their rebuilt forms.
+- Keeps a block's old void `playerWillDestroy` override running, and repairs its `super` call, now that the host's method returns the block state.
+- Repairs 1.20.1 `CustomRecipe` constructors that still pass the recipe id, and the instance `BlockItem.updateCustomBlockEntityTag` call 26.3 removed.
+- Repairs level events with a player source, game events from before they were holders, `setKeepLiquids` on structure settings, and the structure lookups 26.3 retyped.
+- Repairs client calls 1.20.2 to 26.3 changed: `tell`, `isConnectedToRealms`, `EditBox.tick`, sprite `getU` and `getV` in sixteenths, four-float `ModelPart.render` and `Model.renderToBuffer`, the one-argument background draw, the 1.20.1 selection list and model constructors, `Options.renderDebug`, `Minecraft.cameraEntity`, and `Util.OS` link and folder openers on 26.3.
+- Maps the removed `RenderShape.ENTITYBLOCK_ANIMATED` to `INVISIBLE` and `ResourceLocation.isValidResourceLocation` to a parse check.
+- Gives Forge mods on NeoForge their config screen button: Forge's `ConfigScreenFactory` is registered under NeoForge's `IConfigScreenFactory`.
+- Repairs the client hand swing check on 26.3, which renamed the client swing source to `PREDICTED`.
+- Gives a mod's own chunk generator the steps the host calls: 26.3's single terrain step runs its noise, surface and carvers in order, and 1.21 to 26.2 hosts get the noise step a 1.20.1 generator wrote with an executor.
+- Registers a 1.20.1 chunk generator or biome source codec as the map codec those registries hold on 26.x hosts, so a custom dimension loads.
+- Builds vanilla custom payload packets from a channel id and a buffer on Fabric 26.x while the loader API runtime is on, so they carry the same payload as the old channel calls.
+- Repairs `Ingredient.of(TagKey)`, `Recipe.getResultItem(RegistryAccess)`, `ClientLevel.getRecipeManager`, `FriendlyByteBuf.readComponent` and `writeComponent`, and `Minecraft.getTextureAtlas` for 1.20.1 mods.
+- Keeps old three-argument `mouseScrolled` overrides on screens and widgets running, and repairs their `super` calls, now that the host passes a horizontal amount too.
+- Keeps 1.20.1 `getCloneItemStack(BlockGetter, BlockPos, BlockState)` overrides running, and repairs their `super` calls.
+- Renames SRG field and method ids that Forge mods pass as text, as to `ObfuscationReflectionHelper`, to the Mojang names a Mojang-named host has.
+- Moves Forge's `ObfuscationReflectionHelper`, `KeyConflictContext`, `IKeyConflictContext` and `KeyModifier` to NeoForge's, with the changed modifier lookups bridged.
+- Moves Forge's `TickEvent.RenderTickEvent` to NeoForge's frame event, with `renderTickTime` read from the frame's partial tick.
+- Moves Forge's folder pack, `PathPackResources`, onto the vanilla one on NeoForge too, as on Forge 26.2.
+- Repairs a mixin that injects into a constructor the host gave more parameters, such as the player inventory constructor that 1.21.5 extended. The handler is retyped when it never reads what changed, and the refmap entry follows it to the new constructor.
+- Adapts a mod's own key binding subclass whose `super(...)` passes a `String` category on Fabric and Quilt 1.21.9 to 1.21.11, where only keybinds built with `new` were adapted.
+- Adapts the same subclass call to NeoForge's and Forge's conflict-context key binding constructors on 1.21.9 and newer, with or without a key modifier.
+- Leaves a current Fabric or Quilt mod whose Minecraft version is missing or `*`, such as Essential, byte for byte when it is placed in `retromod-input/` on 26.x, and the CLI `transform` and `batch` commands do the same. Retromod reads the jar's classes, nested jars included: Mojang names with almost no intermediary ones, or Java 25 class files with no Minecraft names, mark it as current. On 26.2 and newer the file name or a nested mod must also name the running version, because a 26.1 mod uses the same names. Older mods without a version are still translated.
+- Links the 1.20.1 and 1.21.1 shader getters, such as `GameRenderer.getPositionTexShader()` and `RenderSystem.getShader()`, on every loader. They answer null, since old `setShader` calls are dropped and the host picks a render pipeline for each draw.
+- Gives 1.20.1 mods the `PoseStack` form of `RenderSystem.getModelViewStack()`, starting from the game's model-view matrix.
+- Repairs `Minecraft.getMainRenderTarget()`, `LevelRenderer.getLightColor`, `allChanged()` and `needsUpdate()` on 26.2 and newer, where they moved to the game renderer, `LightCoordsUtil` and the level extractor.
+- Repairs `AbstractTexture.setFilter(blur, mipmap)` and `getId()` on 26.x, through the texture's sampler and its OpenGL texture.
+- Gives Fabric and NeoForge mods the old int[] `BakedQuad` getters and constructor on 26.1 and newer, as Forge mods already had them.
+- Rebuilds Fabric API's `BuiltinItemRendererRegistry` on Fabric 26.x hosts, so a registered renderer draws its item with the old model's display transforms.
+- Runs Forge 1.20.1 HUD overlays and their render events on NeoForge 26.1 and newer through NeoForge's GUI layers, including `VanillaGuiOverlay`, the `ForgeGui` heights, and casts of `Minecraft.gui`.
+
+Mods built for 1.20.1 are covered in part on the newest hosts, and many still stop at a removed API that has no bridge yet. Mods built for 1.19.x and earlier are not covered yet.
+
+The old boat type is bridged only on Minecraft 26.1 and newer. Hosts from 1.21.2 to 1.21.11 still do not bridge `Boat.Type`, so a mod boat item from before 1.21.2 fails there. On 26.1 and newer, mod boats place a vanilla oak boat, because a new boat entity type needs a renderer and model layer that Retromod cannot provide. Forge's `TierSortingRegistry.isCorrectTierForDrops` stays unbridged on hosts without `Tier`.
+
 ## [1.4.0-snapshot.4] - 2026-11-09
 
 Fourth 1.4.0 snapshot. Shows Retromod's screens on more clients, gives Forge 26.x the shared repairs, bridges more renamed and removed APIs, and brings the CLI in line with the game.

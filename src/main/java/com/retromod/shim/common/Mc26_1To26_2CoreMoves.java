@@ -13,6 +13,8 @@ public final class Mc26_1To26_2CoreMoves {
 
     /** Registers every move, through each loader's own shim since ShimRegistry searches per loader. */
     public static void register(RetromodTransformer t) {
+        // Block properties' emissiveRendering takes a plain state predicate from 26.2.
+        LegacyStatePredicateBridge.register(t);
         // 26.2 changed the STRUCTURE_PROCESSOR registry to hold MapCodecs directly; a 1.21.x
         // mod's SAM-lambda registration then breaks every datapack processor_list that
         // references it. Convert at the Registry.register boundary (#98 worldgen chain).

@@ -7,4 +7,5 @@ import net.minecraft.server.packs.repository.PackSource;
 
 public final class PackLocationInfo {
     public PackLocationInfo(String id, Component title, PackSource source, Optional<?> knownPackInfo) { throw new UnsupportedOperationException(); }
+    public String id() { throw new UnsupportedOperationException(); }
 }

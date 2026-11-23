@@ -10,4 +10,8 @@ public final class RenderTypes {
 
     public static RenderType translucentMovingBlock() { throw new UnsupportedOperationException(); }
     public static RenderType entityTranslucentEmissive(net.minecraft.resources.Identifier texture) { throw new UnsupportedOperationException(); }
+    public static RenderType entitySolid(net.minecraft.resources.Identifier texture) { throw new UnsupportedOperationException(); }
+    public static RenderType entityCutout(net.minecraft.resources.Identifier texture) { throw new UnsupportedOperationException(); }
+    public static RenderType entityTranslucent(net.minecraft.resources.Identifier texture) { throw new UnsupportedOperationException(); }
+    public static RenderType entityTranslucentCull(net.minecraft.resources.Identifier texture) { throw new UnsupportedOperationException(); }
 }

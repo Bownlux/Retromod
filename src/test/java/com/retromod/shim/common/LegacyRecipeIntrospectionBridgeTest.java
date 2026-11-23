@@ -64,6 +64,54 @@ class LegacyRecipeIntrospectionBridgeTest {
         new ClassReader(LegacyRecipeIntrospectionBridge.generate()).accept(new CheckClassAdapter(new ClassWriter(0), true), 0);
     }
 
+    @Test
+    @DisplayName("A result template whose item has no bound components is handed over as holder, count and patch")
+    void unboundResultIsReadFromTheTemplate() {
+        Holder unbound = new Holder(false);
+        Object[] parts = com.retromod.shim.common.embedded.LegacyRecipeIntrospection.unboundResult(
+                new Recipe(new SlotDisplay.ItemStackSlotDisplay(new Template(unbound, 2, "patch"))));
+
+        assertArrayEquals(new Object[] {unbound, 2, "patch"}, parts);
+        assertNull(com.retromod.shim.common.embedded.LegacyRecipeIntrospection.unboundResult(
+                new Recipe(new SlotDisplay.ItemStackSlotDisplay(new Template(new Holder(true), 1, "patch")))),
+                "a bound item resolves through the display as before");
+        assertNull(com.retromod.shim.common.embedded.LegacyRecipeIntrospection.unboundResult(new Recipe(new Object())),
+                "another kind of display resolves as before");
+    }
+
+    @Test
+    @DisplayName("With early stacks, resultItem builds the stack through the early stack helper and verifies")
+    void earlyResultItemVerifies() {
+        byte[] calls = LegacyRecipeIntrospectionBridge.generate(true);
+        new ClassReader(calls).accept(new CheckClassAdapter(new ClassWriter(0), true), 0);
+        ClassNode node = new ClassNode();
+        new ClassReader(calls).accept(node, 0);
+        MethodNode resultItem = node.methods.stream().filter(m -> m.name.equals("resultItem")).findFirst().orElseThrow();
+        List<String> owners = new ArrayList<>();
+        for (AbstractInsnNode insn : resultItem.instructions) {
+            if (insn instanceof MethodInsnNode call) owners.add(call.owner + "." + call.name);
+        }
+        assertTrue(owners.contains(LegacyEarlyItemStackBridge.HELPER + ".of"), owners.toString());
+        assertTrue(owners.contains(LegacyRecipeIntrospectionBridge.SUPPORT + ".resultItem"), "a bound result still resolves");
+    }
+
+    // Stand-ins shaped like 26.x's recipe, slot display, template and item holder, read by name as the support class does.
+    public record Recipe(Object result) {
+        public List<Object> display() {
+            return List.of(new Display(result));
+        }
+    }
+
+    public record Display(Object result) {}
+
+    public static final class SlotDisplay {
+        public record ItemStackSlotDisplay(Template stack) {}
+    }
+
+    public record Template(Holder item, int count, Object components) {}
+
+    public record Holder(boolean areComponentsBound) {}
+
     /** One call of each removed recipe question, as ProjectE's mappers make them. */
     private static byte[] mapper() {
         String recipe = "L" + CRAFTING + "Recipe;";

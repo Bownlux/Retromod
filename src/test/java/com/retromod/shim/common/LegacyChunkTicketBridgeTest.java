@@ -120,6 +120,34 @@ class LegacyChunkTicketBridgeTest {
     }
 
     @Test
+    void everyLoaderReadsTheRemovedVanillaTypesFromTheRebuiltHelper() {
+        String getter = "()L" + TICKET_TYPE + ";";
+        for (VersionShim shim : List.of(new Forge_1_21_4_to_1_21_5(), new NeoForge_1_21_4_to_1_21_5(), new Fabric_1_21_4_to_1_21_5())) {
+            assertEquals(List.of(TYPES + ".player" + getter, TYPES + ".postTeleport" + getter),
+                    typeCalls(registered("26.3", shim), constantReader(TICKET_TYPE, "PLAYER", "POST_TELEPORT")), shim.getShimName());
+        }
+    }
+
+    @Test
+    void aForge1201ReadOfTheRemovedTypesInSrgNamesReachesTheRebuiltHelper() {
+        // Waystones, Alex's Mobs and Steam 'n' Rails read POST_TELEPORT as f_9448_.
+        RetromodTransformer transformer = registered("1.21.11", new Forge_1_21_4_to_1_21_5());
+        transformer.registerSrgNameMappings(Map.of(), Map.of("f_9444_", "PLAYER", "f_9448_", "POST_TELEPORT"));
+
+        String getter = "()L" + TICKET_TYPE + ";";
+        assertEquals(List.of(TYPES + ".player" + getter, TYPES + ".postTeleport" + getter),
+                typeCalls(transformer, constantReader(TICKET_TYPE, "f_9444_", "f_9448_")));
+    }
+
+    @Test
+    void fabricOnAnIntermediaryHostReadsTheRemovedTypesFromTheIntermediaryHelper() {
+        String getter = "()L" + INTERMEDIARY_TICKET_TYPE + ";";
+        assertEquals(List.of(INTERMEDIARY_TYPES + ".player" + getter, INTERMEDIARY_TYPES + ".postTeleport" + getter),
+                typeCalls(registered("1.21.11", new Fabric_1_21_4_to_1_21_5()),
+                        constantReader(INTERMEDIARY_TICKET_TYPE, "field_14033", "field_19347")));
+    }
+
+    @Test
     void hostsBefore1215NeverTakeTheBridge() {
         for (VersionShim shim : List.of(new Forge_1_21_4_to_1_21_5(), new NeoForge_1_21_4_to_1_21_5(),
                 new Fabric_1_21_4_to_1_21_5())) {
@@ -175,6 +203,23 @@ class LegacyChunkTicketBridgeTest {
         mv.visitIntInsn(SIPUSH, 300);
         mv.visitMethodInsn(INVOKESTATIC, type, createTimed, "(Ljava/lang/String;Ljava/util/Comparator;I)L" + type + ";", false);
         mv.visitInsn(POP);
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** Reads of two vanilla ticket type constants, in order. */
+    private static byte[] constantReader(String type, String first, String second) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, "mod/Types", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "types", "()V", null, null);
+        mv.visitCode();
+        for (String field : List.of(first, second)) {
+            mv.visitFieldInsn(GETSTATIC, type, field, "L" + type + ";");
+            mv.visitInsn(POP);
+        }
         mv.visitInsn(RETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

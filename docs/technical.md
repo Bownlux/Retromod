@@ -68,7 +68,7 @@ Data packs run the shared 26.x content migrator even when `pack.mcmeta` already 
 
 ## Embedded Classes
 
-Deleted loader APIs are embedded under a unique `com/retromod/embedded/<mod-key>/` path. This avoids split packages between the loader and multiple transformed mods. A helper used inside nested jars derives its key from the complete parent archive chain, so two libraries with the same filename do not share a generated class.
+Deleted loader APIs, and the compiled Retromod helpers a mod calls, are embedded under a unique `com/retromod/embedded/<mod-key>/` path. Helpers that share state with the running Retromod, such as Forge networking, are not copied, so a mod that uses them needs Retromod installed. This avoids split packages between the loader and multiple transformed mods. A helper used inside nested jars derives its key from the complete parent archive chain, so two libraries with the same filename do not share a generated class.
 
 ## Cache and Verification
 

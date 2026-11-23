@@ -2,4 +2,5 @@
 package net.minecraft.world.flag;
 
 public final class FeatureFlagSet {
+    public static FeatureFlagSet of() { throw new UnsupportedOperationException(); }
 }

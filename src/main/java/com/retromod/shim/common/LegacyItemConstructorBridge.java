@@ -59,9 +59,11 @@ public final class LegacyItemConstructorBridge {
     static final String BOAT_ITEM = "net/minecraft/world/item/BoatItem";
     static final String OLD_BOAT_TYPE = "net/minecraft/world/entity/vehicle/Boat$Type";
     static final String ENTITY_TYPE = "net/minecraft/world/entity/EntityType";
+    static final String ENTITY_TYPES = "net/minecraft/world/entity/EntityTypes";
 
     static final String OLD_SIGN_DESC = "(" + ITEM_PROPS + BLOCK + BLOCK + ")V";
     static final String OLD_STANDING_DESC = "(" + BLOCK + BLOCK + ITEM_PROPS + DIRECTION + ")V";
+    static final String NEW_STANDING_DESC = "(" + BLOCK + BLOCK + DIRECTION + ITEM_PROPS + ")V";
     static final String OLD_POTION_DESC = "(" + EFFECTS_DESC + ")V";
     static final String OLD_BOAT_DESC = "(ZL" + OLD_BOAT_TYPE + ";" + ITEM_PROPS + ")V";
     static final String STAND_IN_BOAT_DESC = "(ZL" + BOAT_TYPE + ";" + ITEM_PROPS + ")V";
@@ -72,22 +74,27 @@ public final class LegacyItemConstructorBridge {
     }
 
     static void register(RetromodTransformer transformer, String hostVersion) {
-        if (!RetromodVersion.isUnobfuscatedTarget(hostVersion)) return;
+        if (!RetromodVersion.isUnobfuscatedTarget(hostVersion)) {
+            // Before 26.1 only the wall-standing item's reorder is bridged, where the host shows it, as 1.21.11 does.
+            if (standingItemReordered(com.retromod.core.ClassResourceInspector.read(STANDING_ITEM), hostVersion)) {
+                registerStandingItem(transformer, STANDING_ONLY);
+            }
+            return;
+        }
         // From 26.3 the rebuilt SignItem keeps this constructor itself (LegacyRemovedBlockItems), and the
         // factory class must not name the removed class.
         boolean hostHasSignItem = !LegacyRemovedBlockItems.hostLacks(
                 com.retromod.core.ClassResourceInspector::read, SIGN_ITEM, hostVersion);
         if (!transformer.getSyntheticClasses().containsKey(INTERNAL)) {
             transformer.registerSyntheticClass(BOAT_TYPE, generateBoatType());
-            transformer.registerSyntheticClass(INTERNAL, generate(hostHasSignItem));
+            transformer.registerSyntheticClass(INTERNAL, generate(hostHasSignItem, boatTypeOwner(
+                    com.retromod.core.ClassResourceInspector.read(ENTITY_TYPES), hostVersion)));
         }
         if (hostHasSignItem) {
             transformer.registerConstructorRedirect(SIGN_ITEM, OLD_SIGN_DESC,
                     INTERNAL, "signItem", OLD_SIGN_DESC.replace(")V", ")L" + SIGN_ITEM + ";"));
         }
-        transformer.registerConstructorRedirect(STANDING_ITEM, OLD_STANDING_DESC,
-                INTERNAL, "standingAndWallBlockItem",
-                OLD_STANDING_DESC.replace(")V", ")L" + STANDING_ITEM + ";"));
+        registerStandingItem(transformer, INTERNAL);
         transformer.registerConstructorRedirect(POTION, OLD_POTION_DESC,
                 INTERNAL, "potion", "(" + EFFECTS_DESC + ")L" + POTION + ";");
 
@@ -99,11 +106,64 @@ public final class LegacyItemConstructorBridge {
         }
     }
 
-    public static byte[] generate() {
-        return generate(true);
+    /** The factory class for the wall-standing item alone, on hosts before 26.1. */
+    static final String STANDING_ONLY = "com/retromod/generated/LegacyStandingItems";
+
+    /** Whether the host's wall-standing item takes the direction before the properties; offline, from 1.21.11. */
+    static boolean standingItemReordered(org.objectweb.asm.tree.ClassNode host, String hostVersion) {
+        if (host == null) return hostVersion != null && RetromodVersion.compareMcVersions(hostVersion, "1.21.11") >= 0;
+        boolean hasNew = host.methods.stream().anyMatch(m -> m.name.equals("<init>") && m.desc.equals(NEW_STANDING_DESC));
+        boolean hasOld = host.methods.stream().anyMatch(m -> m.name.equals("<init>") && m.desc.equals(OLD_STANDING_DESC));
+        return hasNew && !hasOld;
     }
 
-    static byte[] generate(boolean withSignItem) {
+    /** The class holding the oak boat entity types: 26.2 moved them from EntityType to EntityTypes; offline, the version decides. */
+    static String boatTypeOwner(org.objectweb.asm.tree.ClassNode entityTypes, String hostVersion) {
+        if (entityTypes != null) {
+            return entityTypes.fields.stream().anyMatch(f -> f.name.equals("OAK_BOAT")) ? ENTITY_TYPES : ENTITY_TYPE;
+        }
+        if (com.retromod.core.ClassResourceInspector.read(ENTITY_TYPE) != null) return ENTITY_TYPE;
+        return hostVersion != null && RetromodVersion.compareMcVersions(hostVersion, "26.2") >= 0 ? ENTITY_TYPES : ENTITY_TYPE;
+    }
+
+    private static void registerStandingItem(RetromodTransformer transformer, String factoryOwner) {
+        if (factoryOwner.equals(STANDING_ONLY) && !transformer.getSyntheticClasses().containsKey(STANDING_ONLY)) {
+            transformer.registerSyntheticClass(STANDING_ONLY, generateStandingOnly());
+        }
+        transformer.registerConstructorRedirect(STANDING_ITEM, OLD_STANDING_DESC,
+                factoryOwner, "standingAndWallBlockItem",
+                OLD_STANDING_DESC.replace(")V", ")L" + STANDING_ITEM + ";"));
+        // A subclass's super call cannot go through the factory, so its last two arguments swap in place.
+        transformer.registerSuperConstructorAdapter(STANDING_ITEM, OLD_STANDING_DESC, NEW_STANDING_DESC,
+                mv -> mv.visitInsn(SWAP));
+    }
+
+    /** {@code static StandingAndWallBlockItem standingAndWallBlockItem(s, w, p, d) { return new StandingAndWallBlockItem(s, w, d, p); }} */
+    static byte[] generateStandingOnly() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, STANDING_ONLY, null, "java/lang/Object", null);
+        MethodVisitor standing = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "standingAndWallBlockItem",
+                OLD_STANDING_DESC.replace(")V", ")L" + STANDING_ITEM + ";"), null, null);
+        standing.visitCode();
+        standing.visitTypeInsn(NEW, STANDING_ITEM);
+        standing.visitInsn(DUP);
+        standing.visitVarInsn(ALOAD, 0);
+        standing.visitVarInsn(ALOAD, 1);
+        standing.visitVarInsn(ALOAD, 3);
+        standing.visitVarInsn(ALOAD, 2);
+        standing.visitMethodInsn(INVOKESPECIAL, STANDING_ITEM, "<init>", NEW_STANDING_DESC, false);
+        standing.visitInsn(ARETURN);
+        standing.visitMaxs(0, 0);
+        standing.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    public static byte[] generate() {
+        return generate(true, ENTITY_TYPE);
+    }
+
+    static byte[] generate(boolean withSignItem, String boatTypeOwner) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES) {
             @Override
             protected String getCommonSuperClass(String first, String second) {
@@ -150,7 +210,7 @@ public final class LegacyItemConstructorBridge {
         standing.visitEnd();
 
         generatePotion(cw);
-        generateBoatItem(cw);
+        generateBoatItem(cw, boatTypeOwner);
         cw.visitEnd();
         return cw.toByteArray();
     }
@@ -195,7 +255,7 @@ public final class LegacyItemConstructorBridge {
     }
 
     /** {@code static BoatItem boatItem(boolean chest, LegacyBoatType type, Properties p)}. */
-    private static void generateBoatItem(ClassWriter cw) {
+    private static void generateBoatItem(ClassWriter cw, String boatTypeOwner) {
         MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "boatItem",
                 STAND_IN_BOAT_DESC.replace(")V", ")L" + BOAT_ITEM + ";"), null, null);
         mv.visitCode();
@@ -207,10 +267,10 @@ public final class LegacyItemConstructorBridge {
         Label typed = new Label();
         mv.visitVarInsn(ILOAD, 0);
         mv.visitJumpInsn(IFEQ, plain);
-        mv.visitFieldInsn(GETSTATIC, ENTITY_TYPE, "OAK_CHEST_BOAT", "L" + ENTITY_TYPE + ";");
+        mv.visitFieldInsn(GETSTATIC, boatTypeOwner, "OAK_CHEST_BOAT", "L" + ENTITY_TYPE + ";");
         mv.visitJumpInsn(GOTO, typed);
         mv.visitLabel(plain);
-        mv.visitFieldInsn(GETSTATIC, ENTITY_TYPE, "OAK_BOAT", "L" + ENTITY_TYPE + ";");
+        mv.visitFieldInsn(GETSTATIC, boatTypeOwner, "OAK_BOAT", "L" + ENTITY_TYPE + ";");
         mv.visitLabel(typed);
         mv.visitVarInsn(ALOAD, 2);
         mv.visitMethodInsn(INVOKESPECIAL, BOAT_ITEM, "<init>",

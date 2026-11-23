@@ -50,6 +50,16 @@ public final class LegacyFeatureSupport {
         }
     }
 
+    /** Logs, once per feature class, an old feature that calls a missing API, and places nothing for it. */
+    public static boolean skipBrokenFeature(Object feature, LinkageError missing) {
+        String name = feature.getClass().getName();
+        LegacyLog.warnOnce("legacy-feature-broken:" + name, "Retromod skipped the old world feature " + name
+                + " because it needs something this Minecraft version does not have (" + missing.getClass().getName()
+                + ": " + missing.getMessage() + "). "
+                + "The rest of the world still generates. Report this line to Retromod with the mod's name.");
+        return false;
+    }
+
     /** {@code Codec} that always decodes to {@code value}, for {@code NoneFeatureConfiguration.CODEC}. */
     public static Object unitCodec(Object value) {
         try {

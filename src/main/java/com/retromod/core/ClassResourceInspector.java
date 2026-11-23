@@ -23,24 +23,40 @@ public final class ClassResourceInspector {
         offlineHost = loader;
     }
 
+    /** The jars an offline translation reads as the host, or null; callers key caches on it. */
+    public static ClassLoader offlineHost() {
+        return offlineHost;
+    }
+
     public static ClassNode read(String internalName) {
-        ClassNode fabricNode = readFabricPreMixin(internalName);
+        return read(internalName, STRUCTURE_ONLY);
+    }
+
+    /** The same, with method bodies, for a check of what the host's code does; debug info and frames stay out. */
+    public static ClassNode readWithCode(String internalName) {
+        return read(internalName, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+    }
+
+    private static final int STRUCTURE_ONLY = ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+
+    private static ClassNode read(String internalName, int flags) {
+        ClassNode fabricNode = readFabricPreMixin(internalName, flags);
         if (fabricNode != null) return fabricNode;
 
         String resource = internalName + ".class";
         ClassLoader own = ClassResourceInspector.class.getClassLoader();
         ClassLoader context = Thread.currentThread().getContextClassLoader();
 
-        ClassNode node = readFrom(own, resource);
+        ClassNode node = readFrom(own, resource, flags);
         if (node == null && context != own) {
-            node = readFrom(context, resource);
+            node = readFrom(context, resource, flags);
         }
         // Read from every thread alike, since batch translates classes on worker threads.
         if (node == null && offlineHost != null) {
-            node = readFrom(offlineHost, resource);
+            node = readFrom(offlineHost, resource, flags);
         }
         if (node == null && internalName.startsWith("java/")) {
-            node = readBootstrap(resource);
+            node = readBootstrap(resource, flags);
         }
         return node;
     }
@@ -68,30 +84,29 @@ public final class ClassResourceInspector {
      */
     private static final long MAX_CLASS_BYTES = 8L * 1024 * 1024;
 
-    private static ClassNode readFrom(ClassLoader loader, String resource) {
+    private static ClassNode readFrom(ClassLoader loader, String resource, int flags) {
         if (loader == null) return null;
         try (InputStream in = loader.getResourceAsStream(resource)) {
-            return parse(in);
+            return parse(in, flags);
         } catch (IOException | RuntimeException e) {
             return null;
         }
     }
 
-    private static ClassNode readBootstrap(String resource) {
+    private static ClassNode readBootstrap(String resource, int flags) {
         try (InputStream in = Object.class.getModule().getResourceAsStream(resource)) {
-            return parse(in);
+            return parse(in, flags);
         } catch (IOException | RuntimeException e) {
             return null;
         }
     }
 
-    /** Read a bounded number of bytes, then parse structure only. */
-    private static ClassNode parse(InputStream in) throws IOException {
+    /** Read a bounded number of bytes, then parse with {@code flags}. */
+    private static ClassNode parse(InputStream in, int flags) throws IOException {
         if (in == null) return null;
         byte[] bytes = com.retromod.util.ZipSecurity.safeReadAllBytes(in, MAX_CLASS_BYTES);
         ClassNode node = new ClassNode();
-        new ClassReader(bytes).accept(node,
-                ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        new ClassReader(bytes).accept(node, flags);
         return node;
     }
 
@@ -99,7 +114,7 @@ public final class ClassResourceInspector {
      * Fabric stores Minecraft under its raw obfuscated resource names. Ask Knot for the mapped,
      * pre-Mixin bytes so intermediary names can be inspected without defining the target class.
      */
-    private static ClassNode readFabricPreMixin(String internalName) {
+    private static ClassNode readFabricPreMixin(String internalName, int flags) {
         try {
             ClassLoader loader = ClassResourceInspector.class.getClassLoader();
             Class<?> base = Class.forName(
@@ -112,8 +127,7 @@ public final class ClassResourceInspector {
                     .invoke(launcher, internalName.replace('/', '.'), true);
             if (bytes == null) return null;
             ClassNode node = new ClassNode();
-            new ClassReader(bytes).accept(node,
-                    ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            new ClassReader(bytes).accept(node, flags);
             return node;
         } catch (ReflectiveOperationException | RuntimeException e) {
             return null;

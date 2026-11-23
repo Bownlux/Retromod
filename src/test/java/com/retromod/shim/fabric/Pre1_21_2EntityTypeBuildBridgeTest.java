@@ -86,6 +86,69 @@ class Pre1_21_2EntityTypeBuildBridgeTest {
     }
 
     @Test
+    @DisplayName("a host whose Fabric API still has the nameless build() keeps it")
+    void namelessBuildStaysWhereFabricApiHasIt() {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        Pre1_21_2EntityTypeBuildBridge.registerRedirects(t, false);
+
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(Opcodes.V17, ACC_PUBLIC, "test/EntityReg", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "reg",
+                "(Lnet/minecraft/class_1299$class_1300;)Lnet/minecraft/class_1299;", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "net/minecraft/class_1299$class_1300", "build", "()Lnet/minecraft/class_1299;", false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        ClassNode cn = new ClassNode();
+        new ClassReader(t.transformClass(cw.toByteArray(), "test/EntityReg")).accept(cn, 0);
+        for (MethodNode m : cn.methods) {
+            for (var i : m.instructions.toArray()) {
+                if (i instanceof MethodInsnNode mi && mi.name.equals("build")) {
+                    assertEquals("net/minecraft/class_1299$class_1300", mi.owner, "the host's own build() is called");
+                }
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Fabric API's old build() with no name devirtualizes to the bridge too")
+    void namelessBuildCallBridged() {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        Pre1_21_2EntityTypeBuildBridge.registerRedirects(t);
+
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(Opcodes.V17, ACC_PUBLIC, "test/EntityReg", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "reg",
+                "(Lnet/minecraft/class_1299$class_1300;)Lnet/minecraft/class_1299;", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "net/minecraft/class_1299$class_1300", "build",
+                "()Lnet/minecraft/class_1299;", false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        ClassNode cn = new ClassNode();
+        new ClassReader(t.transformClass(cw.toByteArray(), "test/EntityReg")).accept(cn, 0);
+        boolean bridged = false;
+        for (MethodNode m : cn.methods) {
+            for (var i : m.instructions.toArray()) {
+                if (i instanceof MethodInsnNode mi && mi.owner.equals("com/retromod/polyfill/minecraft/RetroEntityTypeBuild")) {
+                    bridged = mi.name.equals("build") && mi.desc.equals("(Ljava/lang/Object;)Ljava/lang/Object;");
+                }
+            }
+        }
+        assertTrue(bridged, "the nameless build call must reach the bridge");
+    }
+
+    @Test
     @DisplayName("polyfill fail-safe: no Minecraft on the classpath -> null, never a throw")
     void polyfillFailSafe() {
         assertDoesNotThrow(() ->

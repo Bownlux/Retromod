@@ -44,15 +44,49 @@ final class ForgeNeoForgeSameShapeMoves {
         // A fluid type's bucket sounds: the three constants, get(String) and name(); also checked against 26.3.
         {"net/minecraftforge/common/SoundAction", "net/neoforged/neoforge/common/SoundAction"},
         {"net/minecraftforge/common/SoundActions", "net/neoforged/neoforge/common/SoundActions"},
+        // A key mapping's conflict context: the three constants, isActive and conflicts; checked against NeoForge 26.3.
+        {"net/minecraftforge/client/settings/IKeyConflictContext",
+         "net/neoforged/neoforge/client/settings/IKeyConflictContext"},
+        {"net/minecraftforge/client/settings/KeyConflictContext",
+         "net/neoforged/neoforge/client/settings/KeyConflictContext"},
+        // The modifiers keep their constants, isActive and matches; the three lookups that changed are bridged below.
+        {"net/minecraftforge/client/settings/KeyModifier", "net/neoforged/neoforge/client/settings/KeyModifier"},
     };
 
+    static final String KEY_MODIFIERS = com.retromod.shim.common.RebuiltApiClasses.ROOT + "forge/client/settings/LegacyKeyModifiers";
+
+    static final String KEY_MODIFIER = "net/neoforged/neoforge/client/settings/KeyModifier";
+
     private ForgeNeoForgeSameShapeMoves() {}
+
+    /**
+     * NeoForge renamed the single-key lookup and answers the active modifiers as a list; both are bridged only where the
+     * host declares them, which NeoForge 1.21.11 and 26.3 do. Offline, a target from 1.21.11 has them.
+     */
+    static void registerKeyModifierLookups(RetromodTransformer transformer, org.objectweb.asm.tree.ClassNode host) {
+        String key = "Lcom/mojang/blaze3d/platform/InputConstants$Key;";
+        String single = "(" + key + ")L" + KEY_MODIFIER + ";";
+        boolean present = host == null
+                ? com.retromod.core.RetromodVersion.compareMcVersions(com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "1.21.11") >= 0
+                : declares(host, "getKeyModifier", single) && declares(host, "getActiveModifiers", "()Ljava/util/List;");
+        if (!present) return;
+        transformer.registerMethodRedirect(KEY_MODIFIER, "getModifier", single, KEY_MODIFIER, "getKeyModifier", single);
+        com.retromod.shim.common.RebuiltApiClasses.registerTree(transformer, KEY_MODIFIERS);
+        transformer.registerMethodRedirect(KEY_MODIFIER, "getActiveModifier", "()L" + KEY_MODIFIER + ";", KEY_MODIFIERS,
+                "getActiveModifier", "()L" + KEY_MODIFIER + ";");
+        transformer.registerMethodRedirect(KEY_MODIFIER, "getValues", "(Z)Ljava/util/List;", KEY_MODIFIERS, "getValues", "(Z)Ljava/util/List;");
+    }
+
+    private static boolean declares(org.objectweb.asm.tree.ClassNode node, String name, String desc) {
+        return node.methods.stream().anyMatch(m -> m.name.equals(name) && m.desc.equals(desc));
+    }
 
     /** Registers the renames. Callers apply this only on a NeoForge host. */
     static void register(RetromodTransformer transformer) {
         for (String[] move : MOVES) {
             transformer.registerClassRedirect(move[0], move[1]);
         }
+        registerKeyModifierLookups(transformer, com.retromod.core.ClassResourceInspector.read(KEY_MODIFIER));
         // Renamed too, but its buffer type changed, so it also needs per-class forwarders.
         LegacySpawnDataAdapter.register(transformer);
     }

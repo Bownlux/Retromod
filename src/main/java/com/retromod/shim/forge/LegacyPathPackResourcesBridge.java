@@ -26,10 +26,38 @@ public final class LegacyPathPackResourcesBridge {
 
     private LegacyPathPackResourcesBridge() {}
 
-    /** Registers where the Forge host lacks its own PathPackResources; offline, a Forge target from 26.2. */
+    /** Registers where a Forge host lacks its own PathPackResources; offline, a Forge target from 26.2. */
     public static void register(RetromodTransformer t) {
         // Forge 1.20.1 ships the class and Forge 26.2 and 26.3 do not. Hosts between them were not checked.
         if (!ForgeHostShape.matches(List.of(VANILLA_PACK, PACK_LOCATION), List.of(FORGE_PACK))) return;
+        registerBridge(t);
+    }
+
+    /**
+     * The same bridge for a Forge mod on NeoForge, which never had Forge's class. The rebuilt pack reads folders through
+     * the vanilla pack's static folder helpers, which 26.1 has and NeoForge 1.21.11 lacks; offline, the target version decides.
+     */
+    public static void registerOnNeoForge(RetromodTransformer t) {
+        if (!neoForgeHostHasFolderHelpers(com.retromod.core.ClassResourceInspector.read(VANILLA_PACK))) return;
+        registerBridge(t);
+    }
+
+    /** Whether the host's vanilla pack has the static getNamespaces(Path) and listResources(Path, ...) the bridge uses. */
+    static boolean neoForgeHostHasFolderHelpers(org.objectweb.asm.tree.ClassNode pack) {
+        if (pack == null) {
+            return com.retromod.core.RetromodVersion.compareMcVersions(com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "26.1") >= 0;
+        }
+        String output = "Lnet/minecraft/server/packs/PackResources$ResourceOutput;";
+        return declaresStatic(pack, "getNamespaces", "(Ljava/nio/file/Path;)Ljava/util/Set;")
+                && declaresStatic(pack, "listResources", "(Ljava/nio/file/Path;Ljava/lang/String;Ljava/lang/String;" + output + ")V");
+    }
+
+    private static boolean declaresStatic(org.objectweb.asm.tree.ClassNode node, String name, String desc) {
+        return node.methods.stream().anyMatch(m -> m.name.equals(name) && m.desc.equals(desc)
+                && (m.access & org.objectweb.asm.Opcodes.ACC_STATIC) != 0);
+    }
+
+    private static void registerBridge(RetromodTransformer t) {
         RebuiltApiClasses.registerTree(t, REBUILT);
         SyntheticEmbedder.registerClassResource(t, LEGACY_LOG, LegacyLog.class);
 

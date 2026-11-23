@@ -629,6 +629,12 @@ public class RetromodCli {
         transformer.setModSourceVersion(isUnknownSourceVersion(sourceMcVersion) ? null : sourceMcVersion);
         transformer.setModSourceJar(modPath);
         boolean sourceUnknown = isUnknownSourceVersion(sourceMcVersion);
+        // A Fabric jar without a Minecraft constraint can still be current; its classes decide, as in the game.
+        if (sourceUnknown && builtForTargetByEvidence(info, modPath)) {
+            System.out.println(modPath.getFileName() + " names no Minecraft version, but its classes are built for "
+                    + "Minecraft " + TARGET_MC_VERSION + ". No changes were made.");
+            return;
+        }
         List<VersionShim> versionShims;
         if (sourceUnknown) {
             System.err.println("Retromod could not determine the source Minecraft version.");
@@ -667,6 +673,7 @@ public class RetromodCli {
                 modPath.getFileName().toString(), transformer,
                 com.retromod.core.SyntheticLibraries.NONE);
         com.retromod.core.ModuleInfoRepair.dropInvalid(outputPath);
+        com.retromod.mixin.MixinShadowGate.finishMod();
         reportMissingFabricApi(outputPath, modPath, info);
         System.out.println("Updated: " + outputPath);
         verifyIfRequested(outputPath, modPath.getFileName().toString(), args);
@@ -855,6 +862,16 @@ public class RetromodCli {
                 boolean sourceVersionUnknown = isUnknownSourceVersion(info.targetMcVersion());
                 boolean hasApiRepairs = !shimRegistry.findApiShimsForLoader(
                         info.modLoaderType(), TARGET_MC_VERSION).isEmpty();
+                // A current jar that names no Minecraft version is copied byte for byte, as the game does.
+                if (sourceVersionUnknown && builtForTargetByEvidence(info, modFile.toPath())) {
+                    Path copied = outputFolder.resolve(modFile.getName());
+                    ArchivePublication.copyReplacing(modFile.toPath(), copied);
+                    System.out.println("copied: its classes are built for Minecraft " + TARGET_MC_VERSION);
+                    entries.add(new BatchEntry(modFile.toPath(), copied, BatchStatus.COPIED,
+                            info, "classes built for Minecraft " + TARGET_MC_VERSION));
+                    skipped++;
+                    continue;
+                }
                 // The user explicitly staged this batch. Unknown sources take the loader-safe
                 // fallback, while same-version inputs still receive matching API repairs.
                 if (!needsBytecodeTransform && (sourceVersionUnknown || hasApiRepairs)) {
@@ -954,6 +971,8 @@ public class RetromodCli {
                 failed++;
             }
         }
+        // Each mod's start reports the one before it, so only the last is left.
+        com.retromod.mixin.MixinShadowGate.finishMod();
         
         System.out.println();
         System.out.printf("Summary: %d processed, %d skipped, %d failed%n", processed, skipped, failed);
@@ -970,6 +989,13 @@ public class RetromodCli {
         String message = e.getMessage();
         String type = e.getClass().getSimpleName();
         return message == null || message.isBlank() ? type : type + ": " + message;
+    }
+
+    /** Whether a Fabric or Quilt jar with no Minecraft version is already built for the target, by its classes. */
+    static boolean builtForTargetByEvidence(ModVersionInfo info, Path jar) {
+        String loader = info.modLoaderType();
+        return ("fabric".equalsIgnoreCase(loader) || "quilt".equalsIgnoreCase(loader))
+                && com.retromod.core.UnversionedJarEvidence.isBuiltForHost(jar, TARGET_MC_VERSION);
     }
 
     static boolean isUnknownSourceVersion(String sourceVersion) {
@@ -1269,6 +1295,9 @@ public class RetromodCli {
             }
             var typeRenames = com.retromod.core.LegacyJarTypeRenames.forJar(
                     transformer, classBytesForEquipment);
+            // Handlers another class of the mod calls or references, which the subscriber guard keeps.
+            java.util.Set<String> handlerReferences = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard
+                    .methodsReferencedAcrossClasses(classBytesForEquipment);
 
             // The hierarchy also reads the jars it bundles, as the runtime class pass does.
             try (var hierarchyScope = transformer.pushJarClassBytesProvider(com.retromod.core.BundledJarClasses.attach(
@@ -1419,7 +1448,7 @@ public class RetromodCli {
                                                 .companionName(owner))) companions.put(name, bytes);
                                     });
                             data = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard
-                                    .apply(data);
+                                    .apply(data, name -> false, handlerReferences::contains);
                             data = com.retromod.shim.forge.LegacyTradeBridge.watchHandlers(data);
                             data = com.retromod.shim.forge.LegacyWorldgenBridge.guardOverworldInjection(data);
                             data = com.retromod.shim.forge.Forge1122LifecycleSynthetics
@@ -1667,17 +1696,17 @@ public class RetromodCli {
                 "$1\"*\""
             );
 
-            json = json.replaceAll(
-                "(\"fabricloader\"\\s*:\\s*)\"[^\"]*\"",
-                "$1\">=0.14.0\""
-            );
+            // The loader floor stays the mod's own; see keepLoaderFloor below.
 
             json = json.replaceAll(
                 "(\"fabric-[a-z-]+(?:-v[0-9]+)?\"\\s*:\\s*)\"(?:>=)?[0-9][^\"]*\"",
                 "$1\"*\""
             );
 
-            return json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            // Fabric Loader sets the mod's Mixin compatibility from this floor, so it is kept.
+            return com.retromod.core.FabricMetadataCompat.keepLoaderFloor(
+                    json.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    com.retromod.core.FabricMetadataCompat.loaderCeiling(TARGET_MC_VERSION));
         } catch (Exception e) {
             return jsonData;
         }
@@ -1949,6 +1978,9 @@ public class RetromodCli {
             RetromodTransformer transformer = RetromodTransformer.getInstance();
             Map<String, byte[]> classBytes =
                     RetromodTransformer.readJarClassBytes(jarData, budget);
+            // Handlers another class of this library calls or references, which the subscriber guard keeps.
+            Set<String> handlerReferences = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard
+                    .methodsReferencedAcrossClasses(classBytes.values());
             Set<String> entryNames = new HashSet<>();
             // Built here rather than reused, because it snapshots the redirects registered so far.
             var nestedMixins = new com.retromod.mixin.MixinCompatibilityTransformer(
@@ -2058,6 +2090,9 @@ public class RetromodCli {
                                 byte[] hooked = constructorHooks.apply(data);
                                 if (hooked != data) { data = hooked; modified = true; }
                             }
+                            // A bundled library's subscribers load on the host like the mod's, so they get the same guard.
+                            byte[] guarded = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard.apply(data, event -> false, handlerReferences::contains);
+                            if (guarded != data) { data = guarded; modified = true; }
                             // Wired last, so the registration call lands in the finished constructor.
                             if (biomeWiring != null) {
                                 byte[] wired = biomeWiring.wireClass(data);
@@ -2576,12 +2611,11 @@ public class RetromodCli {
             
             json.append("    \"").append(modId).append("\": {\n");
             json.append("      \"-depends\": {\n");
-            json.append("        \"minecraft\": \"*\",\n");
-            json.append("        \"fabricloader\": \"*\"\n");
+            json.append("        \"minecraft\": \"*\"\n");
             json.append("      },\n");
             json.append("      \"+depends\": {\n");
-            json.append("        \"minecraft\": \">=1.14\",\n");
-            json.append("        \"fabricloader\": \">=0.14.0\"\n");
+            // fabricloader stays the mod's own: its floor sets the Mixin compatibility of its mixins.
+            json.append("        \"minecraft\": \">=1.14\"\n");
             json.append("      }\n");
             json.append("    }");
         }

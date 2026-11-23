@@ -11,4 +11,5 @@ public final class Style {
         public static final MapCodec<Style> MAP_CODEC = null;
         public static final Codec<Style> CODEC = null;
     }
+    public static final Style EMPTY = null;
 }

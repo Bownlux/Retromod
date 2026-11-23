@@ -241,10 +241,19 @@ class MixinLegacyMemberBridgeTest {
     }
 
     private static byte[] legacyInventoryScreenMixin() {
-        String target = "net/minecraft/class_490";
-        String oldSuper = "net/minecraft/class_485";
-        String constructor = "(Lnet/minecraft/class_1703;Lnet/minecraft/class_1661;"
-                + "Lnet/minecraft/class_2561;)V";
+        return legacyInventoryScreenMixin("net/minecraft/class_490", "net/minecraft/class_485",
+                "(Lnet/minecraft/class_1703;Lnet/minecraft/class_1661;Lnet/minecraft/class_2561;)V");
+    }
+
+    /** The same mixin after the 26.x remap, where class_485 reads as EffectsInInventory, with a super.onClose() call. */
+    private static byte[] remappedInventoryScreenMixin() {
+        return legacyInventoryScreenMixin("net/minecraft/client/gui/screens/inventory/InventoryScreen",
+                "net/minecraft/client/gui/screens/inventory/EffectsInInventory",
+                "(Lnet/minecraft/world/inventory/AbstractContainerMenu;Lnet/minecraft/world/entity/player/Inventory;"
+                        + "Lnet/minecraft/network/chat/Component;)V");
+    }
+
+    private static byte[] legacyInventoryScreenMixin(String target, String oldSuper, String constructor) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
                 "test/MixinInventoryScreen", null, oldSuper, null);
@@ -266,6 +275,16 @@ class MixinLegacyMemberBridgeTest {
         constructorMethod.visitInsn(Opcodes.RETURN);
         constructorMethod.visitMaxs(0, 0);
         constructorMethod.visitEnd();
+        MethodVisitor close = cw.visitMethod(Opcodes.ACC_PUBLIC, "onClose", "()V", null, null);
+        close.visitCode();
+        close.visitVarInsn(Opcodes.ALOAD, 0);
+        close.visitFieldInsn(Opcodes.GETFIELD, oldSuper, "width", "I");
+        close.visitInsn(Opcodes.POP);
+        close.visitVarInsn(Opcodes.ALOAD, 0);
+        close.visitMethodInsn(Opcodes.INVOKESPECIAL, oldSuper, "onClose", "()V", false);
+        close.visitInsn(Opcodes.RETURN);
+        close.visitMaxs(0, 0);
+        close.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
     }
@@ -383,6 +402,39 @@ class MixinLegacyMemberBridgeTest {
                 .findFirst().orElseThrow();
         assertTrue(calls(constructor, "net/minecraft/class_465", "<init>", constructor.desc));
         assertFalse(calls(constructor, "net/minecraft/class_485", "<init>", constructor.desc));
+    }
+
+    @Test
+    @DisplayName("An old inventory screen mixin that reads EffectsInInventory after the 26.x remap moves to the container screen")
+    void remappedInventoryScreenMixinLeavesEffectsHelper() {
+        String container = "net/minecraft/client/gui/screens/inventory/AbstractContainerScreen";
+        String effects = "net/minecraft/client/gui/screens/inventory/EffectsInInventory";
+        ClassNode classNode = read(remappedInventoryScreenMixin());
+
+        assertTrue(MixinLegacyMemberBridge.apply(classNode));
+        assertEquals(container, classNode.superName);
+        for (MethodNode method : classNode.methods) {
+            assertFalse(java.util.Arrays.stream(method.instructions.toArray()).anyMatch(
+                    i -> i instanceof MethodInsnNode call && effects.equals(call.owner)), method.name + " still calls the helper");
+        }
+        MethodNode close = classNode.methods.stream().filter(m -> "onClose".equals(m.name)).findFirst().orElseThrow();
+        assertTrue(calls(close, container, "onClose", "()V"), "super.onClose() reaches the container screen");
+    }
+
+    @Test
+    @DisplayName("An old creative screen mixin that extended the effects screen reads the container screen's width")
+    void remappedCreativeScreenMixinMovesFieldReads() {
+        String container = "net/minecraft/client/gui/screens/inventory/AbstractContainerScreen";
+        ClassNode classNode = read(legacyInventoryScreenMixin("net/minecraft/client/gui/screens/inventory/CreativeModeInventoryScreen",
+                "net/minecraft/client/gui/screens/inventory/EffectsInInventory",
+                "(Lnet/minecraft/world/inventory/AbstractContainerMenu;Lnet/minecraft/world/entity/player/Inventory;"
+                        + "Lnet/minecraft/network/chat/Component;)V"));
+
+        assertTrue(MixinLegacyMemberBridge.apply(classNode));
+        assertEquals(container, classNode.superName);
+        MethodNode close = classNode.methods.stream().filter(m -> "onClose".equals(m.name)).findFirst().orElseThrow();
+        assertTrue(java.util.Arrays.stream(close.instructions.toArray()).anyMatch(i -> i instanceof org.objectweb.asm.tree.FieldInsnNode field
+                && container.equals(field.owner) && "width".equals(field.name)), "the width read names the container screen");
     }
 
     @Test

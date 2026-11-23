@@ -49,6 +49,18 @@ numbers and names them, so the same name on a newer jar can belong to different 
 --keep names ids a shim already redirects by their old name, such as the GameRules RULE_*
 constants and the pre-1.20.5 MobEffects names. Those redirects also convert the older descriptor a
 pre-1.21.11 mod carries, which a corrected name would skip. The file explains how it was built.
+
+BRIDGE CANDIDATES (--bridge-candidates): lists the ids of an older version whose table name, with
+that version's descriptor, links on none of the host jars given, together with the old Mojang name
+and both descriptors. It never writes anything.
+
+  python3 harvest-intermediary-skew.py --bridge-candidates <table.tsv> <class-moves.tsv> \
+      <intermediary tiny> <client proguard> <host.jar>...
+
+Keep a candidate in src/main/resources/intermediary-bridged-names.tsv only when translating a mod
+that calls it shows the old name reaching a bridge, redirect, or rename that links on the host, or
+naming a member the host still has. Those rows apply to their intermediary descriptor alone, so the
+table's own name stays for every other shape of the id.
 """
 import struct, sys, re, zipfile
 
@@ -340,8 +352,137 @@ def stale_main(args):
         write_corrections(args[0], corrections)
 
 
+def read_shape(data):
+    """(super, interfaces, fields {name: desc}, methods {(name, desc)}) of one class file."""
+    p = 10
+    cp_count = struct.unpack_from(">H", data, 8)[0]
+    utf8, class_names, i = {}, {}, 1
+    while i < cp_count:
+        tag = data[p]; p += 1
+        if tag == 1:
+            ln = struct.unpack_from(">H", data, p)[0]; p += 2
+            utf8[i] = data[p:p + ln].decode("utf-8", "replace"); p += ln
+        elif tag == 7:
+            class_names[i] = struct.unpack_from(">H", data, p)[0]; p += 2
+        elif tag in (8, 16, 19, 20): p += 2
+        elif tag in (3, 4, 9, 10, 11, 12, 17, 18): p += 4
+        elif tag in (5, 6): p += 8; i += 1
+        elif tag == 15: p += 3
+        else: raise ValueError(f"bad constant pool tag {tag}")
+        i += 1
+    super_index = struct.unpack_from(">H", data, p + 4)[0]
+    p += 6
+    count = struct.unpack_from(">H", data, p)[0]; p += 2
+    interfaces = [utf8[class_names[struct.unpack_from(">H", data, p + 2 * k)[0]]] for k in range(count)]
+    p += 2 * count
+    fields, methods = {}, set()
+    for kind in ("field", "method"):
+        count = struct.unpack_from(">H", data, p)[0]; p += 2
+        for _ in range(count):
+            _access, name, desc = struct.unpack_from(">HHH", data, p); p += 6
+            if kind == "field":
+                fields[utf8[name]] = utf8[desc]
+            else:
+                methods.add((utf8[name], utf8[desc]))
+            attributes = struct.unpack_from(">H", data, p)[0]; p += 2
+            for _a in range(attributes):
+                p += 6 + struct.unpack_from(">I", data, p + 2)[0]
+    parent = utf8[class_names[super_index]] if super_index else None
+    return parent, interfaces, fields, methods
+
+
+def read_host_shapes(jar):
+    """Internal class name -> shape for every class in a host jar."""
+    out = {}
+    with zipfile.ZipFile(jar) as z:
+        for n in z.namelist():
+            if n.endswith(".class") and n.startswith(("net/minecraft/", "com/mojang/")):
+                out[n[:-6]] = read_shape(z.read(n))
+    return out
+
+
+def links(shapes, owner, kind, name, desc):
+    """Whether a reference resolves on a host, through superclasses and interfaces."""
+    seen, todo = set(), [owner]
+    while todo:
+        c = todo.pop()
+        if c in seen or c not in shapes:
+            continue
+        seen.add(c)
+        parent, interfaces, fields, methods = shapes[c]
+        if kind == "FIELD" and fields.get(name) == desc:
+            return True
+        if kind == "METHOD" and (name, desc) in methods:
+            return True
+        todo.extend([parent] if parent else [])
+        todo.extend(interfaces)
+    return False
+
+
+def bridge_candidates(table_path, moves_path, tiny_path, proguard_path, host_jars):
+    """Ids whose table value does not link on any host, with the old name and descriptors to try."""
+    classes, members = parse_tiny_entries(tiny_path)
+    methods_old, fields_old = parse_proguard(proguard_path)
+    moves = {}
+    for line in open(moves_path):
+        parts = line.rstrip("\n").split("\t")
+        if len(parts) >= 2 and not line.startswith("#"):
+            moves[parts[0]] = parts[1]
+    table = {"CLASS": {}, "FIELD": {}, "METHOD": {}}
+    for line in open(table_path):
+        parts = line.rstrip("\n").split("\t")
+        if len(parts) == 3 and parts[0] in table:
+            table[parts[0]][parts[1]] = parts[2]
+    hosts = [read_host_shapes(jar) for jar in host_jars]
+
+    def host_class(inter):
+        value = table["CLASS"].get(inter)
+        return moves.get(value, value) if value else None
+
+    def remap_desc(obf_desc, name_of):
+        def swap(m):
+            inter = classes.get(m.group(1))
+            name = name_of(inter) if inter else None
+            return "L" + name + ";" if name else m.group(0)
+        return DESC_CLASS.sub(swap, obf_desc)
+
+    out = []
+    for kind, obf_owner, obf_name, obf_desc, inter in members:
+        old = (fields_old.get((obf_owner, obf_name)) if kind == "FIELD"
+               else methods_old.get((obf_owner, obf_name, obf_desc)))
+        owner = host_class(classes.get(obf_owner, ""))
+        # Constructors, lambdas, and compiler-generated members have no stable name to bridge.
+        if not old or not owner or "$" in old or old.startswith("<"):
+            continue
+        host_desc = remap_desc(obf_desc, host_class)
+        current = table[kind].get(inter)
+        # A comp_ accessor is a method in the table; its record field never leaves the record.
+        if inter.startswith("comp_") and kind == "FIELD":
+            continue
+        if current == old:
+            continue
+        # A value that links on any host is live there, so it is never replaced.
+        if current and any(links(h, owner, kind, current, host_desc) for h in hosts):
+            continue
+        inter_desc = remap_desc(obf_desc, lambda i: i)
+        out.append((kind, inter, current or "-", old, owner, host_desc, classes[obf_owner],
+                    inter_desc, obf_owner, obf_name, obf_desc))
+    return out
+
+
+def candidates_main(args):
+    if len(args) < 5:
+        sys.exit("usage: --bridge-candidates <table.tsv> <class-moves.tsv> <tiny> <proguard> <host.jar>...")
+    rows = bridge_candidates(args[0], args[1], args[2], args[3], args[4:])
+    for row in rows:
+        print("\t".join(row))
+    print(f"# candidates: {len(rows)}", file=sys.stderr)
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--stale":
         stale_main(sys.argv[2:])
+    elif len(sys.argv) > 1 and sys.argv[1] == "--bridge-candidates":
+        candidates_main(sys.argv[2:])
     else:
         main()

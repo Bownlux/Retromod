@@ -8,6 +8,8 @@ import net.minecraft.tags.TagKey;
 public interface HolderGetter<T> {
     Optional<Holder.Reference<T>> get(ResourceKey<T> key);
     Optional<HolderSet.Named<T>> get(TagKey<T> tag);
+    // A default method on the host.
+    default HolderSet.Named<T> getOrThrow(TagKey<T> tag) { throw new UnsupportedOperationException(); }
 
     interface Provider {
         default <T> Optional<Holder.Reference<T>> get(ResourceKey<T> key) { throw new UnsupportedOperationException(); }

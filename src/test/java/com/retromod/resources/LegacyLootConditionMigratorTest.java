@@ -41,6 +41,22 @@ class LegacyLootConditionMigratorTest {
     }
 
     @Test
+    @DisplayName("Moonlight's load_conditions keeps the loaders' own condition lists as the loaders read them")
+    void loaderConditionListsInsideAConditionStay() {
+        String old = """
+                {"pools":[{"rolls":1,"entries":[{"type":"item","name":"supplementaries:key","conditions":[
+                  {"condition":"moonlight:load_conditions",
+                   "fabric:load_conditions":[{"condition":"supplementaries:flag","flag":"key"}],
+                   "neoforge:conditions":[{"type":"supplementaries:flag","flag":"key"}]}]}]}]}""";
+        assertJson("""
+                {"pools":[{"rolls":1,"entries":[{"type":"item","name":"supplementaries:key","condition":
+                  {"type":"moonlight:load_conditions",
+                   "fabric:load_conditions":[{"condition":"supplementaries:flag","flag":"key"}],
+                   "neoforge:conditions":[{"type":"supplementaries:flag","flag":"key"}]}}]}]}""",
+                ModDataMigrator.migrate("data/supplementaries/loot_table/loot/galleon/key.json", bytes(old), "26.3"));
+    }
+
+    @Test
     @DisplayName("functions become one modifier, and a function's own conditions follow")
     void functionsBecomeModifier() {
         String slab = """

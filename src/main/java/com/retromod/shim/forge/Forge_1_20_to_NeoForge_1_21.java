@@ -350,6 +350,17 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         LegacyForgeChannelBridge.register(transformer);
         // NeoForge reads a display test from the mods toml and has no DisplayTest class.
         LegacyDisplayTestBridge.register(transformer);
+        // Forge's config screen factory, which NeoForge finds as an IConfigScreenFactory.
+        LegacyConfigScreenFactoryBridge.register(transformer);
+        // Forge's folder pack, which NeoForge never had, moves onto the vanilla one as on Forge 26.2.
+        LegacyPathPackResourcesBridge.registerOnNeoForge(transformer);
+        // NeoForge kept Forge's reflection helper under its own package, with the same members and exceptions.
+        String reflection = "net/minecraftforge/fml/util/ObfuscationReflectionHelper";
+        transformer.registerClassRedirect(reflection, "net/neoforged/fml/util/ObfuscationReflectionHelper");
+        for (String failure : new String[]{"$UnableToAccessFieldException", "$UnableToFindFieldException",
+                "$UnableToFindMethodException", "$UnknownConstructorException"}) {
+            transformer.registerClassRedirect(reflection + failure, "net/neoforged/fml/util/ObfuscationReflectionHelper" + failure);
+        }
         ForgeMenuBridge.register(transformer);
         LegacyMenuScreensBridge.register(transformer);
         ForgeNeoForgeApiBridge.register(transformer);
@@ -369,6 +380,8 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "net/minecraftforge/client/event/RenderGuiOverlayEvent",
             "net/neoforged/neoforge/client/event/RenderGuiLayerEvent"
         );
+        // Forge's HUD overlays and their events run on NeoForge's GUI layers.
+        com.retromod.shim.neoforge.LegacyNeoForgeGuiOverlayBridge.register(transformer);
         transformer.registerClassRedirect(
             "net/minecraftforge/client/event/EntityRenderersEvent",
             "net/neoforged/neoforge/client/event/EntityRenderersEvent"

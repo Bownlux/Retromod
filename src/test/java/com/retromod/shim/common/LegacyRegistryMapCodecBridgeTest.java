@@ -132,6 +132,96 @@ class LegacyRegistryMapCodecBridgeTest {
     }
 
     @Test
+    @DisplayName("Moonlight's register into a writable registry stores an old processor type as its map codec view")
+    void writableRegistryRegisterStoresTheView() throws Exception {
+        String writable = LegacyRegistryMapCodecBridge.WRITABLE;
+        Map<String, byte[]> classes = new java.util.HashMap<>(Map.of(
+                LegacyRegistryMapCodecBridge.CLASS, LegacyRegistryMapCodecBridge.generate(true, true),
+                LegacyRegistryMapCodecBridge.PROCESSOR_VIEW, WorldgenTypeBridgeSynthetic.generateWrapper(
+                        LegacyRegistryMapCodecBridge.PROCESSOR_VIEW, PROCESSOR_TYPE),
+                PROCESSOR_TYPE, processorTypeInterface(),
+                "mod/MapProcessorType", processorType("mod/MapProcessorType", true),
+                writable, writableRegistry(),
+                LegacyRegistryMapCodecBridge.WRITABLE_REGISTER, LegacyRegistryMapCodecBridge.generateWritableRegister(true, false),
+                "test/Registry", recordingRegistry()));
+        for (String stub : List.of("net/minecraft/resources/ResourceKey", "net/minecraft/core/RegistrationInfo",
+                "net/minecraft/core/Holder$Reference")) {
+            classes.put(stub, HostStubs.iface(stub));
+        }
+        Dfu dfu = new Dfu(classes);
+        Object registry = dfu.type("test/Registry").getConstructor().newInstance();
+        java.lang.reflect.Method register = dfu.type(LegacyRegistryMapCodecBridge.WRITABLE_REGISTER).getMethod("registerWritable",
+                dfu.type(writable), dfu.type("net/minecraft/resources/ResourceKey"), Object.class,
+                dfu.type("net/minecraft/core/RegistrationInfo"));
+
+        register.invoke(null, registry, null, dfu.type("mod/MapProcessorType").getConstructor().newInstance(), null);
+        Object stored = registry.getClass().getField("value").get(registry);
+        assertTrue(dfu.type(MAP_CODEC).isInstance(stored), "the registry's dispatch reads a map codec");
+        assertTrue(dfu.type(PROCESSOR_TYPE).isInstance(stored), "Moonlight's holder still hands the mod its type");
+
+        Object block = new Object();
+        register.invoke(null, registry, null, block, null);
+        assertSame(block, registry.getClass().getField("value").get(registry), "any other value goes in unchanged");
+    }
+
+    @Test
+    @DisplayName("a writable registry's register goes through the registry conversions, with processor views from 26.2")
+    void writableRegisterRedirectFollowsTheHost() {
+        com.retromod.core.RetromodTransformer transformer = com.retromod.core.RetromodTransformer.getInstance();
+        String saved = com.retromod.core.RetromodVersion.TARGET_MC_VERSION;
+        var key = new com.retromod.core.RetromodTransformer.MethodKey(LegacyRegistryMapCodecBridge.WRITABLE, "register",
+                LegacyRegistryMapCodecBridge.WRITABLE_DESC);
+        try {
+            for (String host : List.of("26.1.2", "26.3")) {
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION = host;
+                transformer.clearRedirectsForTesting();
+                LegacyRegistryMapCodecBridge.registerWritableRegistrations(transformer);
+                assertTrue(transformer.getMethodRedirects().containsKey(key), host);
+                List<String> calls = BridgeHarness.calls(
+                        transformer.getSyntheticClasses().get(LegacyRegistryMapCodecBridge.WRITABLE_REGISTER), "registerWritable");
+                assertTrue(calls.stream().anyMatch(call -> call.startsWith(WorldgenTypeBridgeSynthetic.INTERNAL + ".convert")),
+                        host + ": the same conversion Registry.register gets " + calls);
+                assertEquals(host.equals("26.3"), calls.stream().anyMatch(call -> call.contains(".processorView(")),
+                        host + ": processor types are map codecs only from 26.2");
+            }
+        } finally {
+            com.retromod.core.RetromodVersion.TARGET_MC_VERSION = saved;
+            transformer.clearRedirectsForTesting();
+        }
+    }
+
+    /** {@code WritableRegistry} with only the register method Moonlight calls. */
+    private static byte[] writableRegistry() {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(V17, ACC_PUBLIC | ACC_ABSTRACT | ACC_INTERFACE, LegacyRegistryMapCodecBridge.WRITABLE, null,
+                "java/lang/Object", null);
+        cw.visitMethod(ACC_PUBLIC | ACC_ABSTRACT, "register", LegacyRegistryMapCodecBridge.WRITABLE_DESC, null, null)
+                .visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** A writable registry that keeps the last value registered in {@code value}. */
+    private static byte[] recordingRegistry() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, "test/Registry", null, "java/lang/Object",
+                new String[] {LegacyRegistryMapCodecBridge.WRITABLE});
+        cw.visitField(ACC_PUBLIC, "value", "Ljava/lang/Object;", null, null).visitEnd();
+        HostStubs.defaultConstructor(cw, "java/lang/Object");
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, "register", LegacyRegistryMapCodecBridge.WRITABLE_DESC, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitVarInsn(ALOAD, 2);
+        mv.visitFieldInsn(PUTFIELD, "test/Registry", "value", "Ljava/lang/Object;");
+        mv.visitInsn(ACONST_NULL);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    @Test
     @DisplayName("before 26.2 a structure processor type is the registry's own value and stays as the mod built it")
     void processorTypeStaysBefore262() throws Exception {
         Dfu dfu = new Dfu(Map.of(LegacyRegistryMapCodecBridge.CLASS, LegacyRegistryMapCodecBridge.generate(true, false),

@@ -123,6 +123,7 @@ class ModResourceMigrationsTest {
                 "vanilla model parent renames", "builtin/entity block models",
                 "vanilla texture references in mod models", "mod texture atlas sources",
                 "item model atlas aliases", "26.x model element fields", "banner pattern tags", "armor equipment assets",
+                "trim material palettes",
                 "nested resource pack textures", "Forge data namespaces", "legacy worldgen features",
                 "legacy registry entries", "legacy number providers", "data content",
                 "item definitions", "key category names", "renamed vanilla tags", "26.3 worldgen folders",

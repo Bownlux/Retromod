@@ -72,6 +72,19 @@ public final class AccessWidenerRemapper {
         return Set.of();
     }
 
+    /** A constructor entry names the constructor the host has once a registered constructor change applies to it. */
+    static String constructorEntry(String line, java.util.function.BinaryOperator<String> constructorDescriptor) {
+        // The entry reads "<access> method <owner> <init> <descriptor>", separated by whitespace, maybe with a comment.
+        int hash = line.indexOf('#');
+        String entry = hash < 0 ? line : line.substring(0, hash);
+        String comment = hash < 0 ? "" : " " + line.substring(hash);
+        String[] parts = entry.trim().split("\\s+");
+        if (parts.length != 5 || !parts[1].equals("method") || !parts[3].equals("<init>")) return line;
+        String descriptor = constructorDescriptor.apply(parts[2], parts[4]);
+        if (descriptor.equals(parts[4])) return line;
+        return String.join("\t", parts[0], parts[1], parts[2], parts[3], descriptor) + comment;
+    }
+
     /** Remaps intermediary content and leaves every other namespace unchanged. */
     public static String remapToOfficial(String content, IntermediaryToMojangMapper mapper) {
         try {
@@ -87,7 +100,7 @@ public final class AccessWidenerRemapper {
                 } else if (line.isEmpty() || line.startsWith("#")) {
                     out = line;
                 } else {
-                    out = mapper.remapString(line);
+                    out = constructorEntry(mapper.remapString(line), RetromodTransformer.getInstance()::constructorDescriptorFor);
                 }
                 patched.append(out);
                 if (i < lines.length - 1) patched.append("\n");

@@ -10,4 +10,12 @@ public class LivingEntity extends Entity {
     public final float getMaxHealth() { throw new UnsupportedOperationException(); }
     public float getAbsorptionAmount() { throw new UnsupportedOperationException(); }
     public long getLootTableSeed() { throw new UnsupportedOperationException(); }
+    public void travel(net.minecraft.world.phys.Vec3 input) { throw new UnsupportedOperationException(); }
+    protected void travelFlying(net.minecraft.world.phys.Vec3 input, float speed) { throw new UnsupportedOperationException(); }
+    protected void checkFallDamage(double y, boolean onGround, net.minecraft.world.level.block.state.BlockState state, net.minecraft.core.BlockPos pos) { throw new UnsupportedOperationException(); }
+    public boolean onClimbable() { throw new UnsupportedOperationException(); }
+    public boolean canUseSlot(EquipmentSlot slot) { throw new UnsupportedOperationException(); }
+    public int hurtTime;
+    public int deathTime;
+    public boolean isBaby() { throw new UnsupportedOperationException(); }
 }

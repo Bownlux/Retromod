@@ -55,12 +55,13 @@ public final class LegacyRegistryContext {
                 + ": no save or load is running on this thread, no server is running, and no world is loaded");
     }
 
-    /** The current registries, else the running server's, else the client world's, or null when there are none. */
+    /** The current registries, else the running server's (Forge, NeoForge, or a Fabric dedicated server), else the client world's, or null. */
     public static HolderLookup.Provider available() {
         HolderLookup.Provider current = current();
         if (current != null) return current;
         HolderLookup.Provider registries = ServerRegistries.find();
         if (registries == null) registries = NeoForgeServerRegistries.find();
+        if (registries == null) registries = FabricServerRegistries.find();
         return registries != null ? registries : ClientRegistries.find();
     }
 
@@ -83,6 +84,21 @@ public final class LegacyRegistryContext {
                 MinecraftServer server = net.neoforged.neoforge.server.ServerLifecycleHooks.getCurrentServer();
                 return server == null ? null : server.registryAccess();
             } catch (LinkageError notNeoForge) {
+                return null;
+            }
+        }
+    }
+
+    // Fabric Loader's game instance, which is the server on a dedicated server; read reflectively, as no other loader has it.
+    private static final class FabricServerRegistries {
+        static HolderLookup.Provider find() {
+            try {
+                Class<?> loader = Class.forName("net.fabricmc.loader.api.FabricLoader", false,
+                        LegacyRegistryContext.class.getClassLoader());
+                Object instance = loader.getMethod("getInstance").invoke(null);
+                Object game = loader.getMethod("getGameInstance").invoke(instance);
+                return game instanceof MinecraftServer server ? server.registryAccess() : null;
+            } catch (ReflectiveOperationException | LinkageError | RuntimeException notFabric) {
                 return null;
             }
         }

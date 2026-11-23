@@ -5,4 +5,5 @@ import net.minecraft.util.context.ContextKeySet;
 
 public class LootContextParamSets {
     public static final ContextKeySet ENTITY = null;
+    public static final ContextKeySet CONTAINER_PROCESS = null;
 }

@@ -63,6 +63,18 @@ class LegacyForgeHooksBridgeTest {
     }
 
     @Test
+    void withoutTierOnTheHostTheHelperNamesNoTierGetter() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        registerRedirects(transformer, false);
+
+        ClassNode helper = node(transformer.getSyntheticClasses().get(HELPER));
+        assertTrue(helper.methods.stream().noneMatch(m -> m.name.equals("isCorrectTierForDrops")),
+                "NeoForge 26.3's ToolMaterial has no getIncorrectBlocksForDrops for the tier check to call");
+        assertTrue(helper.methods.stream().anyMatch(m -> m.name.equals("onLivingDamage")), "the damage hooks stay");
+    }
+
+    @Test
     void theGeneratedHelperIsStructurallyValid() throws Exception {
         ClassNode helper = node(generateHelper());
         for (MethodNode method : helper.methods) {

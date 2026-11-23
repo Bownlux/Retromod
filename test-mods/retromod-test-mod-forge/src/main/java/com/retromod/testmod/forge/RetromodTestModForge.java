@@ -63,6 +63,9 @@ public class RetromodTestModForge {
         // A block built in a common class and registered from this loader class by id.
         net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()
                 .addListener(CrossClassRegistration::register);
+        // A block and an item built before their ids are known, as Moonlight's block sets build them.
+        net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()
+                .addListener(DeferredIdCase::register);
         // #302: an addon's knife and registry reads against the installed Farmer's Delight.
         FarmersDelightAddon.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
         // A listener on the ModConfigEvent base, which Forge 26.2 made an interface, reads its config.

@@ -60,6 +60,33 @@ class LegacyPackSupplierAdapterTest {
     }
 
     @Test
+    @DisplayName("An old mod's openPrimary call gets the pack openMetadata opens, from a host supplier and from an old one")
+    void oldCallerOpensThePrimaryPack(@TempDir Path dir) throws Throwable {
+        BridgeHarness.Run run = run(dir, "1.21.1", t -> register(t, name -> null));
+        assertEquals("yungsapi:host primary", run.call("mod/Caller", "primary", run.call(HOST, "supplier"), "yungsapi"),
+                "a 26.3 supplier's metadata reader is its primary pack");
+        Object old = run.call("mod/Source", "supplier", "Locate replacer");
+        assertEquals("yungsapi:primary", run.call("mod/Caller", "primary", old, "yungsapi"),
+                "an old supplier answers through the openMetadata the adapter gave it");
+    }
+
+    @Test
+    @DisplayName("A call naming one of the host's own suppliers is rewritten too, and a host that kept openPrimary keeps the call")
+    void rewritesConcreteOwnersOnlyWhereNeeded() {
+        String file = "net/minecraft/server/packs/FilePackResources$FileResourcesSupplier";
+        byte[] caller = callerOf(file);
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        transformer.clearRedirectsForTesting();
+        register(transformer, name -> null);
+        assertEquals(List.of(CALLS + ".openPrimary(L" + SUPPLIER + ";" + OPEN_PRIMARY.substring(1)),
+                BridgeHarness.calls(transformer.transformClass(caller, "mod/FileCaller"), "primary"));
+        transformer.clearRedirectsForTesting();
+        register(transformer, name -> supplier("openPrimary", OPEN_PRIMARY, "openFull", OPEN_FULL));
+        assertEquals(List.of(file + ".openPrimary" + OPEN_PRIMARY),
+                BridgeHarness.calls(transformer.transformClass(caller, "mod/FileCaller"), "primary"), "a 26.2 host still has it");
+    }
+
+    @Test
     @DisplayName("The adapter turns on only where the host's supplier lost openPrimary; offline the target decides")
     void followsTheHost() {
         assertFalse(hostReplacedIt(supplier("openPrimary", OPEN_PRIMARY, "openFull", OPEN_FULL)), "1.21.1 to 26.2 hosts");
@@ -133,6 +160,22 @@ class LegacyPackSupplierAdapterTest {
         return writer.toByteArray();
     }
 
+    /** A class whose {@code primary} calls {@code owner.openPrimary(null)}. */
+    private static byte[] callerOf(String owner) {
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "mod/FileCaller", null, "java/lang/Object", null);
+        MethodVisitor mv = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "primary", "(L" + owner + ";)Ljava/lang/Object;", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, owner, "openPrimary", OPEN_PRIMARY, false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
     private static List<String> names(byte[] bytes) {
         ClassNode node = new ClassNode();
         new ClassReader(bytes).accept(node, 0);
@@ -200,6 +243,15 @@ class LegacyPackSupplierAdapterTest {
                                 }
                             };
                         }
+                    }""",
+            "mod/Caller.java", """
+                    package mod;
+                    import net.minecraft.server.packs.PackLocationInfo;
+                    import net.minecraft.server.packs.repository.Pack;
+                    public class Caller {
+                        public static String primary(Pack.ResourcesSupplier supplier, String id) {
+                            return supplier.openPrimary(new PackLocationInfo(id)).toString();
+                        }
                     }""");
 
     /** The 26.3 shape, with a host class that opens a pack the way 26.3's Pack does. */
@@ -245,6 +297,20 @@ class LegacyPackSupplierAdapterTest {
                             }
                             boolean closed = (Boolean) opened.getClass().getMethod("closed").invoke(opened);
                             return section + (closed ? ":closed" : ":open");
+                        }
+                        public static Pack.ResourcesSupplier supplier() {
+                            return new Pack.ResourcesSupplier() {
+                                public PackMetadataResources openMetadata(PackLocationInfo location) {
+                                    return new net.minecraft.server.packs.PackResources() {
+                                        public PackLocationInfo location() { return location; }
+                                        public String getMetadataSection(String section) { return null; }
+                                        public void close() {}
+                                        @Override public String toString() { return location.id() + ":host primary"; }
+                                    };
+                                }
+                                public java.util.stream.Stream<net.minecraft.server.packs.PackResources> openResources(
+                                        PackLocationInfo location, Pack.Metadata metadata) { return java.util.stream.Stream.empty(); }
+                            };
                         }
                         public static String open(Pack.ResourcesSupplier supplier, String id, String description) {
                             return supplier.openResources(new PackLocationInfo(id), new Pack.Metadata(description))

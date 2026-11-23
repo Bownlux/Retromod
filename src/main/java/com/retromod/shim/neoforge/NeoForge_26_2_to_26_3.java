@@ -52,6 +52,8 @@ public class NeoForge_26_2_to_26_3 implements VersionShim {
         LegacyModConfigTypeBridge.register(transformer);
         // The brewing registration event went with 26.3's brewing recipe files; old listeners get it rebuilt.
         LegacyNeoForgeBrewingBridge.register(transformer);
+        // FlowerPotBlock.addPlant went; 26.3 builds the full pot table from the pots themselves.
+        LegacyFlowerPotBridge.register(transformer);
         if (hostMergedEntityInteract()) registerEntityInteractMerge(transformer);
     }
 

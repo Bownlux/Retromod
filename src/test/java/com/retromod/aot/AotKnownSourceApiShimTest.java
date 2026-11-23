@@ -5,6 +5,7 @@
 package com.retromod.aot;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.SyntheticEmbedder;
 import com.retromod.core.VersionShim;
 import com.retromod.shim.ShimRegistry;
 import com.retromod.shim.api.common.MixinExtrasApiShim;
@@ -59,7 +60,7 @@ class AotKnownSourceApiShimTest {
         Path output = new AotCompiler(registry, "26.1").compileModAot(input);
         MethodInsnNode call = onlyCall(readClass(output));
 
-        assertEquals("com/retromod/shim/api/common/embedded/MixinExtrasShim", call.owner);
+        assertEquals(embeddedShim(input), call.owner);
         assertEquals("noopInit", call.name);
     }
 
@@ -78,7 +79,7 @@ class AotKnownSourceApiShimTest {
         Path output = new AotCompiler(registry, "26.1").compileModAot(input, true);
         MethodInsnNode call = onlyCall(readClass(output));
 
-        assertEquals("com/retromod/shim/api/common/embedded/MixinExtrasShim", call.owner);
+        assertEquals(embeddedShim(input), call.owner);
         assertEquals("noopInit", call.name);
     }
 
@@ -97,8 +98,14 @@ class AotKnownSourceApiShimTest {
         Path output = new AotCompiler(registry, "1.20.1").compileModAot(input);
         MethodInsnNode call = onlyCall(readClass(output));
 
-        assertEquals("com/retromod/shim/api/common/embedded/MixinExtrasShim", call.owner);
+        assertEquals(embeddedShim(input), call.owner);
         assertEquals("noopInit", call.name);
+    }
+
+    /** The mod's own copy of the MixinExtras shim, which the AOT jar carries so it runs without Retromod. */
+    private static String embeddedShim(Path input) {
+        return SyntheticEmbedder.embeddedBase(input.getFileName().toString())
+                + "com/retromod/shim/api/common/embedded/MixinExtrasShim";
     }
 
     private static VersionShim versionEdge() {

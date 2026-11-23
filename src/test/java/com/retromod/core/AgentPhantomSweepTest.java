@@ -57,7 +57,9 @@ class AgentPhantomSweepTest {
         Path agentJar = manifestOnlyAgentJar();
         Path log = tempDir.resolve("probe-" + String.join("-", args) + ".log");
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-        List<String> command = new ArrayList<>(List.of(java, "-Xmx256M",
+        // Headless, as on a server: the test classpath carries client stand-ins, so a busy machine made the
+        // agent's performance monitor open a modal dialog whose event thread then kept the probe from exiting.
+        List<String> command = new ArrayList<>(List.of(java, "-Xmx256M", "-Djava.awt.headless=true",
                 "-javaagent:" + agentJar, "-cp", System.getProperty("java.class.path"),
                 AgentPhantomSweepProbe.class.getName()));
         command.addAll(List.of(args));
@@ -68,11 +70,30 @@ class AgentPhantomSweepTest {
         try {
             boolean exited = process.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             String output = Files.readString(log, StandardCharsets.UTF_8);
-            assertTrue(exited, "the probe hung for " + PROBE_TIMEOUT_SECONDS + " s. Output:\n" + output);
+            if (!exited) {
+                // "FINISHED" in the output means the sweep and the load both returned, and something else held the JVM.
+                fail("the probe did not exit within " + PROBE_TIMEOUT_SECONDS + " s"
+                        + (output.contains("FINISHED") ? ", although both of its threads finished" : "")
+                        + ". Output:\n" + output + "\nThreads of the probe:\n" + threadDump(process));
+            }
             assertEquals(0, process.exitValue(), "the probe failed. Output:\n" + output);
             return output;
         } finally {
             process.destroyForcibly();
+        }
+    }
+
+    /** The hung probe's threads from the JDK's jcmd, so a failure shows what it waited on. */
+    private String threadDump(Process process) {
+        Path jcmd = Path.of(System.getProperty("java.home"), "bin", "jcmd");
+        try {
+            Process dump = new ProcessBuilder(jcmd.toString(), String.valueOf(process.pid()), "Thread.print")
+                    .redirectErrorStream(true).start();
+            String threads = new String(dump.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            dump.waitFor(30, TimeUnit.SECONDS);
+            return threads;
+        } catch (IOException | InterruptedException unavailable) {
+            return "(no thread dump: " + unavailable + ")";
         }
     }
 

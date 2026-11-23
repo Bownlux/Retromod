@@ -69,7 +69,7 @@ final class VanillaIdRenames {
             "/tags/block/", "block", "/tags/blocks/", "block",
             "/tags/item/", "item", "/tags/items/", "item",
             "/tags/entity_type/", "entity", "/tags/entity_types/", "entity",
-            "/tags/enchantment/", "enchantment");
+            "/tags/enchantment/", "enchantment", "/tags/block_entity_type/", "block_entity_type");
 
     /** A namespaced vanilla id inside a command, not part of a longer id, path or tag. */
     private static final Pattern FUNCTION_TOKEN = Pattern.compile(

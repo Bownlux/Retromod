@@ -31,6 +31,9 @@ public final class LegacyModelLocationAdapter {
     private static final Set<String> PATH_MEMBERS = Set.of("getPath", "withPrefix", "withSuffix", "withPath", "toLanguageKey",
             "toShortLanguageKey", "toDebugFileName");
     private static final Set<String> MISSING_FIELDS = Set.of("MISSING_MODEL_LOCATION", "MISSING_MODEL_VARIANT");
+    // Fabric 1.21.1's MISSING_MODEL_VARIANT keeps its intermediary name through the remap, since 26.x has no such field.
+    static final String FABRIC_MISSING_VARIANT = "field_52276";
+    private static final byte[] FABRIC_MISSING_VARIANT_TEXT = FABRIC_MISSING_VARIANT.getBytes(StandardCharsets.UTF_8);
     private static final Set<String> ID_TYPES = Set.of("L" + OLD_TYPE + ";", "Lnet/minecraft/resources/ResourceLocation;",
             "Lnet/minecraft/resources/Identifier;");
     private static final byte[] OLD_TYPE_TEXT = OLD_TYPE.getBytes(StandardCharsets.UTF_8);
@@ -58,6 +61,37 @@ public final class LegacyModelLocationAdapter {
         }
         if (!changed) return classBytes;
         // Each replacement leaves the same type on the stack as before, so the frames and stack sizes still hold.
+        ClassWriter writer = new ClassWriter(0);
+        node.accept(writer);
+        return writer.toByteArray();
+    }
+
+    /** The missing-model reads again after the remap, for Fabric mods whose intermediary field names the pass above cannot read. */
+    public static byte[] applyAfterRemap(byte[] classBytes) {
+        if (classBytes == null || !contains(classBytes, MISSING_TEXT) && !contains(classBytes, FABRIC_MISSING_VARIANT_TEXT)) {
+            return classBytes;
+        }
+        ClassNode node = new ClassNode();
+        new ClassReader(classBytes).accept(node, 0);
+        boolean changed = false;
+        for (MethodNode method : node.methods) {
+            if (method.instructions == null) continue;
+            for (AbstractInsnNode insn : method.instructions.toArray()) {
+                if (!(insn instanceof FieldInsnNode field) || insn.getOpcode() != Opcodes.GETSTATIC
+                        || !field.owner.equals(MODEL_BAKERY)
+                        || !MISSING_FIELDS.contains(field.name) && !field.name.equals(FABRIC_MISSING_VARIANT)
+                        || !ID_TYPES.contains(field.desc)) {
+                    continue;
+                }
+                // The old location is already an Identifier here, so the name says which form it was: the
+                // variant field held the located form, the location field the plain id.
+                boolean variant = field.name.equals("MISSING_MODEL_VARIANT") || field.name.equals(FABRIC_MISSING_VARIANT);
+                String getter = variant ? "missingModelLocation" : "missingModelId";
+                method.instructions.set(insn, new MethodInsnNode(Opcodes.INVOKESTATIC, HELPER, getter, "()" + field.desc, false));
+                changed = true;
+            }
+        }
+        if (!changed) return classBytes;
         ClassWriter writer = new ClassWriter(0);
         node.accept(writer);
         return writer.toByteArray();

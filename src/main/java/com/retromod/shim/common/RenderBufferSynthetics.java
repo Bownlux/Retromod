@@ -6,6 +6,7 @@
  */
 package com.retromod.shim.common;
 
+import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.util.GeneratedLog;
 import org.objectweb.asm.ClassWriter;
@@ -58,11 +59,16 @@ public final class RenderBufferSynthetics {
     private static final String OLD_MODE = "com/mojang/blaze3d/vertex/VertexFormat$Mode";
     private static final String TOPOLOGY = "com/mojang/blaze3d/PrimitiveTopology";
 
+    static final String LEVEL_CONTEXT = "net/fabricmc/fabric/api/client/rendering/v1/level/LevelRenderContext";
+    // Fabric API's older names for the context, in either package an old mod may name.
+    static final String[] OLD_WORLD_CONTEXTS = {"net/fabricmc/fabric/api/client/rendering/v1/WorldRenderContext",
+            "net/fabricmc/fabric/api/client/rendering/v1/world/WorldRenderContext"};
     private static final String RENDER_TYPE = "net/minecraft/client/renderer/rendertype/RenderType";
     private static final String VERTEX_CONSUMER = "com/mojang/blaze3d/vertex/VertexConsumer";
     private static final String BUFFER_BUILDER = "com/mojang/blaze3d/vertex/BufferBuilder";
     private static final String BYTE_BUFFER_BUILDER = "com/mojang/blaze3d/vertex/ByteBufferBuilder";
     private static final String VERTEX_FORMAT = "com/mojang/blaze3d/vertex/VertexFormat";
+    private static final String DEFAULT_VERTEX_FORMAT = "com/mojang/blaze3d/vertex/DefaultVertexFormat";
 
     private static final String L_RT = "L" + RENDER_TYPE + ";";
     private static final String L_VC = "L" + VERTEX_CONSUMER + ";";
@@ -72,6 +78,7 @@ public final class RenderBufferSynthetics {
     private static final String L_TOPO = "L" + TOPOLOGY + ";";
     private static final String L_MBS = "L" + MBS + ";";
     private static final String L_BS = "L" + BS + ";";
+    static final String LEGACY_BEGIN = "(" + L_BB + "Ljava/lang/Object;Ljava/lang/Object;)V";
 
     /** Default per-RenderType buffer capacity, matching vanilla's transient buffer size. */
     private static final int BUFFER_CAPACITY = 786432;
@@ -88,6 +95,89 @@ public final class RenderBufferSynthetics {
         // VertexFormat$Mode -> PrimitiveTopology: a real 26.2 enum with the identical constant
         // set and public fields, so GETSTATIC Mode.QUADS, ordinal(), values() all keep working.
         t.registerClassRedirect(OLD_MODE, TOPOLOGY);
+        registerRemovedAccessors(t);
+        registerPre121BuilderCalls(t);
+    }
+
+    /**
+     * The 1.20.x immediate mode, where {@code getBuilder()} handed out the one builder, {@code begin(mode, format)}
+     * started it and {@code end()} drew it. Each old builder is a position-only builder on the stand-in's buffer, so every
+     * old vertex call links and runs; like the other stand-in batches, nothing it builds is drawn.
+     */
+    private static void emitPre121ImmediateMode(ClassWriter cw) {
+        // public BufferBuilder getBuilder(): drops what the last old builder left, then starts a new one.
+        MethodVisitor gb = cw.visitMethod(ACC_PUBLIC, "getBuilder", "()" + L_BB, null, null);
+        gb.visitCode();
+        gb.visitVarInsn(ALOAD, 0);
+        gb.visitFieldInsn(GETFIELD, TES, "buffer", L_BBB);
+        gb.visitMethodInsn(INVOKEVIRTUAL, BYTE_BUFFER_BUILDER, "clear", "()V", false);
+        gb.visitVarInsn(ALOAD, 0);
+        gb.visitFieldInsn(GETSTATIC, TOPOLOGY, "QUADS", L_TOPO);
+        gb.visitFieldInsn(GETSTATIC, DEFAULT_VERTEX_FORMAT, "POSITION", L_VF);
+        gb.visitMethodInsn(INVOKEVIRTUAL, TES, "begin", "(" + L_TOPO + L_VF + ")" + L_BB, false);
+        gb.visitInsn(ARETURN);
+        gb.visitMaxs(0, 0);
+        gb.visitEnd();
+
+        // public void end(): the old draw; the geometry is discarded instead.
+        MethodVisitor en = cw.visitMethod(ACC_PUBLIC, "end", "()V", null, null);
+        en.visitCode();
+        en.visitVarInsn(ALOAD, 0);
+        en.visitFieldInsn(GETFIELD, TES, "buffer", L_BBB);
+        en.visitMethodInsn(INVOKEVIRTUAL, BYTE_BUFFER_BUILDER, "clear", "()V", false);
+        en.visitInsn(RETURN);
+        en.visitMaxs(0, 0);
+        en.visitEnd();
+
+        // public static void legacyBegin(BufferBuilder, Object mode, Object format): the old builder's begin, which
+        // has nothing left to start. Plain Object parameters keep the descriptor the same on 26.2 and 26.3.
+        MethodVisitor lb = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "legacyBegin", LEGACY_BEGIN, null, null);
+        lb.visitCode();
+        lb.visitInsn(RETURN);
+        lb.visitMaxs(0, 0);
+        lb.visitEnd();
+    }
+
+    /** The old builder's {@code begin(mode, format)} and {@code end()}, under every name its arguments may have by now. */
+    static void registerPre121BuilderCalls(RetromodTransformer t) {
+        String[][] beginArgs = {{OLD_MODE, VERTEX_FORMAT}, {TOPOLOGY, VERTEX_FORMAT},
+                {"com/mojang/renderpearl/api/pipeline/PrimitiveTopology", "com/mojang/renderpearl/api/vertex/VertexFormat"}};
+        for (String[] args : beginArgs) {
+            t.registerMethodRedirect(BUFFER_BUILDER, "begin", "(L" + args[0] + ";L" + args[1] + ";)V", TES, "legacyBegin",
+                    LEGACY_BEGIN, true);
+        }
+        // end() returned the finished buffer, which build() returns now.
+        t.registerMethodRedirect(BUFFER_BUILDER, "end", "()Lcom/mojang/blaze3d/vertex/MeshData;", BUFFER_BUILDER, "build",
+                "()Lcom/mojang/blaze3d/vertex/MeshData;");
+    }
+
+    /**
+     * Host members that handed out the removed types are gone with them. The link check names them by the stand-in,
+     * since the class redirect rewrites their descriptors, so each one needs a redirect to the stand-in's own source.
+     */
+    static void registerRemovedAccessors(RetromodTransformer t) {
+        // RenderSystem.renderThreadTesselator() was the render thread's shared tesselator.
+        t.registerMethodRedirect("com/mojang/blaze3d/systems/RenderSystem", "renderThreadTesselator",
+                "()L" + OLD_TES + ";", TES, "getInstance", "()L" + TES + ";");
+        // Fabric's level render context handed out the frame's buffer source; 26.2 submits nodes instead, so old
+        // code gets the shared stand-in, whose batches are dropped with one warning.
+        if (!levelContextHasConsumers(ClassResourceInspector.read(LEVEL_CONTEXT))) {
+            java.util.List<String> owners = new java.util.ArrayList<>(java.util.List.of(OLD_WORLD_CONTEXTS));
+            owners.add(LEVEL_CONTEXT);
+            for (String owner : owners) {
+                // The context becomes the helper's argument, which it ignores.
+                t.registerMethodRedirect(owner, "consumers", "()L" + OLD_MBS + ";", BS, "sharedFor", "(Ljava/lang/Object;)" + L_BS, true);
+            }
+        }
+    }
+
+    /** Whether the host's Fabric level render context still has consumers(); a host without Fabric API reads null. */
+    static boolean levelContextHasConsumers(org.objectweb.asm.tree.ClassNode context) {
+        if (context == null) return false;
+        for (org.objectweb.asm.tree.MethodNode method : context.methods) {
+            if (method.name.equals("consumers")) return true;
+        }
+        return false;
     }
 
     private static ClassWriter newWriter() {
@@ -145,6 +235,36 @@ public final class RenderBufferSynthetics {
 
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "buffers", "Ljava/util/Map;", null, null).visitEnd();
         cw.visitField(ACC_PRIVATE | ACC_STATIC, "warned", "Z", null, null).visitEnd();
+        cw.visitField(ACC_PRIVATE | ACC_STATIC, "shared", L_BS, null, null).visitEnd();
+
+        // public static synchronized BufferSource shared(): one stand-in per mod copy, so repeated calls do not
+        // allocate a new set of buffers each frame.
+        MethodVisitor sh = cw.visitMethod(ACC_PUBLIC | ACC_STATIC | ACC_SYNCHRONIZED, "shared", "()" + L_BS, null, null);
+        sh.visitCode();
+        sh.visitFieldInsn(GETSTATIC, BS, "shared", L_BS);
+        Label made = new Label();
+        sh.visitJumpInsn(IFNONNULL, made);
+        sh.visitTypeInsn(NEW, BS);
+        sh.visitInsn(DUP);
+        sh.visitTypeInsn(NEW, BYTE_BUFFER_BUILDER);
+        sh.visitInsn(DUP);
+        sh.visitIntInsn(SIPUSH, 256);
+        sh.visitMethodInsn(INVOKESPECIAL, BYTE_BUFFER_BUILDER, "<init>", "(I)V", false);
+        sh.visitMethodInsn(INVOKESPECIAL, BS, "<init>", "(" + L_BBB + ")V", false);
+        sh.visitFieldInsn(PUTSTATIC, BS, "shared", L_BS);
+        sh.visitLabel(made);
+        sh.visitFieldInsn(GETSTATIC, BS, "shared", L_BS);
+        sh.visitInsn(ARETURN);
+        sh.visitMaxs(0, 0);
+        sh.visitEnd();
+
+        // public static BufferSource sharedFor(Object context): the same, for a call whose receiver becomes the argument.
+        MethodVisitor sf = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "sharedFor", "(Ljava/lang/Object;)" + L_BS, null, null);
+        sf.visitCode();
+        sf.visitMethodInsn(INVOKESTATIC, BS, "shared", "()" + L_BS, false);
+        sf.visitInsn(ARETURN);
+        sf.visitMaxs(0, 0);
+        sf.visitEnd();
 
         MethodVisitor c = cw.visitMethod(ACC_PUBLIC, "<init>", "(" + L_BBB + ")V", null, null);
         c.visitCode();
@@ -316,6 +436,7 @@ public final class RenderBufferSynthetics {
         cl.visitMaxs(0, 0);
         cl.visitEnd();
 
+        emitPre121ImmediateMode(cw);
         cw.visitEnd();
         return cw.toByteArray();
     }

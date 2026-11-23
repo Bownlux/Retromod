@@ -155,8 +155,15 @@ public class ShimRegistry {
      * unknown versions pass through unchanged.
      */
     public static String resolveVersion(String version) {
-        return VERSION_ALIASES.getOrDefault(version, version);
+        String alias = VERSION_ALIASES.get(version);
+        if (alias != null || version == null) return alias != null ? alias : version;
+        // A pre-release of a 1.x release, such as Chunky's 1.21-rc.1, starts from that release's chain.
+        java.util.regex.Matcher prerelease = PRERELEASE.matcher(version);
+        return prerelease.matches() ? VERSION_ALIASES.getOrDefault(prerelease.group(1), prerelease.group(1)) : version;
     }
+
+    private static final java.util.regex.Pattern PRERELEASE =
+            java.util.regex.Pattern.compile("(\\d+(?:\\.\\d+)+)-(?:rc|pre|beta|alpha)[.-]?\\d+");
 
     /** Every version the registry handles: milestones with shims plus their intermediate aliases. */
     public Set<String> getAllKnownVersions() {

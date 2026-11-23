@@ -4,4 +4,5 @@ package net.minecraft.network.chat;
 public final class MutableComponent implements Component {
     public MutableComponent withStyle(Style style) { throw new UnsupportedOperationException(); }
     public Style getStyle() { throw new UnsupportedOperationException(); }
+    public MutableComponent withColor(int color) { throw new UnsupportedOperationException(); }
 }

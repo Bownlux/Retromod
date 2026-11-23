@@ -1,4 +1,4 @@
-# Retromod
+# Retromod - Claude Development Guide
 
 Retromod transforms older Minecraft mod bytecode so old mods work on newer MC versions. It supports Fabric, NeoForge, and Forge with 137 registered version-shim providers and 36 registered polyfill providers. Counts drift; count non-comment, nonblank lines in `src/main/resources/META-INF/services/com.retromod.core.VersionShim` and `src/main/resources/META-INF/services/com.retromod.polyfill.PolyfillProvider`.
 
@@ -110,7 +110,7 @@ Contained does not mean partial. If a rule belongs in one shared layer, fix it t
 - **`Retromod.TARGET_MC_VERSION`** is auto-detected at runtime from the mod loader. NEVER hardcode version strings like `"1.21.11"`. Always use `Retromod.TARGET_MC_VERSION`.
 
 ## Architecture
-Make Sure to Keep Updating This Diagram When You Add New Packages or Move Classes Around
+
 ```
 src/main/java/com/retromod/
 ├── core/           Core runtime: Retromod, RetromodTransformer, version detectors, mod transformers
@@ -158,12 +158,12 @@ mvn package -P lite -DskipTests -Dexec.skip=true
 mvn exec:java -Dexec.mainClass="com.retromod.cli.RetromodCli" -Dexec.args="<command>" -q
 
 # Run the executable release CLI (dependencies bundled)
-java -jar dist/CLI/retromod-1.4.0-snapshot.4-cli.jar <command>
+java -jar dist/CLI/retromod-1.4.0-snapshot.5-cli.jar <command>
 ```
 
 **Important:** Always pass `-Dexec.skip=true` during build to prevent Maven from running the CLI entrypoint.
 
-Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 71 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.4.0-snapshot.4-cli.jar`.
+Development output: `target/retromod-<version>.jar` and `target/retromod-<version>-all.jar`. Release output: 71 loader-specific jars under `dist/{Fabric,Forge,NeoForge}/<mc>/`, plus `dist/CLI/retromod-1.4.0-snapshot.5-cli.jar`.
 
 ## Release integrity (self-hash)
 
@@ -172,7 +172,7 @@ Official builds embed a SHA-256 of the executable release surface in `SignatureV
 **Embed the hash as the LAST release step** (any covered code, provider, or transformation-data change shifts it):
 ```bash
 mvn clean package -Dexec.skip=true                          # build the final jars
-python3 scripts/compute-self-hash.py target/retromod-1.4.0-snapshot.4-all.jar
+python3 scripts/compute-self-hash.py target/retromod-1.4.0-snapshot.5-all.jar
 # embed the 64-hex result into SignatureVerifier.EXPECTED_SELF_HASH PROGRAMMATICALLY
 # (sed/python - never hand-typed), rebuild, then re-run the compute script and
 # compare against the embedded value (closed-loop verify)
@@ -186,7 +186,7 @@ After embedding and rebuilding, run `bash build-all.sh --skip-build --require-se
 ## Deploy to Minecraft
 
 ```bash
-cp dist/Fabric/26.1/retromod-1.4.0-snapshot.4+26.1.jar ~/Library/Application\ Support/minecraft/mods/
+cp dist/Fabric/26.1/retromod-1.4.0-snapshot.5+26.1.jar ~/Library/Application\ Support/minecraft/mods/
 ```
 
 Game directory (macOS): `~/Library/Application Support/minecraft/`
@@ -322,6 +322,17 @@ Historically we found broken mixins *reactively* (a mod crashes, we scroll the l
 - **`scripts/mixin-refmap-harvest.py`** (pure-JSON cross-check). Inventories every `*refmap.json` inside the jars without touching bytecode or needing a JDK, so it works as an independent cross-check where the Java scanner cannot run.
 
 Caveat: these surface CANDIDATES, not confirmations. A predicted break is a hypothesis about a target that changed; correctness still requires the in-game or headless verify (per the pitfalls above, the visible crash often masks the real mixin failure).
+
+## Corpus link surveys (what "clean" means)
+
+Progress across eras is measured with link surveys over fixed mod corpora (about 200 top Modrinth mods per loader and source version, kept outside the repo in the maintainer's work folder). Each jar is translated by the release CLI for a target host (`batch --target <mc> --target-loader <loader> --mc-jar <host jar> --host-jar <host jar>`; without `--host-jar` host-gated bridges stay off and gaps are overstated), then a link checker resolves every class, method, and field the translated jar references against the real host jar, the JDK, and netty.
+
+- **Clean** means zero unresolved references. It is a lower bound, not a launch result. A clean jar can still fail on a mixin that no longer matches, reflection, data formats, or runtime behavior (Farmer's Delight and Supplementaries needed several server runs past clean). A non-clean jar can still play: refs in optional compat classes, the other loader's branch of a multi-loader jar, datagen, or a class another corpus mod provides never run.
+- **Count refs, not only jars.** Report clean counts and total unresolved refs before and after every batch, per corpus, and confirm no jar got worse. A one-off ref made to link with a no-op still loses its feature; say so in the changelog limitations.
+- **Fix near-clean jars first.** Fixing the most common refs barely moves clean counts; fixing every ref that blocks jars with 1 to 3 hard refs moves the most (the 1.4.0-snapshot.5 analysis: 205 refs would turn about 240 jars clean across six surveys). Vanilla-member bridges help every loader at once.
+- **Known artifacts** the checker still counts: Retromod's own per-loader branches (`LegacyRegistryContext` naming the other loader's `ServerLifecycleHooks`), LaunchWrapper paths, other-loader code in multi-loader jars, datagen packages, and classes provided by another corpus mod (Forge Config API Port). Filter them before ranking.
+- **Out of scope** for clean counts: renderer and engine mods (Sodium, Embeddium, Iris, Oculus, Distant Horizons, Create, ImmediatelyFast, ModernUI, Physics Mod, EMF/ETF, Lithium, Starlight, ReplayMod, native-code mods); they stay on [Mods That Can't Be Translated](docs/incompatible-mods.md).
+- **A ref into Retromod's own embedded classes is a Retromod bug**, never a mod gap: an embedded helper naming a member the host lacks means a bridge registered on a host shape it was not written for (pitfall 9).
 
 ## Dependencies
 

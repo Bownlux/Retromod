@@ -3,4 +3,7 @@ package net.minecraft.client;
 
 public class Camera {
     public Camera() {}
+    public org.joml.Vector3fc forwardVector() { throw new UnsupportedOperationException(); }
+    public org.joml.Vector3fc upVector() { throw new UnsupportedOperationException(); }
+    public org.joml.Vector3fc leftVector() { throw new UnsupportedOperationException(); }
 }

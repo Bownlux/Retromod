@@ -66,6 +66,7 @@ public final class LegacyRemovedMemberBridge {
         registerEntityMembers(t, host);
         registerHumanoidModels(t, host);
         LegacyVanillaMemberBridge.register(t, host);
+        LegacyRemovedVanillaTypes.register(t, host);
         if (lacksMethod(host, PATCH, "get", "(Lnet/minecraft/core/component/DataComponentType;)Ljava/util/Optional;",
                 FIRST_PATCH_LOOKUP_HOST)) {
             RebuiltApiClasses.registerTree(t, PATCHES);

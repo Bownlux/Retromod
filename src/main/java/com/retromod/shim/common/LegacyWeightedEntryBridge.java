@@ -100,6 +100,8 @@ public final class LegacyWeightedEntryBridge {
     /** Unconditional registration, in Mojang names or in {@code names}. */
     static void registerRedirects(RetromodTransformer t, Remapper names) {
         RebuiltApiClasses.registerTree(t, MEMBERS, names);
+        // A wrapped value is the host's Weighted, so the mod's own entry types are erased to Object.
+        t.enablePostProcess(LegacyWeightedEntryErasure.FLAG);
         // The class moves come first, so each member redirect below also matches a call whose
         // owner or descriptor an earlier pass already rewrote.
         classRedirect(t, names, OLD_ENTRY, ENTRY);

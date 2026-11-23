@@ -8,8 +8,6 @@ import com.retromod.util.RetromodLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.swing.*;
-import java.awt.*;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
@@ -40,6 +38,9 @@ public class MemorySafetyMonitor {
 
     private final MemoryMXBean memoryBean;
     private final OperatingSystemMXBean osBean;
+    // The heap and CPU samples; tests pass fixed ones.
+    private final java.util.function.DoubleSupplier memorySample;
+    private final java.util.function.DoubleSupplier cpuSample;
 
     private final Map<String, ModPerformanceData> modPerformance = new ConcurrentHashMap<>();
 
@@ -89,12 +90,22 @@ public class MemorySafetyMonitor {
     }
     
     private MemorySafetyMonitor() {
+        this(null, null, true);
+    }
+
+    /** A monitor reading the given samples, or the JVM's own when null; only the shared one watches in the background. */
+    MemorySafetyMonitor(java.util.function.DoubleSupplier memorySample, java.util.function.DoubleSupplier cpuSample,
+            boolean watch) {
         this.memoryBean = ManagementFactory.getMemoryMXBean();
         this.osBean = ManagementFactory.getOperatingSystemMXBean();
+        this.memorySample = memorySample != null ? memorySample : this::sampleHeap;
+        this.cpuSample = cpuSample != null ? cpuSample : this::sampleCpu;
 
-        Thread monitor = new Thread(this::monitorLoop, "Retromod-PerformanceMonitor");
-        monitor.setDaemon(true);
-        monitor.start();
+        if (watch) {
+            Thread monitor = new Thread(this::monitorLoop, "Retromod-PerformanceMonitor");
+            monitor.setDaemon(true);
+            monitor.start();
+        }
     }
     
     public static synchronized MemorySafetyMonitor getInstance() {
@@ -124,7 +135,7 @@ public class MemorySafetyMonitor {
         }
     }
     
-    /** Call before starting to transform a class. */
+    /** Call before starting to transform a class. A busy machine is reported, never a reason to skip the transform. */
     public TransformContext beginTransform(String className, String modId) {
         if (shutdownRequested) {
             return null;
@@ -132,19 +143,15 @@ public class MemorySafetyMonitor {
 
         activeTransforms.incrementAndGet();
 
+        // A class that skips its transform fails later with NoSuchMethodError or worse, so a critical sample is
+        // only reported, once per launch, and the class is still translated.
         PerformanceIssue issue = checkPerformance();
-        if (issue == PerformanceIssue.MEMORY_CRITICAL ||
-            issue == PerformanceIssue.CPU_CRITICAL ||
-            issue == PerformanceIssue.TPS_CRITICAL) {
-
-            activeTransforms.decrementAndGet();
-            if (!warningShown) {
-                lastIssue = issue;
-                showPerformanceError();
-            }
-            return null;
+        if ((issue == PerformanceIssue.MEMORY_CRITICAL || issue == PerformanceIssue.CPU_CRITICAL
+                || issue == PerformanceIssue.TPS_CRITICAL) && !warningShown) {
+            lastIssue = issue;
+            showPerformanceError();
         }
-        
+
         return new TransformContext(className, modId, System.nanoTime());
     }
     
@@ -203,12 +210,20 @@ public class MemorySafetyMonitor {
 
     /** Heap usage as a fraction from 0.0 to 1.0. */
     public double getMemoryUsagePercent() {
-        MemoryUsage heap = memoryBean.getHeapMemoryUsage();
-        return (double) heap.getUsed() / heap.getMax();
+        return memorySample.getAsDouble();
     }
 
     /** Process CPU load as a fraction from 0.0 to 1.0. */
     public double getCpuUsagePercent() {
+        return cpuSample.getAsDouble();
+    }
+
+    private double sampleHeap() {
+        MemoryUsage heap = memoryBean.getHeapMemoryUsage();
+        return (double) heap.getUsed() / heap.getMax();
+    }
+
+    private double sampleCpu() {
         if (osBean instanceof com.sun.management.OperatingSystemMXBean sunBean) {
             double load = sunBean.getProcessCpuLoad();
             return load >= 0 ? load : 0.5; // 50% when unavailable
@@ -311,66 +326,25 @@ public class MemorySafetyMonitor {
                              lastIssue == PerformanceIssue.CPU_CRITICAL ||
                              lastIssue == PerformanceIssue.TPS_CRITICAL;
 
-        if (EnvironmentDetector.canShowGui()) {
-            showGuiPerformanceError(message.toString(), isCritical);
-        } else {
-            showConsolePerformanceError(message.toString(), isCritical);
-        }
+        // Only the log: a dialog opened from a class-loading or tick thread blocks the game, and its window kept
+        // the JVM from exiting.
+        showConsolePerformanceError(message.toString(), isCritical);
     }
 
-    private void showGuiPerformanceError(String message, boolean isCritical) {
-        SwingUtilities.invokeLater(() -> {
-            try {
-                UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-            } catch (Exception ignored) {}
-
-            if (isCritical) {
-                int choice = JOptionPane.showOptionDialog(
-                    null,
-                    message,
-                    "Retromod performance problem",
-                    JOptionPane.YES_NO_OPTION,
-                    JOptionPane.ERROR_MESSAGE,
-                    null,
-                    new String[]{"Exit Minecraft", "Keep Running"},
-                    "Exit Minecraft"
-                );
-                
-                if (choice == 0) {
-                    LOGGER.error("Exiting after a serious performance warning.");
-                    System.exit(1);
-                } else {
-                    LOGGER.warn("Continuing after a serious performance warning.");
-                    shutdownRequested = false;
-                    warningShown = false; // let a later issue prompt again
-                }
-            } else {
-                JOptionPane.showMessageDialog(
-                    null,
-                    message,
-                    "Retromod performance warning",
-                    JOptionPane.WARNING_MESSAGE
-                );
-                warningShown = false;
-            }
-        });
-    }
-    
     private void showConsolePerformanceError(String message, boolean isCritical) {
         if (isCritical) {
             LOGGER.error("Retromod detected a serious performance problem:");
             for (String line : message.split("\n")) {
                 LOGGER.error("{}", line);
             }
-            LOGGER.error("The server will keep running, but you should review the items above.");
+            LOGGER.error("Minecraft keeps running and every class is still translated, but review the items above.");
         } else {
             LOGGER.warn("Retromod detected a performance problem:");
             for (String line : message.split("\n")) {
                 LOGGER.warn("{}", line);
             }
         }
-
-        warningShown = false;
+        // Once per launch: warningShown stays set, so a busy launch does not repeat the report for every class.
     }
 
     public void requestGarbageCollection() {

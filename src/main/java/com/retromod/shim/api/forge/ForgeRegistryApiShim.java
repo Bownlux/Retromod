@@ -147,6 +147,8 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
             // by a different class than the one that registers it, so the statement that fills
             // the field is stamped with the id the jar registers it under.
             transformer.enablePostProcess(RegistryIdBridgeSynthetic.STATIC_FIELDS_FLAG);
+            // What is still built with no id gets a placeholder that the mod's registration replaces.
+            com.retromod.shim.common.DeferredIdStamper.register(transformer);
         } else if (com.retromod.util.McReflect.isNeoForge()
                 && RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20.5") >= 0) {
             // NeoForge never builds a data-driven registry's entries, so a pre-1.19.3 mod's code-built

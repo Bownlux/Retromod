@@ -17,6 +17,7 @@ import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
+import org.objectweb.asm.tree.MethodNode;
 
 import java.util.List;
 
@@ -161,6 +162,44 @@ class ForgeEventBusBridgeTest {
                 .findFirst().orElseThrow().visibleAnnotations.get(0);
         assertEquals("Lnet/minecraftforge/eventbus/api/listener/SubscribeEvent;", ann.desc,
                 "old @SubscribeEvent must be redirected to the EventBus 7 annotation");
+    }
+
+    @Test
+    @DisplayName("a mod that asks its FMLModContainer for the event bus gets the bridge over the container's bus group")
+    void containerEventBusIsBridged() {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        ForgeEventBusSynthetics.register(t);
+        String container = "net/minecraftforge/fml/javafmlmod/FMLModContainer";
+
+        // IEventBus bus = ((FMLModContainer) container).getEventBus();
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+        cw.visit(Opcodes.V17, ACC_PUBLIC, "com/example/RegistryHelper", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "bus", "(L" + container + ";)Ljava/lang/Object;", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEVIRTUAL, container, "getEventBus", "()" + L_OLD_BUS, false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        ClassNode cn = new ClassNode();
+        new ClassReader(t.transformClass(cw.toByteArray(), "com/example/RegistryHelper.class")).accept(cn, 0);
+        MethodInsnNode call = (MethodInsnNode) java.util.Arrays.stream(cn.methods.stream().filter(m -> m.name.equals("bus"))
+                .findFirst().orElseThrow().instructions.toArray()).filter(in -> in instanceof MethodInsnNode).findFirst().orElseThrow();
+        assertEquals(ForgeEventBusSynthetics.LEB_IMPL + ".containerBus(L" + container + ";)L" + ForgeEventBusSynthetics.LEB + ";",
+                call.owner + "." + call.name + call.desc, "Forge 26.2's container has only getModBusGroup()");
+        assertEquals(INVOKESTATIC, call.getOpcode());
+
+        ClassNode impl = new ClassNode();
+        new ClassReader(ForgeEventBusSynthetics.generateImpl()).accept(impl, 0);
+        MethodNode bridge = impl.methods.stream().filter(m -> m.name.equals("containerBus")).findFirst().orElseThrow();
+        assertTrue(java.util.Arrays.stream(bridge.instructions.toArray()).anyMatch(in -> in instanceof MethodInsnNode mi
+                && mi.owner.equals(container) && mi.name.equals("getModBusGroup")), "the bridge reads the container's bus group");
+        assertTrue(java.util.Arrays.stream(bridge.instructions.toArray()).noneMatch(in -> in instanceof FieldInsnNode fi
+                && fi.getOpcode() == PUTSTATIC && fi.name.equals("modGroup")),
+                "a library asking another mod's container must not repoint its own kept mod group");
     }
 
     private static final String OLD_PRI = "net/minecraftforge/eventbus/api/EventPriority";
@@ -1532,6 +1571,8 @@ class ForgeEventBusBridgeTest {
             classes.put(FMLJMLC, modLoadingContext());
             // Named only in helper signatures, which reflection resolves.
             classes.put(DR, standIn(0, DR, null, cw -> {}));
+            classes.put("net/minecraftforge/fml/javafmlmod/FMLModContainer",
+                    standIn(0, "net/minecraftforge/fml/javafmlmod/FMLModContainer", null, cw -> {}));
             classes.put(HANDLERS, handlers());
             classes.put(TICK, standIn(ACC_INTERFACE | ACC_ABSTRACT, TICK, null, cw -> {}));
             for (String tick : TICKS) {

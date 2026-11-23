@@ -47,6 +47,22 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
         // Vanilla content holder fields whose type became ResourceKey<X> in MC 1.21.
         registerRegistryRefRedirects(transformer);
 
+        // FireBlock.setFlammable is private on 26.x, and Fabric API no longer widens it for mods.
+        LegacyFlammablesBridge.register(transformer);
+
+        // Fabric API's FabricElytraItem is gone; an old elytra item that implements it still loads.
+        LegacyFabricElytraItemBridge.register(transformer);
+
+        // ModelResourceLocation became a plain Identifier, and ModelManager.getModel is answered from block state models.
+        com.retromod.shim.common.LegacyModelLocationBridge.register(transformer);
+
+        // BlockColors.getColor moved to tint sources in 26.1. Fabric's loader API owns the old color types, so only the
+        // lookup is bridged here, answered from the host's tint sources.
+        if (blockColorsLostGetColor(com.retromod.core.ClassResourceInspector.read(com.retromod.shim.common.LegacyColorClasses.BLOCK_COLORS))) {
+            com.retromod.shim.common.LegacyColorClasses.registerHostGetColor(transformer, "26.1");
+        }
+        registerBlockAppearance(transformer);
+
         // 26.x refuses to construct a block whose Properties carry no registry id. NeoForge mods
         // get the id from their deferred register; a Fabric mod builds the block inside the
         // Registry.register argument list, so every Fabric mod that adds a block died at its own
@@ -71,6 +87,11 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             com.retromod.shim.fabric.FabricRegistryIdSynthetic.INTERNAL, "blockOfFullCopy",
             "(Lnet/minecraft/world/level/block/state/BlockBehaviour;)"
                 + "Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;");
+        // A block or item built before the mod knows its id, as Moonlight's block sets do, gets a placeholder that
+        // registration replaces.
+        com.retromod.shim.common.DeferredIdStamper.register(transformer);
+        // The compound tag entity data serializer 1.21.9 removed; Fabric runs Mojang names from 26.1.
+        com.retromod.shim.common.LegacyEntityDataSerializerBridge.registerFabric(transformer);
         // blockOfFullCopy runs the copy through this map color guard, so it is embedded beside it.
         com.retromod.core.SyntheticEmbedder.registerClassResource(
                 transformer,
@@ -106,6 +127,46 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
                 transformer,
                 com.retromod.shim.fabric.embedded.LegacyBlockRandomTickBridge.INTERNAL_NAME,
                 com.retromod.shim.fabric.embedded.LegacyBlockRandomTickBridge.class);
+
+        // The block view API became the block getter API, with the same members.
+        transformer.registerClassRedirect(
+            "net/fabricmc/fabric/api/blockview/v2/RenderDataBlockEntity",
+            "net/fabricmc/fabric/api/blockgetter/v2/RenderDataBlockEntity"
+        );
+        transformer.registerClassRedirect(
+            "net/fabricmc/fabric/api/blockview/v2/FabricBlockView",
+            "net/fabricmc/fabric/api/blockgetter/v2/FabricBlockGetter"
+        );
+
+        // Built-in packs moved to the v1 resource loader, and mods that called the old helper's
+        // implementation directly to give a sub path reach it through this bridge.
+        transformer.registerMethodRedirect(
+            "net/fabricmc/fabric/impl/resource/loader/ResourceManagerHelperImpl", "registerBuiltinResourcePack",
+            "(Lnet/minecraft/resources/Identifier;Ljava/lang/String;Lnet/fabricmc/loader/api/ModContainer;"
+                + "Lnet/minecraft/network/chat/Component;Lnet/fabricmc/fabric/api/resource/ResourcePackActivationType;)Z",
+            com.retromod.shim.fabric.embedded.LegacyBuiltinPacks.INTERNAL_NAME, "registerBuiltinResourcePack",
+            "(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Z");
+        com.retromod.core.SyntheticEmbedder.registerClassResource(
+                transformer,
+                com.retromod.shim.fabric.embedded.LegacyBuiltinPacks.INTERNAL_NAME,
+                com.retromod.shim.fabric.embedded.LegacyBuiltinPacks.class);
+
+        // The mod pack class itself moved to the v1 loader's package, where a type check reaches it.
+        FabricModNioResourcePackBridge.registerMovedClass(transformer);
+
+        // Chunk load listeners gained a "just generated" flag.
+        FabricChunkLoadCallbackBridge.register(transformer);
+        // Fabric API's v2 loot events are gone; old callbacks run through the v3 events.
+        FabricLootV2EventsBridge.register(transformer);
+        // FabricEntityTypeBuilder is gone where the polyfill points it at the vanilla builder; its calls follow.
+        LegacyFabricEntityTypeBuilderBridge.register(transformer);
+
+        // Fabric API renamed addSupportedBlock to addValidBlock; mods call it on the interface or on the injected type.
+        for (String owner : new String[]{"net/fabricmc/fabric/api/object/builder/v1/block/entity/FabricBlockEntityType",
+                "net/minecraft/world/level/block/entity/BlockEntityType"}) {
+            transformer.registerMethodRedirect(owner, "addSupportedBlock", "(Lnet/minecraft/world/level/block/Block;)V",
+                    owner, "addValidBlock", "(Lnet/minecraft/world/level/block/Block;)V");
+        }
 
         // Networking: S2C/C2S -> Clientbound/Serverbound
         transformer.registerClassRedirect(
@@ -177,6 +238,8 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
         // The event holder and its callbacks were renamed member by member, so a class redirect
         // alone left END and its End callback unresolved (#296). The bridge maps each one.
         com.retromod.shim.api.fabric.LegacyLevelRenderBridge.register(transformer);
+        // BuiltinItemRendererRegistry, which Fabric API removed in 1.21.4, rebuilt on item model wrapping.
+        LegacyBuiltinItemRendererBridge.register(transformer);
         transformer.registerClassRedirect(
             "net/fabricmc/fabric/api/client/rendering/v1/WorldRenderContext",
             "net/fabricmc/fabric/api/client/rendering/v1/level/LevelRenderContext"
@@ -410,13 +473,8 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             "net/minecraft/client/gui/GuiGraphicsExtractor"
         );
 
-        // Tesselator.getBuilder() -> begin() (signature also changed)
-        transformer.registerMethodRedirect(
-            "com/mojang/blaze3d/vertex/Tesselator", "getBuilder",
-            "()Lcom/mojang/blaze3d/vertex/BufferBuilder;",
-            "com/mojang/blaze3d/vertex/Tesselator", "begin",
-            "(Lcom/mojang/blaze3d/vertex/VertexFormat$Mode;Lcom/mojang/blaze3d/vertex/VertexFormat;)Lcom/mojang/blaze3d/vertex/BufferBuilder;"
-        );
+        // Tesselator.getBuilder() is left as written: begin(mode, format) takes two arguments the old call never pushed,
+        // so redirecting to it broke every method that drew. The 26.2 stand-in answers getBuilder() itself.
 
         // Tesselator.end() -> clear()
         transformer.registerMethodRedirect(
@@ -1090,5 +1148,40 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
                 lookup, pair[1], objRet
             );
         }
+    }
+
+    /**
+     * Fabric API's getAppearance on a block state reads a BlockAndLightGetter from 26.1, where the tint getter it took
+     * moved to the client. The tint getter is a light getter, so an old call keeps its arguments and takes the new form.
+     */
+    public static void registerBlockAppearance(RetromodTransformer transformer) {
+        String rest = "Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Direction;"
+                + "Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/core/BlockPos;)"
+                + "Lnet/minecraft/world/level/block/state/BlockState;";
+        String current = "(Lnet/minecraft/world/level/BlockAndLightGetter;" + rest;
+        // The tint getter under its 1.21.1 package and under the client package Retromod moves it to.
+        for (String getter : new String[]{"net/minecraft/world/level/BlockAndTintGetter", "net/minecraft/client/renderer/block/BlockAndTintGetter"}) {
+            String old = "(L" + getter + ";" + rest;
+            for (String owner : new String[]{"net/minecraft/world/level/block/state/BlockState",
+                    "net/fabricmc/fabric/api/block/v1/FabricBlockState"}) {
+                transformer.registerMethodRedirect(owner, "getAppearance", old, owner, "getAppearance", current);
+            }
+            // The block-level form takes the state first; a call through a block keeps its arguments the same way.
+            String blockOld = "(Lnet/minecraft/world/level/block/state/BlockState;" + old.substring(1);
+            String blockCurrent = "(Lnet/minecraft/world/level/block/state/BlockState;" + current.substring(1);
+            for (String owner : new String[]{"net/minecraft/world/level/block/Block", "net/fabricmc/fabric/api/block/v1/FabricBlock"}) {
+                transformer.registerMethodRedirect(owner, "getAppearance", blockOld, owner, "getAppearance", blockCurrent);
+            }
+        }
+    }
+
+    /** Whether the host's BlockColors lacks the old getColor; an unreadable host is a 26.1 one, where it is gone. */
+    static boolean blockColorsLostGetColor(org.objectweb.asm.tree.ClassNode blockColors) {
+        if (blockColors == null) return true;
+        String old = "(" + com.retromod.shim.common.LegacyColorClasses.COLOR_ARGS + ")I";
+        for (org.objectweb.asm.tree.MethodNode method : blockColors.methods) {
+            if (method.name.equals("getColor") && method.desc.equals(old)) return false;
+        }
+        return true;
     }
 }

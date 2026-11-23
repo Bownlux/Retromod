@@ -77,7 +77,7 @@ final class EventBus7Host extends ClassLoader {
         }
         // Named only in the bridge's other helpers, which reflection over the bridge resolves.
         for (String named : List.of("net/minecraftforge/registries/DeferredRegister",
-                "net/minecraftforge/fml/javafmlmod/FMLJavaModLoadingContext")) {
+                "net/minecraftforge/fml/javafmlmod/FMLJavaModLoadingContext", "net/minecraftforge/fml/javafmlmod/FMLModContainer")) {
             classes.put(named, emptyClass(named));
         }
     }

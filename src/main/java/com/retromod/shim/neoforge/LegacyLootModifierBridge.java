@@ -17,6 +17,9 @@ public final class LegacyLootModifierBridge {
     static final String MODIFIER = "net/neoforged/neoforge/common/loot/LootModifier";
     /** 26.3 replaced the array with one optional condition, so its base is rebuilt in Java. */
     static final String BASE_26_3 = RebuiltApiClasses.ROOT + "neoforge/common/loot/LegacyLootModifier";
+    static final String ADD_TABLE = "net/neoforged/neoforge/common/loot/AddTableLootModifier";
+    /** NeoForge's table modifier, rebuilt on the 26.3 base, for an old mod that extends it as Farmer's Delight does. */
+    static final String ADD_TABLE_26_3 = RebuiltApiClasses.ROOT + "neoforge/common/loot/LegacyAddTableLootModifier";
     /** 26.2 kept the array and added a priority, so its base only fills that in. */
     static final String BASE_26_2 = "com/retromod/generated/LegacyLootModifier262";
     static final String GETTER_26_2 = BASE_26_2 + "$Conditions";
@@ -33,6 +36,8 @@ public final class LegacyLootModifierBridge {
         if (NeoForgeMovedMembers.moved(MODIFIER, "<init>", arrayInit, MODIFIER, "<init>", "(Ljava/util/Optional;I)V", "26.3")) {
             RebuiltApiClasses.registerTree(t, BASE_26_3);
             rebase(t, BASE_26_3);
+            RebuiltApiClasses.registerTree(t, ADD_TABLE_26_3);
+            t.registerSuperclassRebase(ADD_TABLE, ADD_TABLE_26_3);
         } else if (NeoForgeMovedMembers.moved(MODIFIER, "<init>", arrayInit, MODIFIER, "<init>", "(" + CONDITIONS + "I)V", "26.2")) {
             t.registerSyntheticClass(BASE_26_2, generateBase262());
             t.registerSyntheticClass(GETTER_26_2, generateGetter262());

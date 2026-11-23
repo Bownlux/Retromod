@@ -232,6 +232,7 @@ public class AotCompiler {
         }
         // A shaded library's stale descriptor left at the root makes Forge refuse the whole jar.
         com.retromod.core.ModuleInfoRepair.dropInvalid(outputJar);
+        com.retromod.mixin.MixinShadowGate.finishMod();
         if (loaderApiIdentity != null) {
             reportMissingFabricApi(outputJar, validatedModJar);
         }
@@ -487,6 +488,9 @@ public class AotCompiler {
                 // Calls that bridges add to the @Mod constructors, decided from the whole jar as on the runtime path.
                 var constructorHooks = com.retromod.shim.forge.ModConstructorHooks
                         .forJar(transformer, classBytesForEquipment);
+                // Handlers another class of the mod calls or references, which the subscriber guard keeps.
+                java.util.Set<String> handlerReferences = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard
+                        .methodsReferencedAcrossClasses(classBytesForEquipment);
                 classBytesForEquipment = null;
                 Enumeration<JarEntry> entries = jar.entries();
 
@@ -537,6 +541,9 @@ public class AotCompiler {
                             byte[] repaired = AotMixinRepair.apply(
                                     mixinTransformer, out, className, refmapPlan.repairs());
                             if (constructorHooks != null) repaired = constructorHooks.apply(repaired);
+                            // As on the Forge runtime path, so a subscriber the host would refuse or load needlessly is guarded.
+                            repaired = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard.apply(repaired,
+                                    transformer.getSyntheticClasses()::containsKey, handlerReferences::contains);
                             // Last, as on the Forge runtime path, so the registration call is
                             // added to the finished constructor.
                             if (biomeWiring != null) repaired = biomeWiring.wireClass(repaired);
@@ -1030,6 +1037,9 @@ public class AotCompiler {
             Set<String> nestedEntryNames = com.retromod.core.TomlMixinConfigs.entryNames(jarData);
             // The bundled jar gets its own rename decision, and its hierarchy is served renamed.
             var typeRenames = LegacyJarTypeRenames.forJar(transformer, classBytes.values());
+            // Handlers another class of this library calls or references, which the subscriber guard keeps.
+            java.util.Set<String> handlerReferences = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard
+                    .methodsReferencedAcrossClasses(classBytes.values());
             // A bundled mod loads its own @Mod class and data, so it gets its own biome modifier.
             var biomeWiring = com.retromod.shim.forge.LegacyBiomeLoadingBridge
                     .forJar(transformer, classBytes.values());
@@ -1118,6 +1128,9 @@ public class AotCompiler {
                             byte[] hooked = constructorHooks.apply(d);
                             if (hooked != d) { d = hooked; modified = true; }
                         }
+                        byte[] guarded = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard.apply(d,
+                                transformer.getSyntheticClasses()::containsKey, handlerReferences::contains);
+                        if (guarded != d) { d = guarded; modified = true; }
                         // Wired last, so the registration call lands in the finished constructor.
                         if (biomeWiring != null) {
                             byte[] wired = biomeWiring.wireClass(d);
@@ -1788,15 +1801,14 @@ public class AotCompiler {
                 "(\"minecraft\"\\s*:\\s*)(?:\"[^\"]*\"|\\[[^\\]]*\\]|\\{[^}]*\\})",
                 "$1\"*\""
             );
-            json = json.replaceAll(
-                "(\"fabricloader\"\\s*:\\s*)\"[^\"]*\"",
-                "$1\">=0.14.0\""
-            );
+            // The loader floor stays the mod's own; see keepLoaderFloor below.
             json = json.replaceAll(
                 "(\"fabric-[a-z-]+(?:-v[0-9]+)?\"\\s*:\\s*)\"(?:>=)?[0-9][^\"]*\"",
                 "$1\"*\""
             );
-            return json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            // Fabric Loader sets the mod's Mixin compatibility from this floor, so it is kept.
+            return FabricMetadataCompat.keepLoaderFloor(json.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    FabricMetadataCompat.loaderCeiling(com.retromod.core.RetromodVersion.TARGET_MC_VERSION));
         } catch (Exception e) {
             return jsonData;
         }

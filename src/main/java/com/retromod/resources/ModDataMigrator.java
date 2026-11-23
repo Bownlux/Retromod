@@ -146,6 +146,9 @@ public final class ModDataMigrator {
             normalized = splitPotionEntity(normalized);
         }
 
+        // The boat entity 1.21.2 split by wood, named by the wood worldgen data gives. The rename table
+        // lists the old boat as removed, so this runs first.
+        normalized = LegacyBoatIds.migrate(entryName, normalized, sourceMcVersion, targetMcVersion);
         // Minecraft's renamed ids, such as minecraft:chain to minecraft:iron_chain in 1.21.9.
         normalized = VanillaIdRenames.migrate(entryName, normalized, sourceMcVersion, targetMcVersion);
         // And its renamed tags, such as #minecraft:concrete_powder to concrete_powders in 26.2.
@@ -274,7 +277,8 @@ public final class ModDataMigrator {
         // "#tag" string, and skips a recipe in the old shape. 26.3 loads recipes with the
         // registries, so there one old recipe stopped the world from loading.
         if (atLeast(targetMcVersion, FIRST_STRING_INGREDIENT_HOST) && isRecipeFile(entryName)
-                && (probe.contains("\"item\"") || probe.contains("\"tag\"") || probe.contains("[]"))) {
+                && (probe.contains("\"item\"") || probe.contains("\"tag\"") || probe.contains("[]")
+                        || (oldNeoForgeCustomIngredients(targetLoader, sourceMcVersion) && probe.contains("\"type\"")))) {
             normalized = migrateRecipeIngredients(normalized, targetLoader, sourceMcVersion, targetMcVersion);
         }
 
@@ -512,6 +516,12 @@ public final class ModDataMigrator {
     /** Applies {@link #migrate} to every migratable file in the tree and counts the files rewritten. */
     static int migrateContent(ResourceTree tree, String sourceMcVersion, String targetMcVersion,
                               MigrationContext.Loader targetLoader) throws IOException {
+        return migrateContent(tree, sourceMcVersion, targetMcVersion, targetLoader, false);
+    }
+
+    /** The same, also rewriting spawn lists inside a mod's own structure types when {@code nestedSpawns}. */
+    static int migrateContent(ResourceTree tree, String sourceMcVersion, String targetMcVersion,
+                              MigrationContext.Loader targetLoader, boolean nestedSpawns) throws IOException {
         int changed = 0;
         for (String name : tree.names()) {
             if (!isMigratableData(name)) continue; // migrate() picks the rewrites for the target
@@ -519,6 +529,9 @@ public final class ModDataMigrator {
             // reaching the host unconverted.
             byte[] before = tree.read(name, MAX_MIGRATABLE_FILE_BYTES);
             byte[] after = migrate(name, before, sourceMcVersion, targetMcVersion, targetLoader);
+            if (nestedSpawns && SpawnerDataMigrator.appliesTo(targetMcVersion)) {
+                after = SpawnerDataMigrator.migrateNestedSpawns(name, after);
+            }
             if (after != before) {        // same array back means nothing matched
                 tree.write(name, after);
                 changed++;
@@ -687,14 +700,19 @@ public final class ModDataMigrator {
     // Only the singular folder: this check runs for 26.3 and newer, which never read the plural
     // one, so a plural original cannot dangle there and is left in the jar as it was shipped.
     private static final Pattern RECIPE_ADVANCEMENT =
-            Pattern.compile("data/([a-z0-9_.-]+)/advancement/recipes/.+\\.json");
+            Pattern.compile("data/([a-z0-9_.-]+)/advancement/recipes?/.+\\.json");
 
     /**
      * Recipe advancements that name a recipe from their own namespace which the jar does not ship.
      * Older versions ignored the dangling id; 26.3 binds it as a registry reference, so one such
      * file stopped the world from loading (Macaw's Bridges ships {@code iron_bridge} for a recipe
      * named {@code iron_bridge_middle}). Other namespaces are left alone, since another mod may
-     * provide them.
+     * provide them. Both reward lists and {@code recipe_unlocked} criteria count, under the
+     * {@code recipes} folder 1.20 datagen wrote and the {@code recipe} folder 1.21 datagen writes:
+     * Supplementaries ships {@code recipe/way_sign_oak/minecraft/acacia} for a recipe it names
+     * {@code way_sign_acacia}. Older versions never awarded such a recipe and never fired such a
+     * criterion, so the file did nothing. A recipe a mod generates at runtime under the same id
+     * loses the advancement that unlocks it in the recipe book; it can still be crafted.
      *
      * @param entryNames every entry path in the jar or tree, forward-slash separated
      * @param reader reads one entry's bytes, or returns null when it cannot
@@ -713,19 +731,14 @@ public final class ModDataMigrator {
             if (!m.matches()) continue;
             byte[] json = reader.apply(name);
             if (json == null) continue;
-            for (String id : rewardedRecipes(normalizeLenientJson(json))) {
-                int colon = id.indexOf(':');
-                if (colon < 0 || !id.substring(0, colon).equals(m.group(1))) continue;
-                String path = id.substring(colon + 1);
-                String ns = m.group(1);
-                // 26.3 reads recipes only from the singular folder. A plural original is inert
-                // there, so it counts only through the copy the layout step made of it, and a
-                // copy the load gate kept out leaves the reward dangling.
-                if (!names.contains("data/" + ns + "/recipe/" + path + ".json")) {
-                    dangling.add(name);
-                    break;
-                }
-            }
+            RecipeReferences references = referencedRecipes(normalizeLenientJson(json));
+            String ns = m.group(1);
+            // Only a file that does nothing without its missing recipes goes: every reward dangles, or it rewards
+            // none and every unlock criterion dangles. Anything else it does is left as the mod wrote it.
+            boolean drop = !references.rewards().isEmpty()
+                    ? allDangle(references.rewards(), ns, names)
+                    : !references.criteria().isEmpty() && allDangle(references.criteria(), ns, names);
+            if (drop) dangling.add(name);
         }
         if (!dangling.isEmpty()) {
             LOGGER.debug(RetromodLog.DETAIL, "Dropping {} recipe advancement(s) for recipes the mod does not ship: {}",
@@ -734,23 +747,63 @@ public final class ModDataMigrator {
         return dangling;
     }
 
-    private static List<String> rewardedRecipes(byte[] json) {
+    /** Whether every id names a recipe of the advancement's own namespace that the jar does not ship. */
+    private static boolean allDangle(List<String> ids, String ns, java.util.Set<String> names) {
+        for (String id : ids) {
+            int colon = id.indexOf(':');
+            // Another namespace may come from another mod, so it never counts as dangling.
+            if (colon < 0 || !id.substring(0, colon).equals(ns)) return false;
+            // 26.3 reads recipes only from the singular folder. A plural original is inert there, so it counts
+            // only through the copy the layout step made of it, and a copy the load gate kept out dangles.
+            if (names.contains("data/" + ns + "/recipe/" + id.substring(colon + 1) + ".json")) return false;
+        }
+        return true;
+    }
+
+    /** The recipe ids an advancement rewards, and those its unlock criteria wait for. */
+    private record RecipeReferences(List<String> rewards, List<String> criteria) {}
+
+    /** The recipe ids an advancement rewards or waits to see unlocked. */
+    private static RecipeReferences referencedRecipes(byte[] json) {
         List<String> ids = new java.util.ArrayList<>();
+        List<String> criteriaIds = new java.util.ArrayList<>();
         try {
             com.google.gson.JsonElement root = com.google.gson.JsonParser
                     .parseString(new String(json, StandardCharsets.UTF_8));
-            if (!root.isJsonObject()) return ids;
+            if (!root.isJsonObject()) return new RecipeReferences(ids, criteriaIds);
             com.google.gson.JsonElement rewards = root.getAsJsonObject().get("rewards");
-            if (rewards != null && rewards.isJsonObject()
-                    && rewards.getAsJsonObject().get("recipes") instanceof com.google.gson.JsonArray list) {
-                for (com.google.gson.JsonElement id : list) {
-                    if (id.isJsonPrimitive()) ids.add(id.getAsString());
+            if (rewards != null && rewards.isJsonObject()) {
+                addRecipeIds(rewards.getAsJsonObject().get("recipes"), ids);
+            }
+            // A recipe_unlocked criterion names its recipe in "recipe", or in "recipes" after the 26.3 rename.
+            if (root.getAsJsonObject().get("criteria") instanceof com.google.gson.JsonObject criteria) {
+                for (var entry : criteria.entrySet()) {
+                    if (!(entry.getValue() instanceof com.google.gson.JsonObject criterion)) continue;
+                    com.google.gson.JsonElement trigger = criterion.get("trigger");
+                    if (trigger == null || !trigger.isJsonPrimitive()) continue;
+                    String id = trigger.getAsString();
+                    if (!id.equals("minecraft:recipe_unlocked") && !id.equals("recipe_unlocked")) continue;
+                    if (!(criterion.get("conditions") instanceof com.google.gson.JsonObject conditions)) continue;
+                    addRecipeIds(conditions.get("recipe"), criteriaIds);
+                    addRecipeIds(conditions.get("recipes"), criteriaIds);
                 }
             }
         } catch (RuntimeException unparseable) {
             // leave the file to the loader's own error
         }
-        return ids;
+        return new RecipeReferences(ids, criteriaIds);
+    }
+
+    /** One id or a list of ids; a tag reference names no single recipe and is skipped. */
+    private static void addRecipeIds(com.google.gson.JsonElement value, List<String> ids) {
+        if (value == null) return;
+        if (value.isJsonPrimitive()) {
+            if (!value.getAsString().startsWith("#")) ids.add(value.getAsString());
+        } else if (value.isJsonArray()) {
+            for (com.google.gson.JsonElement id : value.getAsJsonArray()) {
+                if (id.isJsonPrimitive() && !id.getAsString().startsWith("#")) ids.add(id.getAsString());
+            }
+        }
     }
 
     private static boolean isRecipeFile(String entryName) {
@@ -1023,9 +1076,12 @@ public final class ModDataMigrator {
                     && primitive.isString() ? namespaced(primitive.getAsString()) : "";
             ComponentIngredients components = type.startsWith("minecraft:") && loader != null
                     ? new ComponentIngredients(loader, sourceMcVersion, targetMcVersion) : null;
+            // NeoForge read a custom ingredient's type from "type" before 1.21.2 and from
+            // "neoforge:ingredient_type" after, where "type" names a holder set instead.
+            boolean neoForgeCustom = oldNeoForgeCustomIngredients(loader, sourceMcVersion);
             boolean changed = false;
             for (String field : SINGLE_INGREDIENT_FIELDS) {
-                com.google.gson.JsonElement converted = legacyIngredient(recipe.get(field), components);
+                com.google.gson.JsonElement converted = legacyIngredient(recipe.get(field), components, neoForgeCustom, true);
                 if (converted != null) {
                     recipe.add(field, converted);
                     changed = true;
@@ -1033,7 +1089,7 @@ public final class ModDataMigrator {
             }
             if (recipe.has("key") && recipe.get("key").isJsonObject()) {
                 for (var entry : recipe.getAsJsonObject("key").entrySet()) {
-                    com.google.gson.JsonElement converted = legacyIngredient(entry.getValue(), components);
+                    com.google.gson.JsonElement converted = legacyIngredient(entry.getValue(), components, neoForgeCustom, true);
                     if (converted != null) {
                         entry.setValue(converted);
                         changed = true;
@@ -1043,7 +1099,7 @@ public final class ModDataMigrator {
             if (recipe.has("ingredients") && recipe.get("ingredients").isJsonArray()) {
                 com.google.gson.JsonArray list = recipe.getAsJsonArray("ingredients");
                 for (int i = 0; i < list.size(); i++) {
-                    com.google.gson.JsonElement converted = legacyIngredient(list.get(i), components);
+                    com.google.gson.JsonElement converted = legacyIngredient(list.get(i), components, neoForgeCustom, true);
                     if (converted != null) {
                         list.set(i, converted);
                         changed = true;
@@ -1068,7 +1124,7 @@ public final class ModDataMigrator {
                 for (var field : recipe.entrySet()) {
                     if (NOT_INGREDIENT_FIELDS.contains(field.getKey())
                             || SINGLE_INGREDIENT_FIELDS.contains(field.getKey())) continue;
-                    com.google.gson.JsonElement converted = legacyIngredient(field.getValue(), null);
+                    com.google.gson.JsonElement converted = legacyIngredient(field.getValue(), null, neoForgeCustom, false);
                     if (converted != null) {
                         field.setValue(converted);
                         changed = true;
@@ -1084,6 +1140,83 @@ public final class ModDataMigrator {
     // Fields of a mod's recipe that hold something other than one ingredient, or were handled above.
     private static final java.util.Set<String> NOT_INGREDIENT_FIELDS = java.util.Set.of(
             "type", "key", "ingredients", "result");
+
+    /** As below, then a pre-1.21.2 NeoForge custom ingredient when {@code neoForgeCustom}; {@code typed} says the value is surely an ingredient. */
+    private static com.google.gson.JsonElement legacyIngredient(com.google.gson.JsonElement value,
+            ComponentIngredients components, boolean neoForgeCustom, boolean typed) {
+        com.google.gson.JsonElement converted = legacyIngredient(value, components);
+        return converted == null && neoForgeCustom ? neoForgeCustomIngredient(value, typed) : converted;
+    }
+
+    private static final String NEOFORGE_INGREDIENT_TYPE = "neoforge:ingredient_type";
+
+    /** Whether a mod for {@code loader} built for {@code source} named its NeoForge custom ingredients with "type". */
+    private static boolean oldNeoForgeCustomIngredients(MigrationContext.Loader loader, String source) {
+        return loader == MigrationContext.Loader.NEOFORGE && source != null && source.matches("\\d+\\.\\d+.*")
+                && !atLeast(source, FIRST_STRING_INGREDIENT_HOST);
+    }
+    // NeoForge's own custom ingredient types, which a mod's own recipe field may hold. Checked in 1.21.1 and 26.3.
+    private static final java.util.Set<String> NEOFORGE_INGREDIENT_TYPES = java.util.Set.of(
+            "neoforge:compound", "neoforge:difference", "neoforge:intersection", "neoforge:components",
+            "neoforge:block_tag");
+    // The fields of NeoForge's ingredients that hold one ingredient, and those that hold a list of them.
+    private static final java.util.Set<String> NESTED_INGREDIENT_FIELDS = java.util.Set.of("base", "subtracted");
+    private static final java.util.Set<String> NESTED_INGREDIENT_LISTS = java.util.Set.of("children", "ingredients");
+
+    /**
+     * A pre-1.21.2 NeoForge custom ingredient in the 1.21.2 shape, or null when the value is not one. A typed
+     * object outside a known ingredient field counts only when NeoForge itself defines the type.
+     */
+    private static com.google.gson.JsonElement neoForgeCustomIngredient(com.google.gson.JsonElement value, boolean typed) {
+        if (value instanceof com.google.gson.JsonObject object) {
+            if (!(object.get("type") instanceof com.google.gson.JsonPrimitive type) || !type.isString()
+                    || object.has(NEOFORGE_INGREDIENT_TYPE)) {
+                return null;
+            }
+            String id = namespaced(type.getAsString());
+            if (!typed && !NEOFORGE_INGREDIENT_TYPES.contains(id)) return null;
+            com.google.gson.JsonObject converted = new com.google.gson.JsonObject();
+            converted.addProperty(NEOFORGE_INGREDIENT_TYPE, id);
+            for (var entry : object.entrySet()) {
+                String key = entry.getKey();
+                if (key.equals("type")) continue;
+                if (NESTED_INGREDIENT_FIELDS.contains(key)) {
+                    converted.add(key, nestedIngredient(entry.getValue()));
+                } else if (NESTED_INGREDIENT_LISTS.contains(key) && entry.getValue() instanceof com.google.gson.JsonArray children) {
+                    com.google.gson.JsonArray list = new com.google.gson.JsonArray();
+                    for (com.google.gson.JsonElement child : children) list.add(nestedIngredient(child));
+                    converted.add(key, list);
+                } else {
+                    converted.add(key, entry.getValue());
+                }
+            }
+            return converted;
+        }
+        // An old list matched any of its entries. One that mixes tags or custom ingredients is a compound now.
+        if (value instanceof com.google.gson.JsonArray list && !list.isEmpty()) {
+            boolean plain = false;
+            for (com.google.gson.JsonElement entry : list) {
+                if (!(entry instanceof com.google.gson.JsonObject object)) return null;
+                if (legacyIngredientId(object) != null) plain = true;
+                else if (!(object.get("type") instanceof com.google.gson.JsonPrimitive)) return null;
+            }
+            // In a mod's own field, only a list holding a plain item or tag is surely ingredients.
+            if (!typed && !plain) return null;
+            com.google.gson.JsonArray children = new com.google.gson.JsonArray();
+            for (com.google.gson.JsonElement entry : list) children.add(nestedIngredient(entry));
+            com.google.gson.JsonObject compound = new com.google.gson.JsonObject();
+            compound.addProperty(NEOFORGE_INGREDIENT_TYPE, "neoforge:compound");
+            compound.add("children", children);
+            return compound;
+        }
+        return null;
+    }
+
+    /** One ingredient inside a NeoForge custom ingredient, converted the same way, or unchanged when it is current. */
+    private static com.google.gson.JsonElement nestedIngredient(com.google.gson.JsonElement value) {
+        com.google.gson.JsonElement converted = legacyIngredient(value, null, true, true);
+        return converted != null ? converted : value;
+    }
 
     /** The string form of one legacy ingredient, or null when it is not a legacy ingredient. */
     private static com.google.gson.JsonElement legacyIngredient(com.google.gson.JsonElement value,

@@ -23,6 +23,8 @@ public class IntermediaryToMojangMapper {
     // host, which the table's header explains how to change.
     private static final String MAPPING_RESOURCE = "/intermediary-to-mojang.tsv";
     private static final String CLASS_MOVES_RESOURCE = "/mojang-class-moves-26.1.tsv";
+    // Older ids whose table name does not link on any 26.x host, given the old name a bridge is keyed on.
+    private static final String BRIDGED_NAMES_RESOURCE = "/intermediary-bridged-names.tsv";
 
     private static volatile IntermediaryToMojangMapper instance;
 
@@ -31,10 +33,15 @@ public class IntermediaryToMojangMapper {
     private final Map<String, String> methodMap = new ConcurrentHashMap<>(40000);
     /** Old Mojang name → New Mojang name for classes moved in 26.1 */
     private final Map<String, String> classMoves = new ConcurrentHashMap<>(600);
+    private final List<BridgedName> bridgedNames = new ArrayList<>();
+
+    /** An older id, its descriptor in intermediary names, and the old Mojang name a bridge matches. */
+    public record BridgedName(boolean field, String id, String descriptor, String oldName) {}
 
     private IntermediaryToMojangMapper() {
         loadMappings();
         loadClassMoves();
+        loadBridgedNames();
     }
 
     public static IntermediaryToMojangMapper getInstance() {
@@ -106,6 +113,31 @@ public class IntermediaryToMojangMapper {
         } catch (IOException e) {
             LOGGER.warn("Failed to load 26.1 class moves: {}", e.getMessage());
         }
+    }
+
+    private void loadBridgedNames() {
+        try (InputStream is = getClass().getResourceAsStream(BRIDGED_NAMES_RESOURCE)) {
+            if (is == null) {
+                return;
+            }
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(is))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.startsWith("#") || line.isEmpty()) continue;
+                    String[] parts = line.split("\t");
+                    if (parts.length >= 4 && (parts[0].equals("FIELD") || parts[0].equals("METHOD"))) {
+                        bridgedNames.add(new BridgedName(parts[0].equals("FIELD"), parts[1], parts[2], parts[3]));
+                    }
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.warn("Could not load the bridged intermediary names: {}", e.getMessage());
+        }
+    }
+
+    /** Older ids that map to their old name for one descriptor, so the bridge keyed on that name applies. */
+    public List<BridgedName> getBridgedNames() {
+        return Collections.unmodifiableList(bridgedNames);
     }
 
     /** Old Mojang to new Mojang class redirects for 26.1 package moves. */
@@ -290,6 +322,12 @@ public class IntermediaryToMojangMapper {
         transformer.registerIntermediaryNameMappings(
                 mapper.getMethodMap(), mapper.getFieldMap());
         registerAmbiguousMemberOverrides(transformer);
+        // Descriptor only, after the class redirects above: every other shape of the id keeps the
+        // table's name, or stays unmapped when the table has none, so a newer mod is untouched.
+        for (BridgedName bridged : mapper.getBridgedNames()) {
+            transformer.registerIntermediaryDescriptorMapping(
+                    bridged.id(), bridged.descriptor(), bridged.oldName(), bridged.field());
+        }
 
         // Also register class-moves on their own, for mods already using Mojang
         // names (1.20+ with GuiGraphics): the intermediary step is skipped but

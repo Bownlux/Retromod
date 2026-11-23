@@ -10,6 +10,76 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.4.0 Snapshot Line
 
+### Snapshot 5, November 20, 2026
+
+- Fixes crashes from old boat items on 26.2 and newer, old saplings on 26.3, and Forge mods that ask a mod container for its event bus on Forge 26.2 and newer.
+- Lets translated jars run without Retromod installed, except a few that use shared networking or loader API bridges.
+- Keeps older mods' bonemealable blocks and structure pieces working on 26.3.
+- Rebuilds the old profile cache, `FlyingMob`, `MossBlock`, and `Saddleable` for older mods.
+- Lets Lootr start on NeoForge 26.3, and bridges the removed chunk ticket types, Fabric API's block view API, and the old nameless entity type builder.
+- Lets Lootr start on Fabric 26.3, and fixes old Fabric chunk load listeners that stopped servers from starting on 26.x.
+- Keeps each Fabric mod's own Fabric Loader floor, so its mixins keep the features they were built for.
+- Lets YUNG's API and Better Dungeons start on NeoForge 26.3.
+- Keeps old jigsaw structure code working on Minecraft 26.3.
+- Disables an old mixin whose game field or method is gone, so its target loads without it instead of failing.
+- Answers the weighted list calls that Minecraft 1.21.5 renamed, so older mods' spawn and loot lists work again.
+
+- Gives blocks and items registered through a mod's own helper the registry id that 1.21.2 requires.
+- Lets old tree, lake and coral features register on 26.3, and loads old cave carvers as carvers that carve nothing.
+- Keeps item sub-predicates from mods built before 1.21.5 registering on 1.21.11 and newer.
+- Keeps old loot table and recipe manager accessors working on 26.3.
+- Rebuilds the axe, shovel and hoe interaction tables 26.3 removed, so blocks old mods add to them still strip, flatten and till on Fabric, Quilt and NeoForge.
+- Places biomes from TerraBlender-based mods on 26.3, which changed how the game looks up biomes.
+- Answers about 25 small client calls that old mods make and 1.21.11 to 26.3 removed, from render state and texture targets to the link screen and cycle buttons.
+- Keeps translating every class when the machine is busy, and reports performance problems in the log instead of a window.
+- Lets old mods that call BufferUploader and the old projection calls load on 1.21.11 and newer; their meshes are not drawn.
+- Lets old world features and trees generate on 26.3, and skips with one log line a feature that needs a game method 26.3 removed instead of freezing world generation.
+- Lets biome mods built on TerraBlender generate their biomes on 26.3 on Fabric as well as NeoForge.
+- Keeps old model locations and block model lookups working on 26.1 and newer for NeoForge and Fabric mods.
+- Answers the old model atlas lookup and the old missing model fields on 26.x, including for Fabric mods.
+- Bridges several smaller removed members old biome mods use: the difficulty name, click event getters, the water-seeking mob goal, the variant holder, and the lily pad's rename.
+- Keeps old sprite construction and quad sprite calls working on 1.21.11 and 26.x, and updates access wideners and transformers that opened an old constructor Retromod adapts.
+- Lets old mods keep creating game objects whose constructor the game made protected, and keeps old dirt path and nether roots blocks working.
+- Lets mods built on Resourceful Lib read their own recipe serializers back on 26.1 and newer, and adds the recipe book methods old Fabric and NeoForge recipes lack.
+- Answers a dozen more small removed calls old mods make, from key bindings and widget clicks to item drops, toasts and pack opening.
+- Lets Moonlight-based mods get past villager schedules, old loot events, registry queues and pack metadata on 26.x, and repairs mixins whose target gained a leading argument.
+- Rebuilds old custom render types made from render state pieces on 26.1 to 26.3, mapped to the closest render type the game has; drawing still needs a client check.
+- Bridges NeoForge's old world render stage event and the old dimension sky effects on 26.x, and extends the render type rebuild to Forge and NeoForge 1.21.11.
+- Reads old block shape constants from the game at runtime, repairs more mixins whose target moved, and maps Fabric API's old entity type builder on 26.x.
+- Answers more small removed calls: the lead knot sounds, the old on/off button, tooltip rendering, the account type, old minecart constructors, and Fabric's old world render position matrix.
+- Keeps old block hooks (neighbor updates, removal, pick block, falling, entity contact) and common server calls working on 1.21.2 to 26.3.
+- Bridges small calls the big content mods use on 1.21.11 and newer: sign text, rain checks, recipe holders and builders, model part copies, item particles, screen keys and text style lookups.
+- Answers the old block color lookup on Fabric 26.x through the game's tint sources.
+- Bridges another batch of common server calls on 26.x: entity type lookups, item predicates, equipment slots, container counters, boats, loot tables, custom data, teleporting, dyes and world generation rule tests.
+- Answers more small removed calls (cow sounds, rising particles, collision checks, model part streams, overlay coordinates, ore and aquifer randoms, biome searches, Fabric API block appearance) and fixes a crash when an old mod's container block is replaced.
+- Lets old mods read and change game rules through the old getRule calls on 1.21.11 and newer, including the renamed fire spread and inverted rules.
+- Answers more small removed calls, including the old boss bar constructor Chunky uses, unsigned commands, confirm keys, label alignment, block sheets and vertex offsets, and fixes Highlighter's inventory screen mixin.
+- Rebuilds the old hierarchical and ageable entity model bases on 1.21.11 and 26.x, so old mod entity models load and are posed each frame.
+- Lets old mods register their own game rules on 26.x and 1.21.11, as real rules that save, show in /gamerule and run their change callbacks.
+- Bridges the old graphics mode option, old option constructors, block entity component input, the block state loot condition and item hover data on 1.21.11 and 26.x.
+- Bridges the old player movement input, the GUI sprite manager and the inventory camera override on 1.21.11 and 26.x.
+- Rebuilds the rest of the old game rule API on 26.x and 1.21.11: the rule visitor, the full rule list, new rule sets, and old saved mod rule values carried over to their new ids.
+- Repairs old mixins that wrap or hook a game call whose parameters were all removed, when the mod only passes them through.
+- Fixes more blockers for Moonlight, Supplementaries, owo-lib and Deeper Darker on Fabric 26.3: wall items, jukebox songs, structure spawn lists, weighted spawn entries, elytra gliding and old text content types.
+- Repairs more single removed members on 26.x, such as team colors, hover events, face shading, blending, and crafting remainders, and old game rule reads.
+- Repairs old farmland blocks, ingredient list codecs, table loot modifiers, patch features, record-built foods, copied crop properties, and default component edits on 26.x.
+- Repairs Fabric 1.21.1 and 1.21.11 mods that call, override, or mix into a member whose 26.x shape changed, and the camera's old up and left vectors.
+- Loads old recipes that read item stacks before item components are ready, repairs old NeoForge custom ingredients in recipe data, and repairs mixins on the old farmland trample method.
+- Applies the full version chain to Fabric mods with a pre-release Minecraft floor, and repairs more single removed members on 1.21.11 and 26.x.
+- Repairs NeoForge 21.1 burn time reads on later NeoForge hosts, old pack supplier openPrimary calls on 26.3, and the old Sheets getters renamed in 26.1.
+- Lets old mods build blocks and items before they know their registry id, as Moonlight does, and repairs old crafting remainder reads on 1.21.5 to 1.21.11 hosts.
+- Repairs more of what Moonlight-based mods need on 26.x: removed cauldron interactions, structure processor registration, runtime-generated packs, old boat ids in worldgen data, and old recipe and loot data shapes.
+- Repairs constructor references to bridged constructors, old cooking and stonecutter recipe constructors, early tag checks in mods built before 1.21.2, and a duplicate Fabric resource condition.
+- Repairs early potion stacks, wood-swapped recipe results, villager memory and sensor lists, and old Fabric custom ingredients on 26.1 and newer.
+- Drops recipe unlock advancements that name recipes a mod never ships on 26.3, and repairs old flower pot plant registration on NeoForge 26.3.
+- Answers unbound tag reads like an empty tag for mods built before 1.21.2, reads old villager trade costs before item components bind, and applies Fabric load conditions to rebuilt JSON reload listeners.
+- Starts carrying mods built for 1.20.1 to the newest hosts: repairs old drawing calls that stopped whole classes from converting, and about 30 removed members on Fabric, Forge, and NeoForge.
+- Carries more 1.20.1 mods to the newest hosts: old chunk generators and dimensions, recipe and packet members, scroll and pick-block overrides, and Forge key, reflection, and render tick APIs on NeoForge.
+- Repairs mixins on constructors whose arguments changed, more old key binding subclasses on every loader, and leaves current mods such as Essential unchanged when they are placed in retromod-input.
+- Lets old rendering code load on 26.x: shader lookups, the model view stack, render targets, light levels, textures, baked quads, Fabric's built-in item renderers, and Forge HUD overlays on NeoForge. Old immediate drawing still draws nothing.
+
+Mods built for 1.20.1 are covered in part on the newest hosts, and many still stop at a removed API that has no bridge yet. Mods built for 1.19.x and earlier are not covered yet. Supplementaries and Moonlight still do not finish starting on Fabric 26.3 or NeoForge 26.3, because Moonlight adds villager trades to a map 26.1 replaced with data-driven trades. Old immediate drawing draws nothing, and a few shared networking and loader API bridges still need Retromod installed.
+
 ### Snapshot 4, November 9, 2026
 
 - Shows the Retromod button, screens, and restart prompt on Forge and NeoForge clients, on Minecraft 26.2 and newer, and on Fabric and Quilt 1.20 to 1.21.11.

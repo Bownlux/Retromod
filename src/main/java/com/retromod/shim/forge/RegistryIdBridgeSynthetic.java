@@ -581,6 +581,8 @@ public final class RegistryIdBridgeSynthetic {
         registerWrapperHelpers(t);
         // Also stamp blocks and items the mod stores in registered static fields.
         t.enablePostProcess(FORGE_STATIC_FIELDS_FLAG);
+        // What is still built with no id gets a placeholder that the mod's registration replaces.
+        com.retromod.shim.common.DeferredIdStamper.register(t);
         final String B = FORGE_INTERNAL;
         t.registerMethodRedirect(FDR, "register",
                 "(Ljava/lang/String;Ljava/util/function/Supplier;)" + L_FRO,
@@ -795,6 +797,13 @@ public final class RegistryIdBridgeSynthetic {
             m.visitVarInsn(ALOAD, 0);
         }
         m.visitMethodInsn(INVOKESTATIC, BBP, orig, desc, false);
+        // A copy can carry a vanilla map color that reads one of the source block's own properties, as
+        // 26.3's wheat reads its age, which the mod's block may lack; the guard answers NONE instead of throwing.
+        if (desc.startsWith("(" + L_BB)) {
+            m.visitMethodInsn(INVOKESTATIC, com.retromod.shim.common.LegacyBlockPropertiesBridge.SUPPORT, "guardMapColor",
+                    "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+            m.visitTypeInsn(CHECKCAST, BBP);
+        }
         m.visitMethodInsn(INVOKESTATIC, owner, "applyBlock", "(" + L_BBP + ")" + L_BBP, false);
         m.visitInsn(ARETURN);
         m.visitMaxs(0, 0);

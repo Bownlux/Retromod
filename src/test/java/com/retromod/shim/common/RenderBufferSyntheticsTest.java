@@ -89,6 +89,55 @@ class RenderBufferSyntheticsTest {
                 "begin must take PrimitiveTopology (the Mode redirect's target) and return a real BufferBuilder");
     }
 
+    @Test
+    @DisplayName("1.20.x immediate mode links on the stand-in and keeps a valid stack after the Fabric 26.1 shim")
+    void preImmediateModeLinksOnTheStandIn() throws Exception {
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        new com.retromod.shim.fabric.Fabric_1_21_11_to_26_1().registerRedirects(t);
+        RenderBufferSynthetics.register(t);
+        String builder = "com/mojang/blaze3d/vertex/BufferBuilder";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, ACC_PUBLIC, "com/example/OldOverlay", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "draw", "()V", null, null);
+        mv.visitCode();
+        // BufferBuilder b = Tesselator.getInstance().getBuilder(); b.begin(Mode.QUADS, fmt); b.end();
+        mv.visitMethodInsn(INVOKESTATIC, OLD_TES, "getInstance", "()L" + OLD_TES + ";", false);
+        mv.visitMethodInsn(INVOKEVIRTUAL, OLD_TES, "getBuilder", "()L" + builder + ";", false);
+        mv.visitVarInsn(ASTORE, 0);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitFieldInsn(GETSTATIC, OLD_MODE, "QUADS", "L" + OLD_MODE + ";");
+        mv.visitInsn(ACONST_NULL);
+        mv.visitMethodInsn(INVOKEVIRTUAL, builder, "begin", "(L" + OLD_MODE + ";L" + VF + ";)V", false);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKEVIRTUAL, builder, "end", "()Lcom/mojang/blaze3d/vertex/MeshData;", false);
+        mv.visitInsn(POP);
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        ClassNode out = new ClassNode();
+        new ClassReader(t.transformClass(cw.toByteArray(), "com/example/OldOverlay")).accept(out, 0);
+        MethodNode draw = out.methods.stream().filter(m -> m.name.equals("draw")).findFirst().orElseThrow();
+        java.util.List<String> calls = new java.util.ArrayList<>();
+        for (AbstractInsnNode in : draw.instructions) {
+            if (in instanceof MethodInsnNode mi) calls.add(mi.owner + "." + mi.name + mi.desc);
+        }
+        assertTrue(calls.contains(RenderBufferSynthetics.TES + ".getBuilder()L" + builder + ";"),
+                "getBuilder() takes no arguments, so it must stay getBuilder on the stand-in: " + calls);
+        assertTrue(calls.contains(RenderBufferSynthetics.TES + ".legacyBegin" + RenderBufferSynthetics.LEGACY_BEGIN), calls.toString());
+        assertTrue(calls.contains(builder + ".build()Lcom/mojang/blaze3d/vertex/MeshData;"), calls.toString());
+        new org.objectweb.asm.tree.analysis.Analyzer<>(new org.objectweb.asm.tree.analysis.BasicInterpreter())
+                .analyze(out.name, draw);
+
+        ClassNode tes = new ClassNode();
+        new ClassReader(RenderBufferSynthetics.generateTesselator()).accept(tes, 0);
+        for (String name : new String[]{"getBuilder", "end", "legacyBegin"}) {
+            assertTrue(tes.methods.stream().anyMatch(m -> m.name.equals(name)), "the stand-in needs " + name);
+        }
+    }
+
     /** A 26.1-translated HUD class using the whole deleted surface, as javac emits it. */
     private static byte[] fixture() {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);

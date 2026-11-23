@@ -1,0 +1,10 @@
+{
+  "type": "retromod_test_mod_neoforge:legacy_stack",
+  "ingredient": {
+    "item": "minecraft:honeycomb"
+  },
+  "result": {
+    "count": 2,
+    "id": "minecraft:honey_bottle"
+  }
+}

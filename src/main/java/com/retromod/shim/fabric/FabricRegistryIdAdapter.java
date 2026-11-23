@@ -42,6 +42,8 @@ public final class FabricRegistryIdAdapter {
 
     /** Encoded once; this runs on every class of every Fabric jar. */
     private static final byte[] REGISTER = "register".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] PROPERTIES_CONSTRUCTOR = "$Properties;)V".getBytes(StandardCharsets.UTF_8);
+    static final String STAMPED_PREFIX = "com/retromod/generated/stamp/";
 
     /** One registration call worth rewriting, and the instruction that produced its id. */
     private record Stamp(MethodInsnNode call, AbstractInsnNode idProducer) {}
@@ -60,7 +62,8 @@ public final class FabricRegistryIdAdapter {
         // Skip the parse when the class has no register call, no store into a field the jar
         // registers, and no static initializer.
         if (indexOf(classBytes, REGISTER) < 0 && !jar.mayStoreInto(classBytes)
-                && !StaticFieldIdStamper.mayHaveClassInitializer(classBytes)) {
+                && !StaticFieldIdStamper.mayHaveClassInitializer(classBytes)
+                && indexOf(classBytes, PROPERTIES_CONSTRUCTOR) < 0) {
             return classBytes;
         }
 
@@ -84,12 +87,111 @@ public final class FabricRegistryIdAdapter {
             stamped += stampHelperCalls(cn.name, m, helpers);
             stamped += stampMethod(cn.name, m);
             stamped += stampConstructorArguments(m);
+            stamped += stampConstructorReferences(m);
         }
         // After the stamps, so the class's own stamped statements run inside the isolated region.
         boolean isolated = StaticFieldIdStamper.isolateClassInitializer(cn, BRIDGE);
         if (stamped == 0 && !isolated) return classBytes;
         // Frames are recomputed only when a stamp was added.
         return StaticFieldIdStamper.write(classBytes, cn, stamped > 0);
+    }
+
+    /**
+     * Points a constructor reference to a game block or item, such as {@code Block::new}, at a generated factory
+     * that stamps the Properties the same way, since the metafactory's call is out of reach of the stamp above.
+     * A mod's own class needs none: its constructor's super call is stamped.
+     */
+    private static int stampConstructorReferences(MethodNode m) {
+        int stamped = 0;
+        for (AbstractInsnNode insn : m.instructions) {
+            // A serializable lambda's deserializer checks the original constructor, so it stays as written.
+            if (!(insn instanceof org.objectweb.asm.tree.InvokeDynamicInsnNode indy) || indy.bsmArgs == null
+                    || !"java/lang/invoke/LambdaMetafactory".equals(indy.bsm.getOwner()) || serializable(indy)) {
+                continue;
+            }
+            for (int i = 0; i < indy.bsmArgs.length; i++) {
+                if (!(indy.bsmArgs[i] instanceof org.objectweb.asm.Handle handle) || handle.getTag() != Opcodes.H_NEWINVOKESPECIAL
+                        || !stampsLastArgument(handle.getDesc()) || !reachableConstructor(handle.getOwner(), handle.getDesc())) {
+                    continue;
+                }
+                String factory = stampedFactory(handle.getOwner(), handle.getDesc());
+                indy.bsmArgs[i] = new org.objectweb.asm.Handle(Opcodes.H_INVOKESTATIC, factory, "create",
+                        factoryDesc(handle.getOwner(), handle.getDesc()), false);
+                stamped++;
+            }
+        }
+        return stamped;
+    }
+
+    private static boolean serializable(org.objectweb.asm.tree.InvokeDynamicInsnNode indy) {
+        return "altMetafactory".equals(indy.bsm.getName()) && indy.bsmArgs.length > 3 && indy.bsmArgs[3] instanceof Integer flags
+                && (flags & java.lang.invoke.LambdaMetafactory.FLAG_SERIALIZABLE) != 0;
+    }
+
+    /**
+     * A game constructor the factory may call, or the public subclass the protected-constructor bridge already
+     * pointed the reference at, whose constructor is public with the same arguments.
+     */
+    private static boolean reachableConstructor(String owner, String desc) {
+        if (owner.startsWith(com.retromod.shim.common.ProtectedConstructorBridge.GENERATED_PREFIX)) return true;
+        return owner.startsWith("net/minecraft/") && publicConstructor(owner, desc);
+    }
+
+    /** Whether the factory, in another package, may call the constructor; an unreadable host counts as no. */
+    private static boolean publicConstructor(String owner, String desc) {
+        ClassNode type = com.retromod.core.ClassResourceInspector.read(owner);
+        return type != null && type.methods.stream().anyMatch(method -> method.name.equals("<init>")
+                && method.desc.equals(desc) && (method.access & Opcodes.ACC_PUBLIC) != 0);
+    }
+
+    private static boolean stampsLastArgument(String desc) {
+        return desc.endsWith("L" + BLOCK_PROPS + ";)V") || desc.endsWith("L" + ITEM_PROPS + ";)V");
+    }
+
+    private static String factoryDesc(String owner, String ctorDesc) {
+        return ctorDesc.substring(0, ctorDesc.length() - 1) + "L" + owner + ";";
+    }
+
+    /** The factory for one constructor, registered once so every mod that names it embeds it. */
+    static String stampedFactory(String owner, String ctorDesc) {
+        String name;
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest((owner + ctorDesc).getBytes(StandardCharsets.UTF_8));
+            name = STAMPED_PREFIX + owner.substring(owner.lastIndexOf('/') + 1) + "$"
+                    + java.util.HexFormat.of().formatHex(digest).substring(0, 24);
+        } catch (java.security.NoSuchAlgorithmException missing) {
+            throw new IllegalStateException("SHA-256 is required by every Java runtime", missing);
+        }
+        com.retromod.core.RetromodTransformer t = com.retromod.core.RetromodTransformer.getInstance();
+        if (!t.getSyntheticClasses().containsKey(name)) t.registerSyntheticClass(name, generateFactory(name, owner, ctorDesc));
+        return name;
+    }
+
+    /** {@code static Owner create(args) { return new Owner(args..., stamp(properties)); }} */
+    static byte[] generateFactory(String name, String owner, String ctorDesc) {
+        org.objectweb.asm.ClassWriter cw = new org.objectweb.asm.ClassWriter(org.objectweb.asm.ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, name, null, "java/lang/Object", null);
+        org.objectweb.asm.MethodVisitor create = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "create",
+                factoryDesc(owner, ctorDesc), null, null);
+        create.visitCode();
+        create.visitTypeInsn(Opcodes.NEW, owner);
+        create.visitInsn(Opcodes.DUP);
+        Type[] arguments = Type.getArgumentTypes(ctorDesc);
+        int slot = 0;
+        for (Type argument : arguments) {
+            create.visitVarInsn(argument.getOpcode(Opcodes.ILOAD), slot);
+            slot += argument.getSize();
+        }
+        boolean block = ctorDesc.endsWith("L" + BLOCK_PROPS + ";)V");
+        String type = block ? BLOCK_PROPS : ITEM_PROPS;
+        create.visitMethodInsn(Opcodes.INVOKESTATIC, BRIDGE, block ? "stampBlock" : "stampItem", "(L" + type + ";)L" + type + ";", false);
+        create.visitMethodInsn(Opcodes.INVOKESPECIAL, owner, "<init>", ctorDesc, false);
+        create.visitInsn(Opcodes.ARETURN);
+        create.visitMaxs(0, 0);
+        create.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     /** This class's static fields with an id, from its own registrations and from the rest of the jar. */

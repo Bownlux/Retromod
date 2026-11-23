@@ -150,6 +150,52 @@ class LegacyRecipeApiBridgeTest {
     }
 
     @Test
+    @DisplayName("A mod's own recipe interface answers the recipe book with default methods, so recipes in other mods get them")
+    void recipeInterfaceAnswersRecipeBook() {
+        RetromodTransformer transformer = bridged("26.3");
+        ClassNode codecRecipe = transform(transformer, recipeInterface(), "mod/CodecRecipe");
+
+        for (String[] answer : new String[][]{{"placementInfo", "()L" + CRAFTING + "PlacementInfo;"},
+                {"recipeBookCategory", "()L" + CRAFTING + "RecipeBookCategory;"}, {"showNotification", "()Z"},
+                {"group", "()Ljava/lang/String;"}}) {
+            MethodNode method = method(codecRecipe, answer[0], answer[1]);
+            assertNotNull(method, answer[0]);
+            assertEquals(0, method.access & ACC_ABSTRACT, answer[0] + " is a default method");
+        }
+    }
+
+    @Test
+    @DisplayName("A crafting recipe that also implements a mod's recipe interface answers its category through CraftingRecipe's default")
+    void craftingRecipeKeepsTheGameCategory() {
+        RetromodTransformer transformer = bridged("26.3");
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_ABSTRACT, "mod/BothRecipe", null, "java/lang/Object",
+                new String[]{"mod/CodecRecipe", CRAFTING + "CraftingRecipe"});
+        cw.visitEnd();
+        ClassNode both = transform(transformer, cw.toByteArray(), "mod/BothRecipe");
+
+        MethodNode category = method(both, "recipeBookCategory", "()L" + CRAFTING + "RecipeBookCategory;");
+        assertNotNull(category, "an explicit category, so the two inherited defaults do not conflict");
+        org.objectweb.asm.tree.MethodInsnNode call = (org.objectweb.asm.tree.MethodInsnNode) java.util.Arrays.stream(category.instructions.toArray())
+                .filter(i -> i instanceof org.objectweb.asm.tree.MethodInsnNode).findFirst().orElseThrow();
+        assertEquals(CRAFTING + "CraftingRecipe", call.owner);
+        assertEquals(INVOKESPECIAL, call.getOpcode());
+    }
+
+    @Test
+    @DisplayName("A recipe interface of a mod built for 1.21.2 or newer is left as written")
+    void newerRecipeInterfaceStays() {
+        RetromodTransformer transformer = bridged("26.3");
+        transformer.setModSourceVersion("1.21.4");
+        try {
+            ClassNode codecRecipe = transform(transformer, recipeInterface(), "mod/CodecRecipe");
+            assertNull(method(codecRecipe, "placementInfo", "()L" + CRAFTING + "PlacementInfo;"));
+        } finally {
+            transformer.setModSourceVersion(null);
+        }
+    }
+
+    @Test
     @DisplayName("On 1.21.11 an old recipe's assemble still takes the registries")
     void recipeOnOneTwentyOneEleven() {
         RetromodTransformer transformer = bridged("1.21.11");
@@ -313,6 +359,15 @@ class LegacyRecipeApiBridgeTest {
         stub(cw, "matches", "(" + CONTAINER + LEVEL + ")Z");
         stub(cw, "assemble", "(" + CONTAINER + "Lnet/minecraft/core/RegistryAccess;)" + STACK);
         stub(cw, "getGroup", "()Ljava/lang/String;");
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** Resourceful Lib's CodecRecipe: a mod interface over Recipe with no group or recipe book answers. */
+    private static byte[] recipeInterface() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_ABSTRACT | ACC_INTERFACE, "mod/CodecRecipe", null, "java/lang/Object",
+                new String[]{CRAFTING + "Recipe"});
         cw.visitEnd();
         return cw.toByteArray();
     }

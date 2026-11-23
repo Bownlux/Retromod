@@ -18,7 +18,6 @@
 com/retromod/shim/fabric/embedded/AttributeShim
 com/retromod/shim/fabric/embedded/BiomeShim
 com/retromod/shim/fabric/embedded/BlockEntityRendererRegistryShim
-com/retromod/shim/fabric/embedded/BuiltinItemRendererRegistryStub
 com/retromod/shim/fabric/embedded/ChatShim
 com/retromod/shim/fabric/embedded/ChunkShim
 com/retromod/shim/fabric/embedded/ComponentBridgeShim

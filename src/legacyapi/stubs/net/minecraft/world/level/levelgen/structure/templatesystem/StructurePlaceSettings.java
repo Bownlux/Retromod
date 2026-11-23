@@ -1,4 +1,6 @@
 // Compile-only stub of a 26.3 host type for src/legacyapi; never packaged.
 package net.minecraft.world.level.levelgen.structure.templatesystem;
 
-public class StructurePlaceSettings {}
+public class StructurePlaceSettings {
+    public StructurePlaceSettings setLiquidSettings(LiquidSettings settings) { throw new UnsupportedOperationException(); }
+}

@@ -125,6 +125,27 @@ class MixinRebuiltTargetTest {
         }
     }
 
+    @Test
+    @DisplayName("A mixin into the removed DimensionSpecialEffects stays on the old name and is skipped, its refmap selector too")
+    void removedVanillaClassIsNotRetargetedOntoItsStandIn() {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        transformer.clearRedirectsForTesting();
+        // As the intermediary map names darkness's target, then the 26.1 bridge, offline where no host class is readable.
+        String nether = "net/minecraft/client/renderer/DimensionSpecialEffects$NetherEffects";
+        transformer.registerClassRedirect("net/minecraft/class_5294$class_5296", nether);
+        com.retromod.shim.common.LegacyRenderStageBridge.registerDimensionEffects(transformer);
+        MixinCompatibilityTransformer mixins = new MixinCompatibilityTransformer(transformer);
+
+        String selector = "L" + nether + ";getBrightnessDependentFogColor(Lnet/minecraft/world/phys/Vec3;F)Lnet/minecraft/world/phys/Vec3;";
+        assertEquals(selector, mixins.remapResourceSelector(selector), "Minecraft's code still names the removed class, not Retromod's copy");
+        for (String target : List.of(nether, "net/minecraft/class_5294$class_5296")) {
+            assertEquals(target, mixins.mixinTargetsRemovedClass(node(mixin("grondag/darkness/mixin/MixinNetherEffects", target)),
+                    name -> false), target);
+            byte[] out = mixins.transformMixinClass(mixin("grondag/darkness/mixin/MixinNetherEffects", target));
+            assertEquals(List.of("retromod/stripped/MixinNetherEffects"), targets(out), target + ": skipped, not moved onto the copy");
+        }
+    }
+
     // A @Mixin(value = target.class), as javac writes it.
     private static byte[] mixin(String name, String target) {
         ClassWriter cw = new ClassWriter(0);

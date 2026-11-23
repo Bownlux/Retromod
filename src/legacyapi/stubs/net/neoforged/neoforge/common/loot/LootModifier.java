@@ -7,4 +7,7 @@ import net.minecraft.world.level.storage.loot.predicates.LootItemCondition;
 
 public abstract class LootModifier {
     protected LootModifier(Optional<Holder<LootItemCondition>> condition, int priority) { throw new UnsupportedOperationException(); }
+    protected abstract it.unimi.dsi.fastutil.objects.ObjectArrayList<net.minecraft.world.item.ItemStack> doApply(
+            it.unimi.dsi.fastutil.objects.ObjectArrayList<net.minecraft.world.item.ItemStack> generatedLoot,
+            net.minecraft.world.level.storage.loot.LootContext context);
 }

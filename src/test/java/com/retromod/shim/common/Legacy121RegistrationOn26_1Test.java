@@ -111,6 +111,100 @@ public class Legacy121RegistrationOn26_1Test {
     }
 
     @Test
+    @DisplayName("Moonlight's lookup-free tag check inside a condition test reads that test's registry lookup")
+    void oldTagCheckReadsTheTestsLookup() throws Exception {
+        new FabricLegacyRegistrationApiShim().registerRedirects(transformer);
+        String impl = "net/fabricmc/fabric/impl/resource/conditions/ResourceConditionsImpl";
+        String lookup = "net/minecraft/resources/RegistryOps$RegistryInfoLookup";
+        String provider = "net/minecraft/core/HolderLookup$Provider";
+        Map<String, byte[]> classes = new HashMap<>(transformer.getSyntheticClasses());
+        classes.put(RESOURCE_CONDITION, iface(RESOURCE_CONDITION));
+        classes.put(lookup, iface(lookup));
+        classes.put(provider, iface(provider));
+        classes.put("net/minecraft/resources/Identifier", iface("net/minecraft/resources/Identifier"));
+        // The helper's duplicate-condition register names the condition type, which reflection resolves.
+        String conditionType = "net/fabricmc/fabric/api/resource/conditions/v1/ResourceConditionType";
+        classes.put(conditionType, iface(conditionType));
+        classes.put("test/Lookup", implementing("test/Lookup", lookup));
+        // The host's check answers whether it was given a lookup.
+        ClassWriter host = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
+        host.visit(V17, ACC_PUBLIC, impl, null, "java/lang/Object", null);
+        MethodVisitor check = host.visitMethod(ACC_PUBLIC | ACC_STATIC, "tagsPopulated",
+                "(L" + lookup + ";Lnet/minecraft/resources/Identifier;Ljava/util/List;)Z", null, null);
+        check.visitCode();
+        org.objectweb.asm.Label none = new org.objectweb.asm.Label();
+        check.visitVarInsn(ALOAD, 0);
+        check.visitJumpInsn(IFNULL, none);
+        check.visitInsn(ICONST_1);
+        check.visitInsn(IRETURN);
+        check.visitLabel(none);
+        check.visitInsn(ICONST_0);
+        check.visitInsn(IRETURN);
+        check.visitMaxs(0, 0);
+        check.visitEnd();
+        host.visitEnd();
+        classes.put(impl, host.toByteArray());
+        // The mod's condition calls the old two-argument check from its test(Provider).
+        ClassWriter mod = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        mod.visit(V17, ACC_PUBLIC, "test/TagEmpty", null, "java/lang/Object", new String[] {RESOURCE_CONDITION});
+        MethodVisitor init = mod.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+        init.visitCode();
+        init.visitVarInsn(ALOAD, 0);
+        init.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        init.visitInsn(RETURN);
+        init.visitMaxs(0, 0);
+        init.visitEnd();
+        MethodVisitor test = mod.visitMethod(ACC_PUBLIC, "test", "(L" + provider + ";)Z", null, null);
+        test.visitCode();
+        test.visitInsn(ACONST_NULL);
+        test.visitInsn(ACONST_NULL);
+        test.visitMethodInsn(INVOKESTATIC, impl, "tagsPopulated", "(Lnet/minecraft/resources/Identifier;Ljava/util/List;)Z", false);
+        test.visitInsn(IRETURN);
+        test.visitMaxs(0, 0);
+        test.visitEnd();
+        mod.visitEnd();
+        classes.put("test/TagEmpty", transformer.transformClass(mod.toByteArray(), "test/TagEmpty.class"));
+
+        ClassLoader loader = new ClassLoader(getClass().getClassLoader()) {
+            @Override
+            protected Class<?> findClass(String name) throws ClassNotFoundException {
+                byte[] bytes = classes.get(name.replace('.', '/'));
+                if (bytes == null) throw new ClassNotFoundException(name);
+                return defineClass(name, bytes, 0, bytes.length);
+            }
+        };
+        Class<?> lookupType = loader.loadClass(lookup.replace('/', '.'));
+        Object condition = loader.loadClass("test.TagEmpty").getConstructor().newInstance();
+        Object hostLookup = loader.loadClass("test.Lookup").getConstructor().newInstance();
+        var newTest = condition.getClass().getMethod("test", lookupType);
+        assertEquals(true, newTest.invoke(condition, hostLookup), "inside a test the check sees the test's lookup");
+        assertEquals(false, loader.loadClass(FabricLegacyRegistrationApiShim.CONDITION_LOOKUPS.replace('/', '.'))
+                .getMethod("tagsPopulated", loader.loadClass("net.minecraft.resources.Identifier"), List.class)
+                .invoke(null, null, null), "outside a test there is no lookup, as Fabric API reports for a null one");
+    }
+
+    private static byte[] iface(String name) {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(V17, ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT, name, null, "java/lang/Object", null);
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    private static byte[] implementing(String name, String iface) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, name, null, "java/lang/Object", new String[] {iface});
+        MethodVisitor init = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+        init.visitCode();
+        init.visitVarInsn(ALOAD, 0);
+        init.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        init.visitInsn(RETURN);
+        init.visitMaxs(0, 0);
+        init.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    @Test
     @DisplayName("A 1.21.11 CustomRecipe.Serializer is built as the generated serializer stand-in")
     void customRecipeSerializerUsesTheStandIn() {
         // #271: Minepathy registers its special recipes with new CustomRecipe.Serializer(Factory),

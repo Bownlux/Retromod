@@ -533,6 +533,47 @@ class ModDataMigratorTest {
     }
 
     @Test
+    void recipeFolderCriterionForMissingRecipeIsDroppedOn263(@TempDir Path root) throws Exception {
+        // Supplementaries ships recipe/way_sign_oak/minecraft/acacia, but its recipe is way_sign_acacia.
+        Path dangling = root.resolve("data/supplementaries/advancement/recipe/way_sign_oak/minecraft/acacia.json");
+        Path kept = root.resolve("data/supplementaries/advancement/recipe/flax.json");
+        Path tagged = root.resolve("data/supplementaries/advancement/recipe/tagged.json");
+        Files.createDirectories(dangling.getParent());
+        Files.createDirectories(root.resolve("data/supplementaries/recipe"));
+        Files.writeString(root.resolve("data/supplementaries/recipe/flax.json"), "{}");
+        Files.writeString(dangling, "{\"criteria\":{\"has_the_recipe\":{\"trigger\":\"minecraft:recipe_unlocked\","
+                + "\"conditions\":{\"recipe\":\"supplementaries:way_sign_oak/minecraft/acacia\"}}}}");
+        Files.writeString(kept, "{\"criteria\":{\"has_the_recipe\":{\"trigger\":\"minecraft:recipe_unlocked\","
+                + "\"conditions\":{\"recipe\":\"supplementaries:flax\"}}},\"rewards\":{\"recipes\":[\"supplementaries:flax\"]}}");
+        Files.writeString(tagged, "{\"criteria\":{\"c\":{\"trigger\":\"minecraft:recipe_unlocked\","
+                + "\"conditions\":{\"recipes\":\"#supplementaries:signs\"}}}}");
+
+        ModDataMigrator.migrateTree(root, "26.3");
+
+        assertFalse(Files.exists(dangling), "a criterion for a missing recipe would stop 26.3's registry load");
+        assertTrue(Files.exists(kept), "an advancement for a shipped recipe stays");
+        assertTrue(Files.exists(tagged), "a tag names no single recipe");
+    }
+
+    @Test
+    void recipeAdvancementWithAShippedRecipeIsKept(@TempDir Path root) throws Exception {
+        Path rewards = root.resolve("data/m/advancement/recipe/mixed_rewards.json");
+        Path criteria = root.resolve("data/m/advancement/recipe/mixed_criteria.json");
+        Files.createDirectories(rewards.getParent());
+        Files.createDirectories(root.resolve("data/m/recipe"));
+        Files.writeString(root.resolve("data/m/recipe/real.json"), "{}");
+        Files.writeString(rewards, "{\"rewards\":{\"recipes\":[\"m:missing\",\"m:real\"]}}");
+        Files.writeString(criteria, "{\"criteria\":{"
+                + "\"a\":{\"trigger\":\"minecraft:recipe_unlocked\",\"conditions\":{\"recipe\":\"m:missing\"}},"
+                + "\"b\":{\"trigger\":\"minecraft:recipe_unlocked\",\"conditions\":{\"recipe\":\"m:real\"}}}}");
+
+        ModDataMigrator.migrateTree(root, "26.3");
+
+        assertTrue(Files.exists(rewards), "one reward still unlocks a shipped recipe");
+        assertTrue(Files.exists(criteria), "with no rewards, one criterion still names a shipped recipe");
+    }
+
+    @Test
     void oldProviderValueWrappersAreInlined() {
         String old = """
                 {"monster_spawn_light_level": {"type": "minecraft:uniform", "value": {"min_inclusive": 0, "max_inclusive": 7}},
@@ -854,5 +895,72 @@ class ModDataMigratorTest {
                 StandardCharsets.UTF_8);
         assertFalse(out.contains("template"), out);
         assertTrue(out.contains("\"base\":\"minecraft:jigsaw\""), out);
+    }
+
+    @Test
+    @DisplayName("a 1.21.1 NeoForge compound or difference ingredient names its type with the key NeoForge reads now")
+    void neoForgeCustomIngredientsTakeTheNewTypeKey() {
+        String in = "{\"type\":\"mod:cooking\",\"ingredients\":[{\"type\":\"neoforge:compound\",\"children\":"
+                + "[{\"item\":\"minecraft:carrot\"},{\"tag\":\"c:mushrooms\"}]},{\"type\":\"neoforge:difference\","
+                + "\"base\":{\"tag\":\"c:foods/vegetable\"},\"subtracted\":{\"item\":\"minecraft:melon_slice\"}}],"
+                + "\"result\":{\"id\":\"mod:stew\"}}";
+        String out = neoForge(in, "1.21.1");
+        assertTrue(out.contains("{\"neoforge:ingredient_type\":\"neoforge:compound\",\"children\":"
+                + "[\"minecraft:carrot\",\"#c:mushrooms\"]}"), out);
+        assertTrue(out.contains("{\"neoforge:ingredient_type\":\"neoforge:difference\",\"base\":\"#c:foods/vegetable\","
+                + "\"subtracted\":\"minecraft:melon_slice\"}"), out);
+        assertFalse(out.contains("\"type\":\"neoforge:"), "no old type key is left: " + out);
+        assertEquals(in, neoForge(in, "1.21.4"), "a mod built for 1.21.2 or newer already wrote the new shape");
+        assertEquals(in, new String(ModDataMigrator.migrate("data/mod/recipe/stew.json", in.getBytes(StandardCharsets.UTF_8),
+                "1.21.1", "26.3", MigrationContext.Loader.FABRIC), StandardCharsets.UTF_8), "only NeoForge reads these types");
+    }
+
+    @Test
+    @DisplayName("a mod's own field holding a custom ingredient and a tag becomes a compound of both")
+    void mixedListInAModsFieldBecomesACompound() {
+        String in = "{\"type\":\"mod:cutting\",\"ingredients\":[{\"item\":\"minecraft:acacia_log\"}],"
+                + "\"tool\":[{\"type\":\"mod:item_ability\",\"action\":\"axe_strip\"},{\"tag\":\"minecraft:axes\"}],"
+                + "\"sound\":{\"sound_id\":\"minecraft:item.axe.strip\"},\"result\":[{\"item\":{\"id\":\"mod:bark\"}}]}";
+        String out = neoForge(in, "1.21.1");
+        assertTrue(out.contains("\"tool\":{\"neoforge:ingredient_type\":\"neoforge:compound\",\"children\":"
+                + "[{\"neoforge:ingredient_type\":\"mod:item_ability\",\"action\":\"axe_strip\"},\"#minecraft:axes\"]}"), out);
+        assertTrue(out.contains("\"sound\":{\"sound_id\":\"minecraft:item.axe.strip\"}"), "a field that is no ingredient stays");
+        assertTrue(out.contains("\"result\":[{\"item\":{\"id\":\"mod:bark\"}}]"), "a result is never read as an ingredient");
+    }
+
+    @Test
+    @DisplayName("a typed object in a mod's own field stays unless NeoForge defines the type")
+    void unknownTypedObjectInAModsFieldStays() {
+        String in = "{\"type\":\"mod:mixing\",\"fluid\":{\"type\":\"mod:fluid_stack\",\"amount\":250},"
+                + "\"catalyst\":{\"type\":\"neoforge:block_tag\",\"tag\":\"minecraft:logs\"},\"result\":{\"id\":\"mod:x\"}}";
+        String out = neoForge(in, "1.21.1");
+        assertTrue(out.contains("\"fluid\":{\"type\":\"mod:fluid_stack\",\"amount\":250}"), out);
+        assertTrue(out.contains("\"catalyst\":{\"neoforge:ingredient_type\":\"neoforge:block_tag\",\"tag\":\"minecraft:logs\"}"), out);
+    }
+
+    @Test
+    @DisplayName("a recipe whose only old ingredient is a NeoForge custom one, with no item or tag key, is converted too")
+    void loneCustomIngredientIsConverted() {
+        String in = "{\"type\":\"minecraft:smelting\",\"ingredient\":{\"type\":\"neoforge:components\","
+                + "\"items\":\"minecraft:potion\",\"components\":{\"minecraft:potion_contents\":\"minecraft:water\"}},"
+                + "\"result\":{\"id\":\"minecraft:glass_bottle\"}}";
+        String out = neoForge(in, "1.21.1");
+        assertTrue(out.contains("\"ingredient\":{\"neoforge:ingredient_type\":\"neoforge:components\",\"items\":\"minecraft:potion\""), out);
+        assertEquals(in, neoForge(in, "1.21.4"), "a mod built for 1.21.2 or newer already wrote the new shape");
+    }
+
+    @Test
+    @DisplayName("a compound written with its ingredients alias converts its entries as children are")
+    void compoundIngredientsAliasIsConverted() {
+        String in = "{\"type\":\"mod:cooking\",\"ingredients\":[{\"type\":\"neoforge:compound\",\"ingredients\":"
+                + "[{\"item\":\"minecraft:carrot\"},{\"tag\":\"c:mushrooms\"}]}],\"result\":{\"id\":\"mod:stew\"}}";
+        String out = neoForge(in, "1.21.1");
+        assertTrue(out.contains("{\"neoforge:ingredient_type\":\"neoforge:compound\",\"ingredients\":"
+                + "[\"minecraft:carrot\",\"#c:mushrooms\"]}"), out);
+    }
+
+    private static String neoForge(String recipe, String source) {
+        return new String(ModDataMigrator.migrate("data/mod/recipe/x.json", recipe.getBytes(StandardCharsets.UTF_8),
+                source, "26.3", MigrationContext.Loader.NEOFORGE), StandardCharsets.UTF_8);
     }
 }

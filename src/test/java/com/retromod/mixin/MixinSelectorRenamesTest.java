@@ -56,6 +56,9 @@ class MixinSelectorRenamesTest {
     private static final String LEVEL = "Lnet/minecraft/world/level/Level;";
     private static final String POS = "Lnet/minecraft/core/BlockPos;";
     private static final String ENTITY = "Lnet/minecraft/world/entity/Entity;";
+    private static final String FARMLAND = "net/minecraft/world/level/block/FarmlandBlock";
+    private static final String STATE = "Lnet/minecraft/world/level/block/state/BlockState;";
+    private static final String TRAMPLE = "(" + ENTITY + STATE + LEVEL + POS + ")V";
 
     @TempDir
     Path dir;
@@ -84,7 +87,9 @@ class MixinSelectorRenamesTest {
                 method(c, 0, "onPlace", "(" + LEVEL + POS + ")V");
                 method(c, 0, "onPlace", "(" + LEVEL + ENTITY + ")V");
             }));
+            put(out, hostClass(FARMLAND, c -> method(c, 0, "turnToBaseBlock", TRAMPLE)));
             for (String name : List.of("net/minecraft/world/level/Level", "net/minecraft/core/BlockPos",
+                    "net/minecraft/world/level/block/state/BlockState",
                     "net/minecraft/world/entity/Entity", "net/minecraft/world/damagesource/DamageSource",
                     "net/minecraft/server/level/ServerLevel")) {
                 put(out, hostClass(name, c -> { }));
@@ -108,6 +113,62 @@ class MixinSelectorRenamesTest {
 
         assertEquals(List.of("resizeGui"), selectors(handler), "26.1 renamed resizeDisplay() to resizeGui()");
         assertEquals("(" + CI + ")V", handler.desc);
+    }
+
+    @Test
+    void aStaticHandlerFollowsATargetThatBecameAnInstanceMethod() {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        // Farmer's Delight cancels trampling of its rich soil from a static handler on 26.2's static turnToDirt.
+        String desc = "(" + ENTITY + STATE + LEVEL + POS + CI + ")V";
+        byte[] mixin = mixin("TrampleMixin", FARMLAND, c -> {
+            MethodVisitor handler = c.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "turnToDirt", desc, null, null);
+            inject(handler, "turnToDirt");
+            handler.visitCode();
+            handler.visitVarInsn(Opcodes.ALOAD, 1);
+            handler.visitInsn(Opcodes.POP);
+            handler.visitVarInsn(Opcodes.ALOAD, 4);
+            handler.visitInsn(Opcodes.POP);
+            handler.visitInsn(Opcodes.RETURN);
+            handler.visitMaxs(1, 5);
+            handler.visitEnd();
+        });
+
+        MethodNode handler = method(repair.apply(mixin), "turnToDirt");
+
+        assertEquals(List.of("turnToBaseBlock"), selectors(handler), "26.3 renamed turnToDirt and made it an instance method");
+        assertEquals(desc, handler.desc);
+        assertEquals(0, handler.access & Opcodes.ACC_STATIC, "Mixin refuses a static handler on an instance target");
+        List<Integer> slots = new java.util.ArrayList<>();
+        for (var insn : handler.instructions) {
+            if (insn instanceof org.objectweb.asm.tree.VarInsnNode var) slots.add(var.var);
+        }
+        assertEquals(List.of(2, 5), slots, "every slot moves past the new this");
+    }
+
+    @Test
+    void aStaticHandlerTheMixinNamesInAMethodHandleKeepsItsSelector() {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        String desc = "(" + ENTITY + STATE + LEVEL + POS + CI + ")V";
+        byte[] mixin = mixin("TrampleMixin", FARMLAND, c -> {
+            handler(c, "turnToDirt", Opcodes.ACC_STATIC, desc, "turnToDirt");
+            // A method reference to the handler keeps its static form, so the handler cannot become an instance method.
+            MethodVisitor user = c.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "reference", "()Ljava/lang/Object;", null, null);
+            user.visitCode();
+            user.visitLdcInsn(new org.objectweb.asm.Handle(Opcodes.H_INVOKESTATIC, "mod/TrampleMixin", "turnToDirt", desc, false));
+            user.visitInsn(Opcodes.ARETURN);
+            user.visitMaxs(1, 0);
+            user.visitEnd();
+        });
+
+        assertArrayEquals(mixin, repair.apply(mixin), "a refused handler keeps its selector too");
+    }
+
+    @Test
+    void aStaticHandlerOn262KeepsItsSelector() {
+        byte[] mixin = mixin("TrampleMixin", FARMLAND, c -> handler(c, "turnToDirt", Opcodes.ACC_STATIC,
+                "(" + ENTITY + STATE + LEVEL + POS + CI + ")V", "turnToDirt"));
+
+        assertArrayEquals(mixin, repair.apply(mixin), "the rename row starts at 26.3");
     }
 
     @Test

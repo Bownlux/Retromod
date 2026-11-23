@@ -50,6 +50,14 @@ public final class NeoForgeAutoSubscriberGuard {
     private static final String AUTO_SUBSCRIBER_DESC = "L" + AUTO_SUBSCRIBER + ";";
     private static final String SUBSCRIBE_DESC = "Lnet/neoforged/bus/api/SubscribeEvent;";
     private static final String EVENT_BASE = "net/neoforged/bus/api/Event";
+    // NeoForge's data event and its client and server variants.
+    private static final String GATHER_DATA = "net/neoforged/neoforge/data/event/GatherDataEvent";
+    // Forge's annotation, data event, and the SubscribeEvent of event bus 6 and of event bus 7 (Forge 26).
+    private static final String FORGE_SUBSCRIBER = "net/minecraftforge/fml/common/Mod$EventBusSubscriber";
+    private static final String FORGE_SUBSCRIBER_DESC = "L" + FORGE_SUBSCRIBER + ";";
+    private static final String FORGE_GATHER_DATA = "net/minecraftforge/data/event/GatherDataEvent";
+    private static final List<String> FORGE_SUBSCRIBE_DESCS = List.of(
+            "Lnet/minecraftforge/eventbus/api/SubscribeEvent;", "Lnet/minecraftforge/eventbus/api/listener/SubscribeEvent;");
     private static final String DIST_DESC = "Lnet/neoforged/api/distmarker/Dist;";
     private static final String[] CLIENT_PACKAGES = {
             "net/minecraft/client/", "com/mojang/blaze3d/", "net/neoforged/neoforge/client/"};
@@ -61,6 +69,11 @@ public final class NeoForgeAutoSubscriberGuard {
         return apply(classBytes, name -> false);
     }
 
+    /** {@link #apply(byte[], Predicate, Predicate)} with no other class of the mod known to call a handler. */
+    public static byte[] apply(byte[] classBytes, Predicate<String> providedByRetromod) {
+        return apply(classBytes, providedByRetromod, method -> false);
+    }
+
     /**
      * Also drops handlers for an event class the running host no longer has, unless
      * {@code providedByRetromod} supplies it. NeoForge lists every method of a subscriber class,
@@ -68,14 +81,19 @@ public final class NeoForgeAutoSubscriberGuard {
      * {@code WandererTradesEvent} after 26.1, failed the whole mod's subscriber registration. Such
      * a handler could never run anyway.
      */
-    public static byte[] apply(byte[] classBytes, Predicate<String> providedByRetromod) {
+    public static byte[] apply(byte[] classBytes, Predicate<String> providedByRetromod, Predicate<String> referencedByMod) {
         if (classBytes == null) return null;
-        // Cheap pre-filter: most classes never mention the annotation.
-        if (new String(classBytes, StandardCharsets.ISO_8859_1).indexOf(AUTO_SUBSCRIBER) < 0) {
+        // Cheap pre-filter: most classes never mention either annotation.
+        String text = new String(classBytes, StandardCharsets.ISO_8859_1);
+        if (text.indexOf(AUTO_SUBSCRIBER) < 0 && text.indexOf(FORGE_SUBSCRIBER) < 0) {
             return classBytes;
         }
         ClassNode node = new ClassNode();
         new ClassReader(classBytes).accept(node, 0);
+        // A Forge host keeps Forge's annotation, and Forge subscribes the class the same way, loading it on every launch.
+        if (has(node.visibleAnnotations, FORGE_SUBSCRIBER_DESC) || has(node.invisibleAnnotations, FORGE_SUBSCRIBER_DESC)) {
+            return dropForgeDataGeneration(classBytes, node, referenced(node, referencedByMod));
+        }
         if (!has(node.visibleAnnotations, AUTO_SUBSCRIBER_DESC)
                 && !has(node.invisibleAnnotations, AUTO_SUBSCRIBER_DESC)) {
             return classBytes;
@@ -87,7 +105,9 @@ public final class NeoForgeAutoSubscriberGuard {
             new ClassReader(classBytes).accept(node, 0);
         }
         // classBytes now holds any erased signatures, so returning it unchanged keeps them.
-        boolean dropped = dropHandlersForRemovedEvents(node, providedByRetromod);
+        Predicate<MethodNode> referenced = referenced(node, referencedByMod);
+        boolean dropped = dropHandlersForRemovedEvents(node, providedByRetromod, referenced);
+        dropped |= dropDataGenerationHandlers(node, GATHER_DATA, List.of(SUBSCRIBE_DESC), referenced);
 
         List<String> staticHandlers = new ArrayList<>();
         boolean instanceHandler = false;
@@ -303,7 +323,8 @@ public final class NeoForgeAutoSubscriberGuard {
      * the host, never drops a handler. Only loader and Minecraft event classes are judged; a mod's
      * own events are its business. A handler the class itself calls is kept.
      */
-    static boolean dropHandlersForRemovedEvents(ClassNode node, Predicate<String> providedByRetromod) {
+    static boolean dropHandlersForRemovedEvents(ClassNode node, Predicate<String> providedByRetromod,
+            Predicate<MethodNode> referenced) {
         if (!ClassResourceInspector.exists(EVENT_BASE)) return false;
         List<MethodNode> dropped = new ArrayList<>();
         for (MethodNode method : node.methods) {
@@ -316,7 +337,7 @@ public final class NeoForgeAutoSubscriberGuard {
             boolean hostOwned = event.startsWith("net/neoforged/") || event.startsWith("net/minecraftforge/")
                     || event.startsWith("net/minecraft/");
             if (!hostOwned || providedByRetromod.test(event) || ClassResourceInspector.exists(event)
-                    || calledInClass(node, method)) {
+                    || referenced.test(method)) {
                 continue;
             }
             LOGGER.warn("{}.{} listens for {}, which this NeoForge version no longer has, so it is dropped.",
@@ -327,6 +348,51 @@ public final class NeoForgeAutoSubscriberGuard {
         return !dropped.isEmpty();
     }
 
+    /**
+     * Drops a translated mod's data generation handlers. They run only in a data run, where an old mod's generators
+     * cannot work on a newer host anyway, but subscribing them loads the class on every launch, and such a class
+     * often builds old worldgen registries in its static initializer, which then fails the whole mod.
+     */
+    static boolean dropDataGenerationHandlers(ClassNode node, String gatherData, List<String> subscribeDescs,
+            Predicate<MethodNode> referenced) {
+        List<MethodNode> dropped = new ArrayList<>();
+        for (MethodNode method : node.methods) {
+            if (!subscribes(method, subscribeDescs)) continue;
+            Type[] params = Type.getArgumentTypes(method.desc);
+            if (params.length != 1 || params[0].getSort() != Type.OBJECT) continue;
+            // A handler the mod also calls or passes as a method reference is still needed.
+            if (!params[0].getInternalName().startsWith(gatherData) || referenced.test(method)) continue;
+            dropped.add(method);
+        }
+        if (dropped.isEmpty()) return false;
+        node.methods.removeAll(dropped);
+        LOGGER.debug("Dropped the data generation handler(s) of {}, which a translated mod cannot run on this host",
+                node.name.replace('/', '.'));
+        return true;
+    }
+
+    /** Forge's subscriber: drops its data generation handlers, and the annotation when no handler is left. */
+    private static byte[] dropForgeDataGeneration(byte[] classBytes, ClassNode node, Predicate<MethodNode> referenced) {
+        if (!dropDataGenerationHandlers(node, FORGE_GATHER_DATA, FORGE_SUBSCRIBE_DESCS, referenced)) return classBytes;
+        // Forge's event bus refuses a class with nothing left to subscribe, as NeoForge's does.
+        if (node.methods.stream().noneMatch(method -> subscribes(method, FORGE_SUBSCRIBE_DESCS))) {
+            for (List<AnnotationNode> annotations : java.util.Arrays.asList(node.visibleAnnotations, node.invisibleAnnotations)) {
+                if (annotations != null) annotations.removeIf(a -> FORGE_SUBSCRIBER_DESC.equals(a.desc));
+            }
+        }
+        return write(node);
+    }
+
+    /** A handler counts as used when its own class or any other class of the mod calls or references it. */
+    private static Predicate<MethodNode> referenced(ClassNode node, Predicate<String> referencedByMod) {
+        return method -> calledInClass(node, method) || referencedByMod.test(node.name + "." + method.name);
+    }
+
+    private static boolean subscribes(MethodNode method, List<String> subscribeDescs) {
+        return subscribeDescs.stream().anyMatch(desc -> has(method.visibleAnnotations, desc) || has(method.invisibleAnnotations, desc));
+    }
+
+    /** Whether the class calls the method or names it in a method reference. */
     private static boolean calledInClass(ClassNode node, MethodNode target) {
         for (MethodNode method : node.methods) {
             for (var insn : method.instructions) {
@@ -334,9 +400,73 @@ public final class NeoForgeAutoSubscriberGuard {
                         && call.name.equals(target.name) && call.desc.equals(target.desc)) {
                     return true;
                 }
+                if (insn instanceof org.objectweb.asm.tree.InvokeDynamicInsnNode indy) {
+                    for (Object arg : indy.bsmArgs) {
+                        if (arg instanceof org.objectweb.asm.Handle handle && handle.getOwner().equals(node.name)
+                                && handle.getName().equals(target.name) && handle.getDesc().equals(target.desc)) {
+                            return true;
+                        }
+                    }
+                }
             }
         }
         return false;
+    }
+
+    /**
+     * The {@code owner.name} of each method of the jar's own classes that another of its classes calls or names in a
+     * method reference, read from the classes as the jar ships them. Mod method names are never renamed, so the name
+     * still matches after translation.
+     */
+    public static java.util.Set<String> methodsReferencedAcrossClasses(Iterable<byte[]> classes) {
+        // A class ASM cannot read is skipped here; the class pass reports it.
+        List<ClassReader> readers = new ArrayList<>();
+        for (byte[] bytes : classes) {
+            try {
+                readers.add(new ClassReader(bytes));
+            } catch (RuntimeException unreadable) {
+                // left out of the index
+            }
+        }
+        java.util.Set<String> own = new java.util.HashSet<>();
+        for (ClassReader reader : readers) own.add(reader.getClassName());
+        java.util.Set<String> referenced = new java.util.HashSet<>();
+        for (ClassReader reader : readers) {
+            String caller = reader.getClassName();
+            try {
+                reader.accept(new org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                    @Override
+                    public org.objectweb.asm.MethodVisitor visitMethod(int access, String name, String desc, String signature,
+                            String[] exceptions) {
+                        return new org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                            @Override
+                            public void visitMethodInsn(int opcode, String owner, String called, String calledDesc, boolean itf) {
+                                note(owner, called);
+                            }
+
+                            @Override
+                            public void visitInvokeDynamicInsn(String n, String d, org.objectweb.asm.Handle bootstrap, Object... args) {
+                                for (Object arg : args) {
+                                    if (arg instanceof org.objectweb.asm.Handle handle) note(handle.getOwner(), handle.getName());
+                                }
+                            }
+
+                            @Override
+                            public void visitLdcInsn(Object value) {
+                                if (value instanceof org.objectweb.asm.Handle handle) note(handle.getOwner(), handle.getName());
+                            }
+
+                            private void note(String owner, String called) {
+                                if (!owner.equals(caller) && own.contains(owner)) referenced.add(owner + "." + called);
+                            }
+                        };
+                    }
+                }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            } catch (RuntimeException unreadable) {
+                // a class ASM cannot walk adds no references
+            }
+        }
+        return referenced;
     }
 
 

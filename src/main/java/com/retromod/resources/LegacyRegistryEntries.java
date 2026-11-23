@@ -27,6 +27,10 @@ final class LegacyRegistryEntries implements ModResourceConverter {
     static final String FIRST_UNPREFIXED_ATTRIBUTE_HOST = ItemStackComponents.FIRST_UNPREFIXED_ATTRIBUTE_HOST;
     static final String FIRST_TOOLTIP_DISPLAY_HOST = "1.21.5";
     static final String FIRST_WOLF_ASSET_HOST = "1.21.5";
+    // 1.21.5 moved a trim pattern's template item into the smithing_trim recipe as its "pattern": 1.21.1's recipes
+    // lack it, and the 1.21.11 and 26.x recipes carry it.
+    static final String FIRST_TRIM_PATTERN_RECIPE_HOST = "1.21.5";
+    private static final String TRIM_TEMPLATE_SUFFIX = "_armor_trim_smithing_template";
     static final String FIRST_CLOCK_HOST = "26.1";
     static final String FIRST_ROOT_BACKGROUND_HOST = "26.3";
 
@@ -167,6 +171,10 @@ final class LegacyRegistryEntries implements ModResourceConverter {
                 foreignIcon(advancement);
             }
             if (path.contains("/loot_modifiers/") && root instanceof JsonObject modifier) inlineReferences(modifier);
+            if ((path.contains("/recipe/") || path.contains("/recipes/")) && root instanceof JsonObject recipe
+                    && changedIn(context, FIRST_TRIM_PATTERN_RECIPE_HOST)) {
+                trimPattern(recipe);
+            }
             walk(root);
             return root;
         }
@@ -197,6 +205,56 @@ final class LegacyRegistryEntries implements ModResourceConverter {
             conditions.add(registered);
             advancement.add(NEOFORGE_CONDITIONS, conditions);
             changed = true;
+        }
+
+        /**
+         * Gives an old smithing_trim recipe the pattern its template applies: a vanilla template's own pattern, or the
+         * one pattern file in this jar that names the template as its template item. Without it the recipe fails.
+         */
+        private void trimPattern(JsonObject recipe) {
+            String type = string(recipe, "type");
+            if (type == null || !namespaced(type).equals("minecraft:smithing_trim") || recipe.has("pattern")) return;
+            JsonElement templateField = recipe.get("template");
+            String template = templateField instanceof JsonObject old ? string(old, "item") : string(recipe, "template");
+            if (template == null || template.startsWith("#")) return;
+            template = namespaced(template);
+            String pattern = null;
+            if (template.startsWith("minecraft:") && template.endsWith(TRIM_TEMPLATE_SUFFIX)) {
+                pattern = template.substring(0, template.length() - TRIM_TEMPLATE_SUFFIX.length());
+            } else {
+                pattern = patternNaming(template);
+            }
+            if (pattern == null) return;
+            recipe.addProperty("pattern", pattern);
+            changed = true;
+        }
+
+        /** The id of the one trim pattern file in this jar whose template item is {@code template}, or null. */
+        private String patternNaming(String template) {
+            String found = null;
+            java.util.SortedSet<String> names;
+            try {
+                names = tree.names();
+            } catch (IOException unreadable) {
+                return null;
+            }
+            for (String name : names) {
+                int folder = name.indexOf("/trim_pattern/");
+                if (!name.startsWith("data/") || folder < 0 || !name.endsWith(".json")) continue;
+                try {
+                    if (!(parse(tree.read(name, MAX_FILE_BYTES)) instanceof JsonObject pattern)) continue;
+                    String item = string(pattern, "template_item");
+                    if (item == null || !namespaced(item).equals(template)) continue;
+                } catch (IOException unreadable) {
+                    continue;
+                }
+                String id = name.substring("data/".length(), folder) + ":"
+                        + name.substring(folder + "/trim_pattern/".length(), name.length() - ".json".length());
+                // Two patterns for one template leave the recipe as it is rather than guess.
+                if (found != null) return null;
+                found = id;
+            }
+            return found;
         }
 
         /**
@@ -255,6 +313,7 @@ final class LegacyRegistryEntries implements ModResourceConverter {
             for (JsonElement child : object.asMap().values()) walk(child);
             if (changedIn(context, FIRST_UNPREFIXED_ATTRIBUTE_HOST)) attributes(object);
             if (object.get("components") instanceof JsonObject components) components(components);
+            if (changedIn(context, FIRST_TOOLTIP_DISPLAY_HOST)) copiedComponents(object);
             if (changedIn(context, FIRST_CLOCK_HOST)) {
                 timeCheckClock(object);
                 if (path.contains("/enchantment/")) renameEffect(object);
@@ -276,6 +335,29 @@ final class LegacyRegistryEntries implements ModResourceConverter {
             String tag = "data/" + destination.substring(0, colon) + "/tags/worldgen/structure/"
                     + destination.substring(colon + 1) + ".json";
             if (!tree.exists(tag)) emptyTags.add(tag);
+        }
+
+        /**
+         * A copy_components function names the component that hid extra tooltip lines, which 1.21.5 removed for the
+         * tooltip display, by its successor, as Supplementaries' flags list it. An unknown id fails the whole loot table.
+         */
+        private void copiedComponents(JsonObject function) {
+            String kind = string(function, "function") != null ? string(function, "function") : string(function, "type");
+            if (kind == null || !namespaced(kind).equals("minecraft:copy_components")) return;
+            for (String list : new String[] {"include", "exclude"}) {
+                if (!(function.get(list) instanceof JsonArray ids)) continue;
+                for (int i = 0; i < ids.size(); i++) {
+                    if (!(ids.get(i) instanceof JsonPrimitive id) || !id.isString()
+                            || !namespaced(id.getAsString()).equals("minecraft:hide_additional_tooltip")) continue;
+                    JsonPrimitive successor = new JsonPrimitive("minecraft:tooltip_display");
+                    if (ids.contains(successor)) {
+                        ids.remove(i--);
+                    } else {
+                        ids.set(i, successor);
+                    }
+                    changed = true;
+                }
+            }
         }
 
         /** Reshapes item components that 1.21.2, 1.21.5 and 26.3 replaced, wherever data sets or matches them. */

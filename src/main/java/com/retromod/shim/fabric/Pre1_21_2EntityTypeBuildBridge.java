@@ -17,6 +17,7 @@ public final class Pre1_21_2EntityTypeBuildBridge {
     private static final String BUILDER = "net/minecraft/class_1299$class_1300";
     private static final String ENTITY_TYPE = "net/minecraft/class_1299";
     private static final String POLY = "com/retromod/polyfill/minecraft/RetroEntityTypeBuild";
+    private static final String FABRIC_BUILDER = "net/fabricmc/fabric/api/object/builder/v1/entity/FabricEntityType$Builder";
 
     private Pre1_21_2EntityTypeBuildBridge() {}
 
@@ -42,12 +43,23 @@ public final class Pre1_21_2EntityTypeBuildBridge {
             LOGGER.debug("The host still supports EntityType.Builder.build(String)");
             return;
         }
-        registerRedirects(transformer);
+        registerRedirects(transformer, !fabricApiKeepsNamelessBuild());
         LOGGER.debug("Added support for the old EntityType.Builder.build(String) method");
+    }
+
+    /** Whether the host's Fabric API still gives the builder the nameless {@code build()} of 1.21.1 and older. */
+    static boolean fabricApiKeepsNamelessBuild() {
+        var builder = ClassResourceInspector.read(FABRIC_BUILDER);
+        return builder != null && builder.methods.stream().anyMatch(m -> m.name.equals("build") && m.desc.startsWith("()"));
     }
 
     /** Unconditional registration for offline transforms and transform-shape tests. */
     public static void registerRedirects(RetromodTransformer transformer) {
+        registerRedirects(transformer, true);
+    }
+
+    /** The redirects, with the nameless {@code build()} one only when the host's Fabric API lost it. */
+    static void registerRedirects(RetromodTransformer transformer, boolean namelessBuild) {
         // Ship the polyfill as an embeddable synthetic so the redirect target resolves from the
         // mod's context too (Fabric injects; the class is also jar-resident).
         try (java.io.InputStream in = Pre1_21_2EntityTypeBuildBridge.class.getClassLoader()
@@ -64,5 +76,9 @@ public final class Pre1_21_2EntityTypeBuildBridge {
         transformer.registerMethodRedirect(
                 BUILDER, "method_5905", "(Ljava/lang/String;)L" + ENTITY_TYPE + ";",
                 POLY, "build", "(Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/Object;");
+        // Fabric API up to 1.21.1 gave the builder a build() that took no name, and 1.21.2 dropped it.
+        if (namelessBuild) transformer.registerMethodRedirect(
+                BUILDER, "build", "()L" + ENTITY_TYPE + ";",
+                POLY, "build", "(Ljava/lang/Object;)Ljava/lang/Object;");
     }
 }

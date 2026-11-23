@@ -29,12 +29,28 @@ public final class LegacyPackMetadataCodecBridge {
     }
 
     static void register(RetromodTransformer t, Function<String, ClassNode> host) {
+        registerSectionType(t, host);
         if (!hostLacksCodec(host)) return;
         RebuiltApiClasses.registerTree(t, REBUILT);
         // The intermediary remap names the old field by its new private name, FALLBACK_CODEC, which no mod can read.
         for (String name : List.of(FIELD, "FALLBACK_CODEC")) {
             t.registerFieldRedirect(METADATA, name, CODEC, REBUILT, "codec", "()" + CODEC);
         }
+    }
+
+    /** Turns on the rewrite of the old single {@code PackMetadataSection.TYPE}, where the host split it per pack type. */
+    static void registerSectionType(RetromodTransformer t, Function<String, ClassNode> host) {
+        ClassNode metadata = host.apply(METADATA);
+        if (metadata == null || hasField(metadata, "TYPE") || !hasField(metadata, "FALLBACK_TYPE")) return;
+        String type = "L" + LegacyPackSectionTypeAdapter.TYPE + ";";
+        // Named outright, so no near match such as CLIENT_TYPE is guessed; the adapter then widens comparisons.
+        t.registerFieldRedirect(METADATA, "TYPE", type, METADATA, "FALLBACK_TYPE", type);
+        t.registerSyntheticClass(LegacyPackSectionTypeAdapter.HELPER, LegacyPackSectionTypeAdapter.generateHelper());
+        t.enablePostProcess(LegacyPackSectionTypeAdapter.FLAG);
+    }
+
+    private static boolean hasField(ClassNode node, String name) {
+        return node.fields.stream().anyMatch(field -> field.name.equals(name));
     }
 
     /** Whether the host's pack metadata has no public {@code CODEC}; offline or unreadable, a target from 1.21.11. */

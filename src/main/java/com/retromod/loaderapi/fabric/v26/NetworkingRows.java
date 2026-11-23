@@ -78,6 +78,14 @@ public final class NetworkingRows {
             registration.claim(RedirectKey.type(helper));
             registration.transformer().registerClassOwner(helper);
         }
+        // A 1.20.1 mod built the vanilla custom payload packets from a channel id and a buffer itself; the packet
+        // carries the same raw payload the old channel calls send, so the receiver registered on that channel reads it.
+        String oldPacket = "(Lnet/minecraft/resources/Identifier;Lnet/minecraft/network/FriendlyByteBuf;)V";
+        String factory = "(" + OBJECT + OBJECT + ")" + OBJECT;
+        registration.transformer().registerConstructorRedirect("net/minecraft/network/protocol/common/ClientboundCustomPayloadPacket",
+                oldPacket, HELPERS.get(0), "serverCreatePacket", factory);
+        registration.transformer().registerConstructorRedirect("net/minecraft/network/protocol/common/ServerboundCustomPayloadPacket",
+                oldPacket, HELPERS.get(0), "clientCreatePacket", factory);
         // Jars the old bridges still serve share these channels while the runtime is on.
         LegacyChannels.installOldBridgeDelegates();
     }

@@ -9,7 +9,7 @@ import net.minecraft.world.level.ItemLike;
 import net.neoforged.neoforge.capabilities.ItemCapability;
 import net.neoforged.neoforge.common.MutableDataComponentHolder;
 
-public final class ItemStack implements DataComponentHolder, MutableDataComponentHolder {
+public final class ItemStack implements ItemInstance, DataComponentHolder, MutableDataComponentHolder {
     public static final ItemStack EMPTY = null;
     public static final MapCodec<ItemStack> MAP_CODEC = null;
     public static final Codec<ItemStack> CODEC = null;
@@ -23,6 +23,8 @@ public final class ItemStack implements DataComponentHolder, MutableDataComponen
     }
     public boolean isEmpty() { throw new UnsupportedOperationException(); }
     public int getCount() { throw new UnsupportedOperationException(); }
+    public net.minecraft.core.component.DataComponentPatch getComponentsPatch() { throw new UnsupportedOperationException(); }
+    public ItemStack transmuteCopy(net.minecraft.world.level.ItemLike item, int count) { throw new UnsupportedOperationException(); }
     public void setCount(int count) { throw new UnsupportedOperationException(); }
     public void grow(int amount) { throw new UnsupportedOperationException(); }
     public void shrink(int amount) { throw new UnsupportedOperationException(); }
@@ -32,8 +34,10 @@ public final class ItemStack implements DataComponentHolder, MutableDataComponen
     public int getMaxStackSize() { throw new UnsupportedOperationException(); }
     public boolean isStackable() { throw new UnsupportedOperationException(); }
     public Item getItem() { throw new UnsupportedOperationException(); }
+    public net.minecraft.network.chat.Component getItemName() { throw new UnsupportedOperationException(); }
     public net.minecraft.core.Holder<Item> typeHolder() { throw new UnsupportedOperationException(); }
     public boolean hasFoil() { throw new UnsupportedOperationException(); }
+    public static com.mojang.serialization.DataResult<ItemStack> validateStrict(ItemStack stack) { throw new UnsupportedOperationException(); }
     public static boolean isSameItem(ItemStack first, ItemStack second) { throw new UnsupportedOperationException(); }
     public static boolean isSameItemSameComponents(ItemStack first, ItemStack second) { throw new UnsupportedOperationException(); }
     public static boolean matches(ItemStack first, ItemStack second) { throw new UnsupportedOperationException(); }

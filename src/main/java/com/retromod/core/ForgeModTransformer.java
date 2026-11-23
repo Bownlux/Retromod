@@ -490,6 +490,9 @@ public class ForgeModTransformer {
             classSnapshot.put(className, Files.readAllBytes(classFile));
         }
         final Map<String, byte[]> originalClasses = Map.copyOf(classSnapshot);
+        // Handlers another class of the mod calls or references, which the subscriber guard keeps.
+        final java.util.Set<String> handlerReferences = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard
+                .methodsReferencedAcrossClasses(originalClasses.values());
         final boolean preFlatteningJar = isPreFlatteningForgeJar(dir, originalClasses.values());
         // NeoForge's dist cleaner never sees these markers, so a dedicated server removes @OnlyIn(CLIENT)
         // members itself and stamps the jar, which keeps it off clients (see ForgeDistCleaner.markersFor).
@@ -553,8 +556,8 @@ public class ForgeModTransformer {
                     // one-handler subscriber's companion is written now, before the embed.
                     transformed = com.retromod.shim.forge.ForgeEventBusSynthetics.stripLenientAutoSubscriber(
                             transformed, (name, bytes) -> writeCompanion(dir, originalClasses, className, name, bytes));
-                    transformed = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard
-                            .apply(transformed, bytecodeTransformer.getSyntheticClasses()::containsKey);
+                    transformed = com.retromod.shim.forge.NeoForgeAutoSubscriberGuard.apply(transformed,
+                            bytecodeTransformer.getSyntheticClasses()::containsKey, handlerReferences::contains);
                     // The same for a listener added with a lambda, which links its event when the call runs.
                     transformed = com.retromod.shim.forge.NeoForgeRemovedEventListeners
                             .apply(transformed, bytecodeTransformer.getSyntheticClasses()::containsKey);
@@ -1872,8 +1875,24 @@ public class ForgeModTransformer {
         // The host also ignores an entry on a class it moved, such as Villager into npc.villager in 26.1, whose
         // FOOD_POINTS Farmer's Delight opens to add its foods.
         RetromodTransformer transformer = RetromodTransformer.getInstance();
-        return moveAccessTransformerClasses(mojang, jarDefines == null ? transformer::classRedirectForCurrentMod
+        String moved = moveAccessTransformerClasses(mojang, jarDefines == null ? transformer::classRedirectForCurrentMod
                 : name -> transformer.classRedirectForJar(name, jarDefines));
+        // An entry on a constructor whose descriptor a constructor change replaced would open one the host lacks.
+        return moveAccessTransformerConstructors(moved, transformer::constructorDescriptorFor);
+    }
+
+    /** Each constructor an AT entry names, under the descriptor the registered constructor changes give it. */
+    public static String moveAccessTransformerConstructors(String content, java.util.function.BinaryOperator<String> descriptor) {
+        Pattern entry = Pattern.compile("(?m)^(\\s*(?:public|protected|private|default)(?:[+-]f)?\\s+)([\\w$.]+)(\\s+<init>)(\\([^\\s#]*)");
+        Matcher matcher = entry.matcher(content);
+        StringBuilder out = new StringBuilder();
+        while (matcher.find()) {
+            String owner = matcher.group(2).replace('.', '/');
+            String moved = descriptor.apply(owner, matcher.group(4));
+            matcher.appendReplacement(out, Matcher.quoteReplacement(matcher.group(1) + matcher.group(2) + matcher.group(3) + moved));
+        }
+        matcher.appendTail(out);
+        return out.toString();
     }
 
     /** The classes an extracted jar holds, by internal name. */

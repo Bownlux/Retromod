@@ -124,10 +124,8 @@ class CrossJarRegistryIdTest {
                     "the library's constructor reads the key the addon's copy set");
             assertNull(pickup.getField("ID_DURING_INIT").get(null),
                     "the library's static initializer starts with no id, even inside the addon's supplier");
-            assertEquals("NullPointerException: Item id not set", otherThread[0],
-                    "another thread never sees the key");
-            assertEquals("NullPointerException: Item id not set", build(pickup),
-                    "the key is cleared once the supplier returns");
+            ConsumerRegistrationIdTest.assertPlaceholder(String.valueOf(otherThread[0]), "another thread never sees the key");
+            ConsumerRegistrationIdTest.assertPlaceholder(build(pickup), "the key is cleared once the supplier returns");
 
             // Both copies hold the same slots, so the handed-back check works across jars too.
             Class<?> libraryCopy = mods.loadClass(libraryBridge.replace('/', '.'));
@@ -216,8 +214,8 @@ class CrossJarRegistryIdTest {
     /** Builds a library item outside any registration and names what it threw, or "built" when it got an id. */
     private static String build(Class<?> pickup) {
         try {
-            pickup.getConstructor().newInstance();
-            return "built";
+            Object item = pickup.getConstructor().newInstance();
+            return String.valueOf(pickup.getSuperclass().getField("key").get(item));
         } catch (InvocationTargetException failed) {
             return failed.getCause().getClass().getSimpleName() + ": " + failed.getCause().getMessage();
         } catch (ReflectiveOperationException e) {

@@ -7,6 +7,7 @@ import net.minecraft.client.renderer.state.GameRenderState;
 public class GameRenderer {
     private GameRenderer() {}
 
+    public com.mojang.blaze3d.pipeline.RenderTarget mainRenderTarget() { throw new UnsupportedOperationException(); }
     public Camera mainCamera() { throw new UnsupportedOperationException(); }
 
     public GameRenderState gameRenderState() { throw new UnsupportedOperationException(); }

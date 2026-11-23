@@ -39,3 +39,4 @@ entity	minecraft:creaking_transient	-	1.21.4
 entity	minecraft:potion	-	1.21.5
 block	minecraft:chain	minecraft:iron_chain	1.21.9
 item	minecraft:chain	minecraft:iron_chain	1.21.9
+block_entity_type	minecraft:bed	-	26.2

@@ -588,6 +588,15 @@ public class FuzzyMethodResolver {
         return methods == null ? List.of() : List.copyOf(methods);
     }
 
+    /** Constructors {@code owner} declares, as {@code <init>} entries; empty when the target JAR is unavailable. */
+    public List<MethodInfo> getConstructors(String owner) {
+        if (!indexed || owner == null) return List.of();
+        Set<String> descriptors = constructorIndex.get(owner);
+        if (descriptors == null) return List.of();
+        // Sorted, so a caller that needs exactly one sees the same list on every run.
+        return descriptors.stream().sorted().map(desc -> new MethodInfo(owner, "<init>", desc, -1, 0)).toList();
+    }
+
     /** Fields declared directly by {@code owner}, immutable and empty when the target JAR is unavailable. */
     public List<FieldInfo> getDeclaredFields(String owner) {
         if (!indexed || owner == null) return List.of();

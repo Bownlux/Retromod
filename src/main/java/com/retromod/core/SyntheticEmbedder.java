@@ -35,8 +35,8 @@ import java.util.Set;
 
 /**
  * Embeds Retromod's registered synthetic classes (ASM-generated polyfills for deleted MC or
- * loader classes) into the transformed mods that reference them, and rewrites those references
- * to the embedded copies.
+ * loader classes) and the compiled helpers {@link CompiledHelpers} picks into the transformed mods
+ * that reference them, and rewrites those references to the embedded copies.
  *
  * <p>Each copy goes under {@code com/retromod/embedded/<mod-key>/}, unique per mod. Embedding at
  * the original name would split-package with loader-owned modules on Forge/NeoForge. On Fabric,
@@ -79,9 +79,10 @@ public final class SyntheticEmbedder {
      * Register one of Retromod's compiled helper classes for per-mod embedding.
      *
      * <p>{@link VersionShim#getShimClasses()} is useful for reporting, but the embedder works from
-     * the transformer's registered byte arrays. A redirect to a compiled helper therefore has to
-     * register that helper here as well or an offline transform leaves a Retromod-only call owner
-     * in the output jar.
+     * the transformer's registered byte arrays and from {@link CompiledHelpers}, which covers only
+     * helpers in an {@code embedded} package and a short list of others. A redirect to any other
+     * compiled helper has to register it here, or an offline transform leaves a Retromod-only call
+     * owner in the output jar.
      *
      * @return true when the class was already registered or its bytes were loaded successfully
      */
@@ -199,7 +200,6 @@ public final class SyntheticEmbedder {
     public static int embed(Path modDir, String uniqueKey, RetromodTransformer transformer,
             SyntheticLibraries libraries) {
         Map<String, byte[]> synthetics = transformer.getSyntheticClasses();
-        if (synthetics == null || synthetics.isEmpty()) return 0;
         try {
             final List<Path> classFiles;
             try (var s = Files.walk(modDir)) {
@@ -225,6 +225,8 @@ public final class SyntheticEmbedder {
                 } catch (IOException ignored) {
                 }
             }
+            // Retromod's compiled helpers the mod calls travel with it too, so it runs without Retromod.
+            synthetics = CompiledHelpers.withHelpers(synthetics, referenced);
             referenced.retainAll(synthetics.keySet());
             if (referenced.isEmpty()) return 0;
             expandTransitively(referenced, synthetics, transformer.getClassRedirectsForHostCode());
@@ -398,7 +400,6 @@ public final class SyntheticEmbedder {
     private static int embedIntoJarChecked(Path jarPath, String uniqueKey,
             RetromodTransformer transformer, SyntheticLibraries libraries) throws IOException {
         Map<String, byte[]> synthetics = transformer.getSyntheticClasses();
-        if (synthetics == null || synthetics.isEmpty()) return 0;
         java.util.LinkedHashMap<String, byte[]> entries = new java.util.LinkedHashMap<>();
         Set<String> canonicalNames = new HashSet<>();
         long total = 0;
@@ -446,6 +447,7 @@ public final class SyntheticEmbedder {
                         en.getValue());
             }
         }
+        synthetics = CompiledHelpers.withHelpers(synthetics, referenced);
         referenced.retainAll(synthetics.keySet());
         if (referenced.isEmpty()) return 0;
         expandTransitively(referenced, synthetics, transformer.getClassRedirectsForHostCode());
@@ -549,7 +551,7 @@ public final class SyntheticEmbedder {
     /**
      * Compatibility overload for callers that supply their own compressed-output limit.
      *
-     * @return {@code jarData} itself when no registered synthetic is referenced
+     * @return {@code jarData} itself when it names no class to embed
      */
     public static byte[] embedIntoJarBytes(byte[] jarData, String uniqueKey,
             RetromodTransformer transformer, long maxOutputBytes) throws IOException {
@@ -563,9 +565,6 @@ public final class SyntheticEmbedder {
         if (transformer == null) throw new IOException("nested JAR transformer is null");
         if (maxOutputBytes <= 0) throw new IOException("nested JAR output limit must be positive");
         Map<String, byte[]> synthetics = transformer.getSyntheticClasses();
-        if (synthetics == null || synthetics.isEmpty()) {
-            return new ByteEmbeddingResult(jarData, 0, true);
-        }
 
         java.util.LinkedHashMap<String, byte[]> entries = new java.util.LinkedHashMap<>();
         Set<String> canonicalNames = new HashSet<>();
@@ -607,6 +606,7 @@ public final class SyntheticEmbedder {
                 }
             }
         }
+        synthetics = CompiledHelpers.withHelpers(synthetics, referenced);
         referenced.retainAll(synthetics.keySet());
         if (referenced.isEmpty()) return new ByteEmbeddingResult(jarData, 0, true);
         expandTransitively(referenced, synthetics, transformer.getClassRedirectsForHostCode());

@@ -12,3 +12,4 @@ net/minecraft/server/ReloadableServerResources	updateRegistryTags	*	updateStatic
 net/minecraft/client/MouseHandler	onPress	(JIII)V	onButton	(JLnet/minecraft/client/input/MouseButtonInfo;I)V	1.21.11
 *	hurt	(Lnet/minecraft/world/damagesource/DamageSource;F)Z	hurtServer	(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/damagesource/DamageSource;F)Z	1.21.11
 *	hurtClient	(Lnet/minecraft/world/damagesource/DamageSource;F)Z	hurtServer	(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/damagesource/DamageSource;F)Z	26.1
+net/minecraft/world/level/block/FarmlandBlock	turnToDirt	(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/world/level/Level;Lnet/minecraft/core/BlockPos;)V	turnToBaseBlock	(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/world/level/Level;Lnet/minecraft/core/BlockPos;)V	26.3

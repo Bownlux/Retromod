@@ -80,11 +80,13 @@ public final class WorldgenTypeBridgeSynthetic {
     // Registries whose element type is now MapCodec directly. Loot + density changed at 26.1;
     // STRUCTURE_PROCESSOR only at 26.2 (26.1 still holds StructureProcessorType SAM objects, so
     // converting there would BREAK a 26.1 host - hence the two layer-specific variants below).
+    // The chunk generator and biome source registries hold map codecs on 26.x, where a 1.20.1 mod still
+    // registers a record codec; both keep their names on every 26.x host, unlike the material rule registries.
     private static final String[] MAPCODEC_REGISTRIES_26_1 = {
-            "LOOT_CONDITION_TYPE", "LOOT_FUNCTION_TYPE", "DENSITY_FUNCTION_TYPE"};
+            "LOOT_CONDITION_TYPE", "LOOT_FUNCTION_TYPE", "DENSITY_FUNCTION_TYPE", "CHUNK_GENERATOR", "BIOME_SOURCE"};
     private static final String[] MAPCODEC_REGISTRIES_26_2 = {
             "LOOT_CONDITION_TYPE", "LOOT_FUNCTION_TYPE", "DENSITY_FUNCTION_TYPE",
-            "STRUCTURE_PROCESSOR"};
+            "STRUCTURE_PROCESSOR", "CHUNK_GENERATOR", "BIOME_SOURCE"};
 
     /** Full 26.2-layer registration (all MapCodec-ized registries incl. STRUCTURE_PROCESSOR). */
     public static void register(RetromodTransformer t) {
@@ -112,6 +114,9 @@ public final class WorldgenTypeBridgeSynthetic {
 
     private static void registerWith(RetromodTransformer t, byte[] bridgeBytes) {
         t.registerSyntheticClass(INTERNAL, bridgeBytes);
+        LegacyMapCodecsSynthetic.register(t);
+        // A value registered straight into a writable registry, as Moonlight's register helper does, is converted too.
+        LegacyRegistryMapCodecBridge.registerWritableRegistrations(t);
         for (String key : new String[]{"L" + IDENTIFIER + ";", "L" + RESOURCE_KEY + ";",
                 "Ljava/lang/String;"}) {
             t.registerMethodRedirect(REGISTRY, "register",
@@ -293,6 +298,23 @@ public final class WorldgenTypeBridgeSynthetic {
         m.visitVarInsn(ALOAD, 1);
         m.visitTypeInsn(INSTANCEOF, MAP_CODEC);
         m.visitJumpInsn(IFNE, ret);
+        // A chunk generator or biome source codec is stored as the map codec the rebuilt base's codec() returns.
+        Label notWorldCodec = new Label();
+        Label worldCodec = new Label();
+        for (String field : new String[]{"CHUNK_GENERATOR", "BIOME_SOURCE"}) {
+            m.visitFieldInsn(GETSTATIC, BUILT_IN, field, L_REG);
+            m.visitVarInsn(ALOAD, 0);
+            m.visitJumpInsn(IF_ACMPEQ, worldCodec);
+        }
+        m.visitJumpInsn(GOTO, notWorldCodec);
+        m.visitLabel(worldCodec);
+        m.visitVarInsn(ALOAD, 1);
+        m.visitTypeInsn(INSTANCEOF, CODEC);
+        m.visitJumpInsn(IFEQ, warn);
+        m.visitVarInsn(ALOAD, 1);
+        m.visitMethodInsn(INVOKESTATIC, LegacyMapCodecsSynthetic.INTERNAL, "of", LegacyMapCodecsSynthetic.OF_DESC, false);
+        m.visitInsn(ARETURN);
+        m.visitLabel(notWorldCodec);
 
         m.visitLabel(tryStart);
         // Method mth = v.getClass().getMethod("codec"); mth.setAccessible(true);
@@ -349,12 +371,12 @@ public final class WorldgenTypeBridgeSynthetic {
         // from the processor class's <clinit>, which codec() triggers via GETSTATIC CODEC.
         m.visitVarInsn(ASTORE, 3);
         GeneratedLog.pushLogger(m);
-        m.visitLdcInsn("[Retromod] Could not read the codec of an old structure processor type");
+        m.visitLdcInsn("[Retromod] Could not read the codec of an old registry value");
         m.visitVarInsn(ALOAD, 3);
         GeneratedLog.warnWithCause(m);
         m.visitLabel(warn);
         GeneratedLog.pushLogger(m);
-        m.visitLdcInsn("[Retromod] Could not convert an old structure processor type to the codec this "
+        m.visitLdcInsn("[Retromod] Could not convert an old registry value to the codec this "
                 + "Minecraft version registers, and left it as it was: ");
         m.visitVarInsn(ALOAD, 1);
         m.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Object", "getClass", "()Ljava/lang/Class;", false);

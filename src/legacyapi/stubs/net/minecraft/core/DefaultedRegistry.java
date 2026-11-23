@@ -3,7 +3,7 @@ package net.minecraft.core;
 
 import net.minecraft.resources.Identifier;
 
-public interface DefaultedRegistry<T> extends Registry<T> {
+public interface DefaultedRegistry<T> extends Registry<T>, HolderGetter<T> {
     Identifier getKey(T value);
     T getValue(Identifier id);
 }

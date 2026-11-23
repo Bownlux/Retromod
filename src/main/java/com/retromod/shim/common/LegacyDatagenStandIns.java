@@ -78,8 +78,8 @@ public final class LegacyDatagenStandIns {
                 : ACC_PUBLIC | ACC_SUPER | (row.kind().equals("abstract") ? ACC_ABSTRACT : 0);
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(V17, access, ROOT + row.name(), null, superName, interfaces.length == 0 ? null : interfaces);
-        if (!isInterface) {
-            // A no-argument constructor, so the stand-in is a complete class; subclasses only link to it.
+        // A no-argument constructor only over a super that has one: the host's own data-generation bases do not.
+        if (!isInterface && (superName.equals("java/lang/Object") || superName.startsWith(ROOT))) {
             MethodVisitor init = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
             init.visitCode();
             init.visitVarInsn(ALOAD, 0);

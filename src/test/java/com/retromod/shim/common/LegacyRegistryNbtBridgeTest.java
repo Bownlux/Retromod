@@ -54,6 +54,31 @@ class LegacyRegistryNbtBridgeTest {
     }
 
     @Test
+    void aFabricLoadUnderItsRemappedNameGetsTheSameBridge() throws Exception {
+        // A Fabric 1.20.1 mod's load(CompoundTag) arrives from the intermediary remap as loadAdditional(CompoundTag).
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/FabricCrate", null, BLOCK_ENTITY, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, FABRIC_LOAD, OLD_LOAD, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, BLOCK_ENTITY, FABRIC_LOAD, OLD_LOAD, false);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        ClassNode node = node(apply(cw.toByteArray(), Map.of()));
+
+        assertTrue(calls(method(node, "loadAdditional", NEW_NBT)).contains("test/FabricCrate.loadAdditional" + OLD_LOAD),
+                "the host's loadAdditional(tag, registries) must run the old override");
+        List<String> superCalls = calls(method(node, FABRIC_LOAD, OLD_LOAD));
+        assertTrue(superCalls.contains(BLOCK_ENTITY + ".loadAdditional" + NEW_NBT),
+                "the old super call must reach the host's form: " + superCalls);
+        verify(node);
+    }
+
+    @Test
     void superCallsThatReachMinecraftTakeTheProvider() {
         ClassNode node = node(apply(modBlockEntity(BLOCK_ENTITY), Map.of()));
 

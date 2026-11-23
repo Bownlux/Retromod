@@ -8,8 +8,10 @@ public interface Holder<T> {
     T value();
 
     boolean is(ResourceKey<T> key);
+    boolean is(net.minecraft.tags.TagKey<T> tag);
 
     Optional<ResourceKey<T>> unwrapKey();
+    boolean areComponentsBound();
     java.util.stream.Stream<net.minecraft.tags.TagKey<T>> tags();
 
     static <T> Holder<T> direct(T value) { throw new UnsupportedOperationException(); }
@@ -20,6 +22,7 @@ public interface Holder<T> {
         }
         public T value() { throw new UnsupportedOperationException(); }
         public boolean is(ResourceKey<T> key) { throw new UnsupportedOperationException(); }
+        public boolean is(net.minecraft.tags.TagKey<T> tag) { throw new UnsupportedOperationException(); }
         public Optional<ResourceKey<T>> unwrapKey() { throw new UnsupportedOperationException(); }
         public java.util.stream.Stream<net.minecraft.tags.TagKey<T>> tags() { throw new UnsupportedOperationException(); }
         public boolean areComponentsBound() { throw new UnsupportedOperationException(); }

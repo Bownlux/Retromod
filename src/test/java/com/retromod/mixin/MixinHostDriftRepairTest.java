@@ -43,6 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Host-proven Mixin repairs for 26.x member drift (Hold My Items, #281/#312). */
@@ -64,6 +65,13 @@ class MixinHostDriftRepairTest {
     private static final String FEATURES = "net/minecraft/client/renderer/feature/FeatureRenderDispatcher";
     private static final String CAMERA = "net/minecraft/client/Camera";
     private static final String LIVING = "net/minecraft/world/entity/LivingEntity";
+    private static final String CUBE_MOB = "net/minecraft/world/entity/monster/cubemob/AbstractCubeMob";
+    private static final String SLIME = "net/minecraft/world/entity/monster/cubemob/Slime";
+    private static final String MAP_FUNCTION = "net/minecraft/world/level/storage/loot/functions/ExplorationMapFunction";
+    private static final String ITEM_TAGS = "net/minecraft/tags/ItemTags";
+    private static final String EDIT_BOX = "net/minecraft/client/gui/components/MultiLineEditBox";
+    private static final String TAG_KEY_DESC = "Lnet/minecraft/tags/TagKey;";
+    private static final String MAP_CODEC_DESC = "Lcom/mojang/serialization/MapCodec;";
     private static final String LOCAL_PLAYER = "net/minecraft/client/player/LocalPlayer";
     private static final String MINECRAFT = "net/minecraft/client/Minecraft";
     private static final String STACK = "net/minecraft/world/item/ItemStack";
@@ -118,6 +126,12 @@ class MixinHostDriftRepairTest {
     private static final String LOCAL_REF = "Lcom/llamalad7/mixinextras/sugar/ref/LocalRef;";
     private static final String LOCAL_INT_REF = "Lcom/llamalad7/mixinextras/sugar/ref/LocalIntRef;";
 
+    // 1.21.5 gave the Inventory constructor an EntityEquipment after the Player (Shifty Hotbar, #425).
+    private static final String INVENTORY = "net/minecraft/world/entity/player/Inventory";
+    private static final String PLAYER = "Lnet/minecraft/world/entity/player/Player;";
+    private static final String EQUIPMENT = "Lnet/minecraft/world/entity/EntityEquipment;";
+    private static final String INVENTORY_CTOR = "(" + PLAYER + EQUIPMENT + ")V";
+
     @TempDir
     Path tempDir;
 
@@ -145,6 +159,14 @@ class MixinHostDriftRepairTest {
                 method(c, 0, "getMainHandItem", "()L" + STACK + ";");
             }));
             put(out, hostClass(LOCAL_PLAYER, LIVING, c -> {}));
+            put(out, hostClass(CUBE_MOB, LIVING, c -> method(c, 0, "getSize", "()I")));
+            put(out, hostClass(SLIME, CUBE_MOB, c -> {}));
+            put(out, hostClass(MAP_FUNCTION, "java/lang/Object", c -> c.visitField(
+                    Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "MAP_CODEC", MAP_CODEC_DESC, null, null).visitEnd()));
+            put(out, hostClass(ITEM_TAGS, "java/lang/Object", c -> c.visitField(
+                    Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "WOODEN_BUTTONS", TAG_KEY_DESC, null, null).visitEnd()));
+            put(out, hostClass(EDIT_BOX, "java/lang/Object", c -> c.visitField(
+                    Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "PLACEHOLDER_TEXT_COLOR", "I", null, null).visitEnd()));
             put(out, hostClass(STACK, "java/lang/Object",
                     c -> method(c, 0, "getAttackAnimation", "()" + ANIMATION)));
             put(out, hostClass(MINECRAFT, "java/lang/Object", c -> {
@@ -611,6 +633,176 @@ class MixinHostDriftRepairTest {
                 "the pass-through call must forward the new arguments");
     }
 
+    private static final String CLIENT_INPUT = "net/minecraft/client/player/ClientInput";
+    private static final String WRAP_OPERATION = "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;";
+    private static final String OPERATION = "com/llamalad7/mixinextras/injector/wrapoperation/Operation";
+
+    /** InvMove's movement wrap: {@code ClientInput.tick(ZF)V} called in {@code aiStep}, the old arguments passed on. */
+    private static byte[] inputWrapMixin(boolean alsoReadsArguments) {
+        return mixin("MovementMixin", LOCAL_PLAYER, c -> {
+            MethodVisitor handler = c.visitMethod(Opcodes.ACC_PRIVATE, "onTick", "(L" + CLIENT_INPUT + ";ZFL" + OPERATION + ";)V",
+                    "(L" + CLIENT_INPUT + ";ZFL" + OPERATION + "<Ljava/lang/Void;>;)V", null);
+            AnnotationVisitor wrap = handler.visitAnnotation(WRAP_OPERATION, true);
+            AnnotationVisitor methods = wrap.visitArray("method");
+            methods.visit(null, "aiStep()V");
+            methods.visitEnd();
+            AnnotationVisitor ats = wrap.visitArray("at");
+            AnnotationVisitor at = ats.visitAnnotation(null, AT);
+            at.visit("value", "INVOKE");
+            at.visit("target", "L" + CLIENT_INPUT + ";tick(ZF)V");
+            at.visitEnd();
+            ats.visitEnd();
+            wrap.visitEnd();
+            handler.visitCode();
+            handler.visitVarInsn(Opcodes.ALOAD, 4);
+            handler.visitInsn(Opcodes.ICONST_3);
+            handler.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+            handler.visitInsn(Opcodes.DUP);
+            handler.visitInsn(Opcodes.ICONST_0);
+            handler.visitVarInsn(Opcodes.ALOAD, 1);
+            handler.visitInsn(Opcodes.AASTORE);
+            handler.visitInsn(Opcodes.DUP);
+            handler.visitInsn(Opcodes.ICONST_1);
+            handler.visitVarInsn(Opcodes.ILOAD, 2);
+            handler.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Boolean", "valueOf", "(Z)Ljava/lang/Boolean;", false);
+            handler.visitInsn(Opcodes.AASTORE);
+            handler.visitInsn(Opcodes.DUP);
+            handler.visitInsn(Opcodes.ICONST_2);
+            handler.visitVarInsn(Opcodes.FLOAD, 3);
+            handler.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Float", "valueOf", "(F)Ljava/lang/Float;", false);
+            handler.visitInsn(Opcodes.AASTORE);
+            handler.visitMethodInsn(Opcodes.INVOKEINTERFACE, OPERATION, "call", "([Ljava/lang/Object;)Ljava/lang/Object;", true);
+            handler.visitInsn(Opcodes.POP);
+            if (alsoReadsArguments) {
+                handler.visitVarInsn(Opcodes.ILOAD, 2);
+                handler.visitInsn(Opcodes.POP);
+            }
+            handler.visitInsn(Opcodes.RETURN);
+            handler.visitMaxs(6, 5);
+            handler.visitEnd();
+        });
+    }
+
+    private MixinHostDriftRepair inputHost() throws IOException {
+        return hostOf("input.jar", hostClass(CLIENT_INPUT, "java/lang/Object", c -> method(c, 0, "tick", "()V")),
+                hostClass(LOCAL_PLAYER, "java/lang/Object", c -> method(c, 0, "aiStep", "()V")));
+    }
+
+    @Test
+    void dropsArgumentsAWrapOnlyPassesOnWhenItsCallLostThem() throws IOException {
+        MethodNode handler = method(read(inputHost().apply(inputWrapMixin(false))), "onTick");
+
+        assertEquals("(L" + CLIENT_INPUT + ";L" + OPERATION + ";)V", handler.desc, "the old arguments leave the handler");
+        assertEquals("(L" + CLIENT_INPUT + ";L" + OPERATION + "<Ljava/lang/Void;>;)V", handler.signature);
+        String target = (String) atValue(handler, WRAP_OPERATION, "target");
+        assertEquals("L" + CLIENT_INPUT + ";tick()V", target);
+        assertEquals(Opcodes.ICONST_1, handler.instructions.get(1).getOpcode(), "the operation gets the receiver alone");
+        assertEquals(2, ((org.objectweb.asm.tree.VarInsnNode) handler.instructions.get(0)).var, "the operation moves to slot 2");
+        for (AbstractInsnNode insn : handler.instructions) {
+            assertFalse(insn instanceof MethodInsnNode call && call.name.equals("valueOf"), "no old argument is boxed");
+        }
+    }
+
+    @Test
+    void leavesAWrapThatReadsTheLostArgumentsItself() throws IOException {
+        byte[] mixin = inputWrapMixin(true);
+
+        assertSame(mixin, inputHost().apply(mixin), "nothing on the host can supply what the old arguments held");
+    }
+
+    @Test
+    void retargetsAnInjectAtACallThatLostItsArguments() throws IOException {
+        byte[] mixin = mixin("TickMixin", LOCAL_PLAYER, c -> {
+            MethodVisitor handler = c.visitMethod(Opcodes.ACC_PRIVATE, "beforeTick", "(" + CI + ")V", null, null);
+            AnnotationVisitor inject = handler.visitAnnotation(INJECT, true);
+            AnnotationVisitor methods = inject.visitArray("method");
+            methods.visit(null, "aiStep");
+            methods.visitEnd();
+            AnnotationVisitor ats = inject.visitArray("at");
+            AnnotationVisitor at = ats.visitAnnotation(null, AT);
+            at.visit("value", "INVOKE");
+            at.visit("target", "L" + CLIENT_INPUT + ";tick(ZF)V");
+            at.visitEnd();
+            ats.visitEnd();
+            inject.visitEnd();
+            handler.visitCode();
+            handler.visitInsn(Opcodes.RETURN);
+            handler.visitMaxs(0, 2);
+            handler.visitEnd();
+        });
+
+        MethodNode handler = method(read(inputHost().apply(mixin)), "beforeTick");
+
+        assertEquals("L" + CLIENT_INPUT + ";tick()V", atValue(handler, INJECT, "target"));
+    }
+
+    /** A value of the first @At of the handler's injector. */
+    private static Object atValue(MethodNode handler, String injector, String key) {
+        for (AnnotationNode annotation : handler.visibleAnnotations) {
+            if (!annotation.desc.equals(injector)) continue;
+            for (int i = 0; i < annotation.values.size(); i += 2) {
+                if (!"at".equals(annotation.values.get(i))) continue;
+                Object at = annotation.values.get(i + 1);
+                AnnotationNode point = at instanceof List<?> list ? (AnnotationNode) list.get(0) : (AnnotationNode) at;
+                for (int j = 0; j < point.values.size(); j += 2) {
+                    if (key.equals(point.values.get(j))) return point.values.get(j + 1);
+                }
+            }
+        }
+        return null;
+    }
+
+    private static final String LIVING_RENDERER = "net/minecraft/client/renderer/entity/LivingEntityRenderer";
+    private static final String AVATAR = "net/minecraft/client/renderer/entity/player/AvatarRenderer";
+
+    /** A mixin on the avatar renderer with javac's getShadowRadius(Entity) bridge forwarding to the 1.21.1 method. */
+    private static byte[] shadowBridgeMixin() {
+        return mixin("PlayerRendererMixin", AVATAR, c -> {
+            MethodVisitor bridge = c.visitMethod(Opcodes.ACC_PROTECTED | Opcodes.ACC_BRIDGE | Opcodes.ACC_SYNTHETIC,
+                    "getShadowRadius", "(Lnet/minecraft/world/entity/Entity;)F", null, null);
+            bridge.visitCode();
+            bridge.visitVarInsn(Opcodes.ALOAD, 0);
+            bridge.visitVarInsn(Opcodes.ALOAD, 1);
+            bridge.visitTypeInsn(Opcodes.CHECKCAST, LIVING);
+            bridge.visitMethodInsn(Opcodes.INVOKESPECIAL, LIVING_RENDERER, "getShadowRadius", "(L" + LIVING + ";)F", false);
+            bridge.visitInsn(Opcodes.FRETURN);
+            bridge.visitMaxs(2, 2);
+            bridge.visitEnd();
+        });
+    }
+
+    private MixinHostDriftRepair rendererHost(String rendererMethod, String avatarMethod) throws IOException {
+        return hostOf("renderer.jar",
+                hostClass(LIVING_RENDERER, "java/lang/Object", c -> method(c, 0, "getShadowRadius", rendererMethod)),
+                hostClass(AVATAR, LIVING_RENDERER, c -> {
+                    if (avatarMethod != null) method(c, 0, "getShadowRadius", avatarMethod);
+                }));
+    }
+
+    @Test
+    void dropsACompilerBridgeToARemovedHostMethod() throws IOException {
+        MixinHostDriftRepair repair = rendererHost("(Lnet/minecraft/client/renderer/entity/state/LivingEntityRenderState;)F", null);
+
+        ClassNode repaired = read(repair.apply(shadowBridgeMixin()));
+
+        assertNull(method(repaired, "getShadowRadius"), "the bridge forwards to a method the host no longer has");
+    }
+
+    @Test
+    void keepsACompilerBridgeWhoseForwardedMethodTheHostStillHas() throws IOException {
+        byte[] mixin = shadowBridgeMixin();
+
+        assertSame(mixin, rendererHost("(L" + LIVING + ";)F", null).apply(mixin));
+    }
+
+    @Test
+    void keepsACompilerBridgeThatStillOverridesAHostMethod() throws IOException {
+        byte[] mixin = shadowBridgeMixin();
+
+        assertSame(mixin, rendererHost("(Lnet/minecraft/client/renderer/entity/state/LivingEntityRenderState;)F",
+                "(Lnet/minecraft/world/entity/Entity;)F").apply(mixin), "host code still calls the bridge's own descriptor");
+    }
+
     @Test
     void renamesAShadowThroughAHostProvenMethodRedirect() {
         byte[] mixin = mixin("ArmMixin", RENDERER, c -> {
@@ -654,6 +846,64 @@ class MixinHostDriftRepairTest {
         MethodInsnNode call = first(bridged, MethodInsnNode.class);
         assertEquals(adapter, call.owner);
         assertEquals(adapterDesc, call.desc, "the mixin must call the same adapter its callers use");
+    }
+
+    @Test
+    void dropsAShadowTheHostMovedToASuperclassAndKeepsItsCalls() {
+        byte[] mixin = mixin("SlimeMixin", SLIME, c -> {
+            MethodVisitor shadow = c.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, "getSize", "()I", null, null);
+            shadow.visitAnnotation(SHADOW, true).visitEnd();
+            shadow.visitEnd();
+            MethodVisitor user = c.visitMethod(Opcodes.ACC_PRIVATE, "big", "()Z", null, null);
+            user.visitCode();
+            user.visitVarInsn(Opcodes.ALOAD, 0);
+            user.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "test/mixin/SlimeMixin", "getSize", "()I", false);
+            user.visitInsn(Opcodes.IRETURN);
+            user.visitMaxs(1, 1);
+            user.visitEnd();
+        }, true);
+
+        ClassNode repaired = read(repair.apply(mixin));
+
+        assertNull(method(repaired, "getSize"), "Mixin finds shadows in Slime alone, and 26.2 moved getSize to AbstractCubeMob");
+        assertEquals("getSize", first(method(repaired, "big"), MethodInsnNode.class).name, "the call still reaches the inherited method");
+    }
+
+    @Test
+    void renamesAShadowFieldTheHostGaveAPrefix() {
+        byte[] mixin = mixin("MapFunctionMixin", MAP_FUNCTION, c -> {
+            FieldVisitor shadow = c.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "CODEC", MAP_CODEC_DESC, null, null);
+            shadow.visitAnnotation(SHADOW, true).visitEnd();
+            shadow.visitEnd();
+            MethodVisitor user = c.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, "codec", "()" + MAP_CODEC_DESC, null, null);
+            user.visitCode();
+            user.visitFieldInsn(Opcodes.GETSTATIC, "test/mixin/MapFunctionMixin", "CODEC", MAP_CODEC_DESC);
+            user.visitInsn(Opcodes.ARETURN);
+            user.visitMaxs(1, 0);
+            user.visitEnd();
+        });
+
+        ClassNode repaired = read(repair.apply(mixin));
+
+        assertEquals("MAP_CODEC", repaired.fields.get(0).name, "26.1 renamed the loot function codec");
+        assertEquals("MAP_CODEC", first(method(repaired, "codec"), org.objectweb.asm.tree.FieldInsnNode.class).name);
+    }
+
+    @Test
+    void leavesOtherPrefixedFieldsAlone() {
+        // WOODEN_BUTTONS is a narrower tag than the BUTTONS 26.3 removed, and PLACEHOLDER_TEXT_COLOR another color.
+        String[][] shadows = {{"ItemTagsMixin", ITEM_TAGS, "BUTTONS", TAG_KEY_DESC}, {"EditBoxMixin", EDIT_BOX, "TEXT_COLOR", "I"}};
+        for (String[] shadow : shadows) {
+            byte[] mixin = mixin(shadow[0], shadow[1], c -> {
+                FieldVisitor field = c.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC, shadow[2], shadow[3], null, null);
+                field.visitAnnotation(SHADOW, true).visitEnd();
+                field.visitEnd();
+            });
+            byte[] repaired = repair.apply(mixin);
+            ClassNode node = read(repaired == null ? mixin : repaired);
+            assertTrue(node.fields.stream().noneMatch(f -> f.name.startsWith("WOODEN_") || f.name.startsWith("PLACEHOLDER_")),
+                    shadow[2] + " keeps its name");
+        }
     }
 
     @Test
@@ -771,6 +1021,56 @@ class MixinHostDriftRepairTest {
 
         assertEquals(List.of(NEW_SELECTION), annotationValue(repaired.invisibleAnnotations.get(0), "targets"),
                 "a string target is annotation text, so the class move must be applied explicitly");
+    }
+
+    @Test
+    void dropsAnUnreadCaptureFromAConstructorInjectWhenTheConstructorGainedAParameter() throws IOException {
+        MixinHostDriftRepair inventoryHost = hostOf("inventory.jar", constructors(INVENTORY, INVENTORY_CTOR));
+        byte[] mixin = mixin("InventoryMixin", INVENTORY, c -> {
+            MethodVisitor handler = inject(c, "init", "(" + PLAYER + CI + ")V", "<init>", "RETURN", 0);
+            handler.visitInsn(Opcodes.RETURN);
+            handler.visitMaxs(0, 3);
+            handler.visitEnd();
+        });
+
+        MethodNode handler = method(inventoryHost.apply(mixin), "init");
+
+        assertEquals("(" + CI + ")V", handler.desc, "a handler that never reads the Player needs only the callback");
+        assertMixinAccepts(handler, INVENTORY_CTOR);
+    }
+
+    @Test
+    void appendsTheNewConstructorParameterWhenTheHandlerReadsTheOldOne() throws IOException {
+        MixinHostDriftRepair inventoryHost = hostOf("inventory.jar", constructors(INVENTORY, INVENTORY_CTOR));
+        byte[] mixin = mixin("InventoryMixin", INVENTORY, c -> {
+            MethodVisitor handler = inject(c, "init", "(" + PLAYER + CI + ")V", "<init>", "RETURN", 0);
+            handler.visitVarInsn(Opcodes.ALOAD, 1);
+            handler.visitInsn(Opcodes.POP);
+            handler.visitInsn(Opcodes.RETURN);
+            handler.visitMaxs(1, 3);
+            handler.visitEnd();
+        });
+
+        MethodNode handler = method(inventoryHost.apply(mixin), "init");
+
+        assertEquals("(" + PLAYER + EQUIPMENT + CI + ")V", handler.desc,
+                "the read Player stays first and the host's EntityEquipment joins after it");
+        assertMixinAccepts(handler, INVENTORY_CTOR);
+        assertEquals(List.of(1), varSlots(handler), "the Player keeps its slot");
+    }
+
+    @Test
+    void leavesAConstructorInjectAloneWhenTheHostHasTwoConstructors() throws IOException {
+        MixinHostDriftRepair inventoryHost = hostOf("inventory.jar",
+                constructors(INVENTORY, INVENTORY_CTOR, "(I)V"));
+        byte[] mixin = mixin("InventoryMixin", INVENTORY, c -> {
+            MethodVisitor handler = inject(c, "init", "(" + PLAYER + CI + ")V", "<init>", "RETURN", 0);
+            handler.visitInsn(Opcodes.RETURN);
+            handler.visitMaxs(0, 3);
+            handler.visitEnd();
+        });
+
+        assertArrayEquals(mixin, inventoryHost.apply(mixin), "two constructors leave the selector ambiguous");
     }
 
     @Test
@@ -1101,6 +1401,19 @@ class MixinHostDriftRepairTest {
         members.accept(writer);
         writer.visitEnd();
         return writer.toByteArray();
+    }
+
+    /** A host class that declares only these constructors. */
+    private static byte[] constructors(String name, String... descs) {
+        return hostClass(name, "java/lang/Object", c -> {
+            for (String desc : descs) {
+                MethodVisitor body = c.visitMethod(Opcodes.ACC_PUBLIC, "<init>", desc, null, null);
+                body.visitCode();
+                body.visitInsn(Opcodes.RETURN);
+                body.visitMaxs(0, Type.getArgumentsAndReturnSizes(desc) >> 2);
+                body.visitEnd();
+            }
+        });
     }
 
     private static void method(ClassWriter writer, int access, String name, String desc) {

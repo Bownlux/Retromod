@@ -163,6 +163,11 @@ final class LegacyLootConditionMigrator {
         for (Map.Entry<String, JsonElement> field : condition.entrySet()) {
             String key = field.getKey();
             if (key.equals("condition")) continue;
+            // A mod condition can carry the loaders' own condition lists, as Moonlight's load_conditions does.
+            if (isLoaderKey(key)) {
+                out.add(key, field.getValue());
+                continue;
+            }
             if (matchBlock && key.equals("block")) key = "blocks";
             if (matchBlock && key.equals("properties")) key = "state";
             // The int check names its range "test", and reads its value only as a typed provider.
@@ -205,6 +210,10 @@ final class LegacyLootConditionMigrator {
             String key = field.getKey();
             JsonElement value = field.getValue();
             if (key.equals("function") || key.equals("destination") && out.has("destination")) continue;
+            if (isLoaderKey(key)) {
+                out.add(key, value);
+                continue;
+            }
             if (key.equals("conditions") && value.isJsonArray()
                     && (value.getAsJsonArray().isEmpty() || isOldConditionList(value))) {
                 if (!value.getAsJsonArray().isEmpty()) {

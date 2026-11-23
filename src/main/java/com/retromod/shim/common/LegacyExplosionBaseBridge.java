@@ -64,6 +64,11 @@ public final class LegacyExplosionBaseBridge {
             + ";L" + VEC3 + ";FZL" + INTERACTION + ";)V";
     private static final String OLD_HIT = "(L" + LEVEL + ";L" + BLOCK_POS + ";L" + EXPLOSION + ";Ljava/util/function/BiConsumer;)V";
 
+    /** The 1.21.1 explosion fields a subclass reads, each with its descriptor. */
+    static final String[][] OLD_FIELDS = {
+            {"level", "L" + LEVEL + ";"}, {"source", "L" + ENTITY + ";"}, {"x", "D"}, {"y", "D"}, {"z", "D"},
+            {"radius", "F"}, {"fire", "Z"}};
+
     private LegacyExplosionBaseBridge() {}
 
     /** Registers on a host whose {@code Explosion} is an interface. */
@@ -198,6 +203,8 @@ public final class LegacyExplosionBaseBridge {
         field(cw, "retromod$small", "L" + PARTICLE + ";");
         field(cw, "retromod$large", "L" + PARTICLE + ";");
         field(cw, "retromod$sound", "L" + HOLDER + ";");
+        // The old explosion's own fields, which subclasses read directly: where it happens, its level and size.
+        for (String[] old : OLD_FIELDS) cw.visitField(ACC_PROTECTED, old[0], old[1], null, null).visitEnd();
 
         // Each old constructor names where the full one's arguments come from: its own, or a default.
         delegatingConstructor(cw, PLAIN, "0", "1", "null", "null", "2", "3", "4", "5", "6", "7", "small", "large", "sound", "null");
@@ -313,6 +320,13 @@ public final class LegacyExplosionBaseBridge {
         store(mv, ALOAD, 14, "retromod$small", "L" + PARTICLE + ";");
         store(mv, ALOAD, 15, "retromod$large", "L" + PARTICLE + ";");
         store(mv, ALOAD, 16, "retromod$sound", "L" + HOLDER + ";");
+        store(mv, ALOAD, 1, "level", "L" + LEVEL + ";");
+        store(mv, ALOAD, 2, "source", "L" + ENTITY + ";");
+        store(mv, DLOAD, 5, "x", "D");
+        store(mv, DLOAD, 7, "y", "D");
+        store(mv, DLOAD, 9, "z", "D");
+        store(mv, FLOAD, 11, "radius", "F");
+        store(mv, ILOAD, 12, "fire", "Z");
         mv.visitInsn(RETURN);
         mv.visitMaxs(0, 0);
         mv.visitEnd();

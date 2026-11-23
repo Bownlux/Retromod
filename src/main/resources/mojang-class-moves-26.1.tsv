@@ -995,6 +995,7 @@ net/minecraft/world/level/block/SnowyDirtBlock	net/minecraft/world/level/block/S
 net/minecraft/world/level/block/TallSeagrass	net/minecraft/world/level/block/TallSeagrassBlock
 net/minecraft/world/level/block/entity/BeaconBlockEntity$BeaconBeamSection	net/minecraft/world/level/block/entity/BeaconBeamOwner$Section
 net/minecraft/world/level/block/entity/EnchantmentTableBlockEntity	net/minecraft/world/level/block/entity/EnchantingTableBlockEntity
+net/minecraft/world/level/block/WaterlilyBlock	net/minecraft/world/level/block/LilyPadBlock
 net/minecraft/world/level/block/entity/trialspawner/TrialSpawnerData	net/minecraft/world/level/block/entity/trialspawner/TrialSpawnerStateData
 net/minecraft/world/level/chunk/ChunkStatus$ChunkType	net/minecraft/world/level/chunk/status/ChunkType
 net/minecraft/world/level/dimension/end/DragonRespawnAnimation	net/minecraft/world/level/dimension/end/DragonRespawnStage

@@ -69,6 +69,21 @@ public final class KeyBindingShim {
         }
     }
 
+    /** The host's Category for an old category string; a subclass's adapted {@code super(...)} call passes it on. */
+    public static Object category(String categoryString) {
+        initialize();
+        // A null category would only fail later inside the host constructor, far from the cause.
+        if (initFailed || categoryClass == null) {
+            throw creationFailed("(subclass)", categoryString,
+                    new IllegalStateException("this host's KeyBinding has no Category record"));
+        }
+        try {
+            return getOrCreateCategory(categoryString);
+        } catch (Exception e) {
+            throw creationFailed("(subclass)", categoryString, e);
+        }
+    }
+
     private static RuntimeException creationFailed(String translationKey, String categoryString, Exception cause) {
         return new RuntimeException("Retromod could not create the key binding '" + translationKey
                 + "' in category '" + categoryString + "' on this Minecraft version. Report it at "

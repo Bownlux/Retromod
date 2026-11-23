@@ -290,6 +290,23 @@ class EarlyItemStacksRuntimeTest {
                                 return stack;
                             }
                         }"""),
+                // Potions as 26.x builds a potion item's stack.
+                Map.entry("net/minecraft/world/item/alchemy/Potion.java", """
+                        package net.minecraft.world.item.alchemy;
+                        public class Potion {}"""),
+                Map.entry("net/minecraft/world/item/alchemy/PotionContents.java", """
+                        package net.minecraft.world.item.alchemy;
+                        import net.minecraft.core.Holder;
+                        import net.minecraft.core.component.*;
+                        import net.minecraft.world.item.*;
+                        public record PotionContents(Holder<Potion> potion) {
+                            @SuppressWarnings({"unchecked", "rawtypes"})
+                            public static ItemStack createItemStack(Item item, Holder<Potion> potion) {
+                                ItemStack stack = new ItemStack(item);
+                                stack.set((DataComponentType) DataComponents.POTION_CONTENTS, new PotionContents(potion));
+                                return stack;
+                            }
+                        }"""),
                 // An item with a method that names a client class, which a dedicated server does not have.
                 Map.entry("net/minecraft/client/ClientThing.java", """
                         package net.minecraft.client;
@@ -337,6 +354,11 @@ class EarlyItemStacksRuntimeTest {
                             public Item getItem() { return item.value(); }
                             public int getCount() { return count; }
                             public void setCount(int count) { this.count = count; }
+                            public DataComponentPatch getComponentsPatch() { return components.asPatch(); }
+                            public ItemStack transmuteCopy(ItemLike to) { return transmuteCopy(to, count); }
+                            public ItemStack transmuteCopy(ItemLike to, int count) {
+                                return isEmpty() ? EMPTY : new ItemStack(to.asItem().builtInRegistryHolder(), count, components.asPatch());
+                            }
                             public <T> T get(DataComponentType<? extends T> type) { return components.get(type); }
                             public <T> T set(DataComponentType<T> type, T value) { return components.set(type, value); }
                             public int getMaxStackSize() { return components.getOrDefault(DataComponents.MAX_STACK_SIZE, 1); }
@@ -528,6 +550,43 @@ class EarlyItemStacksRuntimeTest {
     }
 
     @Test
+    @DisplayName("a potion stack built before binding holds its item and potion, and matches the host's after binding")
+    void potionStackBeforeBinding() throws Exception {
+        Object arrow = run.item("Item");
+        Object potion = run.load("net.minecraft.core.Holder$Reference").getConstructor(Object.class)
+                .newInstance(run.load("net.minecraft.world.item.alchemy.Potion").getConstructor().newInstance());
+
+        Object early = run.potion(arrow, potion);
+
+        assertSame(arrow, run.call(early, "getItem"));
+        assertEquals(potion, run.call(run.call(early, "get", run.component("POTION_CONTENTS")), "potion"));
+        run.bind(arrow, 64);
+        Object host = run.load("net.minecraft.world.item.alchemy.PotionContents")
+                .getMethod("createItemStack", run.load("net.minecraft.world.item.Item"), run.load("net.minecraft.core.Holder"))
+                .invoke(null, arrow, potion);
+        assertTrue(run.same(early, host), "after binding it is the stack Minecraft builds");
+    }
+
+    @Test
+    @DisplayName("an early stack moved to another unbound item keeps its count and changes")
+    void transmuteBeforeBinding() throws Exception {
+        Object oak = run.item("Item");
+        Object acacia = run.item("Item");
+        Object sign = run.of(oak, 1);
+        run.call(sign, "set", run.component("CUSTOM_NAME"), "Road");
+
+        Object moved = run.transmute(sign, acacia, 2);
+
+        assertSame(acacia, run.call(moved, "getItem"));
+        assertEquals(2, run.call(moved, "getCount"));
+        assertEquals("Road", run.call(moved, "get", run.component("CUSTOM_NAME")));
+        run.bind(acacia, 16);
+        Object named = run.newStack(acacia, 2);
+        run.call(named, "set", run.component("CUSTOM_NAME"), "Road");
+        assertTrue(run.same(moved, named));
+    }
+
+    @Test
     @DisplayName("getDefaultInstance after binding is the item's own")
     void defaultInstanceAfterBinding() throws Exception {
         Object potion = run.item("PotionItem");
@@ -610,6 +669,15 @@ class EarlyItemStacksRuntimeTest {
 
         Object ofHolder(Object holder) throws Exception {
             return helper("of", load("net.minecraft.core.Holder")).invoke(null, holder);
+        }
+
+        Object potion(Object item, Object potion) throws Exception {
+            return helper("potion", load("net.minecraft.world.item.Item"), load("net.minecraft.core.Holder")).invoke(null, item, potion);
+        }
+
+        Object transmute(Object stack, Object item, int count) throws Exception {
+            return helper("transmuteCopy", load(STACK), load("net.minecraft.world.level.ItemLike"), int.class)
+                    .invoke(null, stack, item, count);
         }
 
         Object defaultInstance(Object item) throws Exception {

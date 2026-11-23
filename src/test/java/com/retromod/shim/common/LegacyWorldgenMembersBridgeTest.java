@@ -8,6 +8,7 @@ import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
@@ -25,12 +26,14 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Old worldgen and villager calls and constants reach their 26.3 forms (YUNG's API, Moonlight, Biomes O' Plenty). */
 class LegacyWorldgenMembersBridgeTest {
 
     private static final String MEMBERS = LegacyWorldgenMembersBridge.MEMBERS;
+    private static final String MEMBERS_263 = LegacyWorldgenMembersBridge.MEMBERS_263;
     private static final String POS = "Lnet/minecraft/core/BlockPos;";
     private static final String STATE = "Lnet/minecraft/world/level/block/state/BlockState;";
     private static final String SAMPLER = "Lnet/minecraft/world/level/biome/Climate$Sampler;";
@@ -135,8 +138,8 @@ class LegacyWorldgenMembersBridgeTest {
             m.visitInsn(Opcodes.POP);
         }));
 
-        assertEquals(MEMBERS + ".sampler(Lnet/minecraft/world/level/levelgen/RandomState;)" + SAMPLER, describe(calls.get(0)));
-        assertEquals(MEMBERS + ".getNoiseBiome(Lnet/minecraft/world/level/biome/BiomeSource;III" + SAMPLER + ")" + HOLDER,
+        assertEquals(MEMBERS_263 + ".sampler(Lnet/minecraft/world/level/levelgen/RandomState;)" + SAMPLER, describe(calls.get(0)));
+        assertEquals(MEMBERS_263 + ".getNoiseBiome(Lnet/minecraft/world/level/biome/BiomeSource;III" + SAMPLER + ")" + HOLDER,
                 describe(calls.get(1)));
         assertEquals("mod/ModBiomeSource.getNoiseBiome(III" + SAMPLER + ")" + HOLDER, describe(calls.get(2)));
     }
@@ -174,6 +177,41 @@ class LegacyWorldgenMembersBridgeTest {
         // 26.3's Feature is an interface, so the old class call must become an interface call to link.
         assertEquals(Opcodes.INVOKEINTERFACE, place.getOpcode(), "the place call is an interface call");
         assertTrue(place.itf, "and names an interface method");
+    }
+
+    @Test
+    @DisplayName("RandomState.create(settings, noises, seed) reaches the helper that calls 26.3's reordered form")
+    void randomStateCreateTakesTheReorderedForm() {
+        LegacyWorldgenMembersBridge.registerCreate263(transformer);
+
+        List<MethodInsnNode> calls = calls(transform(m -> {
+            m.visitInsn(Opcodes.ACONST_NULL);
+            m.visitInsn(Opcodes.ACONST_NULL);
+            m.visitInsn(Opcodes.LCONST_0);
+            m.visitMethodInsn(Opcodes.INVOKESTATIC, "net/minecraft/world/level/levelgen/RandomState", "create",
+                    LegacyWorldgenMembersBridge.CREATE_OLD, false);
+            m.visitInsn(Opcodes.POP);
+        }));
+
+        assertEquals(MEMBERS_263 + ".createRandomState" + LegacyWorldgenMembersBridge.CREATE_OLD, describe(calls.get(0)));
+    }
+
+    @Test
+    @DisplayName("A 26.2 host embeds only the members it links, never the 26.3 sampler and resolver calls")
+    void olderRegistrationEmbedsNoMemberOnly263Has() {
+        LegacyWorldgenMembersBridge.registerOlder(transformer, true, true, true);
+
+        byte[] embedded = transformer.getSyntheticClasses().get(MEMBERS);
+        assertTrue(embedded != null, "the older members are embedded");
+        assertFalse(transformer.getSyntheticClasses().containsKey(MEMBERS_263), "Forge 26.2 has no SamplerContext to link");
+        List<String> called = new ArrayList<>();
+        ClassNode node = new ClassNode();
+        new ClassReader(embedded).accept(node, 0);
+        for (MethodInsnNode call : calls(node)) called.add(describe(call));
+        for (String only263 : List.of("SamplerContext", "createClimateSampler", "createResolver", "BiomeResolver",
+                "getOrCreateRandomFactory")) {
+            assertTrue(called.stream().noneMatch(c -> c.contains(only263)), only263 + " stays out of the older class: " + called);
+        }
     }
 
     @Test

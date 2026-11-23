@@ -102,7 +102,7 @@ class LegacyTransferApiTest {
     // Rebuilt NeoForge classes that other bridges register: the event members, the loot modifier base,
     // the item renderer installer, the old config type and mod file lookups, the two-way payload handler,
     // and the old brewing registration event.
-    private static final List<String> OTHER_BRIDGES = List.of("event/", "common/", "client/", "fml/", "network/", "brewing/");
+    private static final List<String> OTHER_BRIDGES = List.of("event/", "common/", "client/", "fml/", "network/", "brewing/", "registries/");
 
     /** The rebuilt transfer classes the build copied next to Retromod's own. */
     private static Set<String> builtClasses() throws Exception {

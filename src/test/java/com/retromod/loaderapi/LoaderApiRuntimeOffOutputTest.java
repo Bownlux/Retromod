@@ -49,6 +49,14 @@ class LoaderApiRuntimeOffOutputTest {
     // The golden digests come from the 1.4.0-snapshot.2 CLI jar run on LoaderApiFixtures. Its AOT
     // rows for fixture/Calls.class and the nested jar now hold the transform rows' digests, since
     // AOT registers redirects in the game's order as transform does.
+    // Updated after 1.4.0-snapshot.4 for three intended changes; every other row is still snapshot.2's.
+    // A translated jar now carries its own copies of the compiled helpers it calls (CompiledHelpers),
+    // which adds rows for the VersionSpoofer, ItemSafetyShim, HudRenderCallbackBridge, and
+    // LegacyPublicMethods copies and points three calls in fixture/Calls.class and the legacy
+    // HudRenderCallback stand-in at them. fabric.mod.json, in the jar and the nested library, keeps
+    // the mod's own fabricloader floor. EntityType.Builder.build now goes through RetroEntityTypeBuild.
+    // Updated again for FabricEntityTypeBuilder: its old calls now go through LegacyFabricEntityTypeBuilder,
+    // and RetroEntityTypeBuild reads the Fabric registration window for a nameless build.
     @ParameterizedTest(name = "{0} {1}")
     @CsvSource({"transform, fabric", "transform, quilt", "aot, fabric", "aot, quilt"})
     @DisplayName("Output matches the pre-runtime CLI entry for entry")

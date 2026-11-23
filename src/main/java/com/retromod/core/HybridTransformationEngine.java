@@ -139,7 +139,7 @@ public final class HybridTransformationEngine {
 
         var ctx = performanceMonitor.beginTransform(className, modId);
         if (ctx == null) {
-            // monitor vetoed it; return original so the class still loads
+            // Only a monitor that was shut down returns none; the class then loads as it is
             return originalBytes;
         }
 

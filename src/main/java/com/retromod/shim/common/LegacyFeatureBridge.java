@@ -55,6 +55,7 @@ public final class LegacyFeatureBridge {
     static final String CONFIGURATION = "com/retromod/generated/LegacyFeatureConfiguration";
     static final String NONE = "com/retromod/generated/LegacyNoneFeatureConfiguration";
     static final String SUPPORT = "com/retromod/shim/common/embedded/LegacyFeatureSupport";
+    static final String HELPERS = RebuiltApiClasses.ROOT + "minecraft/world/level/levelgen/feature/LegacyFeatureHelpers";
 
     private static final String LEVEL = "Lnet/minecraft/world/level/WorldGenLevel;";
     private static final String GENERATOR = "Lnet/minecraft/world/level/chunk/ChunkGenerator;";
@@ -85,6 +86,7 @@ public final class LegacyFeatureBridge {
     public static void register(RetromodTransformer t) {
         if (!hostHasFeatureInterface() || t.getSyntheticClasses().containsKey(LEGACY_FEATURE)) return;
         SyntheticEmbedder.registerClassResource(t, SUPPORT, LegacyFeatureSupport.class);
+        RebuiltApiClasses.registerTree(t, HELPERS);
         t.registerSyntheticClass(CONFIGURATION, generateConfigurationInterface());
         t.registerSyntheticClass(NONE, generateNone());
         t.registerSyntheticClass(CONTEXT, generateContext());
@@ -332,7 +334,22 @@ public final class LegacyFeatureBridge {
         for (int i = 2; i <= 5; i++) withConfig.visitVarInsn(Opcodes.ALOAD, i);
         withConfig.visitVarInsn(Opcodes.ALOAD, 1);
         withConfig.visitMethodInsn(Opcodes.INVOKESPECIAL, CONTEXT, "<init>", CONTEXT_CTOR, false);
+        // An old feature that calls an API 26.3 removed is skipped with one line: on 26.3 its failure would leave the
+        // chunk unfinished, freezing every world that generates it, with nothing in the log.
+        org.objectweb.asm.Label tryStart = new org.objectweb.asm.Label();
+        org.objectweb.asm.Label tryEnd = new org.objectweb.asm.Label();
+        org.objectweb.asm.Label missingApi = new org.objectweb.asm.Label();
+        withConfig.visitTryCatchBlock(tryStart, tryEnd, missingApi, "java/lang/LinkageError");
+        withConfig.visitLabel(tryStart);
         withConfig.visitMethodInsn(Opcodes.INVOKEVIRTUAL, LEGACY_FEATURE, "place", "(L" + CONTEXT + ";)Z", false);
+        withConfig.visitLabel(tryEnd);
+        withConfig.visitInsn(Opcodes.IRETURN);
+        withConfig.visitLabel(missingApi);
+        withConfig.visitFrame(Opcodes.F_SAME1, 0, null, 1, new Object[]{"java/lang/LinkageError"});
+        withConfig.visitVarInsn(Opcodes.ALOAD, 0);
+        withConfig.visitInsn(Opcodes.SWAP);
+        withConfig.visitMethodInsn(Opcodes.INVOKESTATIC, SUPPORT, "skipBrokenFeature",
+                "(Ljava/lang/Object;Ljava/lang/LinkageError;)Z", false);
         withConfig.visitInsn(Opcodes.IRETURN);
         withConfig.visitMaxs(0, 0);
         withConfig.visitEnd();
@@ -345,6 +362,14 @@ public final class LegacyFeatureBridge {
                 "(Ljava/util/function/Function;Ljava/lang/Object;Ljava/util/function/Predicate;)Z", 3);
         staticHelper(cw, "isAdjacentToAir", "(Ljava/util/function/Function;" + POS + ")Z",
                 "(Ljava/util/function/Function;Ljava/lang/Object;)Z", 2);
+        // The block helpers old subclasses call on themselves, rebuilt in LegacyFeatureHelpers.
+        String state = "Lnet/minecraft/world/level/block/state/BlockState;";
+        helper(cw, "isStone", "(" + state + ")Z", true);
+        helper(cw, "isDirt", "(" + state + ")Z", true);
+        helper(cw, "isGrassOrDirt", "(Lnet/minecraft/world/level/LevelSimulatedReader;" + POS + ")Z", true);
+        helper(cw, "setBlock", "(Lnet/minecraft/world/level/LevelWriter;" + POS + state + ")V", false);
+        helper(cw, "safeSetBlock", "(" + LEVEL + POS + state + "Ljava/util/function/Predicate;)V", false);
+        helper(cw, "markAboveForPostProcessing", "(" + LEVEL + POS + ")V", false);
         cw.visitEnd();
         return cw.toByteArray();
     }
@@ -358,6 +383,21 @@ public final class LegacyFeatureBridge {
         for (int i = 0; i < args.length; i++) mv.visitVarInsn(Opcodes.ALOAD, i + 1);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, MAP_CODEC, name, desc, false);
         mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /** A method of the old Feature that calls the same-named one in LegacyFeatureHelpers, dropping the receiver if it has one. */
+    private static void helper(ClassWriter cw, String name, String desc, boolean isStatic) {
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | (isStatic ? Opcodes.ACC_STATIC : 0), name, desc, null, null);
+        mv.visitCode();
+        int slot = isStatic ? 0 : 1;
+        for (Type argument : Type.getArgumentTypes(desc)) {
+            mv.visitVarInsn(argument.getOpcode(Opcodes.ILOAD), slot);
+            slot += argument.getSize();
+        }
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, HELPERS, name, desc, false);
+        mv.visitInsn(Type.getReturnType(desc).getOpcode(Opcodes.IRETURN));
         mv.visitMaxs(0, 0);
         mv.visitEnd();
     }

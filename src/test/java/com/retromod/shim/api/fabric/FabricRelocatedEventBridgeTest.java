@@ -63,10 +63,15 @@ class FabricRelocatedEventBridgeTest {
 
             writeClass(dir, "fixture/UsesBridges", holderReferences());
 
-            assertEquals(6, SyntheticEmbedder.embed(dir, "bridge-fixture.jar", transformer),
-                    "both holders and all four SAM interfaces must follow the mod relocation");
+            // Six synthetics plus the two bridges the holders call, which travel with them.
+            assertEquals(8, SyntheticEmbedder.embed(dir, "bridge-fixture.jar", transformer),
+                    "both holders, all four SAM interfaces, and their bridges must follow the mod relocation");
 
             String base = SyntheticEmbedder.embeddedBase("bridge-fixture.jar");
+            for (Class<?> bridge : new Class<?>[] {ItemGroupEventsBridge.class, ServerWorldEventsBridge.class}) {
+                assertTrue(Files.exists(dir.resolve(base + bridge.getName().replace('.', '/') + ".class")),
+                        bridge.getSimpleName() + " must travel with the holder that calls it");
+            }
             ClassNode itemHolder = read(dir.resolve(base + ITEM_HOLDER + ".class"));
             assertClassLiteralCall(itemHolder, "modifyEntriesEvent", "modifyEntriesEvent",
                     "(Ljava/lang/Object;Ljava/lang/Class;)Ljava/lang/Object;",

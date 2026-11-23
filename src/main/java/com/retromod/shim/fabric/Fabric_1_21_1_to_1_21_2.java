@@ -226,7 +226,11 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
             // the remap. The Mixin repair retypes Patchouli's accessor in Mojang names on these hosts.
             com.retromod.shim.common.PatchouliSmithingAccessorBridge.register(transformer);
             com.retromod.shim.common.LegacyBlockApiSynthetic.register(transformer);
+            // Chest boats stopped being Boats; inherited calls on a Boat variable go through AbstractBoat.
+            com.retromod.shim.common.LegacyBoatReceiverAdapter.register(transformer);
             com.retromod.shim.common.LegacyBlockMethodBridge.register(transformer);
+            // MultifaceBlock declares WATERLOGGED itself now; a subclass that also adds it keeps one copy.
+            com.retromod.shim.common.LegacyStateDefinitionBridge.register(transformer);
             com.retromod.shim.common.LegacyChestBlockBridge.register(transformer);
             com.retromod.shim.common.LegacyFoodConsumableBridge.register(transformer);
             // 1.20.5 made food a record kept in the item's components: meat(), the old getters,
@@ -239,6 +243,8 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
             // Entity, goal and level members 1.20.5 and 1.21.2 changed. NeoForge and Forge
             // register the 1.20.5 bridge from their 1.20.5 shims, which Fabric lacks.
             com.retromod.shim.common.Legacy1205MemberBridge.register(transformer);
+            // Block entity, item and world data NBT code from before 1.20.5, as the NeoForge 1.20.5 shim bridges it.
+            com.retromod.shim.common.LegacyRegistryNbtBridge.register(transformer);
             // 1.20.5 turned loot table ids into registry keys; old reads and calls keep getting the id.
             com.retromod.shim.common.LegacyLootTableKeyBridge.register(transformer);
             // An old mob's own default loot table, which the host stopped asking for, picks its death drops again.
@@ -258,6 +264,8 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
             // Recipes are listed through the recipe map and describe themselves through displays.
             com.retromod.shim.common.LegacyRecipeIntrospectionBridge.register(transformer);
             com.retromod.shim.common.LegacySpecialRecipeClasses.register(transformer);
+            // Recipes answer the recipe book from 1.21.2; old ones and their mod interfaces get the answers, as on Forge.
+            com.retromod.shim.common.LegacyRecipeApiBridge.register(transformer);
             // Explosion became an interface; an old subclass extends a server explosion instead.
             com.retromod.shim.common.LegacyExplosionBaseBridge.register(transformer);
             // Later versions hid Level.isClientSide and Level.random behind their getters.

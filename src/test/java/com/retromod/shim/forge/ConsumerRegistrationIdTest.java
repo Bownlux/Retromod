@@ -109,8 +109,7 @@ class ConsumerRegistrationIdTest {
 
             // A mod that catches a failed construction keeps its own handler, and the id does not linger.
             assertEquals("caught: broken", call(items, "registerBroken", helper));
-            assertEquals("NullPointerException: Item id not set", build(mod),
-                    "after every registration the thread holds no id");
+            assertPlaceholder(build(mod), "after every registration the thread holds no id");
         }
     }
 
@@ -126,25 +125,28 @@ class ConsumerRegistrationIdTest {
         try (URLClassLoader mod = new URLClassLoader(new URL[]{translated.toUri().toURL()}, hostClasses)) {
             Class<?> items = mod.loadClass("consumermod.ConsumerItems");
             Class<?> helperType = helperType(items);
-            Object helper = Proxy.newProxyInstance(hostClasses, new Class<?>[]{helperType}, (proxy, method, args) -> null);
+            List<Object> registered = new ArrayList<>();
+            Object helper = Proxy.newProxyInstance(hostClasses, new Class<?>[]{helperType}, (proxy, method, args) -> {
+                registered.add(args[1]);
+                return null;
+            });
+            // None of these is stamped with a guessed id, so each is built under a placeholder its registration replaces.
             // YungsApi's shape: the id comes from a getter called after the item is built.
-            InvocationTargetException thrown = assertThrows(InvocationTargetException.class,
-                    () -> call(items, "registerFromGetter", helper));
-            assertEquals("Item id not set", thrown.getCause().getMessage());
-            // One item registered under two ids gets neither.
-            thrown = assertThrows(InvocationTargetException.class, () -> call(items, "registerTwice", helper));
-            assertEquals("Item id not set", thrown.getCause().getMessage());
-            // Nor does one that only the other branch registers under an id the bytecode cannot prove.
-            thrown = assertThrows(InvocationTargetException.class, () -> call(items, "registerAlternatives", helper));
-            assertEquals("Item id not set", thrown.getCause().getMessage());
+            call(items, "registerFromGetter", helper);
+            // One item registered under two ids.
+            call(items, "registerTwice", helper);
+            // One that only the other branch registers under an id the bytecode cannot prove.
+            call(items, "registerAlternatives", helper);
+            for (Object item : registered) assertPlaceholder(keyOf(item), "the item is built with no guessed id");
 
             // A static field's stamp inside the call would interleave with the consumer's window.
             Class<?> fieldCase = mod.loadClass("consumermod.FieldCase");
-            thrown = assertThrows(InvocationTargetException.class, () -> call(fieldCase, "register", helper));
-            assertEquals("Item id not set", thrown.getCause().getMessage(), "the wrapping item is built with no id");
+            registered.clear();
+            call(fieldCase, "register", helper);
+            assertPlaceholder(keyOf(registered.get(0)), "the wrapping item is built with no id");
             assertEquals("ResourceKey[minecraft:item / consumermod:f15]", keyOf(fieldCase.getField("F15").get(null)),
                     "the field keeps the id it is registered under elsewhere");
-            assertEquals("NullPointerException: Item id not set", build(mod), "and the thread holds no id afterwards");
+            assertPlaceholder(build(mod), "and the thread holds no id afterwards");
         }
     }
 
@@ -170,7 +172,7 @@ class ConsumerRegistrationIdTest {
             // Constructors are not stamped, so what one builds shares the window around it, as inside
             // a deferred register's supplier.
             assertEquals("ResourceKey[minecraft:item / consumermod:outer]", keyOf(registered.get("consumermod:inner")));
-            assertEquals("NullPointerException: Item id not set", build(mod));
+            assertPlaceholder(build(mod), "the thread holds no id afterwards");
         }
     }
 
@@ -237,14 +239,18 @@ class ConsumerRegistrationIdTest {
         return String.valueOf(item.getClass().getField("key").get(item));
     }
 
-    /** Builds a plain item outside any registration and names what it threw. */
+    /** Builds a plain item outside any registration and names the id it was built under, or what it threw. */
     private static String build(ClassLoader mod) throws Exception {
         try {
-            mod.loadClass("consumermod.ConsumerItems").getMethod("plainItem").invoke(null);
-            return "built";
+            return keyOf(mod.loadClass("consumermod.ConsumerItems").getMethod("plainItem").invoke(null));
         } catch (InvocationTargetException failed) {
             return failed.getCause().getClass().getSimpleName() + ": " + failed.getCause().getMessage();
         }
+    }
+
+    /** An item built with no id known gets Retromod's placeholder, which only its own registration replaces. */
+    static void assertPlaceholder(String key, String message) {
+        assertTrue(key.contains("/ retromod:deferred_id_"), message + ": " + key);
     }
 
     /** A Forge 1.20.1 or NeoForge 1.21.1 jar holding the consumer classes. */

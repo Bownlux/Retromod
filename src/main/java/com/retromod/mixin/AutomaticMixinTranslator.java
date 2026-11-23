@@ -322,7 +322,7 @@ public final class AutomaticMixinTranslator {
         }
         scanOuterSelectors(method, injectors, mixinOwners, mixinClass, repairIndex, scan);
         for (AnnotationNode injector : injectors) {
-            scanAtSelectors(method, injector, scan);
+            scanAtSelectors(method, injector, mixinClass, repairIndex, scan);
         }
         return new MethodScan(scan.selectorChanged, scan.selectorRepairs, List.copyOf(scan.pending));
     }
@@ -439,8 +439,8 @@ public final class AutomaticMixinTranslator {
         return sites;
     }
 
-    private void scanAtSelectors(
-            MethodNode handler, AnnotationNode injector, MutableScan scan) {
+    private void scanAtSelectors(MethodNode handler, AnnotationNode injector, String mixinClass,
+            MixinRefmapRepairIndex repairIndex, MutableScan scan) {
         for (AnnotationNode at : collectAtAnnotations(injector)) {
             if (at.values == null || remapDisabled(at)) continue;
             for (int i = 0; i + 1 < at.values.size(); i += 2) {
@@ -448,10 +448,71 @@ public final class AutomaticMixinTranslator {
                         || !(at.values.get(i + 1) instanceof String selector)) {
                     continue;
                 }
+                // A @ModifyArg or @ModifyArgs names arguments of the call by index, which new leading parameters move.
+                if (MixinArgumentIndexRepair.handles(injector.desc)) {
+                    PendingRepair repair = argumentIndexRepair(handler, injector, selector, at.values, i + 1, mixinClass, repairIndex);
+                    // A source-named selector is related to the host only through its refmap, which already names the new call.
+                    if (repair == null) repair = refmapArgumentIndexRepair(handler, injector, selector, mixinClass, repairIndex);
+                    if (repair != null) scan.pending.add(repair);
+                    continue;
+                }
                 SelectorDecision decision = atSelectorDecision(handler, injector.desc, selector);
                 applyDecision(handler, at.values, i + 1, decision, scan);
             }
         }
+    }
+
+    /** The call target's proven parameter addition with the argument indices it moves, or null. */
+    private PendingRepair argumentIndexRepair(MethodNode handler, AnnotationNode injector, String selectorText,
+            List<Object> values, int valueIndex, String mixinClass, MixinRefmapRepairIndex repairIndex) {
+        ParsedSelector selector = ParsedSelector.parse(selectorText);
+        if (selector == null || selector.owner() == null) return null;
+        MethodChange added = resolveAddedParameters(selector.owner(), selector.name(), selector.descriptor(),
+                targetMethods.getMethodsInHierarchy(selector.owner()));
+        if (added == null) return null;
+        MixinArgumentIndexRepair.Plan plan = withOuterLocals(handler, injector, MixinArgumentIndexRepair.plan(
+                handler, injector, selector.descriptor(), added.descriptor()), mixinClass, repairIndex);
+        return plan == null ? null : new ArgumentIndexPending(handler, plan, values, valueIndex,
+                selector.withMethod(added.name(), added.descriptor()));
+    }
+
+    /**
+     * Adds the moves of {@code @Local(argsOnly = true)} sugar when the method the handler injects into gained
+     * parameters too, proven by its refmap or the host. Null when such a local cannot be moved safely.
+     */
+    private MixinArgumentIndexRepair.Plan withOuterLocals(MethodNode handler, AnnotationNode injector,
+            MixinArgumentIndexRepair.Plan plan, String mixinClass, MixinRefmapRepairIndex repairIndex) {
+        if (plan == null) return null;
+        String[] change = null;
+        for (OuterSelectorSite site : outerSelectorSites(List.of(injector))) {
+            String[] found = null;
+            MixinRefmapRepairIndex.Repair repair = repairIndex.find(mixinClass, site.selector()).orElse(null);
+            ParsedSelector selector = ParsedSelector.parse(site.selector());
+            if (repair != null) {
+                found = new String[]{repair.oldTargetDescriptor(), repair.newTargetDescriptor(), String.valueOf(repair.targetAccess())};
+            } else if (selector != null && selector.owner() != null) {
+                MethodChange added = resolveAddedParameters(selector.owner(), selector.name(), selector.descriptor(),
+                        targetMethods.getDeclaredMethods(selector.owner()));
+                if (added != null) found = new String[]{selector.descriptor(), added.descriptor(), String.valueOf(added.access())};
+            }
+            if (found == null) continue;
+            if (change != null && !Arrays.equals(change, found)) return null;
+            change = found;
+        }
+        if (change == null) return plan;
+        boolean isStatic = (Integer.parseInt(change[2]) & Opcodes.ACC_STATIC) != 0;
+        Map<AnnotationNode, Integer> moved = MixinArgumentIndexRepair.movedLocals(handler, change[0], change[1], isStatic);
+        return moved == null ? null : plan.withLocals(moved);
+    }
+
+    /** The argument-index repair for a selector whose refmap value was repaired; the selector text stays the refmap key. */
+    private PendingRepair refmapArgumentIndexRepair(MethodNode handler, AnnotationNode injector, String selector,
+            String mixinClass, MixinRefmapRepairIndex repairIndex) {
+        MixinRefmapRepairIndex.Repair repair = repairIndex.find(mixinClass, selector).orElse(null);
+        if (repair == null) return null;
+        MixinArgumentIndexRepair.Plan plan = withOuterLocals(handler, injector, MixinArgumentIndexRepair.plan(
+                handler, injector, repair.oldTargetDescriptor(), repair.newTargetDescriptor()), mixinClass, repairIndex);
+        return plan == null ? null : new ArgumentIndexPending(handler, plan, null, -1, null);
     }
 
     private SelectorDecision outerSelectorDecision(MethodNode handler, AnnotationNode injector,
@@ -1351,6 +1412,16 @@ public final class AutomaticMixinTranslator {
             for (SelectorReplacement replacement : replacements) {
                 replacement.values().set(replacement.valueIndex(), replacement.replacement());
             }
+            return true;
+        }
+    }
+
+    private record ArgumentIndexPending(MethodNode handler, MixinArgumentIndexRepair.Plan plan,
+            List<Object> values, int valueIndex, String replacement) implements PendingRepair {
+        @Override
+        public boolean apply() {
+            plan.apply(handler);
+            if (replacement != null) values.set(valueIndex, replacement);
             return true;
         }
     }

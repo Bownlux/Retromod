@@ -186,7 +186,8 @@ public final class LegacyRecipeApiBridge {
         t.registerMethodRedirect(CACHED_CHECK, "getRecipeFor", check, CALLS, "cachedRecipeFor", "(L" + CACHED_CHECK + ";" + check.substring(1), true);
         t.limitRedirectToModsBefore(CACHED_CHECK, "getRecipeFor", check, "1.20.2");
         // The level's own manager went in 1.21.2; a server level still answers one through recipeAccess().
-        for (String level : List.of(LEVEL, SERVER_LEVEL)) {
+        // A client level answers through the integrated server, or an empty manager on a multiplayer client.
+        for (String level : List.of(LEVEL, SERVER_LEVEL, "net/minecraft/client/multiplayer/ClientLevel")) {
             t.registerMethodRedirect(level, "getRecipeManager", "()" + manager, CALLS, "recipeManager", "(L" + LEVEL + ";)" + manager, true);
         }
         // getGroup() took the name group() in 1.21.2.
@@ -289,9 +290,15 @@ public final class LegacyRecipeApiBridge {
     static byte[] apply(byte[] classBytes, HostShape host, BiPredicate<String, String> inheritsFrom) {
         ClassNode node = new ClassNode();
         new ClassReader(classBytes).accept(node, 0);
-        if ((node.access & ACC_INTERFACE) != 0 || node.name.startsWith("net/minecraft/")
-                || SyntheticEmbedder.isRetromodClass(node.name)) {
-            return classBytes;
+        if (node.name.startsWith("net/minecraft/") || SyntheticEmbedder.isRetromodClass(node.name)) return classBytes;
+        // A mod's own recipe interface, such as Resourceful Lib's CodecRecipe, answers for every recipe that
+        // implements it, even in another mod, so it gets the recipe book answers as default methods.
+        if ((node.access & ACC_INTERFACE) != 0) {
+            // A mod built for 1.21.2 or newer wrote these answers for its own recipes already.
+            if (!host.recipeBook() || !builtBeforeRecipeBook() || !addRecipeBookAnswers(node)) return classBytes;
+            ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+            node.accept(writer);
+            return writer.toByteArray();
         }
         boolean changed = false;
         // 26.1 drops the serializer interface before this repair runs, so there the readers alone say what the class is.
@@ -301,6 +308,7 @@ public final class LegacyRecipeApiBridge {
         if (isRecipe(node, inheritsFrom)) {
             changed |= addRecipeMethods(node, host);
         }
+        if (host.recipeBook()) changed |= pinGameCategory(node);
         if (!changed) return classBytes;
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         node.accept(writer);
@@ -404,7 +412,9 @@ public final class LegacyRecipeApiBridge {
             MethodNode group = new MethodNode(ACC_PUBLIC, "group", "()Ljava/lang/String;", null, null);
             if (findInstance(node, "getGroup", "()Ljava/lang/String;") != null) {
                 group.instructions.add(new VarInsnNode(ALOAD, 0));
-                group.instructions.add(new MethodInsnNode(INVOKEVIRTUAL, node.name, "getGroup", "()Ljava/lang/String;", false));
+                boolean itf = (node.access & ACC_INTERFACE) != 0;
+                group.instructions.add(new MethodInsnNode(itf ? INVOKEINTERFACE : INVOKEVIRTUAL, node.name, "getGroup",
+                        "()Ljava/lang/String;", itf));
             } else {
                 group.instructions.add(new org.objectweb.asm.tree.LdcInsnNode(""));
             }
@@ -413,6 +423,35 @@ public final class LegacyRecipeApiBridge {
             changed = true;
         }
         return changed;
+    }
+
+    /**
+     * A recipe that implements CraftingRecipe or SmithingRecipe beside a mod's own recipe interface answers its
+     * category through the game's default. The mod interface may carry Retromod's default too, and two inherited
+     * defaults would fail when the category is asked for.
+     */
+    private static boolean pinGameCategory(ClassNode node) {
+        String desc = "()L" + BOOK_CATEGORY + ";";
+        if (findInstance(node, "recipeBookCategory", desc) != null
+                || node.interfaces.stream().allMatch(i -> i.startsWith("net/minecraft/"))) {
+            return false;
+        }
+        for (String game : List.of(CRAFTING_RECIPE, CRAFTING + "SmithingRecipe")) {
+            if (!node.interfaces.contains(game)) continue;
+            MethodNode category = new MethodNode(ACC_PUBLIC, "recipeBookCategory", desc, null, null);
+            category.instructions.add(new VarInsnNode(ALOAD, 0));
+            category.instructions.add(new MethodInsnNode(INVOKESPECIAL, game, "recipeBookCategory", desc, true));
+            category.instructions.add(new InsnNode(ARETURN));
+            node.methods.add(category);
+            return true;
+        }
+        return false;
+    }
+
+    /** Whether the mod being translated was built before 1.21.2 added the recipe book answers; an unknown one counts as older. */
+    private static boolean builtBeforeRecipeBook() {
+        String built = RetromodTransformer.getInstance().getModBuildVersion();
+        return built == null || RetromodVersion.compareMcVersions(built, "1.21.2") < 0;
     }
 
     /** {@code public T name() { return Owner.FIELD; }}. */

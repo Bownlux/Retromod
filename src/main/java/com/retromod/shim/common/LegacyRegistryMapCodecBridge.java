@@ -34,6 +34,11 @@ public final class LegacyRegistryMapCodecBridge {
     /** The value an old processor type becomes: its map codec, and still a processor type for the mod's holder. */
     static final String PROCESSOR_VIEW = "com/retromod/generated/LegacyProcessorTypeCodec";
 
+    static final String WRITABLE = "net/minecraft/core/WritableRegistry";
+    static final String WRITABLE_REGISTER = "com/retromod/generated/LegacyWritableRegistration";
+    static final String WRITABLE_DESC = "(Lnet/minecraft/resources/ResourceKey;Ljava/lang/Object;"
+            + "Lnet/minecraft/core/RegistrationInfo;)Lnet/minecraft/core/Holder$Reference;";
+    static final String WRITABLE_HELPER_DESC = "(L" + WRITABLE + ";" + WRITABLE_DESC.substring(1);
     static final String SERIALIZER_DESC = "(Ljava/lang/Object;Ljava/util/function/Supplier;)Ljava/util/function/Supplier;";
     static final String REGISTER_EACH_DESC = "(Ljava/lang/Object;Ljava/lang/Object;Ljava/util/function/Consumer;)V";
     static final String REGISTER_DEFERRED_DESC =
@@ -86,6 +91,21 @@ public final class LegacyRegistryMapCodecBridge {
             transformer.registerMethodRedirect(FORGE_REGISTER, "register", FORGE_REGISTER_DESC,
                     CLASS, "registerDeferred", REGISTER_DEFERRED_DESC, true);
             transformer.limitRedirectToModsBefore(FORGE_REGISTER, "register", FORGE_REGISTER_DESC, FIRST_MAP_CODEC_HOST);
+        }
+    }
+
+    /**
+     * Gives a value a mod registers straight into a writable registry, as Moonlight's register helper does, the same
+     * conversions {@code Registry.register} gets from 26.1: a recipe serializer adapter, a map codec for the loot and
+     * density registries, and from 26.2 an old processor type's view. Registered with those conversions.
+     */
+    public static void registerWritableRegistrations(RetromodTransformer transformer) {
+        boolean processorViews = hostProcessorTypesAreMapCodecs();
+        if (processorViews) registerClasses(transformer);
+        transformer.registerSyntheticClass(WRITABLE_REGISTER, generateWritableRegister(processorViews, true));
+        for (String owner : new String[] {WRITABLE, "net/minecraft/core/MappedRegistry"}) {
+            transformer.registerWrappingMethodRedirect(owner, "register", WRITABLE_DESC, WRITABLE_REGISTER, "registerWritable",
+                    WRITABLE_HELPER_DESC);
         }
     }
 
@@ -144,6 +164,7 @@ public final class LegacyRegistryMapCodecBridge {
         delegate(cw, "codec", "java/lang/Object", false, "toString", "()Ljava/lang/String;");
 
         emitOf(cw, processorViews);
+        if (processorViews) emitProcessorView(cw);
         LegacyKeyDispatchCodecBridge.emitMapCodec(cw, readsBothShapes);
         emitConverter(cw);
         emitHelperCall(cw, "serializer", SERIALIZER_DESC,
@@ -195,6 +216,46 @@ public final class LegacyRegistryMapCodecBridge {
         mv.visitVarInsn(ALOAD, 0);
         mv.visitInsn(ARETURN);
         end(mv);
+    }
+
+    /** {@code static Object processorView(Object value)}: an old processor type becomes its view, anything else stays. */
+    private static void emitProcessorView(ClassWriter cw) {
+        MethodVisitor view = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "processorView", "(" + OBJECT + ")" + OBJECT, null, null);
+        view.visitCode();
+        emitProcessorType(view);
+        view.visitVarInsn(ALOAD, 0);
+        view.visitInsn(ARETURN);
+        end(view);
+    }
+
+    /**
+     * {@code static Holder.Reference registerWritable(WritableRegistry registry, ResourceKey key, Object value, RegistrationInfo info)}:
+     * the value goes in converted as {@code Registry.register} would convert it; with {@code processorViews} an old
+     * processor type first becomes its view. Its own class, so the value class never names the registry types.
+     */
+    static byte[] generateWritableRegister(boolean processorViews, boolean convertValues) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, WRITABLE_REGISTER, null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "registerWritable", WRITABLE_HELPER_DESC, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitVarInsn(ALOAD, 1);
+        if (convertValues) mv.visitVarInsn(ALOAD, 0);
+        mv.visitVarInsn(ALOAD, 2);
+        if (processorViews) {
+            mv.visitMethodInsn(INVOKESTATIC, CLASS, "processorView", "(" + OBJECT + ")" + OBJECT, false);
+        }
+        if (convertValues) {
+            // The same conversion Registry.register is bridged through; a processor view is a map codec it keeps.
+            mv.visitMethodInsn(INVOKESTATIC, WorldgenTypeBridgeSynthetic.INTERNAL, "convert",
+                    "(Lnet/minecraft/core/Registry;" + OBJECT + ")" + OBJECT, true);
+        }
+        mv.visitVarInsn(ALOAD, 3);
+        mv.visitMethodInsn(INVOKEINTERFACE, WRITABLE, "register", WRITABLE_DESC, true);
+        mv.visitInsn(ARETURN);
+        end(mv);
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     /**

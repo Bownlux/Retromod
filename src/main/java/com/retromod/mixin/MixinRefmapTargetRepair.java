@@ -150,14 +150,17 @@ public final class MixinRefmapTargetRepair {
         if (owner == null || !owner.equals(target) || paren <= 0) return null;
         String name = member.substring(0, paren);
         String desc = member.substring(paren);
-        if (name.startsWith("<") || name.contains("*")) return null;
+        // A constructor moves like a method; MixinHostDriftRepair retypes its handler the same way.
+        if ((name.startsWith("<") && !name.equals("<init>")) || name.contains("*")) return null;
 
         Map<String, FuzzyMethodResolver.MethodInfo> named = new LinkedHashMap<>();
-        for (FuzzyMethodResolver.MethodInfo method : host.getDeclaredMethods(owner)) {
+        boolean constructor = name.equals("<init>");
+        for (FuzzyMethodResolver.MethodInfo method : constructor ? host.getConstructors(owner) : host.getDeclaredMethods(owner)) {
             if (method.name().equals(name)) named.putIfAbsent(method.descriptor(), method);
         }
         // A method the host renamed takes the new name when the handler fits it.
         if (named.isEmpty()) {
+            if (constructor) return null;
             FuzzyMethodResolver.MethodInfo renamed = MixinSelectorRenames.renamed(host, owner, name, desc);
             return renamed != null && fits(handler, renamed)
                     ? (qualified ? "L" + owner + ";" : "") + renamed.name() + renamed.descriptor() : null;

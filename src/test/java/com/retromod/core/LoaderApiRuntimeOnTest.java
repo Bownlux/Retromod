@@ -154,7 +154,9 @@ class LoaderApiRuntimeOnTest {
             CliHarness.transform(input, offOutput, HOST);
             withoutRuntime = modContainerCall(offOutput);
         }
-        assertEquals(VERSION_SPOOFER_CALL, withoutRuntime, "the off path reads spoofed versions");
+        // The jar carries its own copy of the spoofer, so it runs without Retromod installed.
+        assertEquals(SyntheticEmbedder.embeddedBase(input.getFileName().toString()) + VERSION_SPOOFER_CALL,
+                withoutRuntime, "the off path reads spoofed versions");
         assertEquals(withoutRuntime, withRuntime,
                 "the runtime must keep the version spoofer that the off path uses");
     }

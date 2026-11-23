@@ -57,6 +57,8 @@ public final class ModResourceMigrations {
             new BannerPatternTags(),
             // Armor equipment assets, from the old armor textures and the 1.21.2 folder.
             new EquipmentAssetMigrator(),
+            // Trim material palette ids, which 26.3 requires, with the palette copied to the folder it reads.
+            new TrimMaterialPalettes(),
             // Texture moves for resource packs the mod ships inside its jar.
             new NestedResourcePacks(),
             // A Forge mod's data under the names NeoForge and newer Forge read, before the content
@@ -345,7 +347,21 @@ public final class ModResourceMigrations {
         public int apply(ResourceTree tree, MigrationContext context) throws IOException {
             // The source version keeps a rename from touching data written after it.
             return ModDataMigrator.migrateContent(tree, context.sourceMcVersion(),
-                    context.targetMcVersion(), context.targetLoader());
+                    context.targetMcVersion(), context.targetLoader(), usesSpawnerData(tree, context));
+        }
+
+        /** Whether the mod's code uses the game's spawn entry, so spawn lists in its own structure types are the game's format. */
+        private static boolean usesSpawnerData(ResourceTree tree, MigrationContext context) throws IOException {
+            if (!SpawnerDataMigrator.appliesTo(context.targetMcVersion())) return false;
+            // Only a mod that ships a structure needs the answer, so the others are not read.
+            if (tree.names().stream().noneMatch(name -> name.contains("/worldgen/structure/"))) return false;
+            for (String name : tree.names()) {
+                if (name.endsWith(".class") && SpawnerDataMigrator.namesSpawnerData(tree.read(name))) return true;
+            }
+            for (String name : context.classNames()) {
+                if (SpawnerDataMigrator.namesSpawnerData(context.readClass(name))) return true;
+            }
+            return false;
         }
     }
 

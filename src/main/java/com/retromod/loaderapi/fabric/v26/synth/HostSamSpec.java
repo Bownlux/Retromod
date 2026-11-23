@@ -96,7 +96,6 @@ public record HostSamSpec(List<String> oldNames, String hostName, String oldSam,
 
     /** Registers the spec. */
     public void register(LoaderApiRegistration registration) {
-        RetromodTransformer transformer = registration.transformer();
         Set<String> names = new LinkedHashSet<>(oldNames);
         names.add(hostName);
 
@@ -104,8 +103,19 @@ public record HostSamSpec(List<String> oldNames, String hostName, String oldSam,
         // method claim clears the lambda adapter on the same key.
         for (String name : names) registration.claim(RedirectKey.type(name));
         for (String name : names) registration.claim(RedirectKey.method(name, oldSam, oldDesc));
-        registration.registerPerModSynthetic(bridgeName, generateBridge());
-        if (!sameShape()) registration.registerPerModSynthetic(wrapName(), generateWrap());
+        registerOn(registration.transformer(), registration::registerPerModSynthetic);
+    }
+
+    /** Registers the spec outside the loader API runtime, for a callback every build must bridge. */
+    public void registerAlwaysOn(RetromodTransformer transformer) {
+        registerOn(transformer, transformer::registerSyntheticClass);
+    }
+
+    private void registerOn(RetromodTransformer transformer, java.util.function.BiConsumer<String, byte[]> perModSynthetic) {
+        Set<String> names = new LinkedHashSet<>(oldNames);
+        names.add(hostName);
+        perModSynthetic.accept(bridgeName, generateBridge());
+        if (!sameShape()) perModSynthetic.accept(wrapName(), generateWrap());
 
         // Every mod names the host type, so a library and its caller agree on it.
         for (String name : oldNames) {

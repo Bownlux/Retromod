@@ -8,6 +8,8 @@ public final class DataComponents {
     public static final DataComponentType<PotionContents> POTION_CONTENTS = null;
     public static final DataComponentType<CustomData> CUSTOM_DATA = null;
     public static final DataComponentType<net.minecraft.resources.Identifier> ITEM_MODEL = null;
+    public static final DataComponentType<net.minecraft.network.chat.Component> ITEM_NAME = null;
     public static final DataComponentType<net.minecraft.world.item.component.Compostable> COMPOSTABLE = null;
     public static final DataComponentType<net.minecraft.world.item.DyeColor> DYE = null;
+    public static final DataComponentType<net.minecraft.world.item.component.CookingFuel> COOKING_FUEL = null;
 }

@@ -80,10 +80,72 @@ class LegacyItemConstructorBridgeTest {
     }
 
     @Test
+    @DisplayName("the oak boat a stand-in boat item places is read from EntityTypes from 26.2 on")
+    void boatItemReadsTheOakBoatWhereTheHostKeepsIt() {
+        assertEquals(LegacyItemConstructorBridge.ENTITY_TYPE, boatOwnerOn("26.1.2"), "26.1 still keeps them on EntityType");
+        assertEquals(LegacyItemConstructorBridge.ENTITY_TYPES, boatOwnerOn("26.2"), "26.2 moved them to EntityTypes");
+        assertEquals(LegacyItemConstructorBridge.ENTITY_TYPES, boatOwnerOn("26.3"));
+
+        // A readable host decides by its own fields, whatever the version says.
+        ClassNode moved = new ClassNode();
+        moved.fields.add(new org.objectweb.asm.tree.FieldNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "OAK_BOAT",
+                "L" + LegacyItemConstructorBridge.ENTITY_TYPE + ";", null, null));
+        assertEquals(LegacyItemConstructorBridge.ENTITY_TYPES, LegacyItemConstructorBridge.boatTypeOwner(moved, "26.1.2"));
+        assertEquals(LegacyItemConstructorBridge.ENTITY_TYPE, LegacyItemConstructorBridge.boatTypeOwner(new ClassNode(), "26.3"));
+    }
+
+    /** Registers on {@code host} and returns the owner of every oak boat field the generated factory reads. */
+    private String boatOwnerOn(String host) {
+        transformer.clearRedirectsForTesting();
+        LegacyItemConstructorBridge.register(transformer, host);
+        ClassNode factories = new ClassNode();
+        new ClassReader(transformer.getSyntheticClasses().get(LegacyItemConstructorBridge.INTERNAL)).accept(factories, 0);
+        java.util.Set<String> owners = new java.util.TreeSet<>();
+        for (MethodNode method : factories.methods) {
+            for (AbstractInsnNode insn : method.instructions) {
+                if (insn instanceof org.objectweb.asm.tree.FieldInsnNode field && field.name.contains("OAK")) owners.add(field.owner);
+            }
+        }
+        assertEquals(1, owners.size(), "both boat fields share one owner: " + owners);
+        return owners.iterator().next();
+    }
+
+    @Test
     @DisplayName("the generated factories and boat stand-in are valid classes")
     void generatedClassesVerify() {
         assertVerifies(LegacyItemConstructorBridge.generate());
         assertVerifies(LegacyItemConstructorBridge.generateBoatType());
+    }
+
+    @Test
+    @DisplayName("a 1.21.1 subclass's super call to StandingAndWallBlockItem swaps its direction and properties")
+    void standingItemSuperCallSwapsArguments() {
+        LegacyItemConstructorBridge.register(transformer, "26.3");
+
+        ClassNode out = new ClassNode();
+        new ClassReader(transformer.transformClass(standingSubclass(), MOD_CLASS)).accept(out, 0);
+        MethodNode init = out.methods.stream().filter(m -> m.name.equals("<init>")).findFirst().orElseThrow();
+        MethodInsnNode call = constructionCall(init);
+        assertEquals(LegacyItemConstructorBridge.STANDING_ITEM, call.owner);
+        assertEquals(LegacyItemConstructorBridge.NEW_STANDING_DESC, call.desc, "26.1 takes the direction before the properties");
+        assertEquals(Opcodes.SWAP, call.getPrevious().getOpcode(), "the last two arguments trade places on the stack");
+    }
+
+    /** {@code class Bunting extends StandingAndWallBlockItem { Bunting(a, b, p, d) { super(a, b, p, d); } }}, as 1.21.1 compiled it. */
+    private static byte[] standingSubclass() {
+        String desc = LegacyItemConstructorBridge.OLD_STANDING_DESC;
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V21, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, MOD_CLASS, null,
+                LegacyItemConstructorBridge.STANDING_ITEM, null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", desc, null, null);
+        mv.visitCode();
+        for (int slot = 0; slot <= 4; slot++) mv.visitVarInsn(Opcodes.ALOAD, slot);
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, LegacyItemConstructorBridge.STANDING_ITEM, "<init>", desc, false);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     /** Structural checks only: Minecraft is not on the test classpath for a data-flow check. */
@@ -127,5 +189,19 @@ class LegacyItemConstructorBridgeTest {
         mv.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    @Test
+    @DisplayName("before 26.1 the wall-standing item is bridged where the host shows the new order, as 1.21.11 does")
+    void standingItemFollowsTheHost() {
+        ClassNode reordered = new ClassNode();
+        reordered.methods.add(new MethodNode(Opcodes.ACC_PUBLIC, "<init>", LegacyItemConstructorBridge.NEW_STANDING_DESC, null, null));
+        ClassNode old = new ClassNode();
+        old.methods.add(new MethodNode(Opcodes.ACC_PUBLIC, "<init>", LegacyItemConstructorBridge.OLD_STANDING_DESC, null, null));
+        assertTrue(LegacyItemConstructorBridge.standingItemReordered(reordered, "1.21.11"));
+        assertFalse(LegacyItemConstructorBridge.standingItemReordered(old, "1.21.11"));
+        assertTrue(LegacyItemConstructorBridge.standingItemReordered(null, "1.21.11"), "offline, 1.21.11 has the new order");
+        assertFalse(LegacyItemConstructorBridge.standingItemReordered(null, "1.21.10"), "offline, an earlier host is not assumed");
+        new ClassReader(LegacyItemConstructorBridge.generateStandingOnly()).accept(new CheckClassAdapter(new ClassWriter(0)), 0);
     }
 }

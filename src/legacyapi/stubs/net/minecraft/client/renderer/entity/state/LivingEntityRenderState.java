@@ -4,4 +4,6 @@ package net.minecraft.client.renderer.entity.state;
 public class LivingEntityRenderState extends EntityRenderState {
     public float walkAnimationPos;
     public float walkAnimationSpeed;
+    public float yRot;
+    public float xRot;
 }

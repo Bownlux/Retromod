@@ -46,4 +46,13 @@ class RetroReloadScanTest {
         assertThrows(IOException.class, () -> RetroReloadScan.readBoundedJson(
                 new StringReader("[3,4]"), 16, 4, budget));
     }
+
+    @Test
+    void aFileWithLoadConditionsLoadsWithoutFabricApi() {
+        com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(
+                "{\"fabric:load_conditions\":[{\"condition\":\"fabric:mod_loaded\",\"modid\":\"absent\"}]}").getAsJsonObject();
+
+        // The test classpath has no Fabric API resource conditions, so there is nothing to judge the file by.
+        org.junit.jupiter.api.Assertions.assertTrue(RetroReloadScan.loadConditionsPass(json, "trades", "id", String.class));
+    }
 }

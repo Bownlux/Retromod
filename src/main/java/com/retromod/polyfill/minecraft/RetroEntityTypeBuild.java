@@ -25,6 +25,11 @@ public final class RetroEntityTypeBuild {
         return build(builder, id, null, null);
     }
 
+    /** Fabric API's old {@code builder.build()}, which took no name: the registered id names the type. */
+    public static Object build(Object builder) {
+        return build(builder, null, null, null);
+    }
+
     /** {@link #build(Object, String)} plus the call site's registered id and mod namespace, each nullable. */
     public static Object build(Object builder, String id, Object registeredId, String namespace) {
         try {
@@ -48,6 +53,11 @@ public final class RetroEntityTypeBuild {
         return buildOfficial(builder, id, null, null);
     }
 
+    /** {@link #build(Object)} for a host with Mojang names. */
+    public static Object buildOfficial(Object builder) {
+        return buildOfficial(builder, null, null, null);
+    }
+
     /** {@link #buildOfficial(Object, String)} with what the transformer found at the call site. */
     public static Object buildOfficial(Object builder, String id, Object registeredId, String namespace) {
         try {
@@ -62,6 +72,8 @@ public final class RetroEntityTypeBuild {
             // translation key and default loot table from this key, so use the id being registered:
             // the deferred register's key while its supplier runs, else the id from the call site.
             Object key = registrationKey(keyClass, root);
+            // A nameless build has only the id a Fabric registration window holds, such as a mod's own registry queue.
+            if (key == null && id == null && registeredId == null) registeredId = fabricWindowId(idClass);
             if (key == null) {
                 Object identifier = idClass.getMethod("parse", String.class)
                         .invoke(null, entityId(id, registeredId, namespace));
@@ -100,6 +112,8 @@ public final class RetroEntityTypeBuild {
     private static final String UNRELOCATED_NAME = "com.retromod.polyfill.minecraft.RetroEntityTypeBuild";
     static final String NEOFORGE_REGISTRATION_BRIDGE = "com.retromod.shim.forge.embedded.RegistryIdBridge";
     static final String FORGE_REGISTRATION_BRIDGE = "com.retromod.shim.forge.embedded.ForgeRegistryIdBridge";
+    // The system property every embedded copy of Fabric's registration id bridge shares its slot under.
+    static final String FABRIC_SHARED_SLOT = "retromod.registry-id.slot";
     private static volatile java.util.List<ThreadLocal<?>> registrationSlots;
 
     /** The key of the entity type registration running on this thread, or null. */
@@ -119,6 +133,13 @@ public final class RetroEntityTypeBuild {
             // fall back to the id the call site names
         }
         return null;
+    }
+
+    /** The id Fabric's shared registration slot holds on this thread, or null. */
+    private static Object fabricWindowId(Class<?> idClass) {
+        Object slot = System.getProperties().get(FABRIC_SHARED_SLOT);
+        Object current = slot instanceof ThreadLocal<?> local ? local.get() : null;
+        return idClass.isInstance(current) ? current : null;
     }
 
     /** The key slots of the deferred register bridges embedded with this class, found once. */

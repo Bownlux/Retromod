@@ -5,5 +5,6 @@ import net.minecraft.world.entity.Mob;
 
 // Extends Monster on the host, which extends Mob.
 public class Creeper extends Mob {
+    public Creeper(net.minecraft.world.entity.EntityType<? extends Creeper> type, net.minecraft.world.level.Level level) { super(type, level); }
     public boolean isPowered() { throw new UnsupportedOperationException(); }
 }

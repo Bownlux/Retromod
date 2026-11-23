@@ -14,6 +14,7 @@ import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.InsnList;
 import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
@@ -49,6 +50,8 @@ public final class LegacyGuiOverrideAdapter {
     private static final String OLD_RENDER = "(L" + GUI + ";IIF)V";
     private static final String NEW_MOUSE = "(L" + MOUSE_EVENT + ";Z)Z";
     private static final String NEW_KEY = "(L" + KEY_EVENT + ";)Z";
+    static final String OLD_SCROLL = "(DDD)Z";
+    static final String NEW_SCROLL = "(DDDD)Z";
 
     /** {@code Screen.resize(Minecraft, int, int)}, in Mojang names or a Fabric host's intermediary. */
     record ResizeNames(String screen, String name, String minecraft, String getInstance, String helper) {
@@ -125,7 +128,8 @@ public final class LegacyGuiOverrideAdapter {
         boolean oldResize = resizeHost && (mentions(classBytes, MOJANG_RESIZE.oldDesc())
                 || mentions(classBytes, INTERMEDIARY_RESIZE.oldDesc()));
         // Before 26.1 only the input overrides and resize can change, so skip classes with none of them.
-        if (!extractHost && !oldResize && !mentions(classBytes, "(III)Z") && !mentions(classBytes, "(DDI)Z")) {
+        if (!extractHost && !oldResize && !mentions(classBytes, "(III)Z") && !mentions(classBytes, "(DDI)Z")
+                && !mentions(classBytes, OLD_SCROLL)) {
             return classBytes;
         }
 
@@ -140,7 +144,8 @@ public final class LegacyGuiOverrideAdapter {
             // A resize override often sits on a vanilla screen such as AnvilScreen, which only the
             // host hierarchy proves.
             boolean resizeScreen = oldResize && (screen || provenScreen(node.superName));
-            if (!screen && !widget && !oldResize) return classBytes;
+            boolean oldScroll = mentions(classBytes, OLD_SCROLL);
+            if (!screen && !widget && !oldResize && !oldScroll) return classBytes;
 
             int changes = 0;
             Set<String> signatures = new HashSet<>();
@@ -156,6 +161,12 @@ public final class LegacyGuiOverrideAdapter {
                 changes += addMouseBridge(node, signatures);
                 changes += addKeyBridge(node, signatures);
             }
+            // The scroll gained a horizontal amount after 1.20.1, on screens and widgets alike. A mixin's methods merge into
+            // a target that already has the host's scroll, so it gets no bridge.
+            if ((screen || extendsAny(node.superName, KNOWN_WIDGET_BASES, jarClasses)) && !StaticFieldIdStamper.isMixin(node)) {
+                changes += addScrollBridge(node, signatures);
+            }
+            changes += rewriteScrollCalls(node);
             for (ResizeNames names : new ResizeNames[]{MOJANG_RESIZE, INTERMEDIARY_RESIZE}) {
                 if (resizeScreen) {
                     changes += rewriteResizeSuperCalls(node, names);
@@ -223,6 +234,49 @@ public final class LegacyGuiOverrideAdapter {
         node.methods.add(bridge);
         signatures.add("mouseClicked" + NEW_MOUSE);
         return 1;
+    }
+
+    /** {@code mouseScrolled(x, y, horizontal, vertical)}: runs the old override with the vertical amount, as 1.20.1 passed it. */
+    private static int addScrollBridge(ClassNode node, Set<String> signatures) {
+        MethodNode old = find(node, "mouseScrolled", OLD_SCROLL);
+        if (old == null || signatures.contains("mouseScrolled" + NEW_SCROLL)
+                || (old.access & (Opcodes.ACC_STATIC | Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) != 0) {
+            return 0;
+        }
+        MethodNode bridge = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_SYNTHETIC, "mouseScrolled", NEW_SCROLL, null, null);
+        bridge.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        bridge.instructions.add(new VarInsnNode(Opcodes.DLOAD, 1));
+        bridge.instructions.add(new VarInsnNode(Opcodes.DLOAD, 3));
+        bridge.instructions.add(new VarInsnNode(Opcodes.DLOAD, 7));
+        bridge.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, node.name, "mouseScrolled", OLD_SCROLL, false));
+        bridge.instructions.add(new InsnNode(Opcodes.IRETURN));
+        node.methods.add(bridge);
+        signatures.add("mouseScrolled" + NEW_SCROLL);
+        return 1;
+    }
+
+    /** A call to the old scroll on a game class, often the super call, passes no horizontal amount. */
+    private static int rewriteScrollCalls(ClassNode node) {
+        int changes = 0;
+        for (MethodNode method : node.methods) {
+            for (AbstractInsnNode insn : method.instructions.toArray()) {
+                if (!(insn instanceof MethodInsnNode call) || !call.name.equals("mouseScrolled") || !call.desc.equals(OLD_SCROLL)
+                        || !call.owner.startsWith("net/minecraft/") || call.getOpcode() == Opcodes.INVOKESTATIC) {
+                    continue;
+                }
+                // [.., x, y, vertical] becomes [.., x, y, 0, vertical].
+                int vertical = method.maxLocals;
+                method.maxLocals += 2;
+                InsnList list = new InsnList();
+                list.add(new VarInsnNode(Opcodes.DSTORE, vertical));
+                list.add(new InsnNode(Opcodes.DCONST_0));
+                list.add(new VarInsnNode(Opcodes.DLOAD, vertical));
+                method.instructions.insertBefore(call, list);
+                call.desc = NEW_SCROLL;
+                changes++;
+            }
+        }
+        return changes;
     }
 
     private static int addKeyBridge(ClassNode node, Set<String> signatures) {

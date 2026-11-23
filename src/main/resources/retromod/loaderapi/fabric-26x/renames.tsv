@@ -15,7 +15,7 @@
 # RenderRows, so jars translated with older rows are translated again. RowsVersionDigestTest
 # fails when what the runtime registers changes and rows_version does not.
 #
-# rows_version	16
+# rows_version	17
 kind	old_owner	old_name	old_desc	new_owner	new_name	new_desc	host_from	host_to	min_fabric_api	call_site_owners	batch	note
 D	net/fabricmc/loader/api/FabricLoader	getModContainer	(Ljava/lang/String;)Ljava/util/Optional;	com/retromod/compat/VersionSpoofer	getModContainer	(Ljava/lang/Object;Ljava/lang/String;)Ljava/util/Optional;	26.1	*	-	-	B0	Pins VersionSpoofShim, so the built-in redirect to a class that was never written cannot replace it
 D	net/fabricmc/loader/api/FabricLoader	isModLoaded	(Ljava/lang/String;)Z	com/retromod/compat/VersionSpoofer	isModLoaded	(Ljava/lang/Object;Ljava/lang/String;)Z	26.1	*	-	-	B0	Fabric API for 26.x no longer provides the fabric id

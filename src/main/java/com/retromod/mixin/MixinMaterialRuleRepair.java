@@ -258,7 +258,7 @@ final class MixinMaterialRuleRepair {
         return insn instanceof MethodInsnNode call && call.owner.equals(CALLBACK) && call.name.equals(name);
     }
 
-    private static List<String> selectors(AnnotationNode inject) {
+    static List<String> selectors(AnnotationNode inject) {
         if (inject.values == null) return null;
         for (int i = 0; i + 1 < inject.values.size(); i += 2) {
             if ("method".equals(inject.values.get(i)) && inject.values.get(i + 1) instanceof List<?> values) {
@@ -270,7 +270,7 @@ final class MixinMaterialRuleRepair {
         return null;
     }
 
-    private static List<String> targets(ClassNode mixin) {
+    static List<String> targets(ClassNode mixin) {
         List<String> result = new ArrayList<>();
         for (List<AnnotationNode> annotations : lists(mixin.visibleAnnotations, mixin.invisibleAnnotations)) {
             for (AnnotationNode annotation : annotations) {
@@ -287,7 +287,7 @@ final class MixinMaterialRuleRepair {
         return result;
     }
 
-    private static AnnotationNode annotation(MethodNode method, String desc) {
+    static AnnotationNode annotation(MethodNode method, String desc) {
         for (List<AnnotationNode> annotations : lists(method.visibleAnnotations, method.invisibleAnnotations)) {
             for (AnnotationNode annotation : annotations) {
                 if (desc.equals(annotation.desc)) return annotation;

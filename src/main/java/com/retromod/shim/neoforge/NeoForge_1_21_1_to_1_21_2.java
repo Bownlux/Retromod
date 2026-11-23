@@ -24,6 +24,10 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
         NeoForgeMovedClasses.register(transformer);
         NeoForgeMovedMembers.register(transformer);
         LegacyLootModifierBridge.register(transformer);
+        // getBurnTime(RecipeType) went in 21.2; it now needs the world's fuel values, and 26.3 reads an item component.
+        LegacyBurnTimeBridge.register(transformer);
+        // Reshaped vanilla block constructors, such as FarmlandBlock's, for mods built after 1.20.3 too.
+        com.retromod.shim.common.LegacyBlockConstructorBridge.register(transformer);
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerRegistryValueGetterRename(
                 transformer, "net/minecraft/resources/ResourceLocation");
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerSoundEventLocation(
@@ -48,6 +52,8 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
 
         // updateShape/getOcclusionShape signatures and the BlockItem description id changed.
         com.retromod.shim.common.LegacyBlockApiSynthetic.register(transformer);
+        // Chest boats stopped being Boats; inherited calls on a Boat variable go through AbstractBoat.
+        com.retromod.shim.common.LegacyBoatReceiverAdapter.register(transformer);
         com.retromod.shim.common.LegacyBlockMethodBridge.register(transformer);
         // The same release replaced Properties.lootFrom with a loot table override.
         com.retromod.shim.forge.LegacyLootFromBridge.register(transformer);
@@ -66,6 +72,8 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
         com.retromod.shim.common.Legacy1212MemberBridge.register(transformer);
         // The build height getters became inclusive under new names; the old ones answer one higher.
         com.retromod.shim.common.LegacyBuildHeightBridge.register(transformer);
+        // MultifaceBlock gained WATERLOGGED, which old subclasses added themselves.
+        com.retromod.shim.common.LegacyStateDefinitionBridge.register(transformer);
         // Reload listeners lost their two profilers; old listeners get the host's reload.
         com.retromod.shim.common.LegacyReloadListenerBridge.register(transformer);
         // 1.21.2 made armor materials plain records, with no registry to put them in.
@@ -75,6 +83,8 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
         // Recipes are listed through the recipe map and describe themselves through displays.
         com.retromod.shim.common.LegacyRecipeIntrospectionBridge.register(transformer);
         com.retromod.shim.common.LegacySpecialRecipeClasses.register(transformer);
+        // Recipes answer the recipe book from 1.21.2; old ones and their mod interfaces get the answers, as on Forge.
+        com.retromod.shim.common.LegacyRecipeApiBridge.register(transformer);
         // Explosion became an interface; an old subclass extends a server explosion instead.
         com.retromod.shim.common.LegacyExplosionBaseBridge.register(transformer);
         com.retromod.shim.common.LegacyExplosionBaseBridge.registerNeoForge(transformer);

@@ -27,6 +27,11 @@ public final class ConstructorIdStamper {
 
     /** Passes each such constructor's properties through {@code bridge.applyBlock} or {@code applyItem}. */
     public static byte[] apply(byte[] classBytes, String bridge) {
+        return apply(classBytes, bridge, "applyBlock", "applyItem");
+    }
+
+    /** Passes each such constructor's properties through {@code owner.blockHelper} or {@code owner.itemHelper}. */
+    static byte[] apply(byte[] classBytes, String bridge, String blockHelper, String itemHelper) {
         // The bridge stamps properties made inside a registration. A mod that makes them earlier,
         // often once for a torch and its wall torch, passes none or another block's id. Outside a
         // registration the helpers leave the properties alone.
@@ -37,21 +42,21 @@ public final class ConstructorIdStamper {
         if (node.name.startsWith("net/minecraft/") || SyntheticEmbedder.isRetromodClass(node.name)) {
             return classBytes;
         }
-        boolean changed = false;
+        // A reference such as Block::new becomes a factory here first, so the loop below stamps its constructor call.
+        boolean changed = ConstructorReferenceExpander.expand(node, ConstructorIdStamper::stampable) > 0;
         for (MethodNode method : node.methods) {
             if (method.instructions == null) continue;
             for (AbstractInsnNode insn : method.instructions.toArray()) {
                 // Retromod's generated bases for removed classes pass the properties straight on.
                 if (!(insn instanceof MethodInsnNode call) || call.getOpcode() != Opcodes.INVOKESPECIAL
-                        || !call.name.equals("<init>")
-                        || !(call.owner.startsWith("net/minecraft/") || call.owner.startsWith("com/retromod/generated/"))) {
+                        || !call.name.equals("<init>") || !stampedOwner(call.owner)) {
                     continue;
                 }
                 Type[] arguments = Type.getArgumentTypes(call.desc);
                 int index = lastProperties(arguments);
                 if (index < 0) continue;
                 String properties = arguments[index].getDescriptor();
-                String helper = properties.equals(BLOCK_PROPERTIES) ? "applyBlock" : "applyItem";
+                String helper = properties.equals(BLOCK_PROPERTIES) ? blockHelper : itemHelper;
                 // Arguments after the properties, such as NeoForge's sword Tool, wait in spare locals.
                 InsnList stamp = new InsnList();
                 int[] slots = new int[arguments.length];
@@ -74,6 +79,15 @@ public final class ConstructorIdStamper {
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         node.accept(writer);
         return writer.toByteArray();
+    }
+
+    private static boolean stampedOwner(String owner) {
+        return owner.startsWith("net/minecraft/") || owner.startsWith("com/retromod/generated/");
+    }
+
+    /** A constructor whose properties the loop stamps, so a reference to it is worth turning into a factory. */
+    private static boolean stampable(String owner, String desc) {
+        return stampedOwner(owner) && lastProperties(Type.getArgumentTypes(desc)) >= 0;
     }
 
     /** The position of the last block or item properties argument, or -1. */

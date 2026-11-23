@@ -6,4 +6,8 @@ import java.util.UUID;
 // A record on the host; equal profiles have the same id, name, and properties.
 public final class GameProfile {
     public GameProfile(UUID id, String name) {}
+    public GameProfile(UUID id, String name, com.mojang.authlib.properties.PropertyMap properties) {}
+    public UUID id() { throw new UnsupportedOperationException(); }
+    public String name() { throw new UnsupportedOperationException(); }
+    public com.mojang.authlib.properties.PropertyMap properties() { throw new UnsupportedOperationException(); }
 }

@@ -1599,14 +1599,6 @@ public class FabricModTransformer {
             "$1\"" + targetMcVersion + "\""
         );
 
-        Pattern loaderPattern = Pattern.compile(
-            "(\"fabricloader\"\\s*:\\s*)\"[^\"]+\"",
-            Pattern.MULTILINE
-        );
-        updated = loaderPattern.matcher(updated).replaceAll(
-            "$1\">=0.14.0\""
-        );
-
         Pattern fabricApiPattern = Pattern.compile(
             "(\"fabric-api\"\\s*:\\s*)\"[^\"]+\"",
             Pattern.MULTILINE
@@ -1633,6 +1625,11 @@ public class FabricModTransformer {
         // required.
         updated = moveBlockingDepsToSuggests(updated);
         updated = moveNonCoreDepsToSuggests(updated);
+
+        // Fabric Loader sets the mod's Mixin compatibility from its loader floor, so the floor is kept.
+        updated = new String(FabricMetadataCompat.keepLoaderFloor(
+                updated.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                FabricMetadataCompat.loaderCeiling(targetMcVersion)), java.nio.charset.StandardCharsets.UTF_8);
 
         if (!updated.contains("\"retromod_transformed\"")) {
             updated = updated.replaceFirst(

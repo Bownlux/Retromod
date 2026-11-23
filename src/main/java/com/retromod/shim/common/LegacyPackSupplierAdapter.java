@@ -19,7 +19,7 @@ import org.objectweb.asm.tree.VarInsnNode;
 import java.util.Arrays;
 import java.util.function.Function;
 
-/** Gives a pack supplier written before 26.3 the openMetadata and openResources that 26.3 calls. */
+/** Gives a pack supplier written before 26.3 the openMetadata and openResources that 26.3 calls, and old openPrimary calls a replacement. */
 public final class LegacyPackSupplierAdapter {
 
     /** Post-process flag: the host's pack supplier opens metadata and resource streams, not single packs. */
@@ -33,6 +33,11 @@ public final class LegacyPackSupplierAdapter {
     static final String OPEN_FULL = "(" + LOCATION + METADATA + ")" + RESOURCES;
     static final String OPEN_METADATA = "(" + LOCATION + ")Lnet/minecraft/server/packs/PackMetadataResources;";
     static final String OPEN_RESOURCES = "(" + LOCATION + METADATA + ")Ljava/util/stream/Stream;";
+    /** Where an old caller's openPrimary goes, with the supplier as its first argument. */
+    static final String CALLS = RebuiltApiClasses.ROOT + "minecraft/server/packs/repository/LegacyPackSuppliers";
+    /** The host's own suppliers, which mods also name when they call openPrimary on one. */
+    static final String[] HOST_SUPPLIERS = {SUPPLIER, "net/minecraft/server/packs/FilePackResources$FileResourcesSupplier",
+            "net/minecraft/server/packs/PathPackResources$PathResourcesSupplier"};
     /** The release that replaced openPrimary and openFull. */
     static final String VERSION = "26.3";
 
@@ -44,7 +49,14 @@ public final class LegacyPackSupplierAdapter {
     }
 
     static void register(RetromodTransformer t, Function<String, ClassNode> host) {
-        if (hostReplacedIt(host.apply(SUPPLIER))) t.enablePostProcess(FLAG);
+        if (!hostReplacedIt(host.apply(SUPPLIER))) return;
+        t.enablePostProcess(FLAG);
+        // An old call of openPrimary gets the pack that openMetadata opens, which is the same primary pack.
+        RebuiltApiClasses.registerTree(t, CALLS);
+        String callDesc = "(L" + SUPPLIER + ";" + OPEN_PRIMARY.substring(1);
+        for (String owner : HOST_SUPPLIERS) {
+            t.registerMethodRedirect(owner, "openPrimary", OPEN_PRIMARY, CALLS, "openPrimary", callDesc, true);
+        }
     }
 
     static boolean hostReplacedIt(ClassNode supplier) {
