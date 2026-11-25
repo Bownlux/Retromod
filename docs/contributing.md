@@ -95,14 +95,28 @@ Add a transform test for the changed names. Include a same-named texture in the 
 - Keep old shims. Long version chains still depend on them.
 - Avoid unrelated cleanup in a bug-fix pull request.
 
+## Branches
+
+Retromod uses three branches. Open every pull request against `dev`.
+
+- `dev` collects small changes: fixes, new bridges, docs, and build changes.
+- The snapshot branch, `snapshot`, receives `dev` once enough has collected for the next snapshot. It is not part of `main` yet.
+- `main` receives the snapshot branch when a snapshot is released. Only the maintainer merges into `main`.
+
 ## Pull Requests
+
+Base the branch on `dev` and open the pull request against `dev`.
 
 Describe the failing behavior, the fix, and how it was tested. Include the source mod version, source Minecraft version, host version, and loader when compatibility is involved.
 
-Use a short imperative commit subject, for example:
+Use a short, lowercase title with a type prefix, the same style as the commit subject:
 
 ```text
-Add 1.21.5 MobEffect signature guards
+fix: 1.21.5 mob effect signature guards
+feat(neoforge): forge permissions api on neoforge
+chore: update the troubleshooting page
 ```
+
+Common types are `feat`, `fix`, `refactor`, `docs`, and `chore`. Add a loader in parentheses when the change belongs to one loader.
 
 Questions and design proposals belong in [GitHub Discussions](https://github.com/Bownlux/Retromod/discussions).
