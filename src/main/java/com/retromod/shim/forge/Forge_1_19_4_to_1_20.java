@@ -48,6 +48,9 @@ public class Forge_1_19_4_to_1_20 implements VersionShim {
             "net/minecraft/world/level/storage/loot/LootContext$Builder",
             "net/minecraft/world/level/storage/loot/LootParams$Builder"
         );
+        // 1.20 kept a LootContext.Builder that builds a context from those params, which mods from 1.20 on and
+        // Retromod's own rebuilt classes call, so only older mods take the rename.
+        transformer.limitClassRedirectToModsBefore("net/minecraft/world/level/storage/loot/LootContext$Builder", "1.20");
         // Forge 1.20 replaced LivingSetAttackTargetEvent with LivingChangeTargetEvent, which
         // calls the target getNewTarget. A listener for the old event failed to register, and
         // Forge then rejected every automatic subscriber in the mod.

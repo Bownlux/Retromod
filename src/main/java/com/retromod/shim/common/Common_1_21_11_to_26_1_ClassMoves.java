@@ -204,6 +204,8 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         LegacyQuadGettersBridge.register(transformer);
         LegacyOptionsBridge.register(transformer);
         LegacyGameDataShapesBridge.register(transformer);
+        // 1.20.2 made LootContext.Builder.create take an Optional table id.
+        LegacyLootContextCreateBridge.register(transformer);
         LegacyClientGapsBridge.register(transformer);
         LegacyScatteredMembersBridge.register(transformer);
         // Members 1.20.1 mods call that later versions removed: respawn points, game profiles, portal targets.

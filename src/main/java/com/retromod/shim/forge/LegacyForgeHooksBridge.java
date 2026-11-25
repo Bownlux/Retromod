@@ -62,6 +62,41 @@ public final class LegacyForgeHooksBridge {
         registerRedirects(transformer, hostHasClass.test(TIER));
     }
 
+    static final String FORGE_HOOKS_CLIENT = "net/minecraftforge/client/ForgeHooksClient";
+    static final String CLIENT_HOOKS = "net/neoforged/neoforge/client/ClientHooks";
+    /** Client hooks NeoForge's {@code ClientHooks} kept with Forge's exact shape (checked on NeoForge 21.1 and 26.3). */
+    static final java.util.Set<String> SAME_SHAPE_CLIENT_HOOKS = java.util.Set.of("getTooltipFont",
+            "registerLayerDefinition", "gatherTooltipComponents", "gatherTooltipComponentsFromElements");
+
+    /**
+     * Sends each same-shape {@code ForgeHooksClient} call to {@code ClientHooks}, matched against the host's own
+     * descriptors. The class is not renamed whole: armor texture and model hooks changed shape and stay unbridged.
+     */
+    public static void registerClientHooks(RetromodTransformer transformer,
+            java.util.function.Function<String, org.objectweb.asm.tree.ClassNode> host) {
+        org.objectweb.asm.tree.ClassNode hooks = host.apply(CLIENT_HOOKS);
+        if (hooks == null) return;
+        for (org.objectweb.asm.tree.MethodNode method : hooks.methods) {
+            if ((method.access & Opcodes.ACC_STATIC) == 0 || !SAME_SHAPE_CLIENT_HOOKS.contains(method.name)) continue;
+            transformer.registerMethodRedirect(FORGE_HOOKS_CLIENT, method.name, method.desc, CLIENT_HOOKS, method.name, method.desc);
+        }
+    }
+
+    static final String BURN_TIME_DESC = "(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/item/crafting/RecipeType;)I";
+    static final String FORGE_BURN_TIMES = com.retromod.shim.common.RebuiltApiClasses.ROOT + "forge/common/LegacyForgeBurnTimes";
+
+    /** Forge 26.2 dropped {@code ForgeHooks.getBurnTime}; the fuel values' Forge-patched read does the same work. */
+    public static void registerForgeBurnTime(RetromodTransformer transformer) {
+        if (!ForgeHostMembers.lacksMethod(FORGE_HOOKS, "getBurnTime", BURN_TIME_DESC, ForgeHostShape.FIRST_CHECKED_VERSION)) return;
+        // 26.3 moved fuel into an item component and dropped FuelValues, which the rebuilt read needs.
+        boolean fuelValues = com.retromod.core.ClassResourceInspector.read(FORGE_HOOKS) != null
+                ? com.retromod.core.ClassResourceInspector.exists("net/minecraft/world/level/block/entity/FuelValues")
+                : com.retromod.core.RetromodVersion.compareMcVersions(com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "26.3") < 0;
+        if (!fuelValues) return;
+        com.retromod.shim.common.RebuiltApiClasses.registerTree(transformer, FORGE_BURN_TIMES);
+        transformer.registerMethodRedirect(FORGE_HOOKS, "getBurnTime", BURN_TIME_DESC, FORGE_BURN_TIMES, "getBurnTime", BURN_TIME_DESC);
+    }
+
     /** Unconditional registration for transform-shape tests. */
     static void registerRedirects(RetromodTransformer transformer, boolean tierCheck) {
         transformer.registerSyntheticClass(HELPER, generateHelper(tierCheck));

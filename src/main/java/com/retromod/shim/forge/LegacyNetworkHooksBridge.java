@@ -18,6 +18,7 @@ public final class LegacyNetworkHooksBridge {
 
     static final String HOOKS = "net/minecraftforge/network/NetworkHooks";
     static final String HELPER = "com/retromod/generated/LegacyNetworkHooks";
+    static final String NEO_HELPER = "com/retromod/generated/LegacyNeoForgeNetworkHooks";
     static final String SERVER_PLAYER_EXTENSION = "net/minecraftforge/common/extensions/IForgeServerPlayer";
     static final String FORGE_HOOKS = "net/minecraftforge/common/ForgeHooks";
     static final String EXTRA_SPAWN_DATA = "net/minecraftforge/entity/IEntityAdditionalSpawnData";
@@ -39,6 +40,25 @@ public final class LegacyNetworkHooksBridge {
     public static void register(RetromodTransformer t) {
         if (!ForgeHostShape.matches(List.of(SERVER_PLAYER_EXTENSION, EXTRA_SPAWN_DATA), List.of(HOOKS))) return;
         registerRedirects(t);
+    }
+
+    /**
+     * NeoForge never had NetworkHooks. It sends an {@code IEntityWithComplexSpawn} entity's extra data beside
+     * vanilla's add-entity packet on its own, so the old spawn packet call returns that vanilla packet.
+     */
+    public static void registerNeoForge(RetromodTransformer t) {
+        org.objectweb.asm.tree.ClassNode packet = com.retromod.core.ClassResourceInspector.read(ADD_ENTITY_PACKET);
+        if (packet != null && packet.methods.stream().noneMatch(m -> m.name.equals("<init>") && m.desc.equals(ADD_ENTITY_DESC))) return;
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, NEO_HELPER, null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "getEntitySpawningPacket", SPAWN_DESC, null, null);
+        mv.visitCode();
+        emitVanillaPacket(mv);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        t.registerSyntheticClass(NEO_HELPER, cw.toByteArray());
+        t.registerMethodRedirect(HOOKS, "getEntitySpawningPacket", SPAWN_DESC, NEO_HELPER, "getEntitySpawningPacket", SPAWN_DESC);
     }
 
     static void registerRedirects(RetromodTransformer t) {
@@ -127,8 +147,14 @@ public final class LegacyNetworkHooksBridge {
         mv.visitMethodInsn(INVOKESTATIC, FORGE_HOOKS, "getEntitySpawnPacket", SPAWN_DESC, false);
         mv.visitInsn(ARETURN);
 
-        // new ClientboundAddEntityPacket(id, uuid, x, y, z, xRot, yRot, type, 0, motion, headYaw)
         mv.visitLabel(vanilla);
+        emitVanillaPacket(mv);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /** {@code return new ClientboundAddEntityPacket(id, uuid, x, y, z, xRot, yRot, type, 0, motion, headYaw)}. */
+    private static void emitVanillaPacket(MethodVisitor mv) {
         mv.visitTypeInsn(NEW, ADD_ENTITY_PACKET);
         mv.visitInsn(DUP);
         entityGetter(mv, "getId", "()I");
@@ -145,8 +171,6 @@ public final class LegacyNetworkHooksBridge {
         mv.visitInsn(F2D);
         mv.visitMethodInsn(INVOKESPECIAL, ADD_ENTITY_PACKET, "<init>", ADD_ENTITY_DESC, false);
         mv.visitInsn(ARETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
     }
 
     private static void entityGetter(MethodVisitor mv, String name, String desc) {

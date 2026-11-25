@@ -13,6 +13,7 @@ This page keeps the release history readable. The [full technical changelog](htt
 ### Snapshot 6, unreleased
 
 - Repairs about 60 more removed game members for older mods on 26.x: block shading, dimension details, sounds, difficulty, tags, NBT lists, bundles, advancements, permissions, and old packets.
+- Carries more old Forge APIs to NeoForge: permissions, tags, mod info, Forge fluids, item pickup and spawn events; and old config tracker, burn time, and loot builder calls on newer Forge and NeoForge hosts.
 <!--s6-docs-->
 
 ### Snapshot 5, November 20, 2026

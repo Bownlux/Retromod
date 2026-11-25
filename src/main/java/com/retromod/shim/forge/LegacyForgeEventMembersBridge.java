@@ -66,7 +66,27 @@ public final class LegacyForgeEventMembersBridge {
         if (renamedOnHost(MOUSE_SCROLLING, "getScrollDelta", "getDeltaY", "()D", ForgeHostShape.FIRST_CHECKED_VERSION)) {
             t.registerMethodRedirect(MOUSE_SCROLLING, "getScrollDelta", "()D", MOUSE_SCROLLING, "getDeltaY", "()D");
         }
+        // Members that kept their name but changed a number type; the call converts the value it passes or gets.
+        for (String[] drift : PRIMITIVE_DRIFT) {
+            if (ForgeHostMembers.lacksMethod(drift[0], drift[1], drift[2], ForgeHostShape.FIRST_CHECKED_VERSION)
+                    && hostDeclaresOrOffline(drift[0], drift[1], drift[3])) {
+                int opcode = Integer.parseInt(drift[4]);
+                boolean getter = drift[2].startsWith("()");
+                t.registerConvertingRedirect(drift[0], drift[1], drift[2], drift[0], drift[1], drift[3],
+                        getter ? 0 : opcode, getter ? opcode : 0);
+            }
+        }
     }
+
+    /** Owner, member, Forge 1.20.1 descriptor, Forge 26.2 descriptor, and the conversion opcode; checked with javap on Forge 65.0.0. */
+    static final String[][] PRIMITIVE_DRIFT = {
+            {"net/minecraftforge/event/entity/living/LivingFallEvent", "getDistance", "()F", "()D", String.valueOf(org.objectweb.asm.Opcodes.D2F)},
+            {"net/minecraftforge/event/entity/living/LivingFallEvent", "setDistance", "(F)V", "(D)V", String.valueOf(org.objectweb.asm.Opcodes.F2D)},
+            {CLIENT_EVENT + "ViewportEvent$ComputeFov", "getFOV", "()D", "()F", String.valueOf(org.objectweb.asm.Opcodes.F2D)},
+            {CLIENT_EVENT + "ViewportEvent$ComputeFov", "setFOV", "(D)V", "(F)V", String.valueOf(org.objectweb.asm.Opcodes.D2F)},
+            {"net/minecraftforge/event/AnvilUpdateEvent", "getCost", "()I", "()J", String.valueOf(org.objectweb.asm.Opcodes.L2I)},
+            {"net/minecraftforge/event/AnvilUpdateEvent", "setCost", "(I)V", "(J)V", String.valueOf(org.objectweb.asm.Opcodes.I2L)},
+    };
 
     /** The scan code Forge 26.3 removed from its screen and in-game key events, registered from the 26.3 shim. */
     public static void registerScanCode(RetromodTransformer t) {
@@ -80,6 +100,12 @@ public final class LegacyForgeEventMembersBridge {
             RebuiltApiClasses.registerTree(t, KEY_MEMBERS);
             t.registerMethodRedirect(INPUT_KEY, "getScanCode", "()I", KEY_MEMBERS, "inputScanCode", "(L" + INPUT_KEY + ";)I", true);
         }
+    }
+
+    /** Whether the running host's {@code owner} declares the member; offline, the caller's version check has answered. */
+    static boolean hostDeclaresOrOffline(String owner, String name, String desc) {
+        ClassNode host = ClassResourceInspector.read(owner);
+        return host == null || host.methods.stream().anyMatch(m -> m.name.equals(name) && m.desc.equals(desc));
     }
 
     /** Whether the host's {@code owner} lost {@code oldName} and declares {@code newName}; offline, a Forge target from {@code offlineFrom}. */
