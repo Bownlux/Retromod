@@ -17,7 +17,7 @@ Apply this to every fix and feature, right after the security embargo in importa
 
 **Do not use em-dashes (the long dash, Unicode U+2014) anywhere:** not in chat replies, not in code comments, docs, CHANGELOG/ROADMAP entries, or commit messages. Also avoid en-dashes (U+2013). They are annoying to copy out of responses. Use a comma, parentheses, a colon, or two separate sentences instead. (Ordinary hyphens `-`, e.g. in version ranges like `1.20-26.2`, are fine.)
 
-Write like the published docs at https://bownlux.github.io/Retromod/. They are the house style, and
+Write like the published docs at https://bownlux.dev/retromod/. They are the house style, and
 they are built from `docs/`. Read `docs/faq.md`, `docs/troubleshooting.md`, or `docs/index.md` before
 writing user-facing text and match what is there. This applies to chat replies too.
 

@@ -109,7 +109,7 @@ public final class OptiFineCompat {
         LOGGER.warn("OptiFine {} was detected. Retromod cannot reliably translate its renderer changes.",
             optiFineVersion);
         LOGGER.warn("It may fail on a newer Minecraft version or conflict with another rendering mod.");
-        LOGGER.warn("Compatibility notes: https://bownlux.github.io/Retromod/incompatible-mods/");
+        LOGGER.warn("Compatibility notes: https://bownlux.dev/retromod/incompatible-mods/");
         
         if (!isServer) {
             showOptiFineWarningDialog();
@@ -165,7 +165,7 @@ public final class OptiFineCompat {
         int choice = choiceHolder[0];
         if (choice == 0) {
             // Minecraft opens the link once it runs; this dialog shows before, so name it here.
-            String notes = "https://bownlux.github.io/Retromod/incompatible-mods/";
+            String notes = "https://bownlux.dev/retromod/incompatible-mods/";
             if (!McOpener.openLink(notes)) {
                 SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(null,
                     "Please visit: " + notes,

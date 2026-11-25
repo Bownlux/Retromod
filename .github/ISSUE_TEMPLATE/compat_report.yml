@@ -9,8 +9,8 @@ body:
         Thanks for testing! Honest reports are the most useful kind - "loads but X is broken"
         beats "works". A bot converts this report into a database entry automatically
         (you'll get a link to the pull request); once merged it appears on the
-        [Compatibility DB](https://bownlux.github.io/Retromod/compatdb/). Tip: the
-        [DB page](https://bownlux.github.io/Retromod/compatdb/) has a form that pre-fills all of this for you.
+        [Compatibility DB](https://bownlux.dev/retromod/compatdb/). Tip: the
+        [DB page](https://bownlux.dev/retromod/compatdb/) has a form that pre-fills all of this for you.
 
   - type: dropdown
     id: report_type

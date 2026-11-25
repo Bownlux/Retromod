@@ -213,7 +213,7 @@ jobs:
             2. Drop it into your Fabric or Quilt instance's `mods/` folder.
             3. Launch once. Retromod creates `retromod-input/` next to `mods/`. Drop old mods there for transformation, then restart when prompted.
 
-            See the [installation docs](https://bownlux.github.io/Retromod/installation) for the full per-loader walkthrough.
+            See the [installation docs](https://bownlux.dev/retromod/installation) for the full per-loader walkthrough.
 
             ### Verify the Download
             ```

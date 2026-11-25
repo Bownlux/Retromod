@@ -343,7 +343,7 @@ Bukkit, Spigot, Paper, and Purpur plugin translation is not started. Plugins use
 
 ## How to Help
 
-- Add a result to the [compatibility database](https://bownlux.github.io/Retromod/compatdb/).
+- Add a result to the [compatibility database](https://bownlux.dev/retromod/compatdb/).
 - File issues with the full `latest.log` and exact versions.
 - Add an [SRG mapping](docs/srg-mappings.md).
 - Write a focused [Retromod addon](docs/addons.md).
