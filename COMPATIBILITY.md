@@ -2,7 +2,7 @@
 
 Compatibility depends on the exact mod version, loader, host Minecraft version, and Retromod build. A mod that works in one combination may fail in another.
 
-The [compatibility database](https://bownlux.github.io/Retromod/compatdb/) has the current test results. It replaces the old static list that used to live in this file.
+The [compatibility database](https://bownlux.dev/retromod/compatdb/) has the current test results. It replaces the old static list that used to live in this file.
 
 ## Supported Ranges
 
@@ -32,4 +32,4 @@ A clean bytecode transform is only the first check. Good reports also confirm th
 
 ## Share a Result
 
-Use the form at the bottom of the [compatibility database](https://bownlux.github.io/Retromod/compatdb/). Include the mod version, source and host Minecraft versions, loader, Retromod version, and what you tested.
+Use the form at the bottom of the [compatibility database](https://bownlux.dev/retromod/compatdb/). Include the mod version, source and host Minecraft versions, loader, Retromod version, and what you tested.

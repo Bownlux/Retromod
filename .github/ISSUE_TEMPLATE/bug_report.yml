@@ -8,7 +8,7 @@ body:
       value: |
         Thanks for filing this. The more of the fields below you can fill in, the faster I can usually figure out what's going wrong.
 
-        Before opening, have a quick look at the [Troubleshooting page](https://bownlux.github.io/Retromod/troubleshooting) - it covers the most common error messages.
+        Before opening, have a quick look at the [Troubleshooting page](https://bownlux.dev/retromod/troubleshooting) - it covers the most common error messages.
 
   - type: input
     id: retromod-version
@@ -89,7 +89,7 @@ body:
     attributes:
       label: Gap report (optional but very helpful)
       description: |
-        If you can, run the verify-transforms CLI command on the failing mod and paste the report here. See [Verify transforms](https://bownlux.github.io/Retromod/verify-transforms) for how to run it.
+        If you can, run the verify-transforms CLI command on the failing mod and paste the report here. See [Verify transforms](https://bownlux.dev/retromod/verify-transforms) for how to run it.
       render: shell
 
   - type: checkboxes
@@ -97,7 +97,7 @@ body:
     attributes:
       label: Confirmations
       options:
-        - label: I checked the [Troubleshooting page](https://bownlux.github.io/Retromod/troubleshooting) and didn't find this issue.
+        - label: I checked the [Troubleshooting page](https://bownlux.dev/retromod/troubleshooting) and didn't find this issue.
           required: true
         - label: The source mod isn't opted out of Retromod transformation (no `META-INF/retromod-opt-out` marker in the mod JAR).
           required: false

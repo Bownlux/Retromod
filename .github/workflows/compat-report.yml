@@ -178,7 +178,7 @@ jobs:
                 const pr = await github.rest.pulls.create({
                   ...context.repo, base, head: branch,
                   title: `Compat DB: ${name}: ${badge}`,
-                  body: `Auto-generated from #${issue.number} (reported by @${issue.user.login}).\n\nReview the entry, then merge to publish it on the [Compatibility DB](https://bownlux.github.io/Retromod/compatdb/).\n\nCloses #${issue.number}.`,
+                  body: `Auto-generated from #${issue.number} (reported by @${issue.user.login}).\n\nReview the entry, then merge to publish it on the [Compatibility DB](https://bownlux.dev/retromod/compatdb/).\n\nCloses #${issue.number}.`,
                 });
                 prUrl = pr.data.html_url;
               } catch (e) {
@@ -196,4 +196,4 @@ jobs:
               }
             }
             await github.rest.issues.createComment({ ...context.repo, issue_number: issue.number,
-              body: `Thanks! Your report was converted into a database entry automatically: ${prUrl}\n\nOnce a maintainer merges it, it appears on the [Compatibility DB](https://bownlux.github.io/Retromod/compatdb/).` });
+              body: `Thanks! Your report was converted into a database entry automatically: ${prUrl}\n\nOnce a maintainer merges it, it appears on the [Compatibility DB](https://bownlux.dev/retromod/compatdb/).` });

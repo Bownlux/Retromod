@@ -23,7 +23,7 @@ Bridges are selected from the references a mod actually uses. Retromod does not 
 | Cross-loader | Architectury, GeckoLib, YACL, MixinExtras, selected AE2 and Botania API moves |
 | Legacy | Baubles to Curios, NEI to JEI, RF to Forge Energy, WAILA to Jade, old Forge lifecycle and registration types |
 
-Coverage varies within every row. The [compatibility database](https://bownlux.github.io/Retromod/compatdb/) is the best place to check a real mod and version.
+Coverage varies within every row. The [compatibility database](https://bownlux.dev/retromod/compatdb/) is the best place to check a real mod and version.
 
 ## What a Bridge Cannot Do
 
