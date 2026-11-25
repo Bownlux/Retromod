@@ -1,0 +1,53 @@
+# Closes bug reports whose log field has fewer than 30 words, and reopens them once a log is added.
+# A link to a paste site (Gist, Pastebin, mclo.gs, paste.ee) counts as a log, since the form asks for one for long logs.
+name: Require a log on bug reports
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  issues: write
+
+jobs:
+  check-log:
+    if: contains(github.event.issue.labels.*.name, 'bug')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const MIN_WORDS = 30;
+            const MARKER = '<!-- require-log -->';
+            const issue = context.payload.issue;
+            const body = issue.body || '';
+
+            // Cut out the "Crash log or relevant log output" section of the form.
+            const heading = '### Crash log or relevant log output';
+            const start = body.indexOf(heading);
+            let section = start < 0 ? '' : body.slice(start + heading.length);
+            const next = section.indexOf('\n### ');
+            if (next >= 0) section = section.slice(0, next);
+            section = section.replace(/```[a-z]*/gi, '').replace(/_No response_/g, '').trim();
+
+            const words = section.split(/\s+/).filter(Boolean).length;
+            const pasteLink = /https?:\/\/(gist\.github\.com|pastebin\.com|mclo\.gs|paste\.ee)\/\S+/i.test(section);
+            const hasLog = words >= MIN_WORDS || pasteLink;
+
+            const { owner, repo } = context.repo;
+            const number = issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number });
+            const botComment = comments.find(c => c.user.type === 'Bot' && c.body.includes(MARKER));
+
+            if (!hasLog && issue.state === 'open') {
+              if (!botComment) {
+                await github.rest.issues.createComment({ owner, repo, issue_number: number, body:
+                  `${MARKER}\nHi! This report needs a log before it can be looked at. ` +
+                  `Paste the full \`logs/latest.log\` (or the crash report) into the log field, ` +
+                  `or link it from a Gist, Pastebin, or mclo.gs, then edit the issue. ` +
+                  `It reopens on its own once the log is there.` });
+              }
+              await github.rest.issues.update({ owner, repo, issue_number: number, state: 'closed', state_reason: 'not_planned' });
+            } else if (hasLog && issue.state === 'closed' && botComment) {
+              await github.rest.issues.update({ owner, repo, issue_number: number, state: 'open' });
+            }
