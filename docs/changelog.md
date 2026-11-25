@@ -10,6 +10,11 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.4.0 Snapshot Line
 
+### Snapshot 6, unreleased
+
+- Repairs about 60 more removed game members for older mods on 26.x: block shading, dimension details, sounds, difficulty, tags, NBT lists, bundles, advancements, permissions, and old packets.
+<!--s6-docs-->
+
 ### Snapshot 5, November 20, 2026
 
 - Fixes crashes from old boat items on 26.2 and newer, old saplings on 26.3, and Forge mods that ask a mod container for its event bus on Forge 26.2 and newer.

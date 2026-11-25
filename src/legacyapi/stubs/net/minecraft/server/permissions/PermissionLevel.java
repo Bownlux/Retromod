@@ -4,4 +4,5 @@ package net.minecraft.server.permissions;
 public enum PermissionLevel {
     ALL;
     public static PermissionLevel byId(int id) { throw new UnsupportedOperationException(); }
+    public int id() { throw new UnsupportedOperationException(); }
 }

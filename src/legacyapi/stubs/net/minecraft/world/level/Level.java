@@ -26,6 +26,14 @@ public class Level implements CollisionGetter {
     public MinecraftServer getServer() { throw new UnsupportedOperationException(); }
     public RegistryAccess registryAccess() { throw new UnsupportedOperationException(); }
     public java.util.List<Entity> getEntities(Entity except, AABB area, java.util.function.Predicate<? super Entity> filter) { throw new UnsupportedOperationException(); }
+    public void addParticle(net.minecraft.core.particles.ParticleOptions particle, boolean overrideLimiter, boolean alwaysShow,
+            double x, double y, double z, double xd, double yd, double zd) { throw new UnsupportedOperationException(); }
+    public void neighborChanged(BlockState state, BlockPos pos, net.minecraft.world.level.block.Block block,
+            net.minecraft.world.level.redstone.Orientation orientation, boolean movedByPiston) { throw new UnsupportedOperationException(); }
+    public void neighborChanged(BlockPos pos, net.minecraft.world.level.block.Block block,
+            net.minecraft.world.level.redstone.Orientation orientation) { throw new UnsupportedOperationException(); }
+    public void playSound(net.minecraft.world.entity.Entity source, BlockPos pos, net.minecraft.sounds.SoundEvent sound,
+            net.minecraft.sounds.SoundSource category, float volume, float pitch) { throw new UnsupportedOperationException(); }
     public long getOverworldClockTime() { throw new UnsupportedOperationException(); }
     // Abstract on the host.
     public Entity getEntity(int id) { throw new UnsupportedOperationException(); }

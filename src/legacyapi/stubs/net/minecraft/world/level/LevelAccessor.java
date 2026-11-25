@@ -2,6 +2,8 @@
 package net.minecraft.world.level;
 
 public interface LevelAccessor {
+    // A default method on the host.
+    default net.minecraft.world.Difficulty getDifficulty() { throw new UnsupportedOperationException(); }
     void levelEvent(net.minecraft.world.entity.Entity source, int type, net.minecraft.core.BlockPos pos, int data);
     // Default methods on the host.
     default void gameEvent(net.minecraft.world.entity.Entity source, net.minecraft.core.Holder<net.minecraft.world.level.gameevent.GameEvent> event,

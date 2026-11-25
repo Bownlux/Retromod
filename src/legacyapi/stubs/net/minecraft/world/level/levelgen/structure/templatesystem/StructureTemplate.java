@@ -12,4 +12,6 @@ public class StructureTemplate {
         public BlockState state() { throw new UnsupportedOperationException(); }
         public CompoundTag nbt() { throw new UnsupportedOperationException(); }
     }
+    public void fillFromWorld(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos origin, net.minecraft.core.Vec3i size,
+            boolean inludeEntities, java.util.List<net.minecraft.world.level.block.Block> ignoreBlocks) { throw new UnsupportedOperationException(); }
 }

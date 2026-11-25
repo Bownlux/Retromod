@@ -35,6 +35,11 @@ public final class LegacyLevelTime {
         return angle == null ? 0.0F : angle / 360.0F;
     }
 
+    /** {@code getSunAngle(partialTick)}: the same turn in radians, as Level gave it until 1.21.11. */
+    public static float getSunAngle(Object level, float partialTick) {
+        return getTimeOfDay(level, partialTick) * (float) (Math.PI * 2.0);
+    }
+
     /** {@code dayTime()}: the overworld's clock, which every dimension reported in 1.20.1. */
     public static long dayTime(Object level) {
         return level instanceof Level world ? world.getOverworldClockTime() : 0L;

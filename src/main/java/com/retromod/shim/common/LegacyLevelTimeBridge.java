@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
-/** Rebuilds LevelTimeAccess's moon phase, moon brightness, time of day and day time, which 1.21.11 replaced with environment attributes. */
+/** Rebuilds LevelTimeAccess's moon phase, moon brightness, time of day, sun angle and day time, which 1.21.11 replaced with environment attributes. */
 public final class LegacyLevelTimeBridge {
 
     public static final String HELPER = RebuiltApiClasses.ROOT + "minecraft/world/level/LegacyLevelTime";
@@ -34,6 +34,7 @@ public final class LegacyLevelTimeBridge {
             {"getMoonPhase", "()I", "(Ljava/lang/Object;)I"},
             {"getMoonBrightness", "()F", "(Ljava/lang/Object;)F"},
             {"getTimeOfDay", "(F)F", "(Ljava/lang/Object;F)F"},
+            {"getSunAngle", "(F)F", "(Ljava/lang/Object;F)F"},
             {"dayTime", "()J", "(Ljava/lang/Object;)J"}};
 
     private LegacyLevelTimeBridge() {}

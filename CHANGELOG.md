@@ -2,6 +2,19 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
+## [1.4.0-snapshot.6] - Unreleased
+
+Sixth 1.4.0 snapshot.
+
+### Fixed
+
+- Answers about 60 more gameplay, registry, data and network calls that 1.20.1 and 1.21.1 mods make and 26.x removed, on Fabric, Quilt, Forge and NeoForge. They include registry tag lookups, list tag getters, the sun angle, sound, particle, difficulty and shade calls, pathfinding and face occlusion checks, curse checks, spawner entries, dimension rule flags, advancement displays and icons, permission levels, notify sounds, chunk generation futures, the spawn packet, and buffer id reads and writes.
+- Sends each renamed container, chunk and structure template call to the name the running host uses, so the same translated jar works on 26.1, 26.2 and 26.3.
+- Keeps old sound calls made on a client level working on 1.21.5 and newer.
+<!--s6-bullets-->
+
+A tag a mod first asks for with the old `getOrCreateTag` during startup is filled by the next tag load. A tag first asked for after startup stays empty, even when a data pack defines it, because 26.x lets no new tag join a registry once it is frozen. A client level answers the old difficulty call with its base difficulty and the moon's brightness, without the time players spent in the chunk, which only the server tracks. The old `natural()` flag reads whether nether portals spawn piglins, the one rule 26.x kept from it. The item frame lookup, the furnace burn time and portal search calls, the 1.21.1 entity type constructor, and the attack packet still do not link; each needs a larger rebuild. <!--s6-limits-->
+
 ## [1.4.0-snapshot.5] - 2026-11-20
 
 Fifth 1.4.0 snapshot.

@@ -208,6 +208,8 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         LegacyScatteredMembersBridge.register(transformer);
         // Members 1.20.1 mods call that later versions removed: respawn points, game profiles, portal targets.
         Legacy1201MemberBridge.register(transformer);
+        // Registry tags, structure lookups, curses, permission levels and other calls 1.20.1 and 1.21.1 mods make.
+        LegacyGameplayCallsBridge.register(transformer);
         // Removed members the big content mods call, rebuilt on their replacements.
         LegacyContentCallsBridge.register(transformer);
         LegacyDepthBlendBridge.registerDepthState(transformer);
@@ -1369,7 +1371,12 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
     /** The ListTag getters 1.21.5 turned into Optional getters, each taking an int index. */
     static final List<NbtLookupCall> LIST_LOOKUPS = List.of(
             new NbtLookupCall("getString", "method_10608", "Ljava/lang/String;", "listGetString"),
-            new NbtLookupCall("getInt", "method_10600", "I", "listGetInt"));
+            new NbtLookupCall("getInt", "method_10600", "I", "listGetInt"),
+            new NbtLookupCall("getFloat", "method_10604", "F", "listGetFloat"),
+            new NbtLookupCall("getDouble", "method_10611", "D", "listGetDouble"),
+            // ListTag.getIntArray took a new intermediary id in 1.17; mods built for 1.16.5 still carry the old one.
+            new NbtLookupCall("getIntArray", "method_36111", "[I", "listGetIntArray"),
+            new NbtLookupCall("getIntArray", "method_10610", "[I", "listGetIntArray"));
 
     /** The NumericTag getters 1.21.5 renamed when it made NumericTag an interface; intermediary kept their ids. */
     static final List<NbtLookupCall> NUMERIC_LOOKUPS = List.of(
