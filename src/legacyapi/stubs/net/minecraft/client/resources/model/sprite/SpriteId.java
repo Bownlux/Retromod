@@ -8,4 +8,5 @@ public final class SpriteId {
     public SpriteId(Identifier atlasLocation, Identifier texture) {}
     public Identifier atlasLocation() { throw new UnsupportedOperationException(); }
     public Identifier texture() { throw new UnsupportedOperationException(); }
+    public net.minecraft.client.renderer.rendertype.RenderType renderType(java.util.function.Function<Identifier, net.minecraft.client.renderer.rendertype.RenderType> types) { throw new UnsupportedOperationException(); }
 }

@@ -29,6 +29,7 @@ public class Minecraft {
     public net.minecraft.client.renderer.extract.LevelExtractor levelExtractor;
 
     public static Minecraft getInstance() { throw new UnsupportedOperationException(); }
+    public net.minecraft.client.renderer.PlayerSkinRenderCache playerSkinRenderCache() { throw new UnsupportedOperationException(); }
     public ClientPacketListener getConnection() { throw new UnsupportedOperationException(); }
     public Entity getCameraEntity() { throw new UnsupportedOperationException(); }
     public Window getWindow() { throw new UnsupportedOperationException(); }

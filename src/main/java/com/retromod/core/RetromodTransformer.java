@@ -360,6 +360,13 @@ public class RetromodTransformer implements ClassFileTransformer {
         return INSTANCE.jarOrLibraryClassRemapped(internalName);
     }
 
+    /** Whether the jar being transformed or a library it links ships the class; the game's own classes are not read. */
+    private boolean shippedByJarOrLibrary(String internalName) {
+        Function<String, byte[]> provider = currentJarClassBytesProvider();
+        if (provider != null && provider.apply(internalName) != null) return true;
+        return linkedLibraries.classBytes(internalName) != null;
+    }
+
     private byte[] jarOrLibraryClassRemapped(String internalName) {
         Function<String, byte[]> provider = currentJarClassBytesProvider();
         byte[] own = provider != null ? provider.apply(internalName) : null;
@@ -1046,6 +1053,10 @@ public class RetromodTransformer implements ClassFileTransformer {
     private final Map<String, byte[]> syntheticClasses = new ConcurrentHashMap<>();
     /** Post-process adapters a shim turned on that register no synthetic class to key on. */
     private final Set<String> postProcessFlags = ConcurrentHashMap.newKeySet();
+    /** Retromod stand-in types no host signature can name, each with the static supplier for a call returning it, or "". */
+    private final Map<String, String> standInTypes = new ConcurrentHashMap<>();
+    /** Game types a dropped stand-in call may return, each with the static supplier of a harmless value of that type. */
+    private final Map<String, String> standInResults = new ConcurrentHashMap<>();
     // Synthetic classes generated as INTERFACES; redirect emission consults this for the itf flag.
     private final Set<String> interfaceSyntheticTargets = ConcurrentHashMap.newKeySet();
     // Compiled embedded shims that are classes. Calls redirected from an old interface must not
@@ -3990,6 +4001,16 @@ public class RetromodTransformer implements ClassFileTransformer {
         postProcessFlags.add(flag);
     }
 
+    /** Marks a stand-in type no host signature can name, with the {@code "owner.name(desc)"} supplier a dropped call that returned it gets, or null. */
+    public void registerStandInType(String type, String supplier) {
+        standInTypes.put(type, supplier == null ? "" : supplier);
+    }
+
+    /** Answers a dropped stand-in call that returned {@code type}, a game type, with {@code supplier} instead of null. */
+    public void registerStandInResult(String type, String supplier) {
+        standInResults.put(type, supplier);
+    }
+
     /**
      * Like {@link #registerGeneratedLegacyBase}, for a removed base whose other references already
      * move to a modern class that cannot be extended, such as a 1.12 {@code WorldProvider} whose
@@ -4244,6 +4265,8 @@ public class RetromodTransformer implements ClassFileTransformer {
         typedFieldRenames.clear();
         syntheticClasses.clear();
         postProcessFlags.clear();
+        standInTypes.clear();
+        standInResults.clear();
         embeddedShimClasses.clear();
         methodRedirectOwners.clear();
         neutralizedMethods.clear();
@@ -5160,6 +5183,12 @@ public class RetromodTransformer implements ClassFileTransformer {
         if (openedFinals != null && inCurrentJar(repaired)) {
             repaired = com.retromod.shim.common.HostFinalOverrideAdapter.apply(repaired, this::finalOverrideShape,
                     openedFinals);
+        }
+        // After every adapter that rewrites a stand-in call more usefully. A class Retromod generates or the mod or one of
+        // its libraries ships is not the host's, so a call on it is left alone.
+        if (!standInTypes.isEmpty()) {
+            repaired = com.retromod.shim.common.StandInCallFallback.apply(repaired, standInTypes, standInResults,
+                    owner -> syntheticClasses.containsKey(owner) || shippedByJarOrLibrary(owner));
         }
         repaired = com.retromod.shim.fabric.LegacyFabricItemIdRepair
                 .apply(repaired, className);

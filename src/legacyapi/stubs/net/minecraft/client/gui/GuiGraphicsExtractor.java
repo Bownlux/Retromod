@@ -12,6 +12,7 @@ import org.joml.Matrix3x2fStack;
 import java.util.List;
 
 public class GuiGraphicsExtractor {
+    public GuiGraphicsExtractor(net.minecraft.client.Minecraft minecraft, net.minecraft.client.renderer.state.gui.GuiRenderState state, int mouseX, int mouseY) {}
     public int guiWidth() { throw new UnsupportedOperationException(); }
     public int guiHeight() { throw new UnsupportedOperationException(); }
     public Matrix3x2fStack pose() { throw new UnsupportedOperationException(); }

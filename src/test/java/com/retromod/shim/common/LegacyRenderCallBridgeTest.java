@@ -187,8 +187,12 @@ class LegacyRenderCallBridgeTest {
                 assertEquals(List.of(bridged, "ICONST_0", "POP"),
                         calls.subList(calls.indexOf(bridged), calls.indexOf(bridged) + 3), loader + " " + host);
             }
-            // 26.1 took a Matrix4fc as well, so this bridge stays off there and the call is unchanged.
-            assertTrue(body(loader, "26.1", "text").contains(old), loader + " 26.1 is not this bridge's shape");
+            // 26.1 took a Matrix4fc as well, so LegacyStandInCallsBridge converts the call there instead of this bridge.
+            String on26 = "INVOKEVIRTUAL " + FONT + ".drawInBatch(" + COMPONENT + DRAW_TAIL.replace("Matrix4f;", "Matrix4fc;") + "V";
+            List<String> calls = body(loader, "26.1", "text");
+            assertFalse(calls.contains(old), loader + " 26.1 leaves no old draw: " + calls);
+            assertTrue(calls.contains(on26), loader + " 26.1 draws through the void form: " + calls);
+            assertEquals(List.of(on26, "ICONST_0", "POP"), calls.subList(calls.indexOf(on26), calls.indexOf(on26) + 3), loader + " 26.1");
         }
     }
 

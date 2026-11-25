@@ -6,4 +6,5 @@ import net.minecraft.resources.Identifier;
 
 public class AtlasManager {
     public TextureAtlas getAtlasOrThrow(Identifier atlas) { throw new UnsupportedOperationException(); }
+    public net.minecraft.client.renderer.texture.TextureAtlasSprite get(SpriteId sprite) { throw new UnsupportedOperationException(); }
 }

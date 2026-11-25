@@ -80,6 +80,9 @@ public final class RenderBufferSynthetics {
     private static final String L_BS = "L" + BS + ";";
     static final String LEGACY_BEGIN = "(" + L_BB + "Ljava/lang/Object;Ljava/lang/Object;)V";
 
+    /** Starting size of the sink builder's buffer, which grows as needed. */
+    private static final int SINK_CAPACITY = 1024;
+
     /** Default per-RenderType buffer capacity, matching vanilla's transient buffer size. */
     private static final int BUFFER_CAPACITY = 786432;
 
@@ -97,6 +100,14 @@ public final class RenderBufferSynthetics {
         t.registerClassRedirect(OLD_MODE, TOPOLOGY);
         registerRemovedAccessors(t);
         registerPre121BuilderCalls(t);
+        // A game call still naming a stand-in links nowhere; it is dropped last, and one that returned a buffer source
+        // or tesselator gets the shared stand-in, whose batches are dropped like every other.
+        t.registerStandInType(MBS, BS + ".shared()" + L_BS);
+        t.registerStandInType(BS, BS + ".shared()" + L_BS);
+        t.registerStandInType(TES, TES + ".getInstance()L" + TES + ";");
+        // A dropped call that returned a vertex consumer or builder gets a sink builder, whose vertices are dropped.
+        t.registerStandInResult(VERTEX_CONSUMER, TES + ".sink()" + L_BB);
+        t.registerStandInResult(BUFFER_BUILDER, TES + ".sink()" + L_BB);
     }
 
     /**
@@ -105,6 +116,39 @@ public final class RenderBufferSynthetics {
      * old vertex call links and runs; like the other stand-in batches, nothing it builds is drawn.
      */
     private static void emitPre121ImmediateMode(ClassWriter cw) {
+        // public static synchronized BufferBuilder sink(): a builder of a small tesselator kept for dropped calls, so
+        // handing one out never resets the shared tesselator's builder a mod may still be filling.
+        cw.visitField(ACC_PRIVATE | ACC_STATIC, "sinkTesselator", "L" + TES + ";", null, null).visitEnd();
+        MethodVisitor sk = cw.visitMethod(ACC_PUBLIC | ACC_STATIC | ACC_SYNCHRONIZED, "sink", "()" + L_BB, null, null);
+        sk.visitCode();
+        Label ready = new Label();
+        sk.visitFieldInsn(GETSTATIC, TES, "sinkTesselator", "L" + TES + ";");
+        sk.visitJumpInsn(IFNONNULL, ready);
+        sk.visitTypeInsn(NEW, TES);
+        sk.visitInsn(DUP);
+        sk.visitIntInsn(SIPUSH, SINK_CAPACITY);
+        sk.visitMethodInsn(INVOKESPECIAL, TES, "<init>", "(I)V", false);
+        sk.visitFieldInsn(PUTSTATIC, TES, "sinkTesselator", "L" + TES + ";");
+        sk.visitLabel(ready);
+        sk.visitFieldInsn(GETSTATIC, TES, "sinkTesselator", "L" + TES + ";");
+        sk.visitMethodInsn(INVOKEVIRTUAL, TES, "getBuilder", "()" + L_BB, false);
+        sk.visitInsn(ARETURN);
+        sk.visitMaxs(0, 0);
+        sk.visitEnd();
+
+        // public static BufferBuilder legacyBuilder(int capacity): the 1.20.x new BufferBuilder(capacity), a builder of
+        // its own stand-in tesselator, so its begin, vertex and end calls run like the shared one's.
+        MethodVisitor nb = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "legacyBuilder", "(I)" + L_BB, null, null);
+        nb.visitCode();
+        nb.visitTypeInsn(NEW, TES);
+        nb.visitInsn(DUP);
+        nb.visitVarInsn(ILOAD, 0);
+        nb.visitMethodInsn(INVOKESPECIAL, TES, "<init>", "(I)V", false);
+        nb.visitMethodInsn(INVOKEVIRTUAL, TES, "getBuilder", "()" + L_BB, false);
+        nb.visitInsn(ARETURN);
+        nb.visitMaxs(0, 0);
+        nb.visitEnd();
+
         // public BufferBuilder getBuilder(): drops what the last old builder left, then starts a new one.
         MethodVisitor gb = cw.visitMethod(ACC_PUBLIC, "getBuilder", "()" + L_BB, null, null);
         gb.visitCode();
@@ -146,6 +190,8 @@ public final class RenderBufferSynthetics {
             t.registerMethodRedirect(BUFFER_BUILDER, "begin", "(L" + args[0] + ";L" + args[1] + ";)V", TES, "legacyBegin",
                     LEGACY_BEGIN, true);
         }
+        // 1.21 builders take their memory, topology and format up front, so the old capacity form builds a stand-in's.
+        t.registerConstructorRedirect(BUFFER_BUILDER, "(I)V", TES, "legacyBuilder", "(I)" + L_BB);
         // end() returned the finished buffer, which build() returns now.
         t.registerMethodRedirect(BUFFER_BUILDER, "end", "()Lcom/mojang/blaze3d/vertex/MeshData;", BUFFER_BUILDER, "build",
                 "()Lcom/mojang/blaze3d/vertex/MeshData;");

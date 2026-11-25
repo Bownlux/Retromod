@@ -210,6 +210,12 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         LegacyScatteredMembersBridge.register(transformer);
         // Window, screen click, list, option range and tooltip members old GUI mods call.
         LegacyGuiMembersBridge.register(transformer);
+        // Old text draws, buffer-source graphics and sprite lookups, rebuilt on 26.x render classes.
+        LegacyStandInCallsBridge.register(transformer);
+        // Item transforms on a pose stack, prefixed dynamic textures, the culled translucent type and the blend equation.
+        LegacyRenderGapsBridge.register(transformer);
+        // Old shader program and uniform members, which link to inert stand-ins.
+        LegacyShaderMembersBridge.register(transformer);
         // Members 1.20.1 mods call that later versions removed: respawn points, game profiles, portal targets.
         Legacy1201MemberBridge.register(transformer);
         // Registry tags, structure lookups, curses, permission levels and other calls 1.20.1 and 1.21.1 mods make.

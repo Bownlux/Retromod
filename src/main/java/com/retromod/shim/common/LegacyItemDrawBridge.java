@@ -56,6 +56,8 @@ public final class LegacyItemDrawBridge {
         // Class redirect first, so the getters below also match calls once the type is renamed. The host has no class
         // under the old name, so no mod built for it can name one.
         t.registerClassRedirect(OLD_ITEM_RENDERER, ITEMS);
+        // Any other game call still returning the old renderer answers the same stand-in.
+        t.registerStandInType(ITEMS, ITEMS + ".get" + HELPER_GETTER_DESC);
         // Mods keep the renderer from their constructors on, so each getter answers the one stand-in at any time.
         redirectGetter(t, host, MINECRAFT);
         redirectGetter(t, host, BLOCK_ENTITY_CONTEXT);

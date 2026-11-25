@@ -88,6 +88,8 @@ public final class LegacyFeatureBridge {
         SyntheticEmbedder.registerClassResource(t, SUPPORT, LegacyFeatureSupport.class);
         RebuiltApiClasses.registerTree(t, HELPERS);
         t.registerSyntheticClass(CONFIGURATION, generateConfigurationInterface());
+        // A game call still taking or returning the old configuration, such as the data generator's FeatureUtils, is dropped.
+        t.registerStandInType(CONFIGURATION, null);
         t.registerSyntheticClass(NONE, generateNone());
         t.registerSyntheticClass(CONTEXT, generateContext());
         t.registerSyntheticClass(LEGACY_FEATURE, generateLegacyFeature());
