@@ -7,7 +7,7 @@
 [![CurseForge](https://img.shields.io/badge/Download-CurseForge-F16436.svg)](https://www.curseforge.com/minecraft/mc-mods/retromod)
 
 [Download on Modrinth](https://modrinth.com/mod/retromod) · [CurseForge](https://www.curseforge.com/minecraft/mc-mods/retromod) · [Docs](https://bownlux.github.io/Retromod/) · [Compatibility database](https://bownlux.github.io/Retromod/compatdb/)
-<details><summary>How I contribute nowr</summary>
+<details><summary>How to contribute now</summary>
 So I have adopted a new way to contribute to Retromod and it is where Retromod updates start off, then it 
   goes to a pr to the snapshot branch is what I am calling it but it is a collection of these updates grouped in with each other and this is where it gets thoroughly checked and fixed by translating more test mods with it.
   After that a pr goes to the main branch with all these updates and hashed and a new version of Retromod gets released. Also from modrinth I have adopted their [contributing guidelines](https://github.com/Bownlux/Retromod/blob/main/CHANGELOG.md), please check it out! I hope this is not to confusing and if it is I will revert to the old way but I think this is a cleaner more professional way to use GitHub so for contributors, please do your pr's to the dev branch and not the main branch. This spoiler will be moved to the contributing guide soon.
