@@ -16,6 +16,7 @@ This page keeps the release history readable. The [full technical changelog](htt
 - Carries more old Forge APIs to NeoForge: permissions, tags, mod info, Forge fluids, item pickup and spawn events; and old config tracker, burn time, and loot builder calls on newer Forge and NeoForge hosts.
 - Repairs old screens on 26.x: text click handling, widget click and drag code, image buttons, tooltip components, window scale and frame rate calls, and sky darkness.
 - Repairs old rendering calls on 26.x so more 1.20.1 and 1.21.1 mods link: text draws, item transforms, held-item and head layers, old shader code, and several removed render helpers.
+- Repairs old text draws, resource listings, biome carvers, game events, villager professions, and `RegistryObject.isPresent()` for mods from older eras, and reads a 1.12.2 `mcmod.info` that is not valid JSON.
 <!--s6-docs-->
 
 ### Snapshot 5, November 20, 2026

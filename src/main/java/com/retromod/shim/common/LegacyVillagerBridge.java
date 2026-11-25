@@ -8,6 +8,7 @@ import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import com.retromod.core.SyntheticEmbedder;
+import com.retromod.util.McReflect;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
@@ -54,13 +55,30 @@ public final class LegacyVillagerBridge {
     static final String OLD_POI = "(Ljava/lang/String;Ljava/util/Set;II)V";
     static final String OLD_PROFESSION = "(Ljava/lang/String;L" + POI + ";L" + IMMUTABLE_SET + ";L"
             + IMMUTABLE_SET + ";" + SOUND + ")V";
+    private static final String COMPONENT = "net/minecraft/network/chat/Component";
+    private static final String INT_MAP = "it/unimi/dsi/fastutil/ints/Int2ObjectMap";
+    private static final String MATCHERS = "L" + PREDICATE + ";L" + PREDICATE + ";L" + IMMUTABLE_SET + ";L" + IMMUTABLE_SET + ";" + SOUND;
+
+    /** The host's profession constructor: a string name until 1.21.5, a component name after, and trade sets from 26.1. */
+    enum ProfessionShape {
+        STRING_NAME("(Ljava/lang/String;" + MATCHERS + ")V"),
+        COMPONENT_NAME("(L" + COMPONENT + ";" + MATCHERS + ")V"),
+        COMPONENT_NAME_TRADE_SETS("(L" + COMPONENT + ";" + MATCHERS + "L" + INT_MAP + ";)V");
+
+        final String constructor;
+
+        ProfessionShape(String constructor) {
+            this.constructor = constructor;
+        }
+    }
 
     private LegacyVillagerBridge() {
     }
 
     public static void register(RetromodTransformer transformer) {
+        ClassNode hostProfession = ClassResourceInspector.read(villagerPackage(hostMovedVillagerClasses()) + "VillagerProfession");
         transformer.registerSyntheticClass(MATCH, generateMatch());
-        transformer.registerSyntheticClass(SYNTH, generate());
+        transformer.registerSyntheticClass(SYNTH, generate(professionShape(hostProfession), registryObjectsAreDeferredHolders()));
         transformer.registerConstructorRedirect(POI, OLD_POI, SYNTH, "poiType",
                 "(Ljava/lang/String;Ljava/util/Set;II)L" + POI + ";");
         transformer.registerConstructorRedirect(PROFESSION, OLD_PROFESSION, SYNTH, "profession",
@@ -126,6 +144,31 @@ public final class LegacyVillagerBridge {
         return cw.toByteArray();
     }
 
+    /** The profession constructor the host declares; offline, the one of the target version. */
+    static ProfessionShape professionShape(ClassNode profession) {
+        if (profession != null) {
+            for (MethodNode method : profession.methods) {
+                if (!method.name.equals("<init>")) continue;
+                for (ProfessionShape shape : ProfessionShape.values()) {
+                    if (method.desc.equals(shape.constructor)) return shape;
+                }
+            }
+        }
+        if (RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.1") >= 0) {
+            return ProfessionShape.COMPONENT_NAME_TRADE_SETS;
+        }
+        if (RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21.5") >= 0) {
+            return ProfessionShape.COMPONENT_NAME;
+        }
+        return ProfessionShape.STRING_NAME;
+    }
+
+    /** Whether Forge's RegistryObject becomes NeoForge's DeferredHolder, as the Forge to NeoForge shim moves it from 1.21. */
+    static boolean registryObjectsAreDeferredHolders() {
+        return McReflect.isNeoForge()
+                && RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21") >= 0;
+    }
+
     /** True once the bridge is registered, so the call-site pass runs only where it can link. */
     public static boolean isRegistered(RetromodTransformer transformer) {
         return transformer.getSyntheticClasses().containsKey(SYNTH);
@@ -176,6 +219,10 @@ public final class LegacyVillagerBridge {
     }
 
     static byte[] generate() {
+        return generate(professionShape(null), registryObjectsAreDeferredHolders());
+    }
+
+    static byte[] generate(ProfessionShape professionShape, boolean deferredHolders) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
             @Override
             protected String getCommonSuperClass(String first, String second) {
@@ -183,7 +230,7 @@ public final class LegacyVillagerBridge {
             }
         };
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, SYNTH, null, "java/lang/Object", null);
-        emitPending(cw);
+        emitPending(cw, deferredHolders);
 
         MethodVisitor poi = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "poiType",
                 "(Ljava/lang/String;Ljava/util/Set;II)L" + POI + ";", null, null);
@@ -217,7 +264,7 @@ public final class LegacyVillagerBridge {
         profession.visitCode();
         profession.visitTypeInsn(NEW, PROFESSION);
         profession.visitInsn(DUP);
-        profession.visitVarInsn(ALOAD, 0);
+        pushProfessionName(profession, professionShape);
         for (int i = 0; i < 2; i++) {
             profession.visitTypeInsn(NEW, MATCH);
             profession.visitInsn(DUP);
@@ -227,8 +274,13 @@ public final class LegacyVillagerBridge {
         profession.visitVarInsn(ALOAD, 2);
         profession.visitVarInsn(ALOAD, 3);
         profession.visitVarInsn(ALOAD, 4);
-        profession.visitMethodInsn(INVOKESPECIAL, PROFESSION, "<init>", "(Ljava/lang/String;L" + PREDICATE
-                + ";L" + PREDICATE + ";L" + IMMUTABLE_SET + ";L" + IMMUTABLE_SET + ";" + SOUND + ")V", false);
+        // 26.1 reads trades from trade sets, and an old profession has none, so it has no trades. The rebuilt
+        // trade events drop what a mod adds for it too, since they write into a profession's own trade sets.
+        if (professionShape == ProfessionShape.COMPONENT_NAME_TRADE_SETS) {
+            profession.visitMethodInsn(INVOKESTATIC, "it/unimi/dsi/fastutil/ints/Int2ObjectMaps", "emptyMap",
+                    "()L" + INT_MAP + ";", false);
+        }
+        profession.visitMethodInsn(INVOKESPECIAL, PROFESSION, "<init>", professionShape.constructor, false);
         profession.visitInsn(ARETURN);
         profession.visitMaxs(0, 0);
         profession.visitEnd();
@@ -237,8 +289,29 @@ public final class LegacyVillagerBridge {
         return cw.toByteArray();
     }
 
+    /**
+     * The old string name, or from 1.21.5 the display name it stands for: the key Forge's villager
+     * name used, with the name itself as the fallback text.
+     */
+    private static void pushProfessionName(MethodVisitor mv, ProfessionShape shape) {
+        if (shape == ProfessionShape.STRING_NAME) {
+            mv.visitVarInsn(ALOAD, 0);
+            return;
+        }
+        // "entity.minecraft.villager." + name, with a namespaced "mod:name" written as "mod.name".
+        mv.visitLdcInsn("entity.minecraft.villager.");
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitIntInsn(BIPUSH, ':');
+        mv.visitIntInsn(BIPUSH, '.');
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "replace", "(CC)Ljava/lang/String;", false);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "concat", "(Ljava/lang/String;)Ljava/lang/String;", false);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKESTATIC, COMPONENT, "translatableWithFallback",
+                "(Ljava/lang/String;Ljava/lang/String;)Lnet/minecraft/network/chat/MutableComponent;", true);
+    }
+
     /** The placeholder map, {@code poiOrPending}, and {@code resolve}. */
-    private static void emitPending(ClassWriter cw) {
+    private static void emitPending(ClassWriter cw, boolean deferredHolders) {
         cw.visitField(ACC_PRIVATE | ACC_STATIC | ACC_FINAL, "PENDING", PENDING_DESC, null, null).visitEnd();
         MethodVisitor clinit = cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null, null);
         clinit.visitCode();
@@ -258,7 +331,8 @@ public final class LegacyVillagerBridge {
         pending.visitCode();
         Label absent = new Label();
         pending.visitVarInsn(ALOAD, 0);
-        pending.visitMethodInsn(INVOKEVIRTUAL, REGISTRY_OBJECT, "isPresent", "()Z", false);
+        // NeoForge's DeferredHolder, which the registry object becomes there, asks isBound instead.
+        pending.visitMethodInsn(INVOKEVIRTUAL, REGISTRY_OBJECT, deferredHolders ? "isBound" : "isPresent", "()Z", false);
         pending.visitJumpInsn(IFEQ, absent);
         pending.visitVarInsn(ALOAD, 0);
         pending.visitMethodInsn(INVOKEVIRTUAL, REGISTRY_OBJECT, "get", "()Ljava/lang/Object;", false);

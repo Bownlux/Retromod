@@ -4,8 +4,11 @@
  */
 package com.retromod.shim.forge;
 
+import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
 import com.retromod.core.SyntheticEmbedder;
+import com.retromod.shim.common.RebuiltApiClasses;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
@@ -61,6 +64,10 @@ public final class LegacyEntityApi120Adapter {
     static final String NEW_PASSENGER = "()L" + LIVING + ";";
     static final String EYE_BLOCK_POSITION = "()L" + BLOCK_POS + ";";
     static final String OLD_GAME_EVENT = "(L" + GAME_EVENT + ";L" + BLOCK_POS + ";)V";
+    private static final String LEVEL_ACCESSOR = "net/minecraft/world/level/LevelAccessor";
+    private static final String LEVEL_GAME_EVENT = "(L" + ENTITY + ";L" + GAME_EVENT + ";L" + BLOCK_POS + ";)V";
+    // The rebuilt 1.20.1 level calls, which post a bare game event through its registry holder.
+    static final String LEVEL_EVENTS = RebuiltApiClasses.ROOT + "minecraft/world/level/LegacyLevelEvents";
     static final String OLD_TO_BLOW = "Ljava/util/List;";
     static final String NEW_TO_BLOW = "Lit/unimi/dsi/fastutil/objects/ObjectArrayList;";
 
@@ -73,7 +80,13 @@ public final class LegacyEntityApi120Adapter {
     }
 
     public static void register(RetromodTransformer transformer) {
-        transformer.registerSyntheticClass(SYNTH, generate());
+        register(transformer, ClassResourceInspector::read);
+    }
+
+    static void register(RetromodTransformer transformer, Function<String, ClassNode> host) {
+        boolean holderEvents = hostTakesGameEventHolders(host.apply(LEVEL_ACCESSOR));
+        if (holderEvents) RebuiltApiClasses.registerTree(transformer, LEVEL_EVENTS);
+        transformer.registerSyntheticClass(SYNTH, generate(holderEvents));
         // 1.20 replaced the plant tag with the tag of blocks a growing tree may overwrite, which
         // holds the same grass, ferns, vines and flowers plus leaves.
         transformer.registerFieldRedirect(BLOCK_TAGS, "REPLACEABLE_PLANTS", TAG_KEY,
@@ -361,7 +374,24 @@ public final class LegacyEntityApi120Adapter {
         return null;
     }
 
+    /** Whether the host's level posts game events as registry holders; offline or on an SRG host, a target from 1.20.5. */
+    static boolean hostTakesGameEventHolders(ClassNode accessor) {
+        String holderEvent = "(L" + ENTITY + ";Lnet/minecraft/core/Holder;L" + BLOCK_POS + ";)V";
+        if (accessor != null) {
+            for (MethodNode method : accessor.methods) {
+                if (!method.name.equals("gameEvent")) continue;
+                if (method.desc.equals(LEVEL_GAME_EVENT)) return false;
+                if (method.desc.equals(holderEvent)) return true;
+            }
+        }
+        return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20.5") >= 0;
+    }
+
     static byte[] generate() {
+        return generate(hostTakesGameEventHolders(null));
+    }
+
+    static byte[] generate(boolean holderEvents) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
             @Override
             protected String getCommonSuperClass(String first, String second) {
@@ -408,8 +438,13 @@ public final class LegacyEntityApi120Adapter {
         event.visitVarInsn(ALOAD, 0);
         event.visitVarInsn(ALOAD, 1);
         event.visitVarInsn(ALOAD, 2);
-        event.visitMethodInsn(INVOKEINTERFACE, "net/minecraft/world/level/LevelAccessor", "gameEvent",
-                "(" + entity + "L" + GAME_EVENT + ";L" + BLOCK_POS + ";)V", true);
+        // 1.20.5 made game events registry holders, so the bare event goes through the rebuilt call.
+        if (holderEvents) {
+            event.visitMethodInsn(INVOKESTATIC, LEVEL_EVENTS, "gameEvent",
+                    "(L" + LEVEL_ACCESSOR + ";" + LEVEL_GAME_EVENT.substring(1), false);
+        } else {
+            event.visitMethodInsn(INVOKEINTERFACE, LEVEL_ACCESSOR, "gameEvent", LEVEL_GAME_EVENT, true);
+        }
         event.visitInsn(RETURN);
         event.visitMaxs(0, 0);
         event.visitEnd();

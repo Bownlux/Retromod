@@ -233,6 +233,12 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "net/minecraftforge/registries/RegistryObject",
             "net/neoforged/neoforge/registries/DeferredHolder"
         );
+        // RegistryObject.isPresent() is DeferredHolder.isBound(); the call may name either owner.
+        for (String holder : new String[]{"net/minecraftforge/registries/RegistryObject",
+                "net/neoforged/neoforge/registries/DeferredHolder"}) {
+            transformer.registerMethodRedirect(holder, "isPresent", "()Z",
+                    "net/neoforged/neoforge/registries/DeferredHolder", "isBound", "()Z");
+        }
         // An addon's library has its own NeoForge port, which declares the fields Forge typed
         // RegistryObject as Supplier, Holder or DeferredHolder, so they are read by name instead.
         String libraryFields = "com/retromod/shim/forge/embedded/LibraryRegistryFields";

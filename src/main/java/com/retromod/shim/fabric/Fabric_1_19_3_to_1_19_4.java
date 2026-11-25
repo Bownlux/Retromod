@@ -73,6 +73,11 @@ public class Fabric_1_19_3_to_1_19_4 implements VersionShim {
             "net/minecraft/world/entity/Entity", "dismountsUnderwater",
             "()Z"
         );
+        // Limb swing, the text display mode and the float inverse square root, by the Mojang names
+        // a Fabric mod carries only after the 26.1 remap.
+        if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            com.retromod.shim.common.LegacyClientRenderBridge.register(transformer);
+        }
     }
 
     @Override
