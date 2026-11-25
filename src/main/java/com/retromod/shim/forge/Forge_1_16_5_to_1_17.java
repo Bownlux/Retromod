@@ -7,7 +7,7 @@ package com.retromod.shim.forge;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.VersionShim;
 
-/** Forge 1.16.5 to 1.17: the tag rework dropped getAllTags(). */
+/** Forge 1.16.5 to 1.17: the tag rework dropped getAllTags(), and RegistryObject moved to the registries package. */
 public class Forge_1_16_5_to_1_17 implements VersionShim {
 
     @Override public String getShimName() { return "Forge 1.16.5 to 1.17"; }
@@ -21,6 +21,8 @@ public class Forge_1_16_5_to_1_17 implements VersionShim {
         // direct move table so the entire package migration runs, not only member shims.
         new Forge_1_12_2_to_1_13_2().loadDirectClassMoves(transformer);
         registerConfigMoves(transformer);
+        // 1.17 moved RegistryObject from fml to registries with the same members; NeoForge's chain takes it on to DeferredHolder.
+        transformer.registerClassRedirect("net/minecraftforge/fml/RegistryObject", "net/minecraftforge/registries/RegistryObject");
         transformer.registerClassRedirect(
             "net/minecraft/block/FlowingFluidBlock",
             "net/minecraft/world/level/block/LiquidBlock"

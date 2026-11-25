@@ -2,5 +2,7 @@
 package net.minecraft.core;
 
 public interface ClientAsset {
-    interface Texture extends ClientAsset {}
+    interface Texture extends ClientAsset {
+        net.minecraft.resources.Identifier texturePath();
+    }
 }

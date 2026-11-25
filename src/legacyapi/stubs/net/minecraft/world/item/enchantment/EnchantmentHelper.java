@@ -2,5 +2,6 @@
 package net.minecraft.world.item.enchantment;
 
 public class EnchantmentHelper {
+    public static ItemEnchantments getEnchantmentsForCrafting(net.minecraft.world.item.ItemStack stack) { throw new UnsupportedOperationException(); }
     public static boolean has(net.minecraft.world.item.ItemStack stack, net.minecraft.core.component.DataComponentType<?> type) { throw new UnsupportedOperationException(); }
 }

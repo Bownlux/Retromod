@@ -1,0 +1,102 @@
+/*
+ * Retromod - Backwards Compatibility Layer for Minecraft Mods
+ * Copyright (c) 2026 Bownlux. Licensed under MIT License.
+ */
+package com.retromod.shim.fabric;
+
+import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
+import com.retromod.shim.forge.LegacyRandomSourceAdapter;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldInsnNode;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/** The registry fields and randoms of a pre-1.19.3 Fabric mod, by the Mojang names it carries after the 26.x remap. */
+class FabricOldEraMovesTest {
+
+    private static final String MOD = "test/registry/Old";
+    private final String savedTarget = RetromodVersion.TARGET_MC_VERSION;
+    private RetromodTransformer transformer;
+
+    @BeforeEach
+    void setUp() {
+        transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+    }
+
+    @AfterEach
+    void tearDown() {
+        transformer.clearRedirectsForTesting();
+        RetromodVersion.TARGET_MC_VERSION = savedTarget;
+    }
+
+    @Test
+    @DisplayName("on 26.3 Registry.ITEM reads BuiltInRegistries.ITEM and the dimension key reads Registries.DIMENSION")
+    void registryFieldsMove() {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        new Fabric_1_19_2_to_1_19_3().registerRedirects(transformer);
+        List<String> fields = fields(transformer.transformClass(oldReads(), MOD));
+        assertTrue(fields.contains("net/minecraft/core/registries/BuiltInRegistries.ITEM"), fields.toString());
+        assertTrue(fields.contains("net/minecraft/core/registries/Registries.DIMENSION"), fields.toString());
+    }
+
+    @Test
+    @DisplayName("before 26.1 the Fabric runtime is intermediary-named, so the Mojang-named moves stay off")
+    void intermediaryHostsKeepTheirNames() {
+        RetromodVersion.TARGET_MC_VERSION = "1.21.11";
+        new Fabric_1_19_2_to_1_19_3().registerRedirects(transformer);
+        new Fabric_1_18_2_to_1_19().registerRedirects(transformer);
+        List<String> fields = fields(transformer.transformClass(oldReads(), MOD));
+        assertTrue(fields.contains("net/minecraft/core/Registry.ITEM"), fields.toString());
+        assertFalse(transformer.getSyntheticClasses().containsKey(LegacyRandomSourceAdapter.VIEW));
+    }
+
+    @Test
+    @DisplayName("on 26.3 a pre-1.19 Fabric mod's randoms are read through the Random view, as Forge mods' are")
+    void randomViewShips() {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        new Fabric_1_18_2_to_1_19().registerRedirects(transformer);
+        assertTrue(transformer.getSyntheticClasses().containsKey(LegacyRandomSourceAdapter.VIEW));
+    }
+
+    private static byte[] oldReads() {
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, MOD, null, "java/lang/Object", null);
+        MethodVisitor mv = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "run", "()V", null, null);
+        mv.visitCode();
+        mv.visitFieldInsn(Opcodes.GETSTATIC, "net/minecraft/core/Registry", "ITEM", "Lnet/minecraft/core/DefaultedRegistry;");
+        mv.visitInsn(Opcodes.POP);
+        mv.visitFieldInsn(Opcodes.GETSTATIC, "net/minecraft/core/Registry", "DIMENSION_REGISTRY", "Lnet/minecraft/resources/ResourceKey;");
+        mv.visitInsn(Opcodes.POP);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
+    private static List<String> fields(byte[] bytes) {
+        ClassNode node = new ClassNode();
+        new ClassReader(bytes).accept(node, 0);
+        List<String> fields = new ArrayList<>();
+        node.methods.forEach(method -> {
+            for (AbstractInsnNode insn : method.instructions) {
+                if (insn instanceof FieldInsnNode field) fields.add(field.owner + "." + field.name);
+            }
+        });
+        return fields;
+    }
+}

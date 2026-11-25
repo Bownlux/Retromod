@@ -110,6 +110,36 @@ class LegacyOptionsGapsTest {
                 && redirects.get(k).owner().equals(presets)), redirects.keySet().toString());
     }
 
+    @Test
+    @DisplayName("a pre-1.19 read and write of the graphics mode field reach the preset")
+    void graphicsModeFieldReachesThePreset() {
+        RetromodTransformer t = fresh();
+        savedVersion = RetromodVersion.TARGET_MC_VERSION;
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        LegacyOptionsBridge.register(t, name -> null);
+        String status = "L" + LegacyOptionsBridge.GRAPHICS_STATUS + ";";
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/gaps/Mode", null, "java/lang/Object", null);
+        MethodVisitor mv = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "run", "()V", null, null);
+        mv.visitCode();
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitFieldInsn(Opcodes.GETFIELD, LegacyOptionsBridge.OPTIONS, "graphicsMode", status);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitFieldInsn(Opcodes.PUTFIELD, LegacyOptionsBridge.OPTIONS, "graphicsMode", status);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(2, 0);
+        mv.visitEnd();
+        writer.visitEnd();
+
+        List<String> refs = refs(t.transformClass(writer.toByteArray(), "test/gaps/Mode"));
+        String presets = RebuiltApiClasses.ROOT + "minecraft/client/LegacyGraphicsPresets";
+        String preset = "L" + LegacyOptionsBridge.GRAPHICS_PRESET + ";";
+        assertTrue(refs.contains(presets + ".closest(L" + LegacyOptionsBridge.OPTIONS + ";)" + preset), refs.toString());
+        assertTrue(refs.contains(presets + ".apply(L" + LegacyOptionsBridge.OPTIONS + ";" + preset + ")V"), refs.toString());
+    }
+
     private static RetromodTransformer fresh() {
         RetromodTransformer t = RetromodTransformer.getInstance();
         t.clearRedirectsForTesting();

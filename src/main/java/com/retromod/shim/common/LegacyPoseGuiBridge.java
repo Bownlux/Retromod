@@ -19,8 +19,8 @@ import org.objectweb.asm.tree.ClassNode;
  * {@code blit}, {@code fill}, {@code drawString}, and {@code drawCenteredString} of
  * {@code GuiComponent} and the classes mods called them through, {@code Font.draw} and
  * {@code drawShadow}, and the texture and color set through {@code RenderSystem}. A screen's own
- * {@code render(PoseStack, ...)} override is not called by 26.1, so old screens still draw only
- * their widgets.
+ * {@code render(PoseStack, ...)} runs through {@link LegacyPoseScreenAdapter}, with the background,
+ * tooltip and widget render calls it makes.
  */
 public final class LegacyPoseGuiBridge {
 
@@ -28,6 +28,7 @@ public final class LegacyPoseGuiBridge {
     private static final String POSE = "Lcom/mojang/blaze3d/vertex/PoseStack;";
     private static final String FONT = "Lnet/minecraft/client/gui/Font;";
     private static final String OBJECT = "Ljava/lang/Object;";
+    private static final String TEXTURE_MANAGER = "net/minecraft/client/renderer/texture/TextureManager";
     private static final String[] TEXTS = {"Ljava/lang/String;", "Lnet/minecraft/network/chat/Component;",
             "Lnet/minecraft/util/FormattedCharSequence;"};
     private static final String[] DRAW_OWNERS = {
@@ -43,10 +44,94 @@ public final class LegacyPoseGuiBridge {
             "client/event/ScreenEvent$Render", "client/event/ScreenEvent$Render$Pre", "client/event/ScreenEvent$Render$Post",
             "client/event/ScreenEvent$BackgroundRendered"};
 
+    /** Host types with an old {@code render(pose, x, y, delta)} that old code called on a screen or widget it held. */
+    static final String[] RENDERABLES = {
+            "net/minecraft/client/gui/screens/Screen", "net/minecraft/client/gui/components/Renderable",
+            "net/minecraft/client/gui/components/AbstractWidget", "net/minecraft/client/gui/components/AbstractButton",
+            "net/minecraft/client/gui/components/Button", "net/minecraft/client/gui/components/ImageButton",
+            "net/minecraft/client/gui/components/Checkbox", "net/minecraft/client/gui/components/CycleButton",
+            "net/minecraft/client/gui/components/EditBox", "net/minecraft/client/gui/components/AbstractSliderButton",
+            "net/minecraft/client/gui/components/AbstractSelectionList", "net/minecraft/client/gui/components/ObjectSelectionList",
+            "net/minecraft/client/gui/components/ContainerObjectSelectionList", "net/minecraft/client/gui/components/OptionsList",
+            "net/minecraft/client/gui/screens/options/controls/KeyBindsList"};
+
     private LegacyPoseGuiBridge() {}
 
     public static void register(RetromodTransformer transformer) {
-        registerRedirects(transformer, ClassResourceInspector.read("com/mojang/blaze3d/systems/RenderSystem"));
+        ClassNode renderSystem = ClassResourceInspector.read("com/mojang/blaze3d/systems/RenderSystem");
+        registerRedirects(transformer, renderSystem);
+        registerOldBinds(transformer, renderSystem, ClassResourceInspector.read(TEXTURE_MANAGER));
+        registerScreens(transformer);
+    }
+
+    /** The 1.16 texture bind and tint, which 1.17 renamed and 26.1 removed; they feed the next old GUI blit as the newer forms do. */
+    static void registerOldBinds(RetromodTransformer transformer, ClassNode renderSystem, ClassNode textureManager) {
+        for (String bind : new String[] {"bind", "bindForSetup"}) {
+            if (!lacksOrUnknown(textureManager, bind)) continue;
+            for (String id : new String[] {"Lnet/minecraft/resources/Identifier;", "Lnet/minecraft/resources/ResourceLocation;"}) {
+                transformer.registerMethodRedirect(TEXTURE_MANAGER, bind, "(" + id + ")V", HELPER, "bindTexture",
+                        "(" + OBJECT + OBJECT + ")V", true);
+                // From 1.20 GUI code names its texture in each blit, so a later bindForSetup is renderer setup, not a GUI bind.
+                if (bind.equals("bindForSetup")) {
+                    transformer.limitRedirectToModsBefore(TEXTURE_MANAGER, bind, "(" + id + ")V", "1.20");
+                }
+            }
+        }
+        if (!lacksOrUnknown(renderSystem, "color4f")) return;
+        transformer.registerMethodRedirect("com/mojang/blaze3d/systems/RenderSystem", "color4f", "(FFFF)V",
+                HELPER, "setShaderColor", "(FFFF)V");
+        // The state manager's own tint, under its 1.16 home and the 26.3 one.
+        for (String manager : new String[] {"com/mojang/blaze3d/platform/GlStateManager",
+                "com/mojang/renderpearl/backend/opengl/GlStateManager"}) {
+            for (String name : new String[] {"color4f", "_color4f"}) {
+                transformer.registerMethodRedirect(manager, name, "(FFFF)V", HELPER, "setShaderColor", "(FFFF)V");
+            }
+        }
+    }
+
+    /** Whether the host class lacks every method of that name; offline, where nothing is readable, it counts as lacking it. */
+    private static boolean lacksOrUnknown(ClassNode owner, String method) {
+        return owner == null || owner.methods.stream().noneMatch(m -> m.name.equals(method));
+    }
+
+    /** Old screens' own render, which {@link LegacyPoseScreenAdapter} reaches, and the screen and widget calls it makes. */
+    static void registerScreens(RetromodTransformer transformer) {
+        String screens = LegacyPoseScreenAdapter.HELPER;
+        RebuiltApiClasses.registerTree(transformer, screens);
+        // A super call stays for the adapter: through the helper it would run the screen's own render again.
+        String render = "(" + POSE + "IIF)V";
+        for (String owner : RENDERABLES) {
+            transformer.registerWrappingMethodRedirect(owner, "render", render, screens, "render",
+                    "(Lnet/minecraft/client/gui/components/Renderable;" + render.substring(1));
+        }
+        // 26.1 gave Button's constructor a narration argument; this is the only registration on every loader.
+        String button = "net/minecraft/client/gui/components/Button";
+        String oldButton = "(IIIILnet/minecraft/network/chat/Component;L" + button + "$OnPress;)";
+        transformer.registerConstructorRedirect(button, oldButton + "V", screens, "button", oldButton + "L" + button + ";");
+        transformer.registerSuperConstructorRedirect(button, oldButton + "V",
+                oldButton.replace(")", "L" + button + "$CreateNarration;)") + "V",
+                button, "DEFAULT_NARRATION", "L" + button + "$CreateNarration;");
+        String screen = "net/minecraft/client/gui/screens/Screen";
+        String receiver = "(" + OBJECT + POSE;
+        // The extract names are what the render-to-extract naming rule gives these calls when nothing else matched them.
+        for (String background : new String[] {"renderBackground", "extractBackground"}) {
+            transformer.registerInheritedMethodRedirect(screen, background, "(" + POSE + ")V",
+                    screens, "renderBackground", receiver + ")V");
+            transformer.registerInheritedMethodRedirect(screen, background, "(" + POSE + "I)V",
+                    screens, "renderBackground", receiver + "I)V");
+        }
+        transformer.registerInheritedMethodRedirect(screen, "renderDirtBackground", "(I)V",
+                screens, "renderDirtBackground", "(" + OBJECT + "I)V");
+        String component = "Lnet/minecraft/network/chat/Component;";
+        String[][] tooltips = {
+                {"renderTooltip", component, "renderTooltip"}, {"extractTooltip", component, "renderTooltip"},
+                {"renderTooltip", "Ljava/util/List;", "renderTooltip"}, {"extractTooltip", "Ljava/util/List;", "renderTooltip"},
+                {"renderComponentTooltip", "Ljava/util/List;", "renderComponentTooltip"},
+                {"extractComponentTooltip", "Ljava/util/List;", "renderComponentTooltip"}};
+        for (String[] tooltip : tooltips) {
+            transformer.registerInheritedMethodRedirect(screen, tooltip[0], "(" + POSE + tooltip[1] + "II)V",
+                    screens, tooltip[2], receiver + tooltip[1] + "II)V");
+        }
     }
 
     static void registerRedirects(RetromodTransformer transformer, ClassNode renderSystem) {
@@ -83,6 +168,12 @@ public final class LegacyPoseGuiBridge {
                     HELPER, "fontDraw", "(" + OBJECT + OBJECT + OBJECT + "FFI)I", true);
             transformer.registerMethodRedirect("net/minecraft/client/gui/Font", "drawShadow", "(" + POSE + text + "FFI)I",
                     HELPER, "fontDrawShadow", "(" + OBJECT + OBJECT + OBJECT + "FFI)I", true);
+        }
+        // A Fabric mod's draw keeps its intermediary id, which the 26.x name table names drawInBatch. The shadowed
+        // sequence draw shares that name, so it draws without its shadow.
+        for (String text : new String[] {TEXTS[0], TEXTS[2]}) {
+            transformer.registerMethodRedirect("net/minecraft/client/gui/Font", "drawInBatch", "(" + POSE + text + "FFI)I",
+                    HELPER, "fontDraw", "(" + OBJECT + OBJECT + OBJECT + "FFI)I", true);
         }
 
         // Only where the host dropped them: a newer mod's own calls must reach the real methods.

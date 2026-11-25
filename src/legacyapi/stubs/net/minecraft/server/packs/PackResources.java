@@ -8,4 +8,5 @@ import net.minecraft.server.packs.resources.IoSupplier;
 
 public interface PackResources extends PackMetadataResources {
     interface ResourceOutput extends BiConsumer<Identifier, IoSupplier<InputStream>> {}
+    IoSupplier<InputStream> getResource(PackType type, Identifier id);
 }

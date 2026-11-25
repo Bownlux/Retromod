@@ -32,4 +32,7 @@ public class GuiGraphicsExtractor {
     public void item(ItemStack itemStack, int x, int y, int seed) { throw new UnsupportedOperationException(); }
     public void setTooltipForNextFrame(Font font, List<FormattedCharSequence> tooltip, ClientTooltipPositioner positioner, int xo, int yo,
             boolean replaceExisting) { throw new UnsupportedOperationException(); }
+    public void setTooltipForNextFrame(net.minecraft.network.chat.Component text, int x, int y) { throw new UnsupportedOperationException(); }
+    public void setTooltipForNextFrame(List<FormattedCharSequence> lines, int x, int y) { throw new UnsupportedOperationException(); }
+    public void setComponentTooltipForNextFrame(Font font, List<net.minecraft.network.chat.Component> lines, int x, int y) { throw new UnsupportedOperationException(); }
 }

@@ -132,6 +132,42 @@ class MinecraftOverlayBridge26xTest {
         assertTrue(callsSetter, "the setter must call the real Gui.setOverlay(Overlay)");
     }
 
+    @Test
+    @DisplayName("a read and a write of the widened Minecraft.overlay field go through Gui's overlay accessors on 26.2")
+    void overlayFieldHopsThroughGui() {
+        Mc26_1To26_2CoreMoves.register(transformer);
+        String overlay = "L" + OVERLAY + ";";
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V17, ACC_PUBLIC, "test/OverlayCheck", null, "java/lang/Object", null);
+        MethodVisitor swap = writer.visitMethod(ACC_PUBLIC | ACC_STATIC, "swap",
+                "(L" + MINECRAFT + ";" + overlay + ")" + overlay, null, null);
+        swap.visitCode();
+        swap.visitVarInsn(ALOAD, 0);
+        swap.visitVarInsn(ALOAD, 1);
+        swap.visitFieldInsn(Opcodes.PUTFIELD, MINECRAFT, "overlay", overlay);
+        swap.visitVarInsn(ALOAD, 0);
+        swap.visitFieldInsn(GETFIELD, MINECRAFT, "overlay", overlay);
+        swap.visitInsn(ARETURN);
+        swap.visitMaxs(2, 2);
+        swap.visitEnd();
+        writer.visitEnd();
+
+        MethodNode transformed = method(transformer.transformClass(writer.toByteArray(), "test/OverlayCheck.class"), "swap");
+        boolean fieldSurvives = false;
+        boolean setsThroughGui = false;
+        boolean readsThroughGui = false;
+        for (AbstractInsnNode instruction : transformed.instructions) {
+            if (instruction instanceof FieldInsnNode field && field.name.equals("overlay")) fieldSurvives = true;
+            if (instruction instanceof MethodInsnNode call) {
+                setsThroughGui |= call.name.equals("setOverlay") && call.desc.endsWith(overlay + ")V");
+                readsThroughGui |= call.name.equals("overlay") || (call.name.equals("getOverlay") && call.desc.endsWith(")" + overlay));
+            }
+        }
+        assertFalse(fieldSurvives, "Minecraft has no overlay field on 26.2");
+        assertTrue(setsThroughGui, "the write becomes Gui.setOverlay");
+        assertTrue(readsThroughGui, "the read becomes Gui.overlay()");
+    }
+
     private static MethodNode method(byte[] classBytes, String name) {
         ClassNode node = new ClassNode();
         new ClassReader(classBytes).accept(node, 0);

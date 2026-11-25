@@ -7,5 +7,6 @@ public interface Component extends FormattedText {
     static MutableComponent translatable(String key) { throw new UnsupportedOperationException(); }
     Style getStyle();
     default ComponentContents getContents() { throw new UnsupportedOperationException(); }
+    default String getString() { throw new UnsupportedOperationException(); }
     default MutableComponent copy() { throw new UnsupportedOperationException(); }
 }

@@ -91,6 +91,32 @@ class LegacyToolAndMemberBridgeTest {
     }
 
     @Test
+    void fabricBreakEventUnderItsHostNameReachesTheHelper() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        Legacy1205MemberBridge.registerRedirects(transformer, Legacy1205MemberBridge.MEMBERS,
+                List.of(Legacy1205MemberBridge.CLASS_RENAMES), true, Legacy1205MemberBridge.HostShape.AT_1_20_5);
+        String living = Legacy1205MemberBridge.LIVING;
+        String slot = "L" + Legacy1205MemberBridge.SLOT + ";";
+
+        // The 26.x name table names a Fabric mod's broadcastBreakEvent onEquippedItemBroken, with the old descriptor.
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/ModTool", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "broke", "(L" + living + ";" + slot + ")V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, living, "onEquippedItemBroken", "(" + slot + ")V", false);
+        mv.visitInsn(Opcodes.RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        List<String> calls = calls(transformer.transformClass(cw.toByteArray(), "test/ModTool.class"), "broke");
+        assertTrue(calls.contains(Legacy1205MemberBridge.HELPER + ".onEquippedItemBroken(L" + living + ";" + slot + ")V"), calls.toString());
+    }
+
+    @Test
     void bufferReadersAndWritersBecomeStreamCodecsWithTheirMethods() {
         RetromodTransformer transformer = RetromodTransformer.getInstance();
         transformer.clearRedirectsForTesting();

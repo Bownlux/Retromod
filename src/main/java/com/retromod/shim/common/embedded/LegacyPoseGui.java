@@ -44,11 +44,43 @@ public final class LegacyPoseGui {
         }
     }
 
+    /** An old screen's own {@code render(pose, ...)}: a fresh pose stack that draws through the frame's extractor. */
+    public static Object poseForGraphics(Object graphics) {
+        try {
+            Object pose = Class.forName("com.mojang.blaze3d.vertex.PoseStack", true, graphics.getClass().getClassLoader())
+                    .getConstructor().newInstance();
+            GRAPHICS.put(pose, graphics);
+            return pose;
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Retromod could not give an old screen its pose stack", e);
+        }
+    }
+
+    /** The pose stack's extractor with the pose stack's 2D transform pushed, or null; pass a result to {@link #endDraw}. */
+    public static Object beginDraw(Object pose) {
+        return begin(pose);
+    }
+
+    /** Pops the transform {@link #beginDraw} pushed. */
+    public static void endDraw(Object graphics) {
+        end(graphics);
+    }
+
+    /** The extractor behind a pose stack, or null when the pose stack came from somewhere else. */
+    public static Object graphicsOf(Object pose) {
+        return pose == null ? null : GRAPHICS.get(pose);
+    }
+
     // ---- render state ----------------------------------------------------------------------
 
     /** {@code RenderSystem.setShaderTexture(unit, texture)}: the next blit draws this texture. */
     public static void setShaderTexture(int unit, Object textureId) {
         if (unit == 0) texture = textureId;
+    }
+
+    /** {@code textureManager.bind(texture)}, the 1.16 form of the same: the next blit draws this texture. */
+    public static void bindTexture(Object textureManager, Object textureId) {
+        texture = textureId;
     }
 
     /** {@code RenderSystem.setShaderColor(r, g, b, a)}: the next blit is tinted with it. */

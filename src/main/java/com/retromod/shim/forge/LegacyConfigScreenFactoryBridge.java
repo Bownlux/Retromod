@@ -11,6 +11,7 @@ import com.retromod.shim.common.RebuiltApiClasses;
 final class LegacyConfigScreenFactoryBridge {
 
     static final String FORGE_FACTORY = "net/minecraftforge/client/ConfigScreenHandler$ConfigScreenFactory";
+    static final String OLD_FORGE_FACTORY = "net/minecraftforge/client/ConfigGuiHandler$ConfigGuiFactory";
     static final String STAND_IN = RebuiltApiClasses.ROOT + "forge/client/gui/LegacyConfigScreenFactory";
     static final String EXTENSION_POINTS = RebuiltApiClasses.ROOT + "forge/fml/LegacyExtensionPoints";
     static final String REGISTER_DESC = "(Ljava/lang/Class;Ljava/util/function/Supplier;)V";
@@ -22,6 +23,8 @@ final class LegacyConfigScreenFactoryBridge {
         RebuiltApiClasses.registerTree(t, STAND_IN);
         RebuiltApiClasses.registerTree(t, EXTENSION_POINTS);
         t.registerClassRedirect(FORGE_FACTORY, STAND_IN);
+        // Forge 1.18 called the same factory record ConfigGuiHandler.ConfigGuiFactory.
+        t.registerClassRedirect(OLD_FORGE_FACTORY, STAND_IN);
         // The registration names the factory's class, so the key is swapped for NeoForge's on the way through.
         for (String owner : LegacyDisplayTestBridge.OWNERS) {
             t.registerMethodRedirect(owner, "registerExtensionPoint", REGISTER_DESC, EXTENSION_POINTS, "registerExtensionPoint",

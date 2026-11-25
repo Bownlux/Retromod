@@ -220,6 +220,8 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         Legacy1201MemberBridge.register(transformer);
         // Registry tags, structure lookups, curses, permission levels and other calls 1.20.1 and 1.21.1 mods make.
         LegacyGameplayCallsBridge.register(transformer);
+        // Command feedback, item comparison, skins and other members mods for 1.19.4 and older call.
+        LegacyEraCallsBridge.register(transformer);
         // Removed members the big content mods call, rebuilt on their replacements.
         LegacyContentCallsBridge.register(transformer);
         LegacyDepthBlendBridge.registerDepthState(transformer);

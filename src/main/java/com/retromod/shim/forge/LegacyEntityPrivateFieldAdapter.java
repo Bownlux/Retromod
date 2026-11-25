@@ -39,6 +39,8 @@ import java.util.function.Function;
  */
 public final class LegacyEntityPrivateFieldAdapter {
 
+    /** Set by the Forge 1.19 bridge on Forge hosts, where a mod that names no Minecraft version takes this rewrite too. */
+    public static final String UNKNOWN_VERSION_FLAG = "legacy-entity-private-fields-unknown-version";
     static final String ENTITY = "net/minecraft/world/entity/Entity";
     static final String LEVEL_DESC = "Lnet/minecraft/world/level/Level;";
     static final String OLD_LEVEL_GETTER = "getLevel";

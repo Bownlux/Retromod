@@ -630,6 +630,13 @@ public final class Mc26_1To26_2CoreMoves {
             "screen", "()Lnet/minecraft/client/gui/screens/Screen;",
             "setScreen", "(Lnet/minecraft/client/gui/screens/Screen;)V"
         );
+        // The loading overlay field moved to Gui in the same release; mods that widened it read and set it there.
+        t.registerFieldHopAccessor(
+            "net/minecraft/client/Minecraft", "overlay",
+            "gui", "Lnet/minecraft/client/gui/Gui;",
+            "overlay", "()Lnet/minecraft/client/gui/screens/Overlay;",
+            "setOverlay", "(Lnet/minecraft/client/gui/screens/Overlay;)V"
+        );
 
         // Options.hideGui (public boolean on 26.1-snapshot-10) is gone in 26.2: the F1 state moved
         // to Hud.isHidden (private; public isHidden()/toggle(), NO absolute setter; vanilla reads it

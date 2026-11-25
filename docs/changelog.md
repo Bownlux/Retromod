@@ -19,6 +19,7 @@ This page keeps the release history readable. The [full technical changelog](htt
 - Repairs old text draws, resource listings, biome carvers, game events, villager professions, and `RegistryObject.isPresent()` for mods from older eras, and reads a 1.12.2 `mcmod.info` that is not valid JSON.
 - Translates mod jars up to 1 GB without a check, checks larger jars before translating them, and asks on the title screen before translating a jar over 25 GB or one whose check fails.
 - Rebuilds more removed loader events and calls that 1.20.1 and 1.21.1 mods use on NeoForge 26.x, Forge 26.2 and newer, and Fabric 26.x, including the shader, container screen and player render events, old fluid textures, and buffer menu types.
+- Runs old screens built with a pose stack on 26.x, with a fallback to their widgets, and repairs more removed calls, text classes, registry fields, and Forge 1.19 events for mods from 1.12.2 to 1.21.1.
 <!--s6-docs-->
 
 ### Snapshot 5, November 20, 2026
