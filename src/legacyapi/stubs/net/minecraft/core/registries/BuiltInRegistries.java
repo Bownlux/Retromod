@@ -17,4 +17,5 @@ public class BuiltInRegistries {
     private BuiltInRegistries() {}
     public static final net.minecraft.core.DefaultedRegistry<net.minecraft.world.item.Item> ITEM = null;
     public static final net.minecraft.core.Registry<net.minecraft.world.level.block.entity.BlockEntityType<?>> BLOCK_ENTITY_TYPE = null;
+    public static final net.minecraft.core.DefaultedRegistry<net.minecraft.world.level.material.Fluid> FLUID = null;
 }

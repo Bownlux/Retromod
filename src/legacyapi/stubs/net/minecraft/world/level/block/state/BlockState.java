@@ -20,4 +20,6 @@ public class BlockState {
     // Returns the generic S of StateHolder, erased to Object on the host.
     public <T extends Comparable<T>, V extends T> Object setValue(net.minecraft.world.level.block.state.properties.Property<T> property, V value) { throw new UnsupportedOperationException(); }
     public <T extends Comparable<T>> T getValue(net.minecraft.world.level.block.state.properties.Property<T> property) { throw new UnsupportedOperationException(); }
+    // Declared on BlockBehaviour.BlockStateBase on the host; a virtual call resolves either way.
+    public net.minecraft.world.level.material.FluidState getFluidState() { throw new UnsupportedOperationException(); }
 }

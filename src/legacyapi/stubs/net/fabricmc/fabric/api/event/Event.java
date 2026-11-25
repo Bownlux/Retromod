@@ -4,4 +4,5 @@ package net.fabricmc.fabric.api.event;
 public abstract class Event<T> {
     protected Event() {}
     public void register(T listener) { throw new UnsupportedOperationException(); }
+    public final T invoker() { throw new UnsupportedOperationException(); }
 }

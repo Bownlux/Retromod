@@ -113,6 +113,8 @@ public class Forge_26_1_to_26_2 implements VersionShim {
         }
         LegacyForgeEventFactoryBridge.registerForge(transformer);
         LegacyForgeHooksBridge.registerForgeBurnTime(transformer);
+        // 26.2 removed the shader, player render and anger events, the positional fluid reads and the old spawn event constructor.
+        LegacyForgeClientApiBridge.register(transformer);
         // FML's config tracker lost its singleton; the same methods are static now.
         LegacyConfigTrackerBridge.register(transformer);
         // Enchantments became a data registry, and Forge's key list dropped its alias of the vanilla key.

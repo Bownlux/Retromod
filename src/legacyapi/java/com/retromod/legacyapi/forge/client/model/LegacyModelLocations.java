@@ -193,7 +193,7 @@ public final class LegacyModelLocations {
     }
 
     /** Whether the state has every {@code name=value} pair the variant lists; an empty variant matches every state. */
-    static boolean matches(BlockState state, String variant) {
+    public static boolean matches(BlockState state, String variant) {
         if (variant.isEmpty()) return true;
         List<Property<?>> properties = new ArrayList<>(state.getBlock().getStateDefinition().getProperties());
         for (String pair : variant.split(",")) {
@@ -207,7 +207,7 @@ public final class LegacyModelLocations {
     }
 
     /** The state a variant names: the one it spells, else the first it matches, else null. */
-    static BlockState stateOf(Block block, String variant) {
+    public static BlockState stateOf(Block block, String variant) {
         Map<String, BlockState> byVariant = VARIANTS.computeIfAbsent(block, LegacyModelLocations::variants);
         BlockState exact = byVariant.get(variant);
         if (exact != null) return exact;
@@ -225,7 +225,7 @@ public final class LegacyModelLocations {
     }
 
     /** The block a location names, or null when no block has that id. */
-    static Block blockOf(Identifier location) {
+    public static Block blockOf(Identifier location) {
         Identifier id = id(location);
         Block block = BuiltInRegistries.BLOCK.getValue(id);
         // The block registry answers air for an unknown id.

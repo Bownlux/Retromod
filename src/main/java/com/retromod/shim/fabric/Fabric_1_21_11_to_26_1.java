@@ -240,6 +240,9 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
         com.retromod.shim.api.fabric.LegacyLevelRenderBridge.register(transformer);
         // BuiltinItemRendererRegistry, which Fabric API removed in 1.21.4, rebuilt on item model wrapping.
         LegacyBuiltinItemRendererBridge.register(transformer);
+        // Fabric API for 26.1 dropped the fluid render handlers, FabricBakedModel, the core shader callback and the
+        // buffer form of extended menu types.
+        LegacyFabricClientApiBridge.register(transformer);
         transformer.registerClassRedirect(
             "net/fabricmc/fabric/api/client/rendering/v1/WorldRenderContext",
             "net/fabricmc/fabric/api/client/rendering/v1/level/LevelRenderContext"

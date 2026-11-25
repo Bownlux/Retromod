@@ -88,13 +88,30 @@ public final class LegacyForgeHooksBridge {
     /** Forge 26.2 dropped {@code ForgeHooks.getBurnTime}; the fuel values' Forge-patched read does the same work. */
     public static void registerForgeBurnTime(RetromodTransformer transformer) {
         if (!ForgeHostMembers.lacksMethod(FORGE_HOOKS, "getBurnTime", BURN_TIME_DESC, ForgeHostShape.FIRST_CHECKED_VERSION)) return;
-        // 26.3 moved fuel into an item component and dropped FuelValues, which the rebuilt read needs.
+        // 26.3 moved fuel into an item component and dropped FuelValues, so the rebuilt read uses the component.
         boolean fuelValues = com.retromod.core.ClassResourceInspector.read(FORGE_HOOKS) != null
                 ? com.retromod.core.ClassResourceInspector.exists("net/minecraft/world/level/block/entity/FuelValues")
                 : com.retromod.core.RetromodVersion.compareMcVersions(com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "26.3") < 0;
-        if (!fuelValues) return;
+        if (!fuelValues) {
+            registerStackBurnTime(transformer);
+            return;
+        }
         com.retromod.shim.common.RebuiltApiClasses.registerTree(transformer, FORGE_BURN_TIMES);
         transformer.registerMethodRedirect(FORGE_HOOKS, "getBurnTime", BURN_TIME_DESC, FORGE_BURN_TIMES, "getBurnTime", BURN_TIME_DESC);
+    }
+
+    static final String FORGE_STACK = "net/minecraftforge/common/extensions/IForgeItemStack";
+    static final String COMPONENT_BURN_TIMES = com.retromod.shim.common.RebuiltApiClasses.ROOT + "forge/common/LegacyForgeComponentBurnTimes";
+
+    /** Forge 26.3 keeps the item's own burn time behind {@code stack.getBurnTime(type)} and the rest in the fuel component. */
+    static void registerStackBurnTime(RetromodTransformer transformer) {
+        String read = "(Lnet/minecraft/world/item/crafting/RecipeType;)I";
+        org.objectweb.asm.tree.ClassNode stack = com.retromod.core.ClassResourceInspector.read(FORGE_STACK);
+        boolean hasRead = stack != null ? stack.methods.stream().anyMatch(m -> m.name.equals("getBurnTime") && m.desc.equals(read))
+                : com.retromod.core.RetromodVersion.compareMcVersions(com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "26.3") >= 0;
+        if (!hasRead) return;
+        com.retromod.shim.common.RebuiltApiClasses.registerTree(transformer, COMPONENT_BURN_TIMES);
+        transformer.registerMethodRedirect(FORGE_HOOKS, "getBurnTime", BURN_TIME_DESC, COMPONENT_BURN_TIMES, "getBurnTime", BURN_TIME_DESC);
     }
 
     /** Unconditional registration for transform-shape tests. */

@@ -24,4 +24,5 @@ public final class CompoundTag implements Tag {
     public boolean contains(String key) { throw new UnsupportedOperationException(); }
     public CompoundTag copy() { throw new UnsupportedOperationException(); }
     public CompoundTag merge(CompoundTag other) { throw new UnsupportedOperationException(); }
+    public Tag remove(String key) { throw new UnsupportedOperationException(); }
 }

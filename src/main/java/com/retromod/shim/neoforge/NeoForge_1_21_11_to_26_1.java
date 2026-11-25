@@ -203,6 +203,9 @@ public class NeoForge_1_21_11_to_26_1 implements VersionShim {
         LegacyNeoForgeAddLayersBridge.register(transformer);
         // NeoForge 26.1 replaced the block color event with block tint sources, and 1.21.4 removed the item color event.
         LegacyNeoForgeColorBridge.register(transformer);
+        // 26.x removed the shader and container screen events, the old fluid texture reads, the fluid stack tag and the old
+        // spawn event constructor, and renamed the anger event; old mods get rebuilt ones or the new name.
+        LegacyNeoForgeClientApiBridge.register(transformer);
 
         // BlockEvent$BreakEvent moved into its own subpackage in 26.1 (same ctor, still
         // cancellable). Block-break is one of the most common event subscriptions.

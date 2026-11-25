@@ -5,4 +5,5 @@ import net.minecraft.world.item.Item;
 
 public abstract class Fluid {
     public abstract Item getBucket();
+    public final FluidState defaultFluidState() { throw new UnsupportedOperationException(); }
 }
