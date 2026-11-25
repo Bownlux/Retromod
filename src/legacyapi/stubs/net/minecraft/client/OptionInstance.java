@@ -34,6 +34,14 @@ public final class OptionInstance<T> {
     public interface ValueSet<T> {
     }
 
+    public interface SliderableValueSet<T> extends ValueSet<T> {
+    }
+
+    public interface IntRangeBase extends SliderableValueSet<Integer> {
+        default <R> SliderableValueSet<R> xmap(java.util.function.IntFunction<? extends R> to,
+                java.util.function.ToIntFunction<? super R> from, boolean discrete) { throw new UnsupportedOperationException(); }
+    }
+
     public static final class Enum<T> implements ValueSet<T> {
         public Enum(List<T> values, Codec<T> codec) { throw new UnsupportedOperationException(); }
     }

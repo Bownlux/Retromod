@@ -27,6 +27,7 @@ public class Forge_1_21_10_to_1_21_11 implements VersionShim {
         com.retromod.shim.common.LegacyGameDataShapesBridge.register(transformer);
         com.retromod.shim.common.LegacyClientGapsBridge.register(transformer);
         com.retromod.shim.common.LegacyScatteredMembersBridge.register(transformer);
+        com.retromod.shim.common.LegacyGuiMembersBridge.register(transformer);
         com.retromod.shim.common.LegacyContentCallsBridge.register(transformer);
         // Custom render types built from state shards; 1.21.11 has 26.1's render setup shape.
         com.retromod.shim.common.LegacyRenderTypeBridge.registerBefore263(transformer);

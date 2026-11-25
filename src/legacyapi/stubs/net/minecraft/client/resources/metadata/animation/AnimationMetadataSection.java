@@ -8,7 +8,8 @@ import net.minecraft.server.packs.metadata.MetadataSectionType;
 // A record on the host; only its accessors matter to rebuilt code.
 public final class AnimationMetadataSection {
     public static final MetadataSectionType<AnimationMetadataSection> TYPE = null;
-    private AnimationMetadataSection() {}
+    public AnimationMetadataSection(Optional<List<AnimationFrame>> frames, Optional<Integer> frameWidth, Optional<Integer> frameHeight,
+            int defaultFrameTime, boolean interpolatedFrames) { throw new UnsupportedOperationException(); }
     public FrameSize calculateFrameSize(int width, int height) { throw new UnsupportedOperationException(); }
     public Optional<List<AnimationFrame>> frames() { throw new UnsupportedOperationException(); }
     public int defaultFrameTime() { throw new UnsupportedOperationException(); }

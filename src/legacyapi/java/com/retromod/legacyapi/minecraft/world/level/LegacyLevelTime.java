@@ -44,4 +44,11 @@ public final class LegacyLevelTime {
     public static long dayTime(Object level) {
         return level instanceof Level world ? world.getOverworldClockTime() : 0L;
     }
+
+    /** {@code ClientLevel.getSkyDarken(partialTick)}: how much of the sky's light reaches the world, from the attribute that replaced it. */
+    public static float getSkyDarken(Object level, float partialTick) {
+        if (!(level instanceof LevelReader reader)) return 1.0F;
+        Float factor = reader.environmentAttributes().getDimensionValue(EnvironmentAttributes.SKY_LIGHT_FACTOR);
+        return factor == null ? 1.0F : factor;
+    }
 }

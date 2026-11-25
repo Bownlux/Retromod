@@ -22,6 +22,8 @@ public class Minecraft {
     public LevelRenderer levelRenderer;
     public GameRenderer gameRenderer;
     // Final on the host.
+    public Options options;
+    // Final on the host.
     public net.minecraft.client.gui.Font font;
     // Final on the host, from 26.2.
     public net.minecraft.client.renderer.extract.LevelExtractor levelExtractor;
@@ -41,6 +43,7 @@ public class Minecraft {
     public net.minecraft.client.renderer.item.ItemModelResolver getItemModelResolver() { throw new UnsupportedOperationException(); }
     public net.minecraft.client.color.block.BlockColors getBlockColors() { throw new UnsupportedOperationException(); }
     public net.minecraft.client.renderer.entity.EntityRenderDispatcher getEntityRenderDispatcher() { throw new UnsupportedOperationException(); }
+    public com.mojang.blaze3d.platform.FramerateLimitTracker getFramerateLimitTracker() { throw new UnsupportedOperationException(); }
     public long getFrameTimeNs() { throw new UnsupportedOperationException(); }
     // Inherited from BlockableEventLoop on the host.
     public void execute(Runnable task) { throw new UnsupportedOperationException(); }

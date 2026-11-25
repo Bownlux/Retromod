@@ -208,6 +208,8 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         LegacyLootContextCreateBridge.register(transformer);
         LegacyClientGapsBridge.register(transformer);
         LegacyScatteredMembersBridge.register(transformer);
+        // Window, screen click, list, option range and tooltip members old GUI mods call.
+        LegacyGuiMembersBridge.register(transformer);
         // Members 1.20.1 mods call that later versions removed: respawn points, game profiles, portal targets.
         Legacy1201MemberBridge.register(transformer);
         // Registry tags, structure lookups, curses, permission levels and other calls 1.20.1 and 1.21.1 mods make.

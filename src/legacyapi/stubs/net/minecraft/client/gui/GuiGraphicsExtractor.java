@@ -22,6 +22,7 @@ public class GuiGraphicsExtractor {
     public void fillGradient(int x0, int y0, int x1, int y1, int col1, int col2) { throw new UnsupportedOperationException(); }
     public void text(Font font, String text, int x, int y, int col, boolean dropShadow) { throw new UnsupportedOperationException(); }
     public void text(Font font, FormattedCharSequence text, int x, int y, int col, boolean dropShadow) { throw new UnsupportedOperationException(); }
+    public void blit(Identifier texture, int x0, int y0, int x1, int y1, float u0, float u1, float v0, float v1) { throw new UnsupportedOperationException(); }
     public void blitSprite(RenderPipeline renderPipeline, Identifier location, int x, int y, int width, int height) { throw new UnsupportedOperationException(); }
     public void blitSprite(RenderPipeline renderPipeline, Identifier location, int spriteWidth, int spriteHeight, int textureX, int textureY,
             int x, int y, int width, int height) { throw new UnsupportedOperationException(); }

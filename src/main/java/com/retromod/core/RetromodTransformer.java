@@ -214,6 +214,10 @@ public class RetromodTransformer implements ClassFileTransformer {
     // Class-to-interface migrations: when a class becomes an interface in newer MC,
     // mods extending it get their superclass changed to a bridge plus the interface added.
     private final Map<String, SuperclassRedirect> superclassRedirects = new ConcurrentHashMap<>(16);
+    /** Old bases whose rebase leaves Mixin classes alone, since Mixin checks a mixin's superclass against its target. */
+    private final Set<String> rebasesSkippingMixins = ConcurrentHashMap.newKeySet();
+    /** Whether the class being transformed carries the Mixin annotation. */
+    private final ThreadLocal<Boolean> currentClassIsMixin = ThreadLocal.withInitial(() -> Boolean.FALSE);
     /** Rebases keyed on a class redirect's destination, mapped to the removed class whose version limit they follow. */
     private final Map<String, String> rebasesThroughRedirects = new ConcurrentHashMap<>();
 
@@ -3871,6 +3875,13 @@ public class RetromodTransformer implements ClassFileTransformer {
                 oldSuperclass, newSuperclass);
     }
 
+    /** {@link #registerSuperclassRebase(String, String)} for every class except a Mixin class. */
+    public void registerSuperclassRebaseSkippingMixins(String oldSuperclass, String newSuperclass) {
+        if (!admitsType(oldSuperclass)) return;
+        registerSuperclassRebase(oldSuperclass, newSuperclass);
+        rebasesSkippingMixins.add(oldSuperclass);
+    }
+
     /**
      * Rebase variant for a base class that BECAME AN INTERFACE: {@code extends oldSuperclass}
      * becomes {@code extends newSuperclass implements addInterfaces}, and {@code super(...)}
@@ -4200,6 +4211,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         descriptorFieldRedirects.clear();
         mutableAccessorDestinations.clear();
         superclassRedirects.clear();
+        rebasesSkippingMixins.clear();
         rebasesThroughRedirects.clear();
         inheritedTargetSrgNames.clear();
         superclassVerdicts.clear();
@@ -4532,6 +4544,9 @@ public class RetromodTransformer implements ClassFileTransformer {
         // One-time safety sweep: drop any redirect whose target is a com/retromod/* class
         // that will never resolve at runtime (see dropPhantomComRetromodTargets).
         ensureTargetsValidated();
+        // Read once, before any pass, for rebases that must leave Mixin classes alone.
+        currentClassIsMixin.set(!rebasesSkippingMixins.isEmpty() && originalBytes != null
+                && com.retromod.shim.common.LegacyWidgetInputAdapter.mentions(originalBytes, "Lorg/spongepowered/asm/mixin/Mixin;"));
 
         // No redirects registered: no pass would do anything, skip the loop.
         // constructorRedirects + fieldAccessorRedirects are included here too, or a
@@ -4901,6 +4916,9 @@ public class RetromodTransformer implements ClassFileTransformer {
         repaired = com.retromod.shim.common.LegacySynchedEntityDataMixinRepair.apply(repaired);
         // GUI override repair matches Mojang descriptors and proven post-remap base classes.
         repaired = com.retromod.shim.common.LegacyGuiOverrideAdapter.apply(repaired);
+        // Old widget click, release and drag overrides and calls, and old tooltip component heights and images.
+        repaired = com.retromod.shim.common.LegacyWidgetInputAdapter.apply(repaired, limitVersion());
+        repaired = com.retromod.shim.common.LegacyTooltipComponentAdapter.apply(repaired, limitVersion());
         // Only where the 26.x GUI bridge is registered: old pose() and text-selection calls, then old widget overrides.
         if (postProcessFlags.contains(com.retromod.shim.common.LegacyGuiExtractBridge.FLAG)) {
             repaired = com.retromod.shim.common.LegacyGuiCallAdapter.apply(repaired);
@@ -6963,6 +6981,9 @@ public class RetromodTransformer implements ClassFileTransformer {
             // Check if superclass needs to be rewritten (class-to-interface polyfill)
             if (superName != null && !superclassRedirects.isEmpty()) {
                 SuperclassRedirect redirect = superclassRebase(superName, writtenSuperName);
+                if (redirect != null && currentClassIsMixin.get() && rebasesSkippingMixins.contains(superName)) {
+                    redirect = null;
+                }
                 if (redirect != null && isLegacyBaseSaturated(redirect.newSuperclass())) {
                     LOGGER.warn("Not rebasing {} onto the saturated base {}; leaving {} in place so "
                             + "the failure names the removed class instead of failing verification.",

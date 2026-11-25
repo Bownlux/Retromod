@@ -3,4 +3,6 @@ package net.minecraft.client.gui.screens.worldselection;
 
 import net.minecraft.client.gui.screens.Screen;
 
-public class SelectWorldScreen extends Screen {}
+public class SelectWorldScreen extends Screen {
+    SelectWorldScreen() { super(null); }
+}
