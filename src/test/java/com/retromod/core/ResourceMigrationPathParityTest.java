@@ -271,6 +271,22 @@ class ResourceMigrationPathParityTest {
         }
     }
 
+    @ParameterizedTest(name = "streamed resources on {0}")
+    @ValueSource(strings = {"1.21.1", "26.3"})
+    @DisplayName("Assets and data left in the source jar, as a jar over 256 MiB keeps them, come out the same")
+    void streamedResourcesOnEveryPath(String target, @TempDir Path directory) throws Exception {
+        // Every outer jar streams its assets and data; AOT, which never streams, is the reference.
+        com.retromod.util.ArchiveLimits.setStreamResourcesFromForTesting(0);
+        try {
+            fabricPaths(target, Files.createDirectory(directory.resolve("fabric")));
+            forgePaths(target, Files.createDirectory(directory.resolve("forge")));
+            legacyLanguageAndIdCase(target, Files.createDirectory(directory.resolve("lang")));
+            legacyBlockStatesOnEveryPath(target, Files.createDirectory(directory.resolve("states")));
+        } finally {
+            com.retromod.util.ArchiveLimits.resetForTesting();
+        }
+    }
+
     @ParameterizedTest(name = "Forge 1.12.2 language files and id case on {0}")
     @ValueSource(strings = {"1.21.1", "26.3"})
     @DisplayName("A 1.12 mod's .lang files and mixed-case ids come out the same from every path")

@@ -139,7 +139,8 @@ public final class TitleScreenButtonInjector {
                         Object screen = args[1];
                         if (titleScreenClass.isInstance(screen)) {
                             addRetromodButton(screen);
-                            RestartPrompt.maybeShow(screen);
+                            // A held jar is asked about first; the restart prompt follows when the title screen returns.
+                            if (!HugeJarPrompt.maybeShow(screen)) RestartPrompt.maybeShow(screen);
                         }
                     }
                     return null;
@@ -293,7 +294,8 @@ public final class TitleScreenButtonInjector {
 
             if (titleScreenClass.isInstance(screen)) {
                 addRetromodButton(screen);
-                RestartPrompt.maybeShow(screen);
+                // A held jar is asked about first; the restart prompt follows when the title screen returns.
+                if (!HugeJarPrompt.maybeShow(screen)) RestartPrompt.maybeShow(screen);
             }
         } catch (Exception e) {
             LOGGER.debug("Error handling screen event: {}", e.getMessage());

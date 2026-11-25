@@ -30,7 +30,8 @@ public class ForgeModTransformer {
 
     /** Per-entry and total extracted size caps (zip-bomb guard). */
     private static final long MAX_ENTRY_SIZE = ZipSecurity.DEFAULT_MAX_ENTRY_SIZE;
-    private static final long MAX_TOTAL_SIZE = 500 * 1024 * 1024;
+    // A nested jar's cap; the outer jar uses its ArchiveLimits allowance.
+    private static final long MAX_TOTAL_SIZE = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
     private static final int MAX_ENTRY_COUNT = 100_000;
     /** Loader metadata cap. These files are parsed as text and should stay small. */
     private static final long MAX_METADATA_SIZE = 2L * 1024 * 1024;
@@ -73,6 +74,8 @@ public class ForgeModTransformer {
     private final MixinCompatibilityTransformer mixinTransformer;
     /** Libraries translated before the current jar, whose stand-in copies it may reuse. */
     private SyntheticLibraries syntheticLibraries = SyntheticLibraries.NONE;
+    // The outer jar's assets and data that stay in the source jar while it is translated, or null.
+    private com.retromod.resources.StreamedJarResources streamedResources;
     /** The Minecraft version the jar in the class pass was built for, outer or bundled. */
     private String classPassSourceVersion;
     /** Whether this translation removed client-only code or stood in for it, which marks its jar as made for a dedicated server. */
@@ -182,7 +185,11 @@ public class ForgeModTransformer {
         // as FabricModTransformer does with fabric.mod.json.
         Path tempDir = WorkFolder.createTempDirectory("retromod-forge-");
 
+        com.retromod.util.ArchiveLimits.Scope admitted = null;
         try {
+            // A jar over 1 GB passes the archive check first; one over 25 GB waits for approval.
+            admitted = ArchiveAdmission.admit(sourceJar);
+            streamedResources = com.retromod.resources.StreamedJarResources.open(sourceJar);
             extractJar(sourceJar, tempDir);
             // Read from the original classes: on 1.21+ hosts the class pass turns Forge's @Mod
             // into NeoForge's, and a leftover neoforge.mods.toml would then look current.
@@ -216,8 +223,12 @@ public class ForgeModTransformer {
             // source version is read from the source jar, which still holds the original metadata.
             // This runs before the embed, as on the CLI and AOT paths, so the converters that read
             // classes see the mod's own and not Retromod's embedded copies.
-            int dataMigrated = com.retromod.resources.ModResourceMigrations.migrateDirectory(
-                    tempDir, resourceContext(sourceJar, false));
+            int dataMigrated = streamedResources.isEmpty()
+                    ? com.retromod.resources.ModResourceMigrations.migrateDirectory(
+                            tempDir, resourceContext(sourceJar, false))
+                    : com.retromod.resources.ModResourceMigrations.standard().run(
+                            streamedResources.over(com.retromod.resources.DirectoryResourceTree.open(tempDir)),
+                            resourceContext(sourceJar, false));
             if (dataMigrated > 0) {
                 LOGGER.debug(RetromodLog.DETAIL, "Updated {} resource and data file(s)", dataMigrated);
             }
@@ -266,7 +277,7 @@ public class ForgeModTransformer {
             // native one (#14/#46). The Fabric path already stamps Retromod-Transformed.
             stampTransformedManifest(tempDir, originalName);
 
-            repackageJar(tempDir, outputJar);
+            repackageJar(tempDir, outputJar, streamedResources);
             LOGGER.debug(RetromodLog.DETAIL, "Created transformed mod: {}", outputJar.getFileName());
 
             // Record the cache sidecar for this exact source + version + loader so a later
@@ -281,18 +292,34 @@ public class ForgeModTransformer {
 
             return outputJar;
 
+        } catch (ArchiveAdmission.HeldException held) {
+            // The decision already logged what the player can do, so no stack trace follows.
+            if (throwFailure) throw held;
+            return null;
         } catch (Exception e) {
             // The throwable goes to the log, so the failing launch shows the class and stack trace.
             LOGGER.error("Failed to transform {}", originalName, e);
             if (throwFailure) throw e;
             return null;
         } finally {
+            closeStreamedResources();
+            if (admitted != null) admitted.close();
             try (var walk = Files.walk(tempDir)) {
                 walk.sorted(Comparator.reverseOrder()).forEach(p -> {
                     try { Files.delete(p); } catch (Exception ignored) {}
                 });
             }
         }
+    }
+
+    private void closeStreamedResources() {
+        if (streamedResources == null) return;
+        try {
+            streamedResources.close();
+        } catch (IOException e) {
+            LOGGER.debug("Could not close the source jar: {}", e.getMessage());
+        }
+        streamedResources = null;
     }
 
     /** The resource migration context for one jar on this Forge or NeoForge host. */
@@ -371,7 +398,9 @@ public class ForgeModTransformer {
      * entry size. See {@link FabricModTransformer#extractJar}.
      */
     private void extractJar(Path jarPath, Path outputDir) throws IOException {
+        long maxTotal = com.retromod.util.ArchiveLimits.maxTotalBytes();
         Set<String> entryNames = new HashSet<>();
+        var classBytes = new com.retromod.util.ArchiveLimits.ClassBytes(String.valueOf(jarPath.getFileName()));
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             var entries = jar.entries();
             long totalSize = 0;
@@ -393,18 +422,27 @@ public class ForgeModTransformer {
 
                 if (entry.isDirectory()) {
                     Files.createDirectories(outputPath);
+                } else if (streamedResources != null && name.equals(canonicalName)
+                        && com.retromod.resources.StreamedJarResources.leftInSourceJar(canonicalName, entry.getSize())) {
+                    // Left in the source jar and copied at repackaging; its declared size counts now.
+                    streamedResources.add(canonicalName);
+                    totalSize += entry.getSize();
+                    if (totalSize > maxTotal) {
+                        throw FabricModTransformer.totalExceeded(jarPath, maxTotal, totalSize);
+                    }
                 } else {
                     Files.createDirectories(outputPath.getParent());
                     long writtenBytes;
+                    // No file in the folder passes 128 MiB, or 32 MiB for a class, since steps read them whole.
                     try (InputStream is = jar.getInputStream(entry)) {
-                        writtenBytes = copyBounded(is, outputPath, MAX_ENTRY_SIZE, name);
+                        writtenBytes = copyBounded(is, outputPath,
+                                com.retromod.util.ArchiveLimits.entryLimit(name, maxTotal - totalSize), name);
                     }
                     totalSize += writtenBytes;
-                    if (totalSize > MAX_TOTAL_SIZE) {
-                        throw new IOException("ZIP total extracted size exceeds limit ("
-                            + MAX_TOTAL_SIZE + " bytes) - possible zip bomb (decompressed "
-                            + totalSize + " bytes so far)");
+                    if (totalSize > maxTotal) {
+                        throw FabricModTransformer.totalExceeded(jarPath, maxTotal, totalSize);
                     }
+                    classBytes.add(name, writtenBytes);
                 }
             }
         }
@@ -416,6 +454,7 @@ public class ForgeModTransformer {
             throws IOException {
         validateArchiveInput(jarPath);
         Set<String> entryNames = new HashSet<>();
+        var classBytes = new com.retromod.util.ArchiveLimits.ClassBytes(archiveKey);
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             var entries = jar.entries();
             long totalSize = 0;
@@ -436,7 +475,8 @@ public class ForgeModTransformer {
                     Files.createDirectories(outputPath);
                 } else {
                     Files.createDirectories(outputPath.getParent());
-                    long allowance = budget.beginRead(MAX_ENTRY_SIZE, qualifiedName);
+                    long allowance = budget.beginRead(
+                            com.retromod.util.ArchiveLimits.entryLimit(name, MAX_ENTRY_SIZE), qualifiedName);
                     long writtenBytes;
                     try (InputStream input = jar.getInputStream(entry)) {
                         writtenBytes = copyBounded(
@@ -449,6 +489,7 @@ public class ForgeModTransformer {
                                 + MAX_TOTAL_SIZE + " bytes) - possible zip bomb (decompressed "
                                 + totalSize + " bytes so far)");
                     }
+                    classBytes.add(name, writtenBytes);
                 }
             }
         }
@@ -2151,13 +2192,19 @@ public class ForgeModTransformer {
     }
 
     private void repackageJar(Path sourceDir, Path outputJar) throws IOException {
+        repackageJar(sourceDir, outputJar, null);
+    }
+
+    /** Writes {@code sourceDir} as a jar, then the files {@code streamed} left in the source jar. */
+    private void repackageJar(Path sourceDir, Path outputJar,
+            com.retromod.resources.StreamedJarResources streamed) throws IOException {
         Path parent = outputJar.toAbsolutePath().getParent();
         if (parent == null) throw new IOException("JAR output has no parent: " + outputJar);
         Files.createDirectories(parent);
         Path stagedJar = Files.createTempFile(parent,
                 "." + outputJar.getFileName() + ".", ".tmp");
         try {
-            writeJar(sourceDir, stagedJar);
+            writeJar(sourceDir, stagedJar, streamed);
             try (JarFile ignored = new JarFile(stagedJar.toFile())) {
                 // Opening the completed archive validates its central directory.
             }
@@ -2167,13 +2214,18 @@ public class ForgeModTransformer {
         }
     }
 
-    private void writeJar(Path sourceDir, Path outputJar) throws IOException {
+    private void writeJar(Path sourceDir, Path outputJar,
+            com.retromod.resources.StreamedJarResources streamedFiles) throws IOException {
         try (JarOutputStream jos = new JarOutputStream(
                 new BufferedOutputStream(Files.newOutputStream(outputJar)))) {
 
             // ZIP directory entries: package resources (ClassLoader.getResources) and classpath
             // scanners (Reflections - YungsApi @AutoRegister) silently find nothing without them.
             com.retromod.util.JarDirectoryEntries.writeAll(jos, sourceDir);
+            // Files left in the source jar are copied last, and their folders are listed here.
+            java.util.List<String> streamed = streamedFiles == null || streamedFiles.isEmpty()
+                    ? java.util.List.of() : streamedFiles.remaining(sourceDir);
+            com.retromod.util.JarDirectoryEntries.writeAllForNames(jos, streamed);
 
             // A source mod's central directory can list an entry twice (or two
             // collide on a case-insensitive FS); the second putNextEntry would throw
@@ -2209,6 +2261,12 @@ public class ForgeModTransformer {
                     }
                     jos.closeEntry();
                 }
+            }
+            for (String name : streamed) {
+                if (!writtenEntries.add(name)) continue;
+                jos.putNextEntry(new JarEntry(name));
+                streamedFiles.copy(name, jos);
+                jos.closeEntry();
             }
         }
     }

@@ -49,7 +49,17 @@ class ScreenTranslationsTest {
                     + "Click Yes to close Minecraft, then relaunch from your launcher."),
             entry("retromod.restart.cache", "Mods translated for this Minecraft version: %s\n"
                     + "Restart Minecraft to load the translated mods. Your files in mods/ were not changed.\n\n"
-                    + "Click Yes to close Minecraft, then relaunch from your launcher."));
+                    + "Click Yes to close Minecraft, then relaunch from your launcher."),
+            entry("retromod.huge_jar.title", "Large mod jar"),
+            entry("retromod.huge_jar.unverified_title", "Unverified mod jar"),
+            entry("retromod.huge_jar.message", "%s unpacks to %s (the file is %s). Its headers passed Retromod's archive check: %s entries, none overlapping.\n\n"
+                    + "Retromod translates jars over 25 GB only with your approval. Allow translates it on the next launch. Skip leaves it untranslated in %s, and Retromod asks again next time."),
+            entry("retromod.huge_jar.unverified", "%s unpacks to %s (the file is %s) and did not pass Retromod's archive check. It may be a zip bomb. The game log says what the check found.\n\n"
+                    + "Allow it only if you trust where it came from. Allow translates it on the next launch. Skip leaves it untranslated in %s, and Retromod asks again next time."),
+            entry("retromod.huge_jar.allow", "Allow"),
+            entry("retromod.huge_jar.skip", "Skip"),
+            entry("retromod.huge_jar.approved", "Approved. Retromod translates %s the next time Minecraft starts."),
+            entry("retromod.huge_jar.not_saved", "Retromod could not save the approval for %s. The game log names the hash to add to config/retromod/config.json by hand."));
 
     @Test
     void englishMatchesTheTextTranslationsWereCheckedAgainst() throws Exception {

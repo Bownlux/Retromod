@@ -98,6 +98,8 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
             // Fabric pre-launch transforms run before the normal mod initializer. Create the
             // default here so first-launch verification and every other config default apply.
             RetromodConfig.ensureDefaultConfig();
+            // Approvals of jars over 25 GB live in this game's config.
+            ArchiveAdmission.useGameDirectory(gameDir);
             String targetVersion = getMinecraftVersion();
 
             LOGGER.debug(RetromodLog.DETAIL, "Target Minecraft version: {}", targetVersion);
@@ -707,6 +709,10 @@ public class RetromodPreLaunch implements PreLaunchEntrypoint {
 
                     count++;
 
+                } catch (ArchiveAdmission.HeldException held) {
+                    // The decision logged what the player can do; the jar stays in the input folder.
+                    LOGGER.debug("Kept {} in {}: {}", modJar.getFileName(), inputFolder.getFileName(),
+                            held.getMessage());
                 } catch (Exception e) {
                     // A transform failure logged its trace already, and a file error needs only its type.
                     LOGGER.error("Failed to process {}: {}", modJar.getFileName(), e.toString());

@@ -39,6 +39,14 @@
 
   "retromod.restart.converted": "\u3053\u306eMinecraft\u30d0\u30fc\u30b8\u30e7\u30f3\u5411\u3051\u306b\u5909\u63db\u3057\u305fMOD: %s\n\u5909\u63db\u3057\u305fMOD\u3092\u8aad\u307f\u8fbc\u3080\u306b\u306f\u3001Minecraft\u3092\u518d\u8d77\u52d5\u3057\u3066\u304f\u3060\u3055\u3044\u3002\n\n\u300c\u306f\u3044\u300d\u3092\u30af\u30ea\u30c3\u30af\u3059\u308b\u3068Minecraft\u304c\u9589\u3058\u307e\u3059\u3002\u305d\u306e\u5f8c\u3001\u30e9\u30f3\u30c1\u30e3\u30fc\u304b\u3089\u8d77\u52d5\u3057\u76f4\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
   "retromod.restart.cache": "\u3053\u306eMinecraft\u30d0\u30fc\u30b8\u30e7\u30f3\u5411\u3051\u306b\u7ffb\u8a33\u3057\u305fMOD: %s\n\u7ffb\u8a33\u3057\u305fMOD\u3092\u8aad\u307f\u8fbc\u3080\u306b\u306f\u3001Minecraft\u3092\u518d\u8d77\u52d5\u3057\u3066\u304f\u3060\u3055\u3044\u3002mods/ \u5185\u306e\u30d5\u30a1\u30a4\u30eb\u306f\u5909\u66f4\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002\n\n\u300c\u306f\u3044\u300d\u3092\u30af\u30ea\u30c3\u30af\u3059\u308b\u3068Minecraft\u304c\u9589\u3058\u307e\u3059\u3002\u305d\u306e\u5f8c\u3001\u30e9\u30f3\u30c1\u30e3\u30fc\u304b\u3089\u8d77\u52d5\u3057\u76f4\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+  "retromod.huge_jar.title": "大きなMODファイル",
+  "retromod.huge_jar.unverified_title": "未検証のMODファイル",
+  "retromod.huge_jar.message": "%s は展開すると %s になります（ファイルは %s）。ヘッダーはRetromodのアーカイブチェックに合格しました：%s 件のエントリ、重なりなし。\n\nRetromodは25 GBを超えるファイルを許可がある場合にのみ翻訳します。「許可」を選ぶと次回の起動時に翻訳します。「スキップ」を選ぶと %s に翻訳しないまま残し、次回また確認します。",
+  "retromod.huge_jar.unverified": "%s は展開すると %s になります（ファイルは %s）。Retromodのアーカイブチェックに合格しませんでした。zip爆弾の可能性があります。チェックで見つかった内容はゲームログに記録されています。\n\n入手元を信頼できる場合にのみ許可してください。「許可」を選ぶと次回の起動時に翻訳します。「スキップ」を選ぶと %s に翻訳しないまま残し、次回また確認します。",
+  "retromod.huge_jar.allow": "許可",
+  "retromod.huge_jar.skip": "スキップ",
+  "retromod.huge_jar.approved": "許可しました。次にMinecraftを起動したときに %s を翻訳します。",
+  "retromod.huge_jar.not_saved": "%s の許可を保存できませんでした。config/retromod/config.json に手動で追加するハッシュはゲームログに記録されています。",
 
   "retromod.filepicker.title": "Retromod: \u5909\u63db\u3059\u308bMOD\u306eJAR\u3092\u9078\u629e",
 

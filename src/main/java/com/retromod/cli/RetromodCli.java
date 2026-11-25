@@ -66,6 +66,8 @@ public class RetromodCli {
         String[] loaderApiFlag = new String[1];
         args = com.retromod.loaderapi.LoaderApiSetting.stripCliFlag(args, loaderApiFlag);
         com.retromod.loaderapi.LoaderApiRuntime.configureForCli(loaderApiFlag[0]);
+        // So may --allow-huge-jars and --allow-unverified-jars, which let large jars through.
+        args = stripArchiveApprovals(args);
 
         // No arguments, or help, prints the full command list.
         if (args.length == 0) {
@@ -175,6 +177,21 @@ public class RetromodCli {
         }
     }
     
+    /** Removes {@code --allow-huge-jars} and {@code --allow-unverified-jars} and applies them for this run. */
+    static String[] stripArchiveApprovals(String[] args) {
+        List<String> kept = new ArrayList<>(args.length);
+        for (String arg : args) {
+            if ("--allow-huge-jars".equals(arg)) {
+                com.retromod.core.ArchiveAdmission.allowHugeJarsForThisRun();
+            } else if ("--allow-unverified-jars".equals(arg)) {
+                com.retromod.core.ArchiveAdmission.allowUnverifiedJarsForThisRun();
+            } else {
+                kept.add(arg);
+            }
+        }
+        return kept.toArray(new String[0]);
+    }
+
     private static void registerAllShims() {
         // This helper recognizes the old annotation shape and leaves newer mods alone.
         try {
@@ -668,11 +685,15 @@ public class RetromodCli {
             }
         }
 
-        transformJar(modPath, outputPath, transformer, info);
-        com.retromod.core.SyntheticEmbedder.embedIntoJarOrDiscard(outputPath,
-                modPath.getFileName().toString(), transformer,
-                com.retromod.core.SyntheticLibraries.NONE);
-        com.retromod.core.ModuleInfoRepair.dropInvalid(outputPath);
+        // The embed rewrites the output under the same allowance as the transform.
+        try (com.retromod.util.ArchiveLimits.Scope admitted =
+                com.retromod.core.ArchiveAdmission.admit(modPath)) {
+            transformJar(modPath, outputPath, transformer, info);
+            com.retromod.core.SyntheticEmbedder.embedIntoJarOrDiscard(outputPath,
+                    modPath.getFileName().toString(), transformer,
+                    com.retromod.core.SyntheticLibraries.NONE);
+            com.retromod.core.ModuleInfoRepair.dropInvalid(outputPath);
+        }
         com.retromod.mixin.MixinShadowGate.finishMod();
         reportMissingFabricApi(outputPath, modPath, info);
         System.out.println("Updated: " + outputPath);
@@ -843,9 +864,12 @@ public class RetromodCli {
             System.out.printf("[%d/%d] %s... ", i + 1, modFiles.length, modFile.getName());
             // Kept outside the try, so a failure after detection still says which Minecraft the jar is for.
             ModVersionInfo info = null;
+            com.retromod.util.ArchiveLimits.Scope admitted = null;
             
             try {
                 long start = System.currentTimeMillis();
+                // A jar over 1 GB passes the archive check first; one over 25 GB needs --allow-huge-jars.
+                admitted = com.retromod.core.ArchiveAdmission.admit(modFile.toPath());
                 
                 info = detector.detectVersion(modFile.toPath());
                 if (info == null) {
@@ -969,6 +993,8 @@ public class RetromodCli {
                 entries.add(new BatchEntry(modFile.toPath(), null, BatchStatus.FAILED, info,
                         describeFailure(e)));
                 failed++;
+            } finally {
+                if (admitted != null) admitted.close();
             }
         }
         // Each mod's start reports the one before it, so only the last is left.
@@ -1231,6 +1257,15 @@ public class RetromodCli {
     /** Transform a JAR file using the configured transformer. */
     private static void transformJar(Path input, Path output,
             RetromodTransformer transformer, ModVersionInfo info) throws Exception {
+        // A jar over 1 GB passes the archive check first; one over 25 GB needs --allow-huge-jars.
+        try (com.retromod.util.ArchiveLimits.Scope admitted =
+                com.retromod.core.ArchiveAdmission.admit(input)) {
+            transformAdmittedJar(input, output, transformer, info);
+        }
+    }
+
+    private static void transformAdmittedJar(Path input, Path output,
+            RetromodTransformer transformer, ModVersionInfo info) throws Exception {
 
         requireDistinctPaths(input, output, "transform output");
         // The loader API runtime registers last for this mod's loader and host.
@@ -1251,6 +1286,7 @@ public class RetromodCli {
 
         try {
             try (var inJar = new java.util.jar.JarFile(input.toFile());
+                 var streamed = com.retromod.resources.StreamedJarResources.open(input);
                  var outJar = new java.util.jar.JarOutputStream(
                          Files.newOutputStream(tempOutput))) {
 
@@ -1315,6 +1351,9 @@ public class RetromodCli {
             // high-entry-count jar could still force hundreds of GB of inflate/deflate work (CPU DoS).
             // The runtime extractJar paths cap the total; match that here for the offline path.
             long totalRead = 0;
+            long maxTotalRead = com.retromod.util.ArchiveLimits.maxTotalBytes();
+            // Translated classes stay in memory until the resource steps run, so their total is capped.
+            var classBytes = new com.retromod.util.ArchiveLimits.ClassBytes(String.valueOf(input.getFileName()));
             int totalEntries = 0;
             Set<String> outputEntryNames = new HashSet<>();
             Map<String, String> manifestStamps = manifestStamps(inJar, input, info, loaderApiIdentity);
@@ -1361,9 +1400,7 @@ public class RetromodCli {
                     try (var is = inJar.getInputStream(entry)) {
                         byte[] data = com.retromod.util.ZipSecurity.safeReadAllBytes(is);
                         totalRead += data.length;
-                        if (totalRead > com.retromod.util.ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
-                            throw new IOException("mod jar exceeds max total decompressed size: " + input);
-                        }
+                        if (totalRead > maxTotalRead) throw totalExceeded(input, maxTotalRead);
                         heldRefmaps.put(entry.getName(),
                                 refmapPlan.resources().getOrDefault(entry.getName(), data));
                     }
@@ -1376,12 +1413,17 @@ public class RetromodCli {
                         throw new IOException("mod jar contains entries that resolve to the same "
                                 + "output path: " + entry.getName());
                     }
+                    // A large jar's assets and data stay in it and are read only when a step asks.
+                    if (com.retromod.resources.StreamedJarResources.streams(entry.getName(), entry.getSize())) {
+                        streamed.add(entry.getName());
+                        totalRead += entry.getSize();
+                        if (totalRead > maxTotalRead) throw totalExceeded(input, maxTotalRead);
+                        continue;
+                    }
                     try (var is = inJar.getInputStream(entry)) {
                         byte[] data = com.retromod.util.ZipSecurity.safeReadAllBytes(is);
                         totalRead += data.length;
-                        if (totalRead > com.retromod.util.ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
-                            throw new IOException("mod jar exceeds max total decompressed size: " + input);
-                        }
+                        if (totalRead > maxTotalRead) throw totalExceeded(input, maxTotalRead);
                         resources.write(entry.getName(), data);
                     }
                     continue;
@@ -1410,14 +1452,24 @@ public class RetromodCli {
                 }
                 outJar.putNextEntry(new java.util.jar.JarEntry(safeOutName));
 
-                if (!entry.isDirectory()) {
+                if (!entry.isDirectory() && streamsUnchanged(entry, declaredWideners)) {
+                    // Too large to hold in memory, and copied as it is anyway.
                     try (var is = inJar.getInputStream(entry)) {
-                        // Trust bytes read, not the size declared by the zip entry.
-                        byte[] data = com.retromod.util.ZipSecurity.safeReadAllBytes(is);
+                        totalRead += com.retromod.util.ZipSecurity.copyBounded(is, outJar,
+                                Math.max(0, maxTotalRead - totalRead), entry.getName());
+                    }
+                    if (totalRead > maxTotalRead) throw totalExceeded(input, maxTotalRead);
+                } else if (!entry.isDirectory()) {
+                    try (var is = inJar.getInputStream(entry)) {
+                        // Trust bytes read, not the size declared by the zip entry. A class file is
+                        // capped far lower than a resource.
+                        byte[] data = com.retromod.util.ZipSecurity.safeReadAllBytes(is,
+                                entry.getName().endsWith(".class")
+                                        ? com.retromod.util.ZipSecurity.MAX_CLASS_ENTRY_SIZE
+                                        : com.retromod.util.ZipSecurity.DEFAULT_MAX_ENTRY_SIZE);
                         totalRead += data.length;
-                        if (totalRead > com.retromod.util.ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
-                            throw new IOException("mod jar exceeds max total decompressed size: " + input);
-                        }
+                        if (totalRead > maxTotalRead) throw totalExceeded(input, maxTotalRead);
+                        classBytes.add(entry.getName(), data.length);
 
                         if (entry.getName().endsWith(".class")) {
                             data = typeRenames.apply(data);
@@ -1561,8 +1613,19 @@ public class RetromodCli {
                             .isRegistered(transformer))
                     .classes(writtenClasses.keySet(), writtenClasses::get)
                     .build();
-            com.retromod.resources.ModResourceMigrations.standard().run(resources, resourceContext);
+            com.retromod.resources.ModResourceMigrations.standard().run(
+                    streamed.isEmpty() ? resources : streamed.over(resources), resourceContext);
             writeResources(outJar, resources, outputEntryNames);
+            // The files that stayed in the source jar, streamed as they are.
+            for (String name : streamed.remaining(resources::exists)) {
+                if (!outputEntryNames.add(name)) {
+                    throw new IOException("mod jar contains entries that resolve to the same "
+                            + "output path: " + name);
+                }
+                outJar.putNextEntry(new java.util.jar.JarEntry(name));
+                streamed.copy(name, outJar);
+                outJar.closeEntry();
+            }
             }
             }
             }
@@ -1591,6 +1654,8 @@ public class RetromodCli {
             return;
         }
         try {
+            // The check reads the whole jar into memory, so a very large one is left out.
+            if (Files.size(jar) > com.retromod.util.ZipSecurity.DEFAULT_MAX_ENTRY_SIZE) return;
             com.retromod.loaderapi.fabric.v26.FabricApiLinkCheck.reportJar(Files.readAllBytes(jar),
                     input.getFileName().toString(), TARGET_MC_VERSION);
         } catch (IOException | RuntimeException e) {
@@ -1774,6 +1839,24 @@ public class RetromodCli {
             out.write(resource.getValue());
             out.closeEntry();
         }
+    }
+
+    /**
+     * Whether the loop copies this entry unchanged and it is too large to hold in memory, so it is
+     * streamed. Every entry kind the loop rewrites stays in memory, where its usual limit applies.
+     */
+    private static boolean streamsUnchanged(java.util.jar.JarEntry entry, Set<String> declaredWideners) {
+        // The same rule the game's unpacking loops use, plus the wideners fabric.mod.json names.
+        String name = entry.getName();
+        if (com.retromod.core.AccessWidenerRemapper.isWidener(name, declaredWideners)) return false;
+        return com.retromod.resources.StreamedJarResources.copiedUnchanged(name, entry.getSize());
+    }
+
+    /** The error for a jar that unpacks past its limit, naming the jar and the limit. */
+    private static IOException totalExceeded(Path input, long limit) {
+        return new IOException(input.getFileName() + " unpacks to more than "
+                + com.retromod.util.ArchiveCheck.humanBytes(limit) + ". It may be a zip bomb, or a jar "
+                + "that declared smaller sizes than it holds. Retromod stopped reading it.");
     }
 
     private static boolean isRefmapEntry(String name) {
@@ -2323,8 +2406,16 @@ public class RetromodCli {
             com.retromod.resources.MigrationContext.Loader targetLoader) throws Exception {
         patchModMetadata(jarPath,
                 com.retromod.util.ZipSecurity.DEFAULT_MAX_ENTRY_SIZE,
-                com.retromod.util.ZipSecurity.DEFAULT_MAX_TOTAL_SIZE,
+                com.retromod.util.ArchiveLimits.maxTotalBytes(),
                 MAX_ARCHIVE_ENTRY_COUNT, targetLoader);
+    }
+
+    /** Whether the metadata patch rewrites this entry, so it has to be read into memory. */
+    private static boolean rewritesInMetadataPatch(String entryName) {
+        return entryName.equals("fabric.mod.json") || entryName.equals("quilt.mod.json")
+                || entryName.equals("META-INF/mods.toml") || entryName.equals("META-INF/neoforge.mods.toml")
+                || entryName.equals("META-INF/accesstransformer.cfg")
+                || com.retromod.resources.ModDataMigrator.isMigratableData(entryName);
     }
 
     /** Testable bounded entry point for the in-place metadata rewrite. */
@@ -2384,7 +2475,19 @@ public class RetromodCli {
                     outJar.putNextEntry(new java.util.jar.JarEntry(
                             com.retromod.resources.ModDataMigrator.migratedEntryName(entryName, TARGET_MC_VERSION)));
 
-                    if (!entry.isDirectory()) {
+                    if (!entry.isDirectory() && entry.getSize() > maxEntryBytes
+                            && !rewritesInMetadataPatch(entryName)) {
+                        // Too large to hold in memory, and copied as it is.
+                        long copied;
+                        try (var is = inJar.getInputStream(entry)) {
+                            copied = com.retromod.util.ZipSecurity.copyBounded(is, outJar,
+                                    Math.max(0, maxExpandedBytes - expandedInputBytes), entryName);
+                        }
+                        expandedInputBytes = reserveMetadataPatchBytes(expandedInputBytes, copied,
+                                maxExpandedBytes, entryName, "input");
+                        expandedOutputBytes = reserveMetadataPatchBytes(expandedOutputBytes, copied,
+                                maxExpandedBytes, entryName, "output");
+                    } else if (!entry.isDirectory()) {
                         try (var is = inJar.getInputStream(entry)) {
                             long remainingInput = maxExpandedBytes - expandedInputBytes;
                             if (remainingInput <= 0) {
@@ -3405,6 +3508,8 @@ public class RetromodCli {
                 + ModComplexityAnalyzer.SKIP_SCORE + " or more");
         System.out.println("  --force                        Accepted for older scripts. It changes nothing");
         System.out.println("  --loader-api-runtime <value>   auto, true or false for the loader API runtime");
+        System.out.println("  --allow-huge-jars              Translate jars that unpack to over 25 GB once they pass the archive check");
+        System.out.println("  --allow-unverified-jars        Also translate jars over 1 GB whose archive check failed (possible zip bombs)");
         System.out.println();
         System.out.println("Examples:");
         System.out.println("  retromod prepare ~/.minecraft --target " + TARGET_MC_VERSION
@@ -3623,6 +3728,7 @@ public class RetromodCli {
                 case PENDING, RETRY, STARTED -> "waiting";
                 case FAILED -> "failed";
                 case SKIPPED -> "skipped";
+                case AWAITING_APPROVAL -> "held";
             };
             StringBuilder line = new StringBuilder("  ")
                     .append(String.format("%-11s", state)).append(entry.sourceName());

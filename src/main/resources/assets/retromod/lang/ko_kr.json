@@ -39,6 +39,14 @@
 
   "retromod.restart.converted": "\uc774 Minecraft \ubc84\uc804\uc5d0 \ub9de\uac8c \ubcc0\ud658\ub41c \ubaa8\ub4dc: %s\n\ubcc0\ud658\ub41c \ubaa8\ub4dc\ub97c \ubd88\ub7ec\uc624\ub824\uba74 Minecraft\ub97c \ub2e4\uc2dc \uc2dc\uc791\ud558\uc138\uc694.\n\n'\uc608'\ub97c \ud074\ub9ad\ud558\uba74 Minecraft\uac00 \ub2eb\ud799\ub2c8\ub2e4. \uadf8\ub7f0 \ub2e4\uc74c \ub7f0\ucc98\uc5d0\uc11c \ub2e4\uc2dc \uc2e4\ud589\ud558\uc138\uc694.",
   "retromod.restart.cache": "\uc774 Minecraft \ubc84\uc804\uc5d0 \ub9de\uac8c \ubc88\uc5ed\ub41c \ubaa8\ub4dc: %s\n\ubc88\uc5ed\ub41c \ubaa8\ub4dc\ub97c \ubd88\ub7ec\uc624\ub824\uba74 Minecraft\ub97c \ub2e4\uc2dc \uc2dc\uc791\ud558\uc138\uc694. mods/ \uc548\uc758 \ud30c\uc77c\uc740 \ubcc0\uacbd\ub418\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4.\n\n'\uc608'\ub97c \ud074\ub9ad\ud558\uba74 Minecraft\uac00 \ub2eb\ud799\ub2c8\ub2e4. \uadf8\ub7f0 \ub2e4\uc74c \ub7f0\ucc98\uc5d0\uc11c \ub2e4\uc2dc \uc2e4\ud589\ud558\uc138\uc694.",
+  "retromod.huge_jar.title": "큰 모드 파일",
+  "retromod.huge_jar.unverified_title": "검증되지 않은 모드 파일",
+  "retromod.huge_jar.message": "%s 파일은 압축을 풀면 %s입니다(파일 크기 %s). 헤더가 Retromod의 아카이브 검사를 통과했습니다: 항목 %s개, 겹치는 항목 없음.\n\nRetromod는 25 GB가 넘는 파일을 허용한 경우에만 번역합니다. '허용'을 누르면 다음 실행 때 번역합니다. '건너뛰기'를 누르면 %s에 번역하지 않은 채로 두고 다음에 다시 묻습니다.",
+  "retromod.huge_jar.unverified": "%s 파일은 압축을 풀면 %s입니다(파일 크기 %s). Retromod의 아카이브 검사를 통과하지 못했습니다. zip 폭탄일 수 있습니다. 검사 결과는 게임 로그에 있습니다.\n\n출처를 믿을 수 있을 때만 허용하세요. '허용'을 누르면 다음 실행 때 번역합니다. '건너뛰기'를 누르면 %s에 번역하지 않은 채로 두고 다음에 다시 묻습니다.",
+  "retromod.huge_jar.allow": "허용",
+  "retromod.huge_jar.skip": "건너뛰기",
+  "retromod.huge_jar.approved": "허용했습니다. 다음에 Minecraft를 시작할 때 %s 파일을 번역합니다.",
+  "retromod.huge_jar.not_saved": "%s 파일의 허용을 저장하지 못했습니다. config/retromod/config.json에 직접 추가할 해시는 게임 로그에 있습니다.",
 
   "retromod.filepicker.title": "Retromod: \ubcc0\ud658\ud560 \ubaa8\ub4dc JAR \uc120\ud0dd",
 

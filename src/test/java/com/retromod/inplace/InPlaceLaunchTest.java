@@ -272,6 +272,43 @@ class InPlaceLaunchTest {
     }
 
     @Test
+    @DisplayName("a jar over 25 GB waits for approval each launch, stays held back, and translates once approved")
+    void hugeJarWaitsForApproval() throws IOException {
+        Path game = game();
+        Map<String, String> entries = new LinkedHashMap<>();
+        entries.put("META-INF/mods.toml", TestModJars.toml("huge", "1.0.0", "[1.19.2,1.20)",
+                "forge", "[40,)", "mandatory=true"));
+        entries.put("assets/huge/lang/en_us.json", "{\"item.huge.thing\":\"" + "x".repeat(400) + "\"}");
+        Path jar = TestModJars.jar(game.resolve("mods/huge.jar"), null, entries);
+        // A few hundred bytes stand for 25 GB, so the jar is held without a large file.
+        com.retromod.core.ArchiveAdmission.resetForTesting();
+        com.retromod.core.ArchiveAdmission.setLimitsForTesting(50, 100);
+        com.retromod.core.ArchiveAdmission.useGameDirectory(game);
+        try {
+            // Past the launches after which a jar the entry point never translates is shown to the loader.
+            for (int launch = 1; launch <= DiscoveryEngine.MAX_HIDDEN_LAUNCHES + 2; launch++) {
+                DiscoveryEngine.Outcome outcome = discover(game, "1.20.1");
+                InPlaceStatus status = InPlaceStatus.read(outcome.statusFile());
+                assertEquals(1, status.pending().size(), "launch " + launch + " checks the approval again");
+                assertTrue(status.pending().get(0).hidden(), "launch " + launch + " keeps the original back");
+                assertEquals(0, launchFor(outcome).translatePending("1.20.1", InPlaceLaunchTest::production));
+            }
+            assertEquals(jar, com.retromod.core.ArchiveAdmission.heldThisLaunch().get(0).jar(),
+                    "the title screen asks about it");
+
+            Files.createDirectories(game.resolve("config/retromod"));
+            Files.writeString(game.resolve("config/retromod/config.json"), "{\"approved_huge_jars\": [\""
+                    + TranslatedModCache.sha256(jar) + "\"]}");
+            DiscoveryEngine.Outcome approved = discover(game, "1.20.1");
+            assertEquals(1, launchFor(approved).translatePending("1.20.1", InPlaceLaunchTest::production));
+            assertEquals(1, InPlaceStatus.read(discover(game, "1.20.1").statusFile()).served().size(),
+                    "the next launch serves the translation");
+        } finally {
+            com.retromod.core.ArchiveAdmission.resetForTesting();
+        }
+    }
+
+    @Test
     @DisplayName("nothing is cached when the game reports another version than the loader did")
     void versionMismatchTranslatesNothing() throws IOException {
         Path game = game();

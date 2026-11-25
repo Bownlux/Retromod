@@ -35,6 +35,9 @@ public final class RetromodConfig {
               "_install_comment": "Forge and NeoForge: false keeps translated copies in retromod-cache/ and never changes mods/. true writes translated jars into mods/ like earlier versions. Fabric and Quilt always use retromod-input/.",
               "write_translated_jars": false,
 
+              "_huge_jars_comment": "A mod jar that unpacks to more than 1 GB passes an archive check first. Over 25 GB, or when the check fails, Retromod asks on the title screen. true here allows jars over 25 GB that pass the check, never one that failed it.",
+              "allow_huge_jars": false,
+
               "use_aot": true,
               "use_hybrid": true,
               "instruction_level_granularity": true,
@@ -170,6 +173,56 @@ public final class RetromodConfig {
             return Optional.empty();
         }
         return Optional.of(value.getAsJsonPrimitive());
+    }
+
+    /** Reads a list of strings without creating a missing file; empty when it is absent or not a list. */
+    public static java.util.Set<String> findStrings(Path configPath, String key) {
+        JsonObject config = loadExistingOrNull(configPath);
+        if (config == null || key == null || !config.has(key)) return java.util.Set.of();
+        var value = config.get(key);
+        if (!value.isJsonArray()) {
+            LOGGER.warn("Config setting '{}' in {} is not a list; ignoring it", key, configPath);
+            return java.util.Set.of();
+        }
+        java.util.Set<String> strings = new java.util.LinkedHashSet<>();
+        for (var element : value.getAsJsonArray()) {
+            if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
+                strings.add(element.getAsString().trim().toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        return java.util.Collections.unmodifiableSet(strings);
+    }
+
+    /**
+     * Adds {@code value} to the string list {@code key} and keeps every other setting. The file is
+     * written next to itself first, so a failed write never leaves half a config.
+     */
+    public static synchronized void addString(Path configPath, String key, String value)
+            throws IOException {
+        Path folder = configPath.toAbsolutePath().getParent();
+        Files.createDirectories(folder);
+        JsonObject root = Files.exists(configPath) ? parseConfig(JsonSecurity.readUtf8(configPath,
+                MAX_CONFIG_BYTES, JsonSecurity.DEFAULT_MAX_DEPTH, "Retromod config")) : new JsonObject();
+        com.google.gson.JsonArray list = root.has(key) && root.get(key).isJsonArray()
+                ? root.getAsJsonArray(key) : new com.google.gson.JsonArray();
+        for (var element : list) {
+            if (element.isJsonPrimitive() && value.equals(element.getAsString())) return;
+        }
+        list.add(value);
+        root.add(key, list);
+        String json = new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(root) + "\n";
+        Path temp = Files.createTempFile(folder, ".config.json.", ".tmp");
+        try {
+            Files.writeString(temp, json);
+            try {
+                Files.move(temp, configPath, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(temp, configPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temp);
+        }
     }
 
     static boolean booleanValue(JsonObject config, String key, boolean defaultValue) {

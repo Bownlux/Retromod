@@ -39,6 +39,14 @@
 
   "retromod.restart.converted": "Mods transformados para esta versi\u00f3n de Minecraft: %s\nReinicia Minecraft para cargar los mods transformados.\n\nHaz clic en S\u00ed para cerrar Minecraft y vuelve a abrirlo desde tu launcher.",
   "retromod.restart.cache": "Mods traducidos para esta versi\u00f3n de Minecraft: %s\nReinicia Minecraft para cargar los mods traducidos. Tus archivos de mods/ no se han modificado.\n\nHaz clic en S\u00ed para cerrar Minecraft y vuelve a abrirlo desde tu launcher.",
+  "retromod.huge_jar.title": "Archivo de mod grande",
+  "retromod.huge_jar.unverified_title": "Archivo de mod sin verificar",
+  "retromod.huge_jar.message": "%s ocupa %s al descomprimirse (el archivo ocupa %s). Sus cabeceras pasaron la comprobación de archivo de Retromod: %s entradas, ninguna superpuesta.\n\nRetromod solo traduce archivos de más de 25 GB con tu permiso. Permitir lo traduce en el próximo inicio. Omitir lo deja sin traducir en %s, y Retromod volverá a preguntar la próxima vez.",
+  "retromod.huge_jar.unverified": "%s ocupa %s al descomprimirse (el archivo ocupa %s) y no pasó la comprobación de archivo de Retromod. Podría ser una bomba zip. El registro del juego indica qué encontró la comprobación.\n\nPermítelo solo si confías en su origen. Permitir lo traduce en el próximo inicio. Omitir lo deja sin traducir en %s, y Retromod volverá a preguntar la próxima vez.",
+  "retromod.huge_jar.allow": "Permitir",
+  "retromod.huge_jar.skip": "Omitir",
+  "retromod.huge_jar.approved": "Permitido. Retromod traducirá %s la próxima vez que inicies Minecraft.",
+  "retromod.huge_jar.not_saved": "Retromod no pudo guardar el permiso para %s. El registro del juego indica el hash que debes añadir a mano en config/retromod/config.json.",
 
   "retromod.filepicker.title": "Retromod: Selecciona los JARs de mods a transformar",
 

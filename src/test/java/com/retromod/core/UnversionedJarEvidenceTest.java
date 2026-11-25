@@ -44,6 +44,32 @@ class UnversionedJarEvidenceTest {
     }
 
     @Test
+    void aClassOrDescriptorPastItsReadLimitEndsTheScanWithoutLoadingIt() throws IOException {
+        // 40 MiB of class bytes, past the 32 MiB class limit, packed into a small file.
+        Path bigClass = dir.resolve("big-class.jar");
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(bigClass))) {
+            out.putNextEntry(new ZipEntry("fabric.mod.json"));
+            out.write(String.format(NO_MINECRAFT, "big").getBytes(StandardCharsets.UTF_8));
+            out.closeEntry();
+            out.putNextEntry(new ZipEntry("a/A.class"));
+            byte[] block = new byte[1 << 20];
+            for (int i = 0; i < 40; i++) out.write(block);
+            out.closeEntry();
+        }
+        assertFalse(UnversionedJarEvidence.isBuiltForHost(bigClass, "26.1"), "it gets the normal translation");
+
+        // A descriptor of 3 MiB, past the 2 MiB a loader descriptor may take.
+        Path bigDescriptor = dir.resolve("big-descriptor.jar");
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(bigDescriptor))) {
+            out.putNextEntry(new ZipEntry("fabric.mod.json"));
+            out.write(String.format(NO_MINECRAFT, "big").getBytes(StandardCharsets.UTF_8));
+            out.write(" ".repeat(3 << 20).getBytes(StandardCharsets.UTF_8));
+            out.closeEntry();
+        }
+        assertFalse(UnversionedJarEvidence.isBuiltForHost(bigDescriptor, "26.1"));
+    }
+
+    @Test
     void pastTheFirstUnobfuscatedVersionTheJarMustAlsoPointAtTheHost() throws IOException {
         // Mojang names are the same on 26.1, 26.2 and 26.3, so they cannot date the mod on their own.
         Path unnamed = essentialLike(dir.resolve("container.jar"));

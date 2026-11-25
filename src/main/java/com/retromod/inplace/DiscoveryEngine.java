@@ -664,9 +664,11 @@ public final class DiscoveryEngine {
                             + "back this launch so it can be translated.");
                 }
                 // A STARTED entry proves the entry point runs, so showing the original to the
-                // loader would not help; the translation-attempt limit above ends that case.
+                // loader would not help; the translation-attempt limit above ends that case. A jar
+                // waiting for approval was seen by the entry point too, so it stays held back.
                 if (holdBack && attempts > MAX_HIDDEN_LAUNCHES
-                        && before != CacheEntry.Status.STARTED) {
+                        && before != CacheEntry.Status.STARTED
+                        && before != CacheEntry.Status.AWAITING_APPROVAL) {
                     // Start the count over, so the next launch holds it back again.
                     cache.forget(sha);
                     holdBack = false;

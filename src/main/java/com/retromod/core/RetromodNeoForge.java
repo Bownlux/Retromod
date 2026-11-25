@@ -113,6 +113,8 @@ public class RetromodNeoForge {
 
         // In-place mode serves translations from Retromod's cache and never writes into mods/.
         // The rewrite flow below is what write_translated_jars=true keeps.
+        // Approvals of jars over 25 GB live in this game's config.
+        ArchiveAdmission.useGameDirectory(Paths.get(".").toAbsolutePath().normalize());
         InPlaceLaunch launch = InPlaceLaunch.forEntryPoint(
                 Paths.get(".").toAbsolutePath().normalize());
         launch.logDecision();
@@ -509,6 +511,8 @@ public class RetromodNeoForge {
             InPlaceLaunch.LinkingTranslator translator, SyntheticLibraries libraries) {
         String fileName = modJar.getFileName().toString();
         try {
+            // A jar waiting for approval is neither backed up nor translated this launch.
+            ArchiveAdmission.require(modJar);
             Files.createDirectories(backupDir);
             ArchivePublication.copyReplacing(modJar, backupDir.resolve(fileName));
             return withInPlaceTransformDirectory(tempDir -> {
@@ -517,6 +521,9 @@ public class RetromodNeoForge {
                 ArchivePublication.moveReplacing(transformed, modJar);
                 return true;
             });
+        } catch (ArchiveAdmission.HeldException held) {
+            // The decision already logged what the player can do.
+            return false;
         } catch (Exception e) {
             // The old jar stays in mods/, so latest.log has to say why it was not updated.
             LOGGER.warn("Could not translate {} in mods/: {}. Retromod tries again on the next "

@@ -39,6 +39,14 @@
 
   "retromod.restart.converted": "Mody przekszta\u0142cone dla tej wersji Minecrafta: %s\nUruchom Minecrafta ponownie, aby wczyta\u0107 przekszta\u0142cone mody.\n\nKliknij Tak, aby zamkn\u0105\u0107 Minecrafta, a potem uruchom go ponownie z launchera.",
   "retromod.restart.cache": "Mody przet\u0142umaczone dla tej wersji Minecrafta: %s\nUruchom Minecrafta ponownie, aby wczyta\u0107 przet\u0142umaczone mody. Twoje pliki w mods/ nie zosta\u0142y zmienione.\n\nKliknij Tak, aby zamkn\u0105\u0107 Minecrafta, a potem uruchom go ponownie z launchera.",
+  "retromod.huge_jar.title": "Duży plik moda",
+  "retromod.huge_jar.unverified_title": "Niezweryfikowany plik moda",
+  "retromod.huge_jar.message": "%s po rozpakowaniu zajmuje %s (plik ma %s). Jego nagłówki przeszły kontrolę archiwum Retromoda: %s wpisów, żaden się nie nakłada.\n\nRetromod tłumaczy pliki ponad 25 GB tylko za twoją zgodą. Zezwól tłumaczy go przy następnym uruchomieniu. Pomiń zostawia go nieprzetłumaczonego w %s, a Retromod zapyta ponownie następnym razem.",
+  "retromod.huge_jar.unverified": "%s po rozpakowaniu zajmuje %s (plik ma %s) i nie przeszedł kontroli archiwum Retromoda. To może być bomba zip. Dziennik gry podaje, co wykryła kontrola.\n\nZezwól tylko wtedy, gdy ufasz jego źródłu. Zezwól tłumaczy go przy następnym uruchomieniu. Pomiń zostawia go nieprzetłumaczonego w %s, a Retromod zapyta ponownie następnym razem.",
+  "retromod.huge_jar.allow": "Zezwól",
+  "retromod.huge_jar.skip": "Pomiń",
+  "retromod.huge_jar.approved": "Zezwolono. Retromod przetłumaczy %s przy następnym uruchomieniu Minecrafta.",
+  "retromod.huge_jar.not_saved": "Retromod nie mógł zapisać zgody dla %s. Dziennik gry podaje hash, który trzeba ręcznie dodać do config/retromod/config.json.",
 
   "retromod.filepicker.title": "Retromod: Wybierz pliki JAR mod\u00f3w do przekszta\u0142cenia",
 

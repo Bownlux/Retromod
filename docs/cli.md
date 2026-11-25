@@ -68,6 +68,8 @@ java -jar retromod-1.4.0-snapshot.5-cli.jar --help
 - `--aot` prepares cached transforms during batch work.
 - `--skip-risky` makes `aot` skip a mod whose scan scores 60 or more out of 100, and print what the scan found. Without it, `aot` translates every mod. `transform` and `batch` never skip on the score.
 - `--force` is still accepted so older scripts keep working. It changes nothing.
+- `--allow-huge-jars` translates a jar that unpacks to more than 25 GB once it passes the archive check. Without it, such a jar is skipped with a message naming its SHA-256.
+- `--allow-unverified-jars` also translates a jar over 1 GB whose archive check failed. The check fails on the shapes zip bombs use, so pass it only for a jar you trust.
 
 `analyze` prints the same scan: a score and the parts of the jar that translation often has to rebuild, such as coremods, access transformers, bytecode generation, and heavy reflection. The score describes the jar. It does not predict whether the mod runs, and Retromod translates the mod whatever the score.
 

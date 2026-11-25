@@ -39,6 +39,14 @@
 
   "retromod.restart.converted": "F\u00fcr diese Minecraft-Version umgewandelte Mods: %s\nStarte Minecraft neu, um die umgewandelten Mods zu laden.\n\nKlicke auf Ja, um Minecraft zu schlie\u00dfen, und starte es dann \u00fcber deinen Launcher neu.",
   "retromod.restart.cache": "F\u00fcr diese Minecraft-Version \u00fcbersetzte Mods: %s\nStarte Minecraft neu, um die \u00fcbersetzten Mods zu laden. Deine Dateien in mods/ wurden nicht ver\u00e4ndert.\n\nKlicke auf Ja, um Minecraft zu schlie\u00dfen, und starte es dann \u00fcber deinen Launcher neu.",
+  "retromod.huge_jar.title": "Große Mod-Datei",
+  "retromod.huge_jar.unverified_title": "Ungeprüfte Mod-Datei",
+  "retromod.huge_jar.message": "%s wird entpackt %s groß (die Datei hat %s). Ihre Kopfdaten haben Retromods Archivprüfung bestanden: %s Einträge, keiner überlappt.\n\nRetromod übersetzt Dateien über 25 GB nur mit deiner Zustimmung. Erlauben übersetzt sie beim nächsten Start. Überspringen lässt sie unübersetzt in %s, und Retromod fragt beim nächsten Mal erneut.",
+  "retromod.huge_jar.unverified": "%s wird entpackt %s groß (die Datei hat %s) und hat Retromods Archivprüfung nicht bestanden. Es könnte eine Zip-Bombe sein. Das Spielprotokoll nennt, was die Prüfung gefunden hat.\n\nErlaube sie nur, wenn du der Quelle vertraust. Erlauben übersetzt sie beim nächsten Start. Überspringen lässt sie unübersetzt in %s, und Retromod fragt beim nächsten Mal erneut.",
+  "retromod.huge_jar.allow": "Erlauben",
+  "retromod.huge_jar.skip": "Überspringen",
+  "retromod.huge_jar.approved": "Erlaubt. Retromod übersetzt %s beim nächsten Start von Minecraft.",
+  "retromod.huge_jar.not_saved": "Retromod konnte die Zustimmung für %s nicht speichern. Das Spielprotokoll nennt den Hash, den du von Hand in config/retromod/config.json einträgst.",
 
   "retromod.filepicker.title": "Retromod: Mod-JARs ausw\u00e4hlen",
 

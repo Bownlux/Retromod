@@ -525,6 +525,11 @@ public final class TranslatedModCache implements AutoCloseable {
         record(source, CacheEntry.Status.RETRY, reason, waitingAttempts(source));
     }
 
+    /** Records a jar that waits for the player's approval; the next launch checks it again. */
+    public void recordAwaitingApproval(SourceJar source, String reason) {
+        record(source, CacheEntry.Status.AWAITING_APPROVAL, reason, 0);
+    }
+
     /** Records the player's choice not to translate this file. */
     public void recordSkipped(SourceJar source, String reason) {
         record(source, CacheEntry.Status.SKIPPED, reason, 0);

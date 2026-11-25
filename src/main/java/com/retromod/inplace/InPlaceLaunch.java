@@ -389,6 +389,25 @@ public final class InPlaceLaunch {
         }
     }
 
+    /**
+     * Records a jar that waits for approval (over 25 GB, or over 1 GB with a failed archive
+     * check) before anything marks it started. The cache already hashed it, so the decision does
+     * not hash it again.
+     */
+    private static boolean admitted(TranslatedModCache cache, SourceJar described, Path source) {
+        com.retromod.core.ArchiveAdmission.rememberHash(source, described.sha256());
+        try {
+            com.retromod.core.ArchiveAdmission.require(source);
+            return true;
+        } catch (com.retromod.core.ArchiveAdmission.HeldException held) {
+            cache.recordAwaitingApproval(described, held.getMessage());
+            return false;
+        } catch (IOException unreadable) {
+            // The transformer reports a jar it cannot read in its own words.
+            return true;
+        }
+    }
+
     private static boolean translateOne(TranslatedModCache cache, InPlaceStatus.Source row,
             Translator translator, SyntheticLibraries libraries) {
         Path source = Path.of(row.source());
@@ -411,6 +430,7 @@ public final class InPlaceLaunch {
             return false;
         }
         if (!cache.shouldTranslate(described.sha256())) return false;
+        if (!admitted(cache, described, source)) return false;
 
         Path staging = null;
         try {

@@ -28,8 +28,18 @@ public final class ZipSecurity {
      * entry declares, and the total stays capped below.
      */
     public static final long DEFAULT_MAX_ENTRY_SIZE = 128L * 1024 * 1024;
-    /** Default total extraction cap (500 MB). */
+    /**
+     * Default total extraction cap (500 MB). The mod jar being translated gets its own cap from
+     * {@link ArchiveLimits}, so raising that never changes the other readers that use this one.
+     */
     public static final long DEFAULT_MAX_TOTAL_SIZE = 500L * 1024 * 1024;
+    /**
+     * Cap for one class file (32 MiB). The largest class in a 32,000-entry mod is about 110 KB, so
+     * a class entry this large is a damaged or hostile jar, while resources may run far larger.
+     */
+    public static final long MAX_CLASS_ENTRY_SIZE = 32L << 20;
+    /** Cap for all class files of one jar together (512 MiB): every path holds them in memory at once. */
+    public static final long MAX_CLASS_TOTAL_SIZE = 512L << 20;
 
     private ZipSecurity() {}
 
@@ -244,5 +254,26 @@ public final class ZipSecurity {
     /** Convenience overload using {@link #DEFAULT_MAX_ENTRY_SIZE}. */
     public static long copyBounded(InputStream is, Path target, String entryNameForError) throws IOException {
         return copyBounded(is, target, DEFAULT_MAX_ENTRY_SIZE, entryNameForError);
+    }
+
+    /**
+     * Streams {@code is} into {@code out} without holding the entry in memory, throwing once more
+     * than {@code maxBytes} arrive. Returns the bytes copied. Neither stream is closed.
+     */
+    public static long copyBounded(InputStream is, java.io.OutputStream out, long maxBytes,
+            String entryNameForError) throws IOException {
+        long written = 0;
+        byte[] buf = new byte[65536];
+        int n;
+        while ((n = is.read(buf)) != -1) {
+            if (n == 0) continue;
+            written += n;
+            if (written > maxBytes) {
+                throw new IOException("ZIP entry too large: " + entryNameForError
+                        + " (exceeded " + maxBytes + " bytes while reading, possible zip bomb)");
+            }
+            out.write(buf, 0, n);
+        }
+        return written;
     }
 }
