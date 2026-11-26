@@ -1,0 +1,14 @@
+name: "Monke Madness"
+badge: borked
+mod_version: "47.4.28"
+host_mc: "1.20.1"
+loader: "forge"
+retromod: "1.18.2"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/monke-madness"
+summary: "Monke Madness (monkemadness) has failed to load correctly"
+details: "Starting up Minecraft crashes the game after loading on startup, and it displays this error message Monke Madness (monkemadness) has failed to load correctly java.lang.NoClassDefFoundError:net/minecraft/forge/client/IItemRenderProperties"
+reporter: "fleetag"
+date: "2026-11-06"
+issue: 408
+
