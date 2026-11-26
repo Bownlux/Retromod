@@ -132,9 +132,9 @@ Add a transform test for the changed names. Include a same-named texture in the 
 
 ## Release Distribution
 
-This section is for the maintainer publishing a release. Contributors do not need it.
+This section is for the maintainer publishing a release. In case I start a team for retromod. Contributors do not need it. You may want it though for building Retromod from source.
 
-Keep `SignatureVerifier.EXPECTED_SELF_HASH` empty during development. Finish the release text and every code, provider, and bundled transformation-data edit first. Then build the final shaded jar, compute the self-hash, update the constant programmatically, and rebuild. Generate the distribution from that exact jar:
+Please, Keep `SignatureVerifier.EXPECTED_SELF_HASH` empty during development. Finish the release text and every code, provider, and bundled transformation-data edit first. Then build the final shaded jar, compute the self-hash, update the constant programmatically, and rebuild. Generate the distribution from that exact jar:
 
 ```bash
 mvn clean package -Dexec.skip=true
@@ -156,4 +156,3 @@ sha256sum --check SHA256SUMS.txt
 shasum -a 256 --check SHA256SUMS.txt
 ```
 
-Upload only the 71 loader jars to loader-specific Modrinth or CurseForge versions. Publish `dist/CLI/retromod-1.4.0-snapshot.5-cli.jar` and `dist/SHA256SUMS.txt` with the GitHub release.
