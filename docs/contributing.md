@@ -51,7 +51,7 @@ Retromod uses three branches. Base your work on `dev` and open the pull request 
 
 - `dev` collects changes as they are reviewed: fixes, bridges, docs, and build changes.
 - `snapshot` receives `dev` once enough has collected for the next snapshot.
-- `main` receives `snapshot` when a snapshot is released. Only I (bownlux) merge it into `main`.
+- `main` receives `snapshot` when a snapshot is released. Only 1 pr gets merged into `main` as the entire snapshot.
 
 ### Keep Pull Requests Small and Focused
 
