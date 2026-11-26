@@ -1,0 +1,14 @@
+name: "Italian Brain Rot"
+badge: borked
+mod_version: "1.20.1"
+host_mc: "1.21.1"
+loader: "neoforge"
+retromod: "1.21.1"
+links:
+  curseforge: "https://www.curseforge.com/minecraft/mc-mods/italian-brain-rot"
+summary: "java.lang.NoClassDefFoundError: com/retromod/shim/forge/embedded/NetworkShim"
+details: "Caused by 0: java.lang.NoClassDefFoundError: com/retromod/shim/forge/embedded/NetworkShim 		at TRANSFORMER/brainrot@1.0.0/net.mcreator.brainrot.BrainrotMod.<clinit>(BrainrotMod.java:58) ~[?:?] {re:classloading} 		at java.base/jdk.internal.misc.Unsafe.ensureClassInitialized0(Native Method) ~[?:?] {} 		at java.base/jdk.internal.misc.Unsafe.ensureClassInitialized(Unsafe.java:1160) ~[?:?] {} 		at ... full log in the linked issue."
+reporter: "MartyRicci"
+date: "2026-11-06"
+issue: 404
+
