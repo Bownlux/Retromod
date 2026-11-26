@@ -28,9 +28,9 @@ Retromod ships tables that match old class, member, and registry names to curren
 
 | Source | Used in | Terms as the source publishes them |
 |---|---|---|
-| [Fabric Intermediary](https://github.com/FabricMC/intermediary) | `intermediary-to-mojang.tsv` and `intermediary-bridged-names.tsv` | CC0 1.0 Universal |
-| Mojang's official mappings | the Mojang names in `intermediary-to-mojang.tsv`, `intermediary-bridged-names.tsv`, `mojang-class-moves-26.1.tsv`, and the `retromod/srg-*` and `retromod/target-srg-*` tables | the Microsoft notice quoted below |
-| [MCPConfig](https://github.com/MinecraftForge/MCPConfig) | the SRG ids in `retromod/srg-to-mojang.tsv`, `retromod/srg-version-drift.tsv`, and `retromod/target-srg-*.tsv` | Copyright (c) 2018 Forge Development LLC, text at `META-INF/licenses/mcpconfig/LICENSE` |
+| [Fabric Intermediary](https://github.com/FabricMC/intermediary) | `intermediary-to-mojang.tsv` and `intermediary-bridged-names.tsv`, and the class identities behind `retromod/forge-mcp-class-names.tsv` | CC0 1.0 Universal |
+| Mojang's official mappings | the Mojang names in `intermediary-to-mojang.tsv`, `intermediary-bridged-names.tsv`, `mojang-class-moves-26.1.tsv`, `retromod/forge-mcp-class-names.tsv`, and the `retromod/srg-*` and `retromod/target-srg-*` tables | the Microsoft notice quoted below |
+| [MCPConfig](https://github.com/MinecraftForge/MCPConfig) | the SRG ids in `retromod/srg-to-mojang.tsv`, `retromod/srg-version-drift.tsv`, and `retromod/target-srg-*.tsv`, and the 1.14 to 1.16.5 class names in `retromod/forge-mcp-class-names.tsv` | Copyright (c) 2018 Forge Development LLC, text at `META-INF/licenses/mcpconfig/LICENSE` |
 | MCP 1.12.2 names: member names from MCPBot's stable exports, class names from MCP | the 1.12.2 names in `retromod/srg-1.12.2-to-mojang.tsv` and `retromod/forge-1.12.2-class-moves*.tsv` | not recorded in this repository |
 | Minecraft, Forge, NeoForge, Fabric API, and GeckoLib jars | event, tag, registry id, texture, model, and class move tables in `retromod/`, such as `forge-eventbus7-cancellable.tsv` and `vanilla-registry-ids.tsv` | names and facts read with `javap` and the scripts under `scripts/` |
 

@@ -2,6 +2,7 @@
 package net.minecraftforge.client.event;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.client.renderer.entity.player.AvatarRenderer;
 import net.minecraft.client.renderer.entity.state.AvatarRenderState;
 import net.minecraftforge.eventbus.api.bus.CancellableEventBus;
 import net.minecraftforge.eventbus.api.bus.EventBus;
@@ -10,12 +11,14 @@ import net.minecraftforge.eventbus.api.event.characteristic.Cancellable;
 
 public interface RenderAvatarEvent {
     AvatarRenderState getState();
+    AvatarRenderer<?> getRenderer();
     PoseStack getPoseStack();
 
     final class Pre implements RenderAvatarEvent, RecordEvent, Cancellable {
         public static final CancellableEventBus<Pre> BUS = null;
         private Pre() {}
         @Override public AvatarRenderState getState() { throw new UnsupportedOperationException(); }
+        @Override public AvatarRenderer<?> getRenderer() { throw new UnsupportedOperationException(); }
         @Override public PoseStack getPoseStack() { throw new UnsupportedOperationException(); }
     }
 
@@ -23,6 +26,7 @@ public interface RenderAvatarEvent {
         public static final EventBus<Post> BUS = null;
         private Post() {}
         @Override public AvatarRenderState getState() { throw new UnsupportedOperationException(); }
+        @Override public AvatarRenderer<?> getRenderer() { throw new UnsupportedOperationException(); }
         @Override public PoseStack getPoseStack() { throw new UnsupportedOperationException(); }
     }
 }

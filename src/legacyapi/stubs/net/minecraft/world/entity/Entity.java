@@ -45,4 +45,5 @@ public class Entity {
     public final void setOldPosAndRot() { throw new UnsupportedOperationException(); }
     public boolean canBeCollidedWith(Entity other) { throw new UnsupportedOperationException(); }
     public boolean isPassenger() { throw new UnsupportedOperationException(); }
+    public boolean isCrouching() { throw new UnsupportedOperationException(); }
 }

@@ -152,7 +152,7 @@ public final class Forge1122BlockConstructorAdapter {
     }
 
     private static String translatedName(String internalName) {
-        Map<String, String> moves = com.retromod.core.RetromodTransformer.getInstance().getClassRedirects();
+        Map<String, String> moves = com.retromod.core.RetromodTransformer.getInstance().getClassRedirectsForCurrentMod();
         String current = internalName;
         for (int step = 0; step < 16; step++) {
             String next = moves.get(current);

@@ -4,6 +4,7 @@
  */
 package com.retromod.legacyapi.minecraft.client.renderer.entity;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.Collections;
@@ -49,11 +50,15 @@ public final class RenderStateEntities {
         if (state == null) return null;
         Answer answer = FOUND.get(state);
         // An answer counts only while the state holds what it was found from and the entity still matches it.
-        if (answer != null && answer.isFor(state) && (answer.entity() == null || matches(state, answer.entity()))) {
-            return answer.entity();
+        if (answer != null && answer.isFor(state)) {
+            if (answer.ref() == null) return null;
+            Entity cached = answer.ref().get();
+            if (cached != null && matches(state, cached)) return cached;
         }
         Entity found = search(state);
-        FOUND.put(state, new Answer(found, state.entityType, state.x, state.y, state.z, state.ageInTicks));
+        // The entity is held weakly, so a cached state never keeps a left world's entities and level alive.
+        FOUND.put(state, new Answer(found == null ? null : new WeakReference<>(found), state.entityType, state.x, state.y, state.z,
+                state.ageInTicks));
         return found;
     }
 
@@ -129,8 +134,8 @@ public final class RenderStateEntities {
         }
     }
 
-    /** One answer, and the state's type, position and age it was found from. */
-    private record Answer(Entity entity, Object type, double x, double y, double z, float age) {
+    /** One answer, null when no entity matched, and the state's type, position and age it was found from. */
+    private record Answer(WeakReference<Entity> ref, Object type, double x, double y, double z, float age) {
         boolean isFor(EntityRenderState state) {
             return state.entityType == type && state.x == x && state.y == y && state.z == z && state.ageInTicks == age;
         }

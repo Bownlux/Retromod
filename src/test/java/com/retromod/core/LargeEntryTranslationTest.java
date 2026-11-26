@@ -6,11 +6,13 @@ package com.retromod.core;
 
 import com.retromod.util.ZipSecurity;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -53,9 +55,25 @@ class LargeEntryTranslationTest {
     @TempDir
     Path dir;
 
+    private Object savedHeadless;
+
+    // A failed Fabric translation opens Retromod's error dialog when a window can show, so these tests run headless.
+    @BeforeEach
+    void runHeadless() throws ReflectiveOperationException {
+        savedHeadless = headlessFlag().get(null);
+        headlessFlag().set(null, Boolean.TRUE);
+    }
+
     @AfterEach
-    void forgetDecisions() {
+    void forgetDecisions() throws ReflectiveOperationException {
         ArchiveAdmission.resetForTesting();
+        headlessFlag().set(null, savedHeadless);
+    }
+
+    private static Field headlessFlag() throws NoSuchFieldException {
+        Field flag = EnvironmentDetector.class.getDeclaredField("isHeadless");
+        flag.setAccessible(true);
+        return flag;
     }
 
     /** A jar of small text entries and one entry of {@link #OVER_LIMIT} zero bytes, which packs small. */

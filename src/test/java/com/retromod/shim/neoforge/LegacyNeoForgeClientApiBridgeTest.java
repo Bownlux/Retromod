@@ -99,9 +99,9 @@ public class LegacyNeoForgeClientApiBridgeTest {
                 call(INVOKEVIRTUAL, NEO + "fluids/FluidStack", "getOrCreateTag", "()Lnet/minecraft/nbt/CompoundTag;"));
         assertEquals(ROOT + "client/model/LegacyNeoForgeModelMaps.getModels(L" + NEO + "client/event/ModelEvent$ModifyBakingResult;)Ljava/util/Map;",
                 call(INVOKEVIRTUAL, NEO + "client/event/ModelEvent$ModifyBakingResult", "getModels", "()Ljava/util/Map;"));
-        assertEquals(LegacyNeoForgeClientApiBridge.NO_PLAYER_RENDERER + ".getRenderer(Ljava/lang/Object;)L"
-                + LegacyNeoForgeClientApiBridge.PLAYER_RENDERER + ";", call(INVOKEVIRTUAL, NEO + "client/event/RenderPlayerEvent$Pre",
-                "getRenderer", "()L" + LegacyNeoForgeClientApiBridge.PLAYER_RENDERER + ";"));
+        // PlayerRenderer is AvatarRenderer for old mods now, so the old read reaches NeoForge's own renderer.
+        assertEquals(NEO + "client/event/RenderPlayerEvent$Pre.getRenderer()L" + LegacyNeoForgeClientApiBridge.AVATAR_RENDERER + ";",
+                call(INVOKEVIRTUAL, NEO + "client/event/RenderPlayerEvent$Pre", "getRenderer", "()L" + LegacyNeoForgeClientApiBridge.PLAYER_RENDERER + ";"));
     }
 
     @Test
@@ -124,29 +124,14 @@ public class LegacyNeoForgeClientApiBridgeTest {
         assertEquals(LegacyNeoForgeClientApiBridge.INSTALLER, plan.callsFor("mod/Main", "mod").get(0).owner());
     }
 
-    @Test
-    @DisplayName("The PlayerRenderer helper answers null to a caller, without the renamed class ever loading")
-    void noPlayerRendererLoads() throws Exception {
-        String helper = LegacyNeoForgeClientApiBridge.NO_PLAYER_RENDERER;
-        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
-        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "mod/AsksRenderer", null, "java/lang/Object", null);
-        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "ask", "()Ljava/lang/Object;", null, null);
-        mv.visitInsn(ACONST_NULL);
-        mv.visitMethodInsn(INVOKESTATIC, helper, "getRenderer", "(Ljava/lang/Object;)L" + LegacyNeoForgeClientApiBridge.PLAYER_RENDERER + ";", false);
-        mv.visitInsn(ARETURN);
-        mv.visitMaxs(0, 0);
-        cw.visitEnd();
-        Map<String, byte[]> classes = Map.of(helper.replace('/', '.'), LegacyNeoForgeClientApiBridge.noPlayerRenderer(),
-                "mod.AsksRenderer", cw.toByteArray());
-        ClassLoader loader = new ClassLoader(getClass().getClassLoader()) {
-            @Override
-            protected Class<?> findClass(String name) throws ClassNotFoundException {
-                byte[] bytes = classes.get(name);
-                if (bytes == null) throw new ClassNotFoundException(name);
-                return defineClass(name, bytes, 0, bytes.length);
-            }
-        };
-        assertNull(loader.loadClass("mod.AsksRenderer").getMethod("ask").invoke(null));
+    /** The install plan for a jar of these original classes, for another package's test. */
+    public static ModConstructorHooks.JarPlan planForTest(Map<String, byte[]> classes) {
+        return LegacyNeoForgeClientApiBridge.plan(classes, Map.of());
+    }
+
+    /** Registers the bridge for another package's test, with {@code classes} as the host. */
+    public static void registerForTest(RetromodTransformer transformer, Function<String, ClassNode> classes) {
+        LegacyNeoForgeClientApiBridge.register(transformer, classes);
     }
 
     private void register(String host, Function<String, ClassNode> classes) {

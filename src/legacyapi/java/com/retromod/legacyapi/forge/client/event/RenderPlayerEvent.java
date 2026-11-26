@@ -8,6 +8,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.retromod.legacyapi.forge.event.LegacyPlayerEvent;
 import com.retromod.legacyapi.forge.eventbus.LegacyEvents;
 import com.retromod.legacyapi.minecraft.client.renderer.entity.RenderStateEntities;
+import net.minecraft.client.renderer.entity.player.AvatarRenderer;
 import net.minecraft.client.renderer.entity.state.AvatarRenderState;
 import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.eventbus.api.bus.BusGroup;
@@ -19,6 +20,7 @@ public abstract class RenderPlayerEvent extends LegacyPlayerEvent implements Inh
     private final float partialTick;
     private final PoseStack poseStack;
     private final int packedLight;
+    private AvatarRenderer<?> renderer;
 
     protected RenderPlayerEvent(Player player, float partialTick, PoseStack poseStack, int packedLight) {
         super(player);
@@ -40,11 +42,22 @@ public abstract class RenderPlayerEvent extends LegacyPlayerEvent implements Inh
         return packedLight;
     }
 
+    /** The avatar renderer drawing the player, which old mods name by 1.21.1's PlayerRenderer; null for an event a mod built itself. */
+    public AvatarRenderer<?> getRenderer() {
+        return renderer;
+    }
+
     /** Posts this copy's Pre or Post for one avatar draw; a Pre answers whether it ends cancelled. No player, no post. */
-    static boolean post(boolean pre, AvatarRenderState state, PoseStack pose, float partialTick) {
+    static boolean post(boolean pre, AvatarRenderState state, AvatarRenderer<?> renderer, PoseStack pose, float partialTick) {
         if (!(RenderStateEntities.livingEntity(state) instanceof Player player)) return false;
-        RenderPlayerEvent event = pre ? new Pre(player, partialTick, pose, state.lightCoords) : new Post(player, partialTick, pose, state.lightCoords);
-        return LegacyEvents.post(BusGroup.DEFAULT, event);
+        return LegacyEvents.post(BusGroup.DEFAULT, create(pre, player, renderer, pose, partialTick, state.lightCoords));
+    }
+
+    /** A Pre or Post for one avatar draw, carrying the renderer drawing it. */
+    static RenderPlayerEvent create(boolean pre, Player player, AvatarRenderer<?> renderer, PoseStack pose, float partialTick, int light) {
+        RenderPlayerEvent event = pre ? new Pre(player, partialTick, pose, light) : new Post(player, partialTick, pose, light);
+        event.renderer = renderer;
+        return event;
     }
 
     /** Before a player draws; cancelling it skips the draw. */

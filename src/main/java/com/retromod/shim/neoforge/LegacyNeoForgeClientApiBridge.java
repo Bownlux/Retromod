@@ -11,11 +11,10 @@ import com.retromod.core.SyntheticEmbedder;
 import com.retromod.shim.common.RebuiltApiClasses;
 import com.retromod.shim.common.RenderStateLookupHost;
 import com.retromod.shim.common.embedded.LegacyLog;
+import com.retromod.shim.forge.LegacyArmorHooksBridge;
+import com.retromod.shim.forge.LegacyAvatarRendererBridge;
 import com.retromod.shim.forge.ModConstructorHooks;
 import com.retromod.util.McReflect;
-import org.objectweb.asm.ClassWriter;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.MethodNode;
 
@@ -23,7 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.function.Function;
 
-/** Rebuilds the client events, fluid reads, fluid stack tag and spawn event constructor that NeoForge 26.x removed or renamed, for old mods. */
+/** Rebuilds the client events, fluid reads, fluid stack tag, spawn event constructor and armor hooks that NeoForge 26.x removed or renamed, for old mods. */
 public final class LegacyNeoForgeClientApiBridge {
 
     private static final String NEO = "net/neoforged/neoforge/";
@@ -53,9 +52,9 @@ public final class LegacyNeoForgeClientApiBridge {
     static final String MODEL_MAPS = ROOT + "client/model/LegacyNeoForgeModelMaps";
     /** The rebuilt class whose {@code install()} posts the old client events and registers old fluid models. */
     public static final String INSTALLER = ROOT + "client/event/LegacyNeoForgeClientEvents";
-    // RenderPlayerEvent.getRenderer() returned PlayerRenderer, which 1.21.9 renamed; nothing of that type exists to hand out.
-    static final String NO_PLAYER_RENDERER = "com/retromod/generated/LegacyNoPlayerRenderer";
+    // 1.21.9 renamed PlayerRenderer to AvatarRenderer, which LegacyAvatarRendererBridge gives old mods.
     static final String PLAYER_RENDERER = "net/minecraft/client/renderer/entity/player/PlayerRenderer";
+    static final String AVATAR_RENDERER = "net/minecraft/client/renderer/entity/player/AvatarRenderer";
 
     /** The first NeoForge host whose events these are rebuilt for; 26.1 moved fluid textures into fluid models. */
     public static final String FIRST_HOST = "26.1";
@@ -84,6 +83,10 @@ public final class LegacyNeoForgeClientApiBridge {
     static void register(RetromodTransformer t, Function<String, ClassNode> host) {
         if (!McReflect.isNeoForge() || RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, FIRST_HOST) < 0) return;
         SyntheticEmbedder.registerClassResource(t, LEGACY_LOG, LegacyLog.class);
+        // First, so the player render reads below know the old renderer type has a name on this host.
+        if (host.apply(ANCHOR) == null || host.apply(AVATAR_RENDERER) != null && host.apply(PLAYER_RENDERER) == null) {
+            LegacyAvatarRendererBridge.register(t);
+        }
         boolean install = false;
         if (gone(host, NEO + SHADERS, FIRST_HOST)) {
             registerShaders(t);
@@ -112,10 +115,30 @@ public final class LegacyNeoForgeClientApiBridge {
                         "(L" + NEO + MODIFY_BAKING + ";)Ljava/util/Map;", true);
             }
         }
+        // The install also gives old armor items that choose their texture in code an extension.
+        if (registerArmor(t, host)) install = true;
         if (install) {
             RebuiltApiClasses.registerTree(t, INSTALLER);
             ModConstructorHooks.register(t, HOOK_KEY, LegacyNeoForgeClientApiBridge::plan);
         }
+    }
+
+    /** The old armor and disguise hooks; true when the armor items need the install. */
+    private static boolean registerArmor(RetromodTransformer t, Function<String, ClassNode> host) {
+        String ext = NEO + "client/extensions/common/IClientItemExtensions";
+        boolean armorGone = lacks(host, ext, "getHumanoidArmorModel", LegacyArmorHooksBridge.OLD_MODEL_ARGS
+                + "Lnet/minecraft/client/model/HumanoidModel;");
+        String stack = NEO + "common/extensions/IItemStackExtension";
+        String oldMask = "(Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/world/entity/monster/EnderMan;)Z";
+        String gaze = "(Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/world/entity/LivingEntity;)Z";
+        boolean disguiseGone = lacks(host, stack, "isEnderMask", oldMask) && (host.apply(ANCHOR) == null || !lacks(host, stack, "isGazeDisguise", gaze));
+        // 26.3 gave the hand transform the player's render state; offline the target version answers.
+        String hand = "(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/player/LocalPlayer;Lnet/minecraft/world/entity/HumanoidArm;"
+                + "Lnet/minecraft/world/item/ItemStack;FFF)Z";
+        boolean handGone = host.apply(ANCHOR) == null ? RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, CONTAINER_GONE) >= 0
+                : lacks(host, ext, "applyForgeHandTransform", hand);
+        LegacyArmorHooksBridge.registerNeoForge(t, armorGone, disguiseGone, handGone);
+        return armorGone;
     }
 
     // ---- the parts ----
@@ -175,7 +198,6 @@ public final class LegacyNeoForgeClientApiBridge {
 
     private static void registerPlayerReads(RetromodTransformer t) {
         RebuiltApiClasses.registerTree(t, RENDER_MEMBERS);
-        registerNoPlayerRenderer(t);
         String living = "(L" + NEO + "client/event/RenderLivingEvent;)";
         for (String root : List.of(NEO, FORGE)) {
             for (String event : List.of("", "$Pre", "$Post")) {
@@ -183,20 +205,8 @@ public final class LegacyNeoForgeClientApiBridge {
                 t.registerMethodRedirect(owner, "getEntity", "()Lnet/minecraft/world/entity/player/Player;",
                         RENDER_MEMBERS, "getPlayer", living + "Lnet/minecraft/world/entity/player/Player;", true);
                 t.registerMethodRedirect(owner, "getPackedLight", "()I", RENDER_MEMBERS, "getPackedLight", living + "I", true);
-                redirectNoPlayerRenderer(t, owner);
             }
         }
-    }
-
-    /** Registers the helper that answers the old {@code getRenderer()} of a player render event with null. */
-    public static void registerNoPlayerRenderer(RetromodTransformer t) {
-        t.registerSyntheticClass(NO_PLAYER_RENDERER, noPlayerRenderer());
-    }
-
-    /** Sends {@code owner.getRenderer()}, which returned the renamed PlayerRenderer, to that helper. */
-    public static void redirectNoPlayerRenderer(RetromodTransformer t, String owner) {
-        t.registerMethodRedirect(owner, "getRenderer", "()L" + PLAYER_RENDERER + ";",
-                NO_PLAYER_RENDERER, "getRenderer", "(Ljava/lang/Object;)L" + PLAYER_RENDERER + ";", true);
     }
 
     /** The names an old shader instance can carry in a mod by the time its calls are matched. */
@@ -228,26 +238,13 @@ public final class LegacyNeoForgeClientApiBridge {
         }
     }
 
-    /** {@code static PlayerRenderer getRenderer(Object event)}, answering null: no renderer of the old type exists. */
-    static byte[] noPlayerRenderer() {
-        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
-        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, NO_PLAYER_RENDERER, null, "java/lang/Object", null);
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "getRenderer",
-                "(Ljava/lang/Object;)L" + PLAYER_RENDERER + ";", null, null);
-        mv.visitCode();
-        mv.visitInsn(Opcodes.ACONST_NULL);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
-        cw.visitEnd();
-        return cw.toByteArray();
-    }
-
     // ---- the install call ----
 
     // A jar that names one of these needs the install: it posts the rebuilt events and builds the old fluid models.
     private static final List<byte[]> INSTALL_NAMES = List.of(bytes(NEO + SHADERS), bytes(FORGE + SHADERS), bytes(NEO + CONTAINER),
             bytes(FORGE + CONTAINER), bytes(NEO + FLUID_EXT), bytes(FORGE + FLUID_EXT));
+    // A jar that names the old armor texture hook may have an armor item that chooses its texture in code.
+    private static final byte[] ARMOR_TEXTURE = bytes("getArmorTexture");
 
     /** The install call in each {@code @Mod} constructor of a jar whose original classes name a removed client API, or null. */
     static ModConstructorHooks.JarPlan plan(java.util.Map<String, byte[]> classes, java.util.Map<String, String> modIds) {
@@ -255,8 +252,20 @@ public final class LegacyNeoForgeClientApiBridge {
             for (byte[] name : INSTALL_NAMES) {
                 if (namesClass(original, name)) return (modClass, modId) -> List.of(INSTALL);
             }
+            if (contains(original, ARMOR_TEXTURE)) return (modClass, modId) -> List.of(INSTALL);
         }
         return null;
+    }
+
+    private static boolean contains(byte[] haystack, byte[] needle) {
+        outer:
+        for (int start = 0; start <= haystack.length - needle.length; start++) {
+            for (int i = 0; i < needle.length; i++) {
+                if (haystack[start + i] != needle[i]) continue outer;
+            }
+            return true;
+        }
+        return false;
     }
 
     // The class name or a nested class of it, so NeoForge's own longer names in the same package do not count.

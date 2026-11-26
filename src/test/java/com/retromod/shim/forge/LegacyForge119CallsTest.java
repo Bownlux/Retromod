@@ -103,6 +103,19 @@ class LegacyForge119CallsTest {
         new ClassReader(LegacyForge119Calls.generate()).accept(new CheckClassAdapter(new ClassWriter(0), false), 0);
     }
 
+    @Test
+    void spawnPacketFactoryIsLeftOutWhereItsConstructorIsGone() {
+        RetromodVersion.TARGET_MC_VERSION = "26.2";
+        transformer.clearRedirectsForTesting();
+        LegacyForge119Calls.register(transformer);
+
+        ClassNode helper = new ClassNode();
+        new ClassReader(transformer.getSyntheticClasses().get(LegacyForge119Calls.SYNTH)).accept(helper, 0);
+        assertTrue(helper.methods.stream().noneMatch(m -> m.name.equals("addMob")),
+                "26.x has no ClientboundAddEntityPacket(Entity), so a helper embedded in a mod must not name it");
+        assertTrue(helper.methods.stream().anyMatch(m -> m.name.equals("sample")), "the other helpers stay");
+    }
+
     private static byte[] method(String name, String desc, Consumer<MethodVisitor> body) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(V17, ACC_PUBLIC, MOD, null, "java/lang/Object", null);

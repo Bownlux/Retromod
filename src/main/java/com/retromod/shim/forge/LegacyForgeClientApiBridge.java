@@ -19,7 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 
-/** Rebuilds the shader, player render and anger events, the positional fluid reads and the old spawn event constructor on Forge 26.2. */
+/** Rebuilds the shader, player render and anger events, the positional fluid reads, the old spawn event constructor and armor hooks on Forge 26.2. */
 public final class LegacyForgeClientApiBridge {
 
     private static final String OLD = "net/minecraftforge/";
@@ -56,6 +56,11 @@ public final class LegacyForgeClientApiBridge {
     }
 
     static void register(RetromodTransformer t, Function<String, ClassNode> host) {
+        // First, so the player render event below knows the old renderer type has a name on this host.
+        if (ForgeHostShape.matches(List.of(LegacyAvatarRendererBridge.AVATAR_RENDERER), List.of(LegacyAvatarRendererBridge.PLAYER_RENDERER),
+                ForgeHostShape.FIRST_CHECKED_VERSION, host)) {
+            LegacyAvatarRendererBridge.register(t);
+        }
         List<String> posted = new ArrayList<>();
         if (ForgeHostShape.matches(List.of(), List.of(OLD_SHADERS), ForgeHostShape.FIRST_CHECKED_VERSION, host)) {
             registerShaders(t);
@@ -86,6 +91,20 @@ public final class LegacyForgeClientApiBridge {
         if (!posted.isEmpty()) {
             LegacyClientRenderBootstrapInjector.addPart(t, new LegacyClientRenderBootstrapInjector.Part("legacy-client-events", posted, INSTALLER));
         }
+        registerArmor(t, host);
+    }
+
+    // The old armor and disguise hooks.
+    private static void registerArmor(RetromodTransformer t, Function<String, ClassNode> host) {
+        String first = ForgeHostShape.FIRST_CHECKED_VERSION;
+        boolean armorGone = ForgeHostMembers.lacksMethod(OLD + LegacyArmorHooksBridge.EXT, "getHumanoidArmorModel",
+                LegacyArmorHooksBridge.OLD_MODEL_ARGS + "Lnet/minecraft/client/model/HumanoidModel;", first, host);
+        String stack = OLD + "common/extensions/IForgeItemStack";
+        boolean disguiseGone = ForgeHostMembers.lacksMethod(stack, "isEnderMask",
+                "(Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/world/entity/monster/EnderMan;)Z", first, host)
+                && (host.apply(ForgeHostShape.ANCHOR) == null || !ForgeHostMembers.lacksMethod(stack, "isMonsterDisguise",
+                        "(Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/world/entity/monster/Monster;)Z", first, host));
+        LegacyArmorHooksBridge.registerForge(t, armorGone, disguiseGone);
     }
 
     private static void registerShaders(RetromodTransformer t) {
@@ -110,11 +129,9 @@ public final class LegacyForgeClientApiBridge {
             events.add(OLD_RENDER_PLAYER + nested);
         }
         LegacyEventBaseAdapter.dispatchAsLegacy(t, events);
-        // No renderer of the old type exists, and buffer source draws reach nothing on 26.2, so both get stand-ins.
-        LegacyNeoForgeClientApiBridge.registerNoPlayerRenderer(t);
+        // Buffer source draws reach nothing on 26.2, so they get a stand-in; the renderer is the avatar event's own.
         for (String nested : List.of("", "$Pre", "$Post")) {
             for (String owner : List.of(OLD_RENDER_PLAYER + nested, RENDER_PLAYER + nested)) {
-                LegacyNeoForgeClientApiBridge.redirectNoPlayerRenderer(t, owner);
                 for (String buffers : List.of("net/minecraft/client/renderer/MultiBufferSource", RenderBufferSynthetics.MBS)) {
                     t.registerMethodRedirect(owner, "getMultiBufferSource", "()L" + buffers + ";", RenderBufferSynthetics.BS,
                             "sharedFor", "(Ljava/lang/Object;)L" + RenderBufferSynthetics.BS + ";", true);

@@ -53,6 +53,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     private final Map<String, String> legacyOnlyClassRedirects = new ConcurrentHashMap<>();
     /** Of those, the old names a mod whose version is unknown keeps too, because the host still has the class. */
     private final Set<String> knownVersionClassRedirects = ConcurrentHashMap.newKeySet();
+    /** Class redirects kept for mods known to be built for a version or later, mapped to it, by old class name. */
+    private final Map<String, String> newerOnlyClassRedirects = new ConcurrentHashMap<>();
     /** Class redirects a direct subclass of the old class does not take, since the new class cannot be extended. */
     private final Set<String> superKeepingClassRedirects = ConcurrentHashMap.newKeySet();
     /** Loader classes' parents as the host has them, for hierarchy proofs. */
@@ -67,6 +69,9 @@ public class RetromodTransformer implements ClassFileTransformer {
     private final Map<MethodKey, String> superCallHelperNames = new ConcurrentHashMap<>();
     /** The Minecraft version the mod being transformed was built for, or null when unknown. */
     private volatile String modSourceVersion;
+    /** The jar the mod being transformed came from, and whether it is a 1.12-era build, read when first needed. */
+    private volatile java.nio.file.Path modJar;
+    private volatile Boolean modJarPredates113;
     /** The newest Minecraft version the mod's jar shows it was built for, or null to use its source version. */
     private volatile String modBuildVersion;
     /** The translated jars the current mod was linked with, kept past the class pass for the embedder. */
@@ -381,6 +386,11 @@ public class RetromodTransformer implements ClassFileTransformer {
      */
     public static byte[] readJarOrLibraryClassRemapped(String internalName) {
         return INSTANCE.jarOrLibraryClassRemapped(internalName);
+    }
+
+    /** {@link #readJarOrLibraryClassRemapped} without the class loader fallback, so the game and the CLI read the same parents. */
+    public static byte[] readShippedClassRemapped(String internalName) {
+        return INSTANCE.shippedByJarOrLibrary(internalName) ? INSTANCE.jarOrLibraryClassRemapped(internalName) : null;
     }
 
     /** Whether the jar being transformed or a library it links ships the class; the game's own classes are not read. */
@@ -829,8 +839,8 @@ public class RetromodTransformer implements ClassFileTransformer {
             // A jar's own classes are read as shipped, so a Fabric mod's block names its
             // superclass in intermediary, such as class_2346, which a 26.x host has only under
             // the name this transform gives it. That name is the same class, so the walk goes on
-            // from there.
-            String renamed = classRedirects.get(current);
+            // from there, unless the current mod keeps the old name.
+            String renamed = takenRedirect(current);
             if (renamed != null && !visited.contains(renamed)) pending.push(renamed);
         }
         return false;
@@ -1347,6 +1357,8 @@ public class RetromodTransformer implements ClassFileTransformer {
                 declared == null ? null : FIRST_VERSION_NUMBER.matcher(declared);
         modSourceVersion = version != null && version.find() ? version.group() : null;
         modBuildVersion = null;
+        modJar = null;
+        modJarPredates113 = null;
         modLibraries = SyntheticLibraries.NONE;
     }
 
@@ -1362,7 +1374,19 @@ public class RetromodTransformer implements ClassFileTransformer {
     public void setModSourceJar(java.nio.file.Path jar) {
         com.retromod.mixin.MixinShadowGate.startMod(jar == null ? null : String.valueOf(jar.getFileName()));
         modBuildVersion = jar == null ? null : ModVersionDetector.metadataOnly().buildVersion(jar, modSourceVersion);
+        modJar = jar;
+        modJarPredates113 = null;
         modLibraries = SyntheticLibraries.NONE;
+    }
+
+    /** Whether the current mod's jar is a 1.12-era build whatever its mods.toml declares; read once per mod. */
+    private boolean modJarPredates113() {
+        Boolean known = modJarPredates113;
+        if (known == null) {
+            known = McpEraJarSigns.predates113(modJar);
+            modJarPredates113 = known;
+        }
+        return known;
     }
 
     /** The Minecraft version the mod's saved data comes from: the newest its jar shows, else its source version. */
@@ -1413,6 +1437,16 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     /**
+     * Applies a class redirect, and every redirect keyed on that class, only to mods known to be built for
+     * {@code firstVersionWith} or later. An older mod may use the same name for another class, as 1.12.2 and the 1.14
+     * MCP names did, so a mod whose version is unknown keeps the old name too.
+     */
+    public void limitClassRedirectToModsFrom(String oldName, String firstVersionWith) {
+        if (!admitsType(oldName)) return;
+        newerOnlyClassRedirects.put(oldName, firstVersionWith);
+    }
+
+    /**
      * Leaves {@code oldName} alone in a class that extends it: the redirect's target is final, so such a subclass
      * fails either way, and keeping its old superclass keeps its own calls as they were.
      */
@@ -1445,6 +1479,10 @@ public class RetromodTransformer implements ClassFileTransformer {
     private final Predicate<String> transformedJarDefines = this::currentJarDefines;
 
     private boolean keepsOldName(String name, Predicate<String> jarDefines) {
+        return keepsOldNameBesidesFloor(name, jarDefines) || limitedToNewerMods(name);
+    }
+
+    private boolean keepsOldNameBesidesFloor(String name, Predicate<String> jarDefines) {
         if (name == null) return false;
         return definesOwnLibraryClass(name, jarDefines) || yieldsToLibrary(name, jarDefines)
                 || limitedToOlderMods(name) || keptBySubclass(name);
@@ -1481,6 +1519,20 @@ public class RetromodTransformer implements ClassFileTransformer {
         // redirect would retarget a class the host still has.
         if (source == null) return knownVersionClassRedirects.contains(name);
         return RetromodVersion.compareMcVersions(source, firstVersionWithout) >= 0;
+    }
+
+    /** Whether the redirect keyed on {@code name} is for mods newer than the current one, or for known ones only. */
+    private boolean limitedToNewerMods(String name) {
+        if (newerOnlyClassRedirects.isEmpty()) return false;
+        String firstVersionWith = newerOnlyClassRedirects.get(name);
+        if (firstVersionWith == null) return false;
+        // Only the declared version decides. A jar's own version number can read as a newer build, as 26.6.0 does for
+        // a 1.12.2 mod at that version, and the game registers before it has read any jar.
+        if (modSourceVersion == null || RetromodVersion.compareMcVersions(modSourceVersion, firstVersionWith) < 0) {
+            return true;
+        }
+        // A 1.12.2 jar can carry a stale mods.toml that declares a newer version; its other metadata tells.
+        return modJarPredates113();
     }
 
     /** Whether the jar the current thread transforms has a class file for {@code name}. */
@@ -1593,7 +1645,7 @@ public class RetromodTransformer implements ClassFileTransformer {
     private void registerRemappedMethodAlias(String oldOwner, String oldName, String oldDesc,
             MethodTarget target) {
         String remappedOwner = classRedirects.getOrDefault(oldOwner, oldOwner);
-        String remappedDesc = resolveDescriptor(oldDesc);
+        String remappedDesc = resolveAliasDescriptor(oldDesc);
         if (remappedOwner.equals(oldOwner) && remappedDesc.equals(oldDesc)) {
             return;
         }
@@ -3100,7 +3152,7 @@ public class RetromodTransformer implements ClassFileTransformer {
             // A rebase base such as LegacyDoorBlock extends the very class it replaces. Rebasing
             // its own parent would point the walk back at itself and hide every inherited member,
             // so a mod's super.getDrops() kept its Mojang name on an SRG host.
-            if (host.equals(type)) host = classRedirects.getOrDefault(parent, parent);
+            if (host.equals(type)) host = redirectedClass(parent);
             resolved.add(host);
         }
         return resolved;
@@ -3109,7 +3161,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     private String hostSupertypeName(String type) {
         SuperclassRedirect rebase = superclassRebase(type, type);
         if (rebase != null) return rebase.newSuperclass();
-        String moved = classRedirects.getOrDefault(type, type);
+        // The name the current mod's own reference takes, so a name the mod keeps stays the host's own class.
+        String moved = redirectedClass(type);
         rebase = superclassRebase(moved, type);
         return rebase != null ? rebase.newSuperclass() : moved;
     }
@@ -4022,7 +4075,8 @@ public class RetromodTransformer implements ClassFileTransformer {
         // A Fabric mod names the intermediary class, which reaches the removed base in one or two moves.
         for (int hop = 0; name != null && hop < 4; hop++) {
             if (name.equals(target)) return true;
-            String moved = classRedirects.get(name);
+            // A name the current mod keeps stays as written, as the remapper leaves it.
+            String moved = takenRedirect(name);
             if (moved == null || moved.equals(name)) return false;
             name = moved;
         }
@@ -4263,12 +4317,15 @@ public class RetromodTransformer implements ClassFileTransformer {
         legacyOnlyRedirects.clear();
         legacyOnlyClassRedirects.clear();
         knownVersionClassRedirects.clear();
+        newerOnlyClassRedirects.clear();
         superKeepingClassRedirects.clear();
         hostParentCache.clear();
         libraryYieldingClassRedirects.clear();
         superCallHelperNames.clear();
         modSourceVersion = null;
         modBuildVersion = null;
+        modJar = null;
+        modJarPredates113 = null;
         modLibraries = SyntheticLibraries.NONE;
         inheritedMethodRedirects.clear();
         interfaceSyntheticTargets.clear();
@@ -5082,6 +5139,11 @@ public class RetromodTransformer implements ClassFileTransformer {
         // Only on NeoForge 21.2 to 26.2, whose furnaces call the fuel values form of an item's burn time.
         if (postProcessFlags.contains(com.retromod.shim.common.LegacyBurnTimeOverrideAdapter.FLAG)) {
             repaired = com.retromod.shim.common.LegacyBurnTimeOverrideAdapter.apply(repaired, limitVersion());
+        }
+        // Only on a Forge-family 26.x host whose armor and disguise hooks changed shape: old extensions and items get the new ones.
+        if (com.retromod.shim.forge.LegacyArmorOverrideAdapter.enabled(postProcessFlags::contains)) {
+            repaired = com.retromod.shim.forge.LegacyArmorOverrideAdapter.apply(repaired, postProcessFlags::contains,
+                    RetromodTransformer::readShippedClassRemapped);
         }
         // Only on hosts from 26.3, whose pack suppliers open metadata and resource streams instead of single packs.
         if (postProcessFlags.contains(com.retromod.shim.common.LegacyPackSupplierAdapter.FLAG)) {
@@ -7327,6 +7389,31 @@ public class RetromodTransformer implements ClassFileTransformer {
                 sb.append(c);
                 i++;
             }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * The descriptor a redirect's alias is keyed on. It ignores the limit to newer mods: registration happens before
+     * any mod is known, an alias only adds a key, and a mod that keeps the old names still matches the original key.
+     */
+    private String resolveAliasDescriptor(String descriptor) {
+        if (classRedirects.isEmpty() || descriptor.indexOf('L') < 0) return descriptor;
+        StringBuilder sb = new StringBuilder(descriptor.length());
+        int i = 0;
+        while (i < descriptor.length()) {
+            char c = descriptor.charAt(i);
+            int end = c == 'L' ? descriptor.indexOf(';', i) : -1;
+            if (end < 0) {
+                sb.append(c);
+                i++;
+                continue;
+            }
+            String className = descriptor.substring(i + 1, end);
+            String renamed = classRedirects.get(className);
+            boolean kept = renamed == null || keepsOldNameBesidesFloor(className, transformedJarDefines);
+            sb.append('L').append(kept ? className : renamed).append(';');
+            i = end + 1;
         }
         return sb.toString();
     }
@@ -9644,6 +9731,7 @@ public class RetromodTransformer implements ClassFileTransformer {
                 classRedirects.remove(owner);
                 legacyOnlyClassRedirects.remove(owner);
                 knownVersionClassRedirects.remove(owner);
+                newerOnlyClassRedirects.remove(owner);
                 superKeepingClassRedirects.remove(owner);
                 libraryYieldingClassRedirects.remove(owner);
                 implementedInterfaceRewrites.remove(owner);
@@ -9776,6 +9864,44 @@ public class RetromodTransformer implements ClassFileTransformer {
     
     public Map<String, String> getClassRedirects() {
         return Collections.unmodifiableMap(classRedirects);
+    }
+
+    /**
+     * The class redirects the current mod takes: every one except those its version limits, its own library, or a
+     * kept superclass hold back. A pass that reads redirects outside the remapper uses this, so it agrees with what
+     * the remapper writes for the same mod. It is a live view, read when asked.
+     */
+    public Map<String, String> getClassRedirectsForCurrentMod() {
+        return new CurrentModClassRedirects();
+    }
+
+    /** {@link #getClassRedirectsForCurrentMod}: lookups go through the same check the remapper makes. */
+    private final class CurrentModClassRedirects extends java.util.AbstractMap<String, String> {
+        @Override
+        public String get(Object key) {
+            return key instanceof String name ? takenRedirect(name) : null;
+        }
+
+        @Override
+        public boolean containsKey(Object key) {
+            return get(key) != null;
+        }
+
+        @Override
+        public Set<Map.Entry<String, String>> entrySet() {
+            Map<String, String> taken = new HashMap<>();
+            for (String name : classRedirects.keySet()) {
+                String target = takenRedirect(name);
+                if (target != null) taken.put(name, target);
+            }
+            return Collections.unmodifiableSet(taken.entrySet());
+        }
+    }
+
+    /** The class {@code name} becomes for the current mod, or null when it has no redirect the mod takes. */
+    private String takenRedirect(String name) {
+        String renamed = classRedirects.get(name);
+        return renamed == null || keepsOldName(name) ? null : renamed;
     }
 
     /**

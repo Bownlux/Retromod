@@ -18,5 +18,6 @@ public class LivingEntity extends Entity {
     public int hurtTime;
     public int deathTime;
     public boolean isBaby() { throw new UnsupportedOperationException(); }
+    public final float getScale() { throw new UnsupportedOperationException(); }
     public net.minecraft.world.item.ItemStack getMainHandItem() { throw new UnsupportedOperationException(); }
 }

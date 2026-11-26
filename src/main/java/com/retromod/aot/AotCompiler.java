@@ -1294,13 +1294,13 @@ public class AotCompiler {
         @Override
         public void visit(int version, int access, String name, String signature,
                 String superName, String[] interfaces) {
-            String newSuper = transformer.getClassRedirects().getOrDefault(superName, superName);
+            String newSuper = transformer.getClassRedirectsForCurrentMod().getOrDefault(superName, superName);
             
             String[] newInterfaces = interfaces;
             if (interfaces != null) {
                 newInterfaces = new String[interfaces.length];
                 for (int i = 0; i < interfaces.length; i++) {
-                    newInterfaces[i] = transformer.getClassRedirects()
+                    newInterfaces[i] = transformer.getClassRedirectsForCurrentMod()
                         .getOrDefault(interfaces[i], interfaces[i]);
                 }
             }
@@ -1326,20 +1326,20 @@ public class AotCompiler {
                 super.visitMethodInsn(opcode, target.owner(), target.name(),
                     target.desc(), isInterface);
             } else {
-                String newOwner = transformer.getClassRedirects().getOrDefault(owner, owner);
+                String newOwner = transformer.getClassRedirectsForCurrentMod().getOrDefault(owner, owner);
                 super.visitMethodInsn(opcode, newOwner, name, descriptor, isInterface);
             }
         }
         
         @Override
         public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
-            String newOwner = transformer.getClassRedirects().getOrDefault(owner, owner);
+            String newOwner = transformer.getClassRedirectsForCurrentMod().getOrDefault(owner, owner);
             super.visitFieldInsn(opcode, newOwner, name, descriptor);
         }
         
         @Override
         public void visitTypeInsn(int opcode, String type) {
-            String newType = transformer.getClassRedirects().getOrDefault(type, type);
+            String newType = transformer.getClassRedirectsForCurrentMod().getOrDefault(type, type);
             super.visitTypeInsn(opcode, newType);
         }
         
@@ -1347,7 +1347,7 @@ public class AotCompiler {
         public void visitLdcInsn(Object value) {
             if (value instanceof Type type) {
                 if (type.getSort() == Type.OBJECT) {
-                    String newName = transformer.getClassRedirects()
+                    String newName = transformer.getClassRedirectsForCurrentMod()
                         .getOrDefault(type.getInternalName(), type.getInternalName());
                     super.visitLdcInsn(Type.getObjectType(newName));
                     return;
@@ -1363,7 +1363,7 @@ public class AotCompiler {
         }
 
         private String redirectDescriptor(String descriptor) {
-            for (var entry : transformer.getClassRedirects().entrySet()) {
+            for (var entry : transformer.getClassRedirectsForCurrentMod().entrySet()) {
                 descriptor = descriptor.replace(
                     "L" + entry.getKey() + ";",
                     "L" + entry.getValue() + ";"

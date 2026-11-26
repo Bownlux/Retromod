@@ -23,7 +23,7 @@ import java.util.Set;
 import java.util.function.Predicate;
 
 /** Reads the old draw methods of a mod's renderers, in the jar's own classes as well as in the class being transformed. */
-final class OldRenderShapes {
+public final class OldRenderShapes {
 
     static final String POSE_STACK = "com/mojang/blaze3d/vertex/PoseStack";
     static final String ENTITY = "net/minecraft/world/entity/Entity";
@@ -147,7 +147,7 @@ final class OldRenderShapes {
         }
     }
 
-    static boolean isMixin(ClassNode node) {
+    public static boolean isMixin(ClassNode node) {
         return hasMixin(node.visibleAnnotations) || hasMixin(node.invisibleAnnotations);
     }
 

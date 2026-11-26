@@ -69,7 +69,7 @@ public final class LegacyForgeClientEvents {
             }
             PoseStack.Pose mark = pose.last();
             try {
-                return RenderPlayerEvent.post(pre, event.getState(), pose, frameTick());
+                return RenderPlayerEvent.post(pre, event.getState(), event.getRenderer(), pose, frameTick());
             } catch (RuntimeException | LinkageError failure) {
                 // A listener that pushed and then threw leaves the stack deeper, which the level renderer refuses afterwards.
                 while (pose.last() != mark && !pose.isEmpty()) pose.popPose();

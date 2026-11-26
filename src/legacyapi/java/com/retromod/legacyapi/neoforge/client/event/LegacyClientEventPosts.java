@@ -4,6 +4,7 @@
  */
 package com.retromod.legacyapi.neoforge.client.event;
 
+import com.retromod.legacyapi.neoforge.client.extensions.LegacyArmorExtensions;
 import com.retromod.legacyapi.neoforge.client.extensions.LegacyFluidTypeReads;
 import com.retromod.shim.common.embedded.LegacyLog;
 import java.lang.reflect.Field;
@@ -27,7 +28,7 @@ import net.neoforged.neoforge.client.extensions.common.IClientFluidTypeExtension
 import net.neoforged.neoforge.common.NeoForge;
 import org.joml.Matrix3x2fStack;
 
-/** Posts this copy's removed client events at the times the old loader did, and gives old mod fluids their models. */
+/** Posts this copy's removed client events at the times the old loader did, and gives old mod fluids and armor their models and textures. */
 final class LegacyClientEventPosts {
 
     private static final String HOST_CONTAINER_EVENT = "net.neoforged.neoforge.client.event.ContainerScreenEvent";
@@ -52,6 +53,8 @@ final class LegacyClientEventPosts {
                 () -> postToMods(new LegacyRegisterShadersEvent(Minecraft.getInstance().getResourceManager()))));
         // Last, so a fluid model a current mod registers itself is never taken first.
         bus.addListener(EventPriority.LOWEST, RegisterFluidModelsEvent.class, LegacyClientEventPosts::registerFluidModels);
+        // Old armor items that chose their texture in code get an extension, registered after every other one.
+        LegacyArmorExtensions.listen(bus);
         // NeoForge 26.1 and 26.2 still post their own container screen events.
         if (hostHas(HOST_CONTAINER_EVENT)) return;
         NeoForge.EVENT_BUS.addListener(ScreenEvent.Render.Pre.class, event -> LegacyContainerScreenEvent.frameStarted(event.getScreen()));
