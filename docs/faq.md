@@ -48,7 +48,7 @@ Fabric and Quilt still use `retromod-input/`. Fabric resolves every jar in `mods
 
 ## Can I share a translated mod?
 
-Yes, with limits. `java -jar retromod-1.4.0-snapshot.5-cli.jar export <game-dir>` copies translations out of a Forge or NeoForge game's cache to `retromod-output/mods/`. A jar translated for NeoForge on 1.21.1 only fits NeoForge on 1.21.1. The jar carries most of the Retromod code it calls. The game you share it with still needs Retromod for that loader and version when the mod uses Forge `SimpleChannel` networking, the old Fabric API that Retromod rebuilds on 26.x, or another bridge listed under [Running a Translated Jar Without Retromod]({{ '/cli' | relative_url }}#running-a-translated-jar-without-retromod). Sharing the original jar is usually simpler, since Retromod on the other game translates it there.
+Yes, with limits. `java -jar retromod-1.4.0-snapshot.6-cli.jar export <game-dir>` copies translations out of a Forge or NeoForge game's cache to `retromod-output/mods/`. A jar translated for NeoForge on 1.21.1 only fits NeoForge on 1.21.1. The jar carries most of the Retromod code it calls. The game you share it with still needs Retromod for that loader and version when the mod uses Forge `SimpleChannel` networking, the old Fabric API that Retromod rebuilds on 26.x, or another bridge listed under [Running a Translated Jar Without Retromod]({{ '/cli' | relative_url }}#running-a-translated-jar-without-retromod). Sharing the original jar is usually simpler, since Retromod on the other game translates it there.
 
 ## What happens to dependencies?
 

@@ -7,10 +7,10 @@ nav_order: 5
 
 The CLI transforms mods without launching Minecraft. It is useful for servers, modpacks, CI, and compatibility checks.
 
-Download `retromod-1.4.0-snapshot.5-cli.jar` from the GitHub release. It bundles its dependencies and has an executable manifest:
+Download `retromod-1.4.0-snapshot.6-cli.jar` from the GitHub release. It bundles its dependencies and has an executable manifest:
 
 ```bash
-java -jar retromod-1.4.0-snapshot.5-cli.jar <command> <args>
+java -jar retromod-1.4.0-snapshot.6-cli.jar <command> <args>
 ```
 
 From a repository checkout, Maven is a useful fallback:
@@ -25,35 +25,35 @@ mvn exec:java \
 
 ```bash
 # Inspect a mod
-java -jar retromod-1.4.0-snapshot.5-cli.jar analyze path/to/mod.jar
+java -jar retromod-1.4.0-snapshot.6-cli.jar analyze path/to/mod.jar
 
 # Transform one mod and use the exact target jar for safe Mixin repairs
-java -jar retromod-1.4.0-snapshot.5-cli.jar transform path/to/mod.jar \
+java -jar retromod-1.4.0-snapshot.6-cli.jar transform path/to/mod.jar \
   --target 26.2 --mc-jar path/to/minecraft-26.2-client.jar --verify
 
 # Transform a folder
-java -jar retromod-1.4.0-snapshot.5-cli.jar batch path/to/mods \
+java -jar retromod-1.4.0-snapshot.6-cli.jar batch path/to/mods \
   --aot --mc-jar path/to/minecraft-26.2-client.jar --verify
 
 # Translate the old mods in a game's mods folder
-java -jar retromod-1.4.0-snapshot.5-cli.jar prepare path/to/.minecraft \
+java -jar retromod-1.4.0-snapshot.6-cli.jar prepare path/to/.minecraft \
   --target 26.3 --target-loader neoforge
 
 # Update one resource pack without launching Minecraft
-java -jar retromod-1.4.0-snapshot.5-cli.jar resourcepack path/to/old-pack.zip \
+java -jar retromod-1.4.0-snapshot.6-cli.jar resourcepack path/to/old-pack.zip \
   --target 26.2 --output path/to/updated-packs
 
 # List registered shims
-java -jar retromod-1.4.0-snapshot.5-cli.jar shims
+java -jar retromod-1.4.0-snapshot.6-cli.jar shims
 
 # Compare two version points
-java -jar retromod-1.4.0-snapshot.5-cli.jar diff fabric 1.21.1 26.2
+java -jar retromod-1.4.0-snapshot.6-cli.jar diff fabric 1.21.1 26.2
 ```
 
 Run `--help` for the full command and option list:
 
 ```bash
-java -jar retromod-1.4.0-snapshot.5-cli.jar --help
+java -jar retromod-1.4.0-snapshot.6-cli.jar --help
 ```
 
 ## Useful Flags
@@ -115,17 +115,17 @@ On Forge and NeoForge, Retromod keeps translated mods in the game's `retromod-ca
 
 ```bash
 # Copy every translated mod to <game-dir>/retromod-output/mods/
-java -jar retromod-1.4.0-snapshot.5-cli.jar export path/to/.minecraft
+java -jar retromod-1.4.0-snapshot.6-cli.jar export path/to/.minecraft
 
 # Copy one mod, chosen by mod id or original file name, to another folder
-java -jar retromod-1.4.0-snapshot.5-cli.jar export path/to/.minecraft \
+java -jar retromod-1.4.0-snapshot.6-cli.jar export path/to/.minecraft \
   --mod examplemod --output path/to/shared
 
 # List translated, waiting, and failed mods, and other translated jars in mods/
-java -jar retromod-1.4.0-snapshot.5-cli.jar cache status path/to/.minecraft
+java -jar retromod-1.4.0-snapshot.6-cli.jar cache status path/to/.minecraft
 
 # Delete the translations so the next launch makes them again
-java -jar retromod-1.4.0-snapshot.5-cli.jar cache clear path/to/.minecraft
+java -jar retromod-1.4.0-snapshot.6-cli.jar cache clear path/to/.minecraft
 ```
 
 `export` copies only finished translations whose files still match the cache's record, and it never changes the cache. It lists the mods it left out and why. An exported jar keeps its cache name, such as `Example_Mod-1.0-retromod.jar`. It is translated for one loader and Minecraft version. The game you share it with needs the same loader and version. It also needs Retromod when the jar uses one of the bridges listed in [Running a Translated Jar Without Retromod](#running-a-translated-jar-without-retromod). If a game has caches for more than one setup, choose one with `--target <version>` and `--target-loader <forge|neoforge>`.
