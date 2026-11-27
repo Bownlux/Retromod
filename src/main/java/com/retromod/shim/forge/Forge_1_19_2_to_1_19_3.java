@@ -21,6 +21,9 @@ public class Forge_1_19_2_to_1_19_3 implements VersionShim {
         // constructor, which 1.19.3 deleted in favour of a builder. The subclass loads and then
         // dies on its own super(...) call (#264). Rebase it onto a generated bridge.
         CreativeModeTabBridge.register(transformer);
+        // 1.19.3 gave MenuType's constructor a feature flag set; NeoForge's own menu bridge adds its factory to it.
+        com.retromod.shim.common.LegacyMenuTypeBridge.register(transformer,
+                com.retromod.shim.common.LegacyMenuTypeBridge.MOJANG, null, null);
 
         // 1.19.3 moved configured features, placed features and biomes into data pack
         // registries. Rebuild what the mod registers in code as a generated data pack.

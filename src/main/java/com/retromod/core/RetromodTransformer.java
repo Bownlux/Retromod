@@ -49,6 +49,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     private final Set<MethodKey> wrappingMethodRedirects = ConcurrentHashMap.newKeySet();
     /** Redirects kept for mods built before a version, mapped to the first version without it. */
     private final Map<MethodKey, String> legacyOnlyRedirects = new ConcurrentHashMap<>();
+    /** Redirects for a removed static method whose key the host's instance method of the same name now has. */
+    private final Set<MethodKey> staticCallRedirects = ConcurrentHashMap.newKeySet();
     /** Class redirects kept for mods built before a version, by old class name. */
     private final Map<String, String> legacyOnlyClassRedirects = new ConcurrentHashMap<>();
     /** Of those, the old names a mod whose version is unknown keeps too, because the host still has the class. */
@@ -680,6 +682,10 @@ public class RetromodTransformer implements ClassFileTransformer {
             }
             // A class the current mod keeps under its old name takes no redirect keyed on it.
             if (!inheritsFrom(owner, candidate.oldOwner()) || keepsOldName(candidate.oldOwner())) {
+                continue;
+            }
+            // An instance call keeps the host method that shares its key with a removed static one.
+            if (keepsInstanceCall(opcode, candidate.oldOwner(), name, descriptor)) {
                 continue;
             }
             // A redirect limited to older mods leaves a newer mod's call alone whatever class it names.
@@ -1337,6 +1343,19 @@ public class RetromodTransformer implements ClassFileTransformer {
         // whatever version a mod was built for, so a mod written for the newer behavior would
         // be rewritten too.
         legacyOnlyRedirects.put(new MethodKey(owner, name, desc), firstVersionWithout);
+    }
+
+    /** Applies a redirect only to static calls, because the host has an instance method with the same key. */
+    public void limitRedirectToStaticCalls(String owner, String name, String desc) {
+        if (!admitsMethod(owner, name, desc)) return;
+        staticCallRedirects.add(new MethodKey(owner, name, desc));
+    }
+
+    /** Whether an instance call under this key must keep the host's method that a static-only redirect shares a key with. */
+    private boolean keepsInstanceCall(int opcode, String owner, String name, String descriptor) {
+        if (opcode == Opcodes.INVOKESTATIC || staticCallRedirects.isEmpty()) return false;
+        return staticCallRedirects.contains(new MethodKey(owner, name, descriptor))
+                || staticCallRedirects.contains(new MethodKey(owner, name, resolveDescriptor(descriptor)));
     }
 
     /** Points a {@code super} call that a redirect sends to a helper at that helper's {@code superName}. */
@@ -4315,6 +4334,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         methodRedirects.clear();
         wrappingMethodRedirects.clear();
         legacyOnlyRedirects.clear();
+        staticCallRedirects.clear();
         legacyOnlyClassRedirects.clear();
         knownVersionClassRedirects.clear();
         newerOnlyClassRedirects.clear();
@@ -4746,7 +4766,8 @@ public class RetromodTransformer implements ClassFileTransformer {
         // two consecutive passes produce byte-identical output, or MAX_TRANSFORM_ITERATIONS
         // (possible redirect cycle) is reached. Byte-equality is the stability signal rather
         // than a threaded "dirty" flag: ASM is deterministic, so same input = same output.
-        byte[] current = legacyModelLocationPrePass(legacyEventBasePrePass(legacyMaterialPrePass(legacyWeightedListPrePass(originalBytes))));
+        byte[] current = legacyModelLocationPrePass(legacyEventBasePrePass(legacyMaterialPrePass(
+                legacyRenderPropertiesPrePass(legacyWeightedListPrePass(originalBytes)))));
         for (int pass = 1; pass <= MAX_TRANSFORM_ITERATIONS; pass++) {
             // Constructor rewrites are resolved against the fully remapped owner during the
             // first pass. Re-running the constructor pre-pass is both unnecessary and harmful:
@@ -4819,6 +4840,12 @@ public class RetromodTransformer implements ClassFileTransformer {
         }
         return com.retromod.shim.common.LegacyMaterialAdapter.apply(classBytes,
                 this::srgMethodName, this::srgFieldName);
+    }
+
+    /** Gives a Forge 1.18 render properties class the methods of the client extensions that replaced it, while it still names the old interface. */
+    private byte[] legacyRenderPropertiesPrePass(byte[] classBytes) {
+        if (!postProcessFlags.contains(com.retromod.shim.forge.LegacyRenderPropertiesBridge.FLAG)) return classBytes;
+        return com.retromod.shim.forge.LegacyRenderPropertiesBridge.apply(classBytes, currentJarClassBytesProvider());
     }
 
     /** Rewrites the weighted list calls whose meaning depended on the old list type, while that type is still named. */
@@ -4973,9 +5000,18 @@ public class RetromodTransformer implements ClassFileTransformer {
         if (syntheticClasses.containsKey(com.retromod.shim.common.EntityTypeBuildKeyAdapter.BRIDGE)) {
             repaired = com.retromod.shim.common.EntityTypeBuildKeyAdapter.apply(repaired, currentJarRegistryIds());
         }
+        // Only on 1.21 to 1.21.11: old four-float model draw calls, and on 1.21 and 1.21.1 an old model's int draw.
+        if (postProcessFlags.contains(com.retromod.shim.common.LegacyModelDrawBridge.FLAG)) {
+            repaired = com.retromod.shim.common.LegacyModelDrawBridge.apply(repaired,
+                    postProcessFlags.contains(com.retromod.shim.common.LegacyModelDrawBridge.OVERRIDE_FLAG));
+        }
         // Only where the old model bases are rebuilt: an old model's root() and renderToBuffer, which the host made final.
         if (postProcessFlags.contains(com.retromod.shim.common.LegacyOldModelsBridge.FLAG)) {
             repaired = com.retromod.shim.common.LegacyOldModelsBridge.renameFinalOverrides(repaired, currentJarClassBytesProvider());
+        }
+        // Only where the host left FallingBlock's dust color abstract: an old falling block gets the old plain color.
+        if (postProcessFlags.contains(com.retromod.shim.common.LegacyFallingBlockBridge.DUST_FLAG)) {
+            repaired = com.retromod.shim.common.LegacyFallingBlockBridge.addDustColor(repaired);
         }
         // Only on hosts from 1.21.2, where chest boats stopped being Boats.
         if (postProcessFlags.contains(com.retromod.shim.common.LegacyBoatReceiverAdapter.FLAG)) {
@@ -5069,6 +5105,10 @@ public class RetromodTransformer implements ClassFileTransformer {
             repaired = com.retromod.shim.forge.LegacyLivingTickAdapter.apply(repaired);
             repaired = com.retromod.shim.forge.LegacyLazyLambdaAdapter.apply(repaired);
         }
+        // Only where the shield event bridge is registered: a migrated listener skips the unblocked hits Forge never posted.
+        if (syntheticClasses.containsKey(com.retromod.shim.forge.LegacyShieldBlockEventBridge.HELPER)) {
+            repaired = com.retromod.shim.forge.LegacyShieldBlockEventBridge.guardListeners(repaired, modSourceVersion);
+        }
         // Only where the Forge event API shim embedded the result stand-in, which is NeoForge only.
         if (syntheticClasses.containsKey(com.retromod.shim.forge.LegacyEventResultAdapter.RESULT)) {
             repaired = com.retromod.shim.forge.LegacyEventResultAdapter.apply(repaired);
@@ -5140,6 +5180,8 @@ public class RetromodTransformer implements ClassFileTransformer {
         if (postProcessFlags.contains(com.retromod.shim.common.LegacyBurnTimeOverrideAdapter.FLAG)) {
             repaired = com.retromod.shim.common.LegacyBurnTimeOverrideAdapter.apply(repaired, limitVersion());
         }
+        // Only where the vanilla gap bridge set a flag: old furnace burn time overrides and the GUI frame old tooltips use.
+        repaired = com.retromod.shim.common.LegacyVanillaGapsAdapters.apply(repaired, postProcessFlags::contains, limitVersion());
         // Only on a Forge-family 26.x host whose armor and disguise hooks changed shape: old extensions and items get the new ones.
         if (com.retromod.shim.forge.LegacyArmorOverrideAdapter.enabled(postProcessFlags::contains)) {
             repaired = com.retromod.shim.forge.LegacyArmorOverrideAdapter.apply(repaired, postProcessFlags::contains,
@@ -5294,6 +5336,10 @@ public class RetromodTransformer implements ClassFileTransformer {
         if (syntheticClasses.containsKey(com.retromod.shim.forge.LegacyRandomSourceAdapter.VIEW)) {
             repaired = com.retromod.shim.forge.LegacyRandomSourceAdapter.apply(
                     repaired, this, currentJarClassBytesProvider());
+            // A mod built before 1.19 passes a Random to calls, overrides and method references that now take a RandomSource.
+            if (builtBefore("1.19")) {
+                repaired = com.retromod.shim.forge.LegacyRandomCallAdapter.apply(repaired, this);
+            }
         }
         // 1.20 made Entity.level, maxUpStep, and onGround private; older mods use them directly. A newer mod that opened
         // the field itself keeps its access, and a mod that names no version takes it only where Forge asked for that.
@@ -8418,6 +8464,10 @@ public class RetromodTransformer implements ClassFileTransformer {
             }
             // A redirect for mods older than this one leaves its method references as written too.
             if (target != null && skipsCurrentMod(key)) target = null;
+            // An instance method reference keeps the host method that shares its key with a removed static one.
+            if (target != null && instance && keepsInstanceCall(Opcodes.INVOKEVIRTUAL, h.getOwner(), h.getName(), h.getDesc())) {
+                target = null;
+            }
             if (target == null) {
                 if (tag == Opcodes.H_INVOKEINTERFACE && classShimTargets.contains(h.getOwner())) {
                     return new org.objectweb.asm.Handle(Opcodes.H_INVOKEVIRTUAL,
@@ -8761,6 +8811,10 @@ public class RetromodTransformer implements ClassFileTransformer {
             // as in inheritedMethodTarget. A newer mod calls the static method that replaced an instance
             // one under the same name, as with Forge 26.2's ModLoader.addWarning.
             if (target != null && opcode == Opcodes.INVOKESTATIC && takesReceiverAsFirstArgument(target, descriptor)) {
+                target = null;
+            }
+            // The reverse: an instance call keeps the host method that shares its key with a removed static one.
+            if (target != null && keepsInstanceCall(opcode, owner, name, descriptor)) {
                 target = null;
             }
             if (target == null) {
@@ -9788,6 +9842,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         }
         wrappingMethodRedirects.removeIf(matches);
         legacyOnlyRedirects.keySet().removeIf(matches);
+        staticCallRedirects.removeIf(matches);
         neutralizedMethods.removeIf(matches);
         argDropRedirects.keySet().removeIf(matches);
         convertingRedirects.keySet().removeIf(matches);

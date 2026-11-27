@@ -96,6 +96,23 @@ class LegacyRegistryMapCodecBridgeTest {
     }
 
     @Test
+    @DisplayName("#392: a chunk generator's rebuilt codec() returns the very value its register event stored")
+    void generatorCodecIsTheRegisteredValue() throws Exception {
+        // Meulti's Backrooms registers each generator's record codec through RegisterEvent; NeoForge 1.21.1 then
+        // looked up generator.codec() by identity and logged "Unregistered holder" each time it saved the world.
+        Dfu dfu = new Dfu("10.0.21", true);
+        java.lang.reflect.Method codecOf = dfu.type(LegacyMapCodecsSynthetic.INTERNAL).getMethod("of", Object.class);
+        for (Object codec : List.of(dfu.recordCodec("feature"), dfu.unitCodec("generator"))) {
+            Object registered = dfu.of(codec);
+            assertSame(registered, codecOf.invoke(null, codec), "the generator base answers with the registered value");
+            assertSame(registered, dfu.of(codec), "registering the same codec again keeps one value");
+        }
+        Object record = dfu.recordCodec("other");
+        assertSame(dfu.type(MAP_CODEC).cast(record.getClass().getMethod("codec").invoke(record)), codecOf.invoke(null, record),
+                "a record codec nothing registered through the event still answers with its own map codec");
+    }
+
+    @Test
     @DisplayName("the register wrappers' entry point converts only for a map codec registry")
     void serializerEntryPoint() throws Exception {
         Dfu dfu = new Dfu("10.0.21", true);
@@ -301,8 +318,11 @@ class LegacyRegistryMapCodecBridgeTest {
             Path fastutil = LIBRARIES.resolve("it/unimi/dsi/fastutil/8.5.18/fastutil-8.5.18.jar");
             assumeTrue(Files.isRegularFile(dfu) && Files.isRegularFile(fastutil),
                     "no local DataFixerUpper " + version + " or fastutil jar; they are local test material");
+            // The value class records each value in the shared map codecs, which ship beside it.
+            Map<String, byte[]> withShared = new java.util.HashMap<>(classes);
+            withShared.putIfAbsent(LegacyMapCodecsSynthetic.INTERNAL, LegacyMapCodecsSynthetic.generate());
             loader = new LegacyKeyDispatchCodecBridgeTest.ChildFirstLoader(
-                    new URL[] {dfu.toUri().toURL(), fastutil.toUri().toURL()}, classes);
+                    new URL[] {dfu.toUri().toURL(), fastutil.toUri().toURL()}, withShared);
         }
 
         Class<?> type(String internalName) throws ClassNotFoundException {

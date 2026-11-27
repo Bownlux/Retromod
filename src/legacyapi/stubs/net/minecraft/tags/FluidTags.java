@@ -5,4 +5,5 @@ import net.minecraft.world.level.material.Fluid;
 
 public final class FluidTags {
     public static final TagKey<Fluid> WATER = null;
+    public static final TagKey<Fluid> LAVA = null;
 }

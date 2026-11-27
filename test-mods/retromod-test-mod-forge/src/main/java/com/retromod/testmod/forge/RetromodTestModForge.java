@@ -75,6 +75,8 @@ public class RetromodTestModForge {
         // #372: a 1.20.1 recipe serializer and advancement trigger, checked once the server's data loads.
         LegacyRecipesAndTriggers.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
         ListenerTriggerCase.register();
+        // #408 and #412: a 1.18.2 disc and a menu from a RegistryEvent.Register handler, checked once a server runs.
+        Era118Checks.register(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus());
         net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener(this::checkLoadedData);
         // Old listener objects with explicit priorities and a lone listener, checked when the server starts.
         ListenerPriorities.register();
@@ -145,9 +147,19 @@ public class RetromodTestModForge {
         // the render and screen event members Forge 26.2 and 26.3 dropped, checked as the client posts them.
         EventMemberCases.register();
         if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) EventMemberCases.registerClient();
+        // A shield listener, a Vanishable item and a GeckoLib 4 bone, which NeoForge 1.21 and GeckoLib 4.5 changed,
+        // checked once a server runs, and an MCreator HUD handler's window and partial tick, checked on the first frame.
+        ShieldAndBoneCases.register();
+        if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) HudEventMembersCase.register();
         // Listeners on a parent event, Forge's version classes, setConfig and FMLConfig, which stopped Forge mods
         // while NeoForge constructed them.
         NeoForgeStartupCases.register();
+        // Gameplay calls NeoForge 1.21.1 and newer lost: entity data ids, forced chunks, sided handlers, loot and goals.
+        NeoForge121GameplayCases.register();
+        if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) {
+            LOG.info("{} #392 new ImageButton(x, y, width, height, u, v, hoverOffset, texture, onPress) (startup): {}", PREFIX,
+                    NeoForge121GameplayCases.imageButton());
+        }
         // Handler, entity and capability data saved with the old NBT methods, and an item's old capability hook,
         // checked once a server runs. Forge only: NeoForge rebuilds Forge's capabilities on its own system.
         if (!LegacyEventBaseCase.onNeoForge()) {
@@ -714,6 +726,10 @@ public class RetromodTestModForge {
         n++; passed += check(n, "#358 a library versioned only by its manifest is translated with this mod",
             () -> LibraryCalls.manifestVersionedLibraryTranslatedLike(RetromodTestModForge.class,
                     "retromod-test-mod-forge"));
+        // Forge 1.21.1 runs mods built for 1.21 as its own, so such a jar loads as it is on Forge 1.21.1
+        // and older.
+        n++; passed += check(n, "A Forge jar built for 1.21 is translated only on Forge newer than 1.21.1",
+            LibraryCalls::forge121JarTranslatedOnlyAbove1211);
         // A move for a library's users never applies to the jar that defines the class, as GeckoLib 4's own
         // jar was moved onto com.geckolib and its classes could not load.
         n++; passed += check(n, "A class this mod ships under a library name Retromod moves stays its own",
@@ -904,6 +920,11 @@ public class RetromodTestModForge {
             LootTableIds::constantsAreIds);
         n++; passed += check(n, "BuiltInLootTables.EMPTY, Block.getLootTable() and EntityType.getDefaultLootTable() read as ids",
             LootTableIds::emptyAndGetters);
+
+        // #412 and #408: Forge 1.18.2's one-argument MenuType and IItemRenderProperties, from the legacy118 source set.
+        n++; passed += check(n, "#412 new MenuType(supplier) from a 1.18.2 mod", Era118Checks::menuTypeBuilds);
+        n++; passed += check(n, "#408 IItemRenderProperties becomes the client item extensions",
+            Era118Checks::renderPropertiesAreClientExtensions);
 
         LOG.info("{} SUMMARY: {}/{} passed", PREFIX, passed, n);
     }

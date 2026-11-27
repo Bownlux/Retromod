@@ -68,6 +68,7 @@ public final class LegacyForge119Bridge {
             renameGetters(transformer);
             LegacyForgeClientEvents119.registerNeoForge(transformer);
             registerRandomView(transformer);
+            LegacyRenderPropertiesBridge.register(transformer);
             return;
         }
         registerClassMoves(transformer);
@@ -75,6 +76,8 @@ public final class LegacyForge119Bridge {
         registerSpawnCheckMove(transformer);
         registerBiomeLoadingStandIn(transformer);
         LegacyForgeClientEvents119.register(transformer);
+        // IItemRenderProperties and IBlockRenderProperties became the client extensions.
+        LegacyRenderPropertiesBridge.register(transformer);
 
         // Same handler contract (network thread, Supplier<Context>), new name.
         String builder = "net/minecraftforge/network/simple/SimpleChannel$MessageBuilder";
@@ -96,6 +99,9 @@ public final class LegacyForge119Bridge {
     /** Entity and level randoms became {@code RandomSource}; {@link LegacyRandomSourceAdapter} wraps the reads. */
     public static void registerRandomView(RetromodTransformer transformer) {
         SyntheticEmbedder.registerClassResource(transformer, LegacyRandomSourceAdapter.VIEW, LegacyRandomView.class);
+        // An old override the Random bridge wakes logs through it when it falls back to the game's own method.
+        SyntheticEmbedder.registerClassResource(transformer, LegacyRandomCallAdapter.LOG,
+                com.retromod.shim.common.embedded.LegacyLog.class);
     }
 
     /**

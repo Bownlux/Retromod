@@ -4,4 +4,5 @@ package net.minecraft;
 public class CrashReport {
     public static CrashReport forThrowable(Throwable cause, String title) { throw new UnsupportedOperationException(); }
     public CrashReportCategory addCategory(String name) { throw new UnsupportedOperationException(); }
+    public String getFriendlyReport(ReportType type) { throw new UnsupportedOperationException(); }
 }

@@ -243,6 +243,8 @@ public class Fabric_1_21_1_to_1_21_2 implements VersionShim {
             // Entity, goal and level members 1.20.5 and 1.21.2 changed. NeoForge and Forge
             // register the 1.20.5 bridge from their 1.20.5 shims, which Fabric lacks.
             com.retromod.shim.common.Legacy1205MemberBridge.register(transformer);
+            // And the pet follow goal's flying flag, which 1.21 dropped.
+            com.retromod.shim.common.Legacy121MembersBridge.register(transformer);
             // Block entity, item and world data NBT code from before 1.20.5, as the NeoForge 1.20.5 shim bridges it.
             com.retromod.shim.common.LegacyRegistryNbtBridge.register(transformer);
             // 1.20.5 turned loot table ids into registry keys; old reads and calls keep getting the id.

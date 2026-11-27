@@ -6,5 +6,5 @@ import net.minecraft.client.gui.screens.Screen;
 public abstract class AbstractContainerScreen<T> extends Screen {
     protected int leftPos;
     protected int topPos;
-    private AbstractContainerScreen() { super(null); }
+    AbstractContainerScreen() { super(null); }
 }

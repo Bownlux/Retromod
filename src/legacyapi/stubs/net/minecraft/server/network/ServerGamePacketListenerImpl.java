@@ -10,4 +10,6 @@ public class ServerGamePacketListenerImpl extends ServerCommonPacketListenerImpl
             CommonListenerCookie cookie) {
         super(server, connection, cookie);
     }
+    public void handleAttack(net.minecraft.network.protocol.game.ServerboundAttackPacket packet) { throw new UnsupportedOperationException(); }
+    public void handleInteract(net.minecraft.network.protocol.game.ServerboundInteractPacket packet) { throw new UnsupportedOperationException(); }
 }

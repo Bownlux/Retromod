@@ -22,6 +22,12 @@ This page keeps the release history readable. The [full technical changelog](htt
 - Runs old screens built with a pose stack on 26.x, with a fallback to their widgets, and repairs more removed calls, text classes, registry fields, and Forge 1.19 events for mods from 1.12.2 to 1.21.1.
 - Bridges the old armor model, texture and tint hooks, the ender mask hook and `PlayerRenderer` for 1.20.1 and 1.21.1 Forge and NeoForge mods on NeoForge 26.x and Forge 26.2 and newer.
 - Moves the old Minecraft class names that Forge mods for 1.14 to 1.16.5 use to the classes NeoForge and Forge 26.x hosts have, so more of those mods link. Mods for 1.13.2 and older keep their names.
+- Stops translating mods that Forge and NeoForge 1.21.1 load as their own, such as a 1.21 mod on 1.21.1.
+- Fixes held block draws from old first-person hand mixins on 26.x and adapts the old pipeline blend call on 26.1.
+- Bridges more vanilla members that 26.x removed or reshaped, including block materials, old furnace fuel times, screen tooltips, the attack packet, toasts, and 1.16 GL state calls, for old mods on every loader.
+- Loads more Forge 1.18 and 1.19 mods on newer hosts: old menu types, music discs, item render properties, registry events, `Random` calls and biome categories.
+- Repairs more 1.20.1 Forge mods on NeoForge 1.21.1 and newer: GeckoLib 4 models, entity model draws, HUD overlays, shield listeners, and several blocks and triggers they build at startup.
+- Keeps more Forge 1.20.1 mods working on NeoForge 1.21.1 and newer: mod dimensions, sided block inventories, forced chunks, loot table lookups, biome tag checks, potion effect reads, mob path finding and pet follow goals. On NeoForge and Forge 1.21 and 1.21.1 it also rebuilds their texture image buttons.
 
 ### Snapshot 5, November 20, 2026
 

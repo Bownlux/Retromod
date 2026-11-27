@@ -22,6 +22,8 @@ public class Minecraft {
     public LevelRenderer levelRenderer;
     public GameRenderer gameRenderer;
     // Final on the host.
+    public MouseHandler mouseHandler;
+    // Final on the host.
     public Options options;
     // Final on the host.
     public net.minecraft.client.gui.Font font;
@@ -48,4 +50,7 @@ public class Minecraft {
     public long getFrameTimeNs() { throw new UnsupportedOperationException(); }
     // Inherited from BlockableEventLoop on the host.
     public void execute(Runnable task) { throw new UnsupportedOperationException(); }
+    public void setScreenAndShow(net.minecraft.client.gui.screens.Screen screen) { throw new UnsupportedOperationException(); }
+    public static void fillReport(Minecraft minecraft, net.minecraft.client.resources.language.LanguageManager languages, String version, Options options, net.minecraft.CrashReport report) { throw new UnsupportedOperationException(); }
+    public net.minecraft.client.resources.language.LanguageManager getLanguageManager() { throw new UnsupportedOperationException(); }
 }

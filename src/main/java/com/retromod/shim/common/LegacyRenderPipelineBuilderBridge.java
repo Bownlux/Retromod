@@ -14,7 +14,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 
-/** Adapts the 26.1 render-pipeline builder calls replaced by bind groups in 26.2. */
+/** Adapts the 26.1 render-pipeline builder calls replaced by bind groups in 26.2, and the 1.21.11 blend shortcut 26.1 removed. */
 public final class LegacyRenderPipelineBuilderBridge {
     private static final String OWNER = "com/mojang/blaze3d/pipeline/RenderPipeline$Builder";
     private static final String BUILDER_DESC = "L" + OWNER + ";";
@@ -26,16 +26,10 @@ public final class LegacyRenderPipelineBuilderBridge {
     }
 
     public static void register(RetromodTransformer transformer) {
-        SyntheticEmbedder.registerClassResource(transformer, BRIDGE,
-                LegacyRenderPipelineBuilderBridge.class);
-
+        registerBlend(transformer);
         transformer.registerMethodRedirect(
                 OWNER, "withSampler", "(Ljava/lang/String;)" + BUILDER_DESC,
                 BRIDGE, "withSampler", "(Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/Object;");
-        transformer.registerMethodRedirect(
-                OWNER, "withBlend",
-                "(Lcom/mojang/blaze3d/pipeline/BlendFunction;)" + BUILDER_DESC,
-                BRIDGE, "withBlend", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
         transformer.registerMethodRedirect(
                 OWNER, "withFragmentShader", "(Ljava/lang/String;)" + BUILDER_DESC,
                 BRIDGE, "withFragmentShader",
@@ -60,6 +54,16 @@ public final class LegacyRenderPipelineBuilderBridge {
                 BRIDGE, "buildSnippet", "(Ljava/lang/Object;)Ljava/lang/Object;");
     }
 
+    /** The blend shortcut alone, which 26.1 already replaced with a color target state. */
+    public static void registerBlend(RetromodTransformer transformer) {
+        SyntheticEmbedder.registerClassResource(transformer, BRIDGE,
+                LegacyRenderPipelineBuilderBridge.class);
+        transformer.registerMethodRedirect(
+                OWNER, "withBlend",
+                "(Lcom/mojang/blaze3d/pipeline/BlendFunction;)" + BUILDER_DESC,
+                BRIDGE, "withBlend", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+    }
+
     /** Defers sampler layout selection until all old sampler names have been collected. */
     public static Object withSampler(Object builder, String sampler) {
         synchronized (PENDING_SAMPLERS) {
@@ -68,7 +72,7 @@ public final class LegacyRenderPipelineBuilderBridge {
         return builder;
     }
 
-    /** Converts the old blend shortcut to 26.2's color-target state. */
+    /** Converts the old blend shortcut to the color-target state 26.1 introduced. */
     public static Object withBlend(Object builder, Object blendFunction) {
         try {
             ClassLoader loader = builder.getClass().getClassLoader();

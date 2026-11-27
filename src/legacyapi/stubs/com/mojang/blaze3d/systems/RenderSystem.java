@@ -9,4 +9,5 @@ public final class RenderSystem {
     public static Matrix4fStack getModelViewStack() { throw new UnsupportedOperationException(); }
     public static SamplerCache getSamplerCache() { throw new UnsupportedOperationException(); }
     public static boolean isOnRenderThread() { throw new UnsupportedOperationException(); }
+    public static GpuDevice getDevice() { throw new UnsupportedOperationException(); }
 }

@@ -8,4 +8,9 @@ public interface RegistryAccess extends HolderLookup.Provider {
     <E> Optional<Registry<E>> lookup(ResourceKey<? extends Registry<? extends E>> key);
 
     interface Frozen extends RegistryAccess {}
+    Frozen EMPTY = null;
+    class ImmutableRegistryAccess implements RegistryAccess {
+        public ImmutableRegistryAccess(java.util.List<? extends Registry<?>> registries) { throw new UnsupportedOperationException(); }
+        public <E> Optional<Registry<E>> lookup(ResourceKey<? extends Registry<? extends E>> key) { throw new UnsupportedOperationException(); }
+    }
 }

@@ -71,6 +71,32 @@ class LegacyRenderPipelineBuilderBridgeTest {
     }
 
     @Test
+    void the26_1ShimAdaptsOnlyTheBlendShortcutThat26_1Removed() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        try {
+            Common_1_21_11_to_26_1_ClassMoves.register(transformer);
+            ClassNode node = new ClassNode();
+            new ClassReader(transformer.transformClass(oldPipelineBuilderCalls(), "test/OldPipelineBuilderCalls"))
+                    .accept(node, 0);
+            List<MethodInsnNode> calls = node.methods.stream()
+                    .flatMap(method -> Arrays.stream(method.instructions.toArray()))
+                    .filter(MethodInsnNode.class::isInstance)
+                    .map(MethodInsnNode.class::cast)
+                    .toList();
+
+            assertTrue(calls.stream().anyMatch(call -> BRIDGE.equals(call.owner) && "withBlend".equals(call.name)),
+                    "26.1 has no withBlend, so Hold My Items' particle pipeline must reach the bridge");
+            assertTrue(calls.stream().anyMatch(call -> BUILDER.equals(call.owner) && "withSampler".equals(call.name)),
+                    "26.1 still has named samplers, so they stay on the builder");
+            assertTrue(calls.stream().anyMatch(call -> BUILDER.equals(call.owner) && "build".equals(call.name)),
+                    "26.1 builds the pipeline itself");
+        } finally {
+            transformer.clearRedirectsForTesting();
+        }
+    }
+
+    @Test
     void oldSamplerNamesChooseTheMatchingCombinedLayout() {
         assertEquals("SAMPLER0", layout("Sampler0"));
         assertEquals("SAMPLER0_SAMPLER2", layout("Sampler0", "Sampler2"));

@@ -17,6 +17,17 @@ public abstract class BlockBehaviour {
         public Properties setId(net.minecraft.resources.ResourceKey<net.minecraft.world.level.block.Block> id) { throw new UnsupportedOperationException(); }
         public Properties isViewBlocking(StateArgumentPredicate<AABB> predicate) { throw new UnsupportedOperationException(); }
         public Properties emissiveRendering(java.util.function.Predicate<BlockState> predicate) { throw new UnsupportedOperationException(); }
+        public static Properties of() { throw new UnsupportedOperationException(); }
+        public Properties mapColor(net.minecraft.world.level.material.MapColor color) { throw new UnsupportedOperationException(); }
+        public Properties mapColor(net.minecraft.world.item.DyeColor color) { throw new UnsupportedOperationException(); }
+        public Properties mapColor(java.util.function.Function<BlockState, net.minecraft.world.level.material.MapColor> color) { throw new UnsupportedOperationException(); }
+        public Properties pushReaction(net.minecraft.world.level.material.PushReaction reaction) { throw new UnsupportedOperationException(); }
+        public Properties noCollision() { throw new UnsupportedOperationException(); }
+        public Properties noOcclusion() { throw new UnsupportedOperationException(); }
+        public Properties ignitedByLava() { throw new UnsupportedOperationException(); }
+        public Properties liquid() { throw new UnsupportedOperationException(); }
+        public Properties replaceable() { throw new UnsupportedOperationException(); }
+        public Properties forceSolidOff() { throw new UnsupportedOperationException(); }
     }
 
     public interface StatePredicate {

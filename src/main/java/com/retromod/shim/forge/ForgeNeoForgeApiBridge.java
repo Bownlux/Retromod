@@ -40,6 +40,8 @@ public final class ForgeNeoForgeApiBridge {
             {"client/model/geometry/IGeometryLoader", "client/model/geometry/IGeometryLoader"},
             {"client/model/geometry/IUnbakedGeometry", "client/model/geometry/IUnbakedGeometry"},
             {"client/model/geometry/IGeometryBakingContext", "client/model/geometry/IGeometryBakingContext"},
+            // The same private EFFECTS map and getForType, which MCreator's sky light code reads by reflection (#406).
+            {"client/DimensionSpecialEffectsManager", "client/DimensionSpecialEffectsManager"},
             // Forge's pre-damage hook; NeoForge's is cancellable with the same getters.
             {"event/entity/living/LivingAttackEvent", "event/entity/living/LivingIncomingDamageEvent"},
             // NeoForge fires the tick for every entity; LegacyLivingTickAdapter keeps Forge's
@@ -213,6 +215,10 @@ public final class ForgeNeoForgeApiBridge {
         registerRemovedEvents(transformer, ForgeNeoForgeApiBridge::hostHasClass);
         registerArchitecturyEventBuses(transformer, ForgeNeoForgeApiBridge::hostHasClass);
         LegacyCapabilitySynthetics.register(transformer);
+        // SidedInvWrapper.create returned Forge's lazy handlers, which NeoForge has no form of.
+        LegacySidedInvWrapperBridge.register(transformer);
+        // ForgeChunkManager became ticket controllers that each mod registers while the game loads.
+        LegacyForgeChunkManagerBridge.register(transformer);
         LegacyCustomRegistryBridge.register(transformer);
         LegacyEntityClientFactoryBridge.register(transformer);
         com.retromod.shim.forge.capability.ForgeCapabilityStorage.listen();
@@ -228,8 +234,21 @@ public final class ForgeNeoForgeApiBridge {
         // Forge's forge: tag constants became NeoForge c: constants, many under new names.
         LegacyNeoForgeTagsBridge.register(transformer);
         registerStrictIngredient(transformer, ForgeNeoForgeApiBridge::hostHasClass);
+        registerHolderTagCheck(transformer);
         registerCombinedIngredients(transformer, ForgeNeoForgeApiBridge::hostHasClass);
         LOGGER.debug(RetromodLog.DETAIL, "Bridged {} renamed Forge API classes and the Forge capability system", moved);
+    }
+
+    static final String HOLDER = "net/minecraft/core/Holder";
+    static final String HOLDER_TAG_CHECK = "(Lnet/minecraft/tags/TagKey;)Z";
+
+    /** Forge's {@code holder.containsTag(tag)}, which Villager Recruits checks a biome with (#394), is {@code is(tag)} on NeoForge. */
+    static void registerHolderTagCheck(RetromodTransformer transformer) {
+        org.objectweb.asm.tree.ClassNode holder = com.retromod.core.ClassResourceInspector.read(HOLDER);
+        if (holder != null && holder.methods.stream().anyMatch(method -> method.name.equals("containsTag"))) return;
+        transformer.registerMethodRedirect(HOLDER, "containsTag", HOLDER_TAG_CHECK, HOLDER, "is", HOLDER_TAG_CHECK);
+        // A call through a holder's own type, such as Holder.Reference, takes the same check.
+        transformer.registerInheritedMethodRedirect(HOLDER, "containsTag", HOLDER_TAG_CHECK, HOLDER, "is", HOLDER_TAG_CHECK);
     }
 
     static final String STRICT_INGREDIENT = "net/minecraftforge/common/crafting/StrictNBTIngredient";

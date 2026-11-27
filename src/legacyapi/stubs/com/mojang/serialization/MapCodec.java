@@ -20,4 +20,5 @@ public abstract class MapCodec<A> {
     public static final class MapCodecCodec<A> {
         public MapCodec<A> codec() { throw new UnsupportedOperationException(); }
     }
+    public MapCodec<A> validate(java.util.function.Function<A, DataResult<A>> check) { throw new UnsupportedOperationException(); }
 }

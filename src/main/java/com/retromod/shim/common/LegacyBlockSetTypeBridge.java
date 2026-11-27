@@ -54,6 +54,12 @@ public final class LegacyBlockSetTypeBridge {
     private static final String WOOD_CTOR = "(Ljava/lang/String;L" + SET_TYPE + ";L" + SOUND_TYPE + ";L"
             + SOUND_TYPE + ";L" + SOUND_EVENT + ";L" + SOUND_EVENT + ";)V";
     private static final String SOUND_WOOD = "retromod$soundWood";
+    static final String SET_TYPE_FACTORY = "com/retromod/generated/LegacyBlockSetTypes";
+    /** BlockSetType's 1.20.1 record constructor: the name, hand opening, the sound type and eight sounds. */
+    static final String OLD_SET_TYPE_CTOR = "(Ljava/lang/String;ZL" + SOUND_TYPE + ";" + ("L" + SOUND_EVENT + ";").repeat(8) + ")V";
+    /** The 1.20.3 one, which added wind charge and arrow opening and the pressure plate sensitivity. */
+    static final String SET_TYPE_CTOR = "(Ljava/lang/String;ZZZL" + SET_TYPE + "$PressurePlateSensitivity;L" + SOUND_TYPE + ";"
+            + ("L" + SOUND_EVENT + ";").repeat(8) + ")V";
 
     private LegacyBlockSetTypeBridge() {}
 
@@ -75,6 +81,48 @@ public final class LegacyBlockSetTypeBridge {
         // 1.20.3 folded the sensitivity into BlockSetType; a read of the old constants on a newer
         // host yields null, which the generated constructor ignores.
         if (!hostHasSensitivity()) transformer.registerStaticFieldNuller(SENSITIVITY);
+        registerSetTypeConstructor(transformer, ClassResourceInspector.read(SET_TYPE));
+    }
+
+    /** A mod's own 1.20.1 BlockSetType, built through the 1.20.3 constructor where the host has only that one (#415). */
+    static void registerSetTypeConstructor(RetromodTransformer transformer, ClassNode host) {
+        if (!lacksOldSetTypeConstructor(host) || transformer.getSyntheticClasses().containsKey(SET_TYPE_FACTORY)) return;
+        transformer.registerSyntheticClass(SET_TYPE_FACTORY, generateSetTypeFactory());
+        transformer.registerConstructorRedirect(SET_TYPE, OLD_SET_TYPE_CTOR, SET_TYPE_FACTORY, "create",
+                OLD_SET_TYPE_CTOR.replace(")V", ")L" + SET_TYPE + ";"));
+    }
+
+    /** Whether the host has the 1.20.3 constructor and not the old one; unreadable, a host from 1.20.3 has only the new one. */
+    static boolean lacksOldSetTypeConstructor(ClassNode host) {
+        if (host == null) return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20.3") >= 0;
+        boolean hasOld = host.methods.stream().anyMatch(m -> m.name.equals("<init>") && m.desc.equals(OLD_SET_TYPE_CTOR));
+        boolean hasNew = host.methods.stream().anyMatch(m -> m.name.equals("<init>") && m.desc.equals(SET_TYPE_CTOR));
+        return !hasOld && hasNew;
+    }
+
+    /** {@code create(name, canOpenByHand, soundType, eight sounds)}: the old set through the 1.20.3 constructor. */
+    static byte[] generateSetTypeFactory() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, SET_TYPE_FACTORY, null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "create",
+                OLD_SET_TYPE_CTOR.replace(")V", ")L" + SET_TYPE + ";"), null, null);
+        mv.visitCode();
+        mv.visitTypeInsn(NEW, SET_TYPE);
+        mv.visitInsn(DUP);
+        mv.visitVarInsn(ALOAD, 0);
+        // The three new settings follow hand opening, as a wooden set (all three) or an iron one (none) has them.
+        for (int i = 0; i < 3; i++) mv.visitVarInsn(ILOAD, 1);
+        String sensitivity = SET_TYPE + "$PressurePlateSensitivity";
+        // The oak pressure plate's sensitivity.
+        mv.visitFieldInsn(GETSTATIC, sensitivity, "EVERYTHING", "L" + sensitivity + ";");
+        // The sound type and the eight sounds, in the same order in both constructors.
+        for (int slot = 2; slot <= 10; slot++) mv.visitVarInsn(ALOAD, slot);
+        mv.visitMethodInsn(INVOKESPECIAL, SET_TYPE, "<init>", SET_TYPE_CTOR, false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     private static void bridge(RetromodTransformer transformer, String block, String typeClass,

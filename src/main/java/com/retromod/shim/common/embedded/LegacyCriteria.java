@@ -40,6 +40,11 @@ public final class LegacyCriteria {
             "net.minecraft.advancements.criterion.ItemPredicate",
             "net.minecraft.advancements.predicates.ItemPredicate"};
 
+    // 1.20.2 dropped the trigger's id, so the id an old PlayerTrigger was built with is kept for its registration.
+    private static final String[] PLAYER_TRIGGER = {"net.minecraft.advancements.critereon.PlayerTrigger",
+            "net.minecraft.advancements.criterion.PlayerTrigger", "net.minecraft.advancements.triggers.PlayerTrigger"};
+    private static final Map<Object, Object> TRIGGER_IDS = Collections.synchronizedMap(new WeakHashMap<>());
+
     private static final Map<Object, Object> CODECS = Collections.synchronizedMap(new WeakHashMap<>());
     // The ops the advancement loader is reading with. Predicates hold registry entries since
     // 1.20.5, and only these registry-aware ops can resolve them.
@@ -51,12 +56,22 @@ public final class LegacyCriteria {
 
     /** {@code CriteriaTriggers.register(trigger)}: the trigger types registry, under the trigger's own id. */
     public static Object register(Object trigger) throws Throwable {
-        Method getId = LegacyPublicMethods.method(trigger.getClass(), "getId");
-        getId.trySetAccessible();
-        Object id = getId.invoke(trigger);
+        Object id = TRIGGER_IDS.get(trigger);
+        if (id == null) {
+            Method getId = LegacyPublicMethods.method(trigger.getClass(), "getId");
+            getId.trySetAccessible();
+            id = getId.invoke(trigger);
+        }
         Object types = Class.forName("net.minecraft.core.registries.BuiltInRegistries", true, loader())
                 .getField("TRIGGER_TYPES").get(null);
         LateVanillaRegistration.register(types, id, trigger);
+        return trigger;
+    }
+
+    /** {@code new PlayerTrigger(id)}: the host's trigger, which takes no id, remembered under that id for {@link #register}. */
+    public static Object playerTrigger(Object id) throws ReflectiveOperationException {
+        Object trigger = first(loader(), PLAYER_TRIGGER).getConstructor().newInstance();
+        TRIGGER_IDS.put(trigger, id);
         return trigger;
     }
 

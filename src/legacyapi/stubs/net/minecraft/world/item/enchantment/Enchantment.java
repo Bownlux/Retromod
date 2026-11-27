@@ -3,4 +3,5 @@ package net.minecraft.world.item.enchantment;
 
 public final class Enchantment {
     public net.minecraft.network.chat.Component description() { throw new UnsupportedOperationException(); }
+    public static net.minecraft.network.chat.Component getFullname(net.minecraft.core.Holder<Enchantment> enchantment, int level) { throw new UnsupportedOperationException(); }
 }

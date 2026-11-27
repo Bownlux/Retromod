@@ -110,6 +110,12 @@ final class MixinFirstPersonRendererAdapter {
     private static final String LIGHT_COORDS = "net/minecraft/util/LightCoordsUtil";
     private static final String WITH_EMISSION_DESC = "(II)I";
 
+    // Retromod's own copies of the removed classes, which the bytecode pass names, embedded per mod, before this step.
+    private static final String RENDERER_COPY =
+            com.retromod.shim.common.RebuiltApiClasses.ROOT + "minecraft/client/renderer/LegacyItemInHandRenderer";
+    private static final String BLOCK_RENDERER_COPY =
+            com.retromod.shim.common.RebuiltApiClasses.ROOT + "minecraft/client/renderer/LegacyBlockRenderDispatcher";
+
     private static final String PLAYER_STATE_FIELD = "retromod$playerState";
     private static final String HANDS_STATE_FIELD = "retromod$handsState";
     private static final String LEGACY_SUFFIX = "$retromodLegacy";
@@ -133,18 +139,23 @@ final class MixinFirstPersonRendererAdapter {
     static byte[] adapt(byte[] classBytes, FuzzyMethodResolver host,
             java.util.function.Predicate<String> hostHasClass) {
         if (classBytes == null) return classBytes;
+        String oldTarget = oldRendererTarget(classBytes);
         if (host == null || !host.isIndexed()) {
             // The removed-target check deferred this mixin on the strength of the class probe. With
             // no indexed host there is nothing to retarget against, so disable it as that check
             // would have, instead of leaving Mixin to fail on the missing ItemInHandRenderer.
-            if (isOldRendererMixin(classBytes) && !hostHasClass.test(OLD_RENDERER.replace('/', '.'))
+            if (oldTarget != null && !hostHasClass.test(OLD_RENDERER.replace('/', '.'))
                     && movesAfterRemap(OLD_RENDERER, hostHasClass)) {
                 return disabled(classBytes);
             }
             return classBytes;
         }
-        boolean retarget = isOldRendererMixin(classBytes) && hostSplitRenderer(host);
-        byte[] working = retarget ? remapRenderer(classBytes) : classBytes;
+        boolean retarget = oldTarget != null && hostSplitRenderer(host);
+        // The copy's static getter has no counterpart on the split renderer, so such a mixin cannot move.
+        if (retarget && !OLD_RENDERER.equals(oldTarget) && callsStaticOn(classBytes, oldTarget)) {
+            return disabled(classBytes);
+        }
+        byte[] working = retarget ? remapRenderer(classBytes, oldTarget) : classBytes;
 
         ClassNode classNode = new ClassNode();
         new ClassReader(working).accept(classNode, 0);
@@ -207,15 +218,20 @@ final class MixinFirstPersonRendererAdapter {
         boolean replaced = false;
         for (MethodNode method : classNode.methods) {
             for (AbstractInsnNode insn : method.instructions.toArray()) {
-                if (!(insn instanceof MethodInsnNode get) || !MINECRAFT.equals(get.owner)
-                        || !"getBlockRenderer".equals(get.name)) {
-                    continue;
-                }
+                if (!(insn instanceof MethodInsnNode get) || !isBlockRendererGetter(get)) continue;
+                // The rebuilt getter is cast to its own type before the mod's cast to its duck interface.
+                List<AbstractInsnNode> casts = new ArrayList<>();
                 AbstractInsnNode next = get.getNext();
+                while (next instanceof TypeInsnNode copyCast && copyCast.getOpcode() == Opcodes.CHECKCAST
+                        && isCopy(copyCast.desc, BLOCK_RENDERER_COPY)) {
+                    casts.add(copyCast);
+                    next = next.getNext();
+                }
                 if (!(next instanceof TypeInsnNode cast) || cast.getOpcode() != Opcodes.CHECKCAST) continue;
                 MethodInsnNode call = findHeldBlockCall(cast, cast.desc);
                 if (call == null) continue;
                 method.instructions.remove(get);
+                for (AbstractInsnNode copyCast : casts) method.instructions.remove(copyCast);
                 method.instructions.remove(cast);
                 method.instructions.set(call, new MethodInsnNode(Opcodes.INVOKESTATIC, classNode.name,
                         HELD_BLOCK_HELPER, "(L" + MINECRAFT + ";" + HELD_BLOCK_DESC.substring(1), false));
@@ -227,6 +243,21 @@ final class MixinFirstPersonRendererAdapter {
                     host.hasMethod(LIGHT_COORDS, "lightCoordsWithEmission", WITH_EMISSION_DESC)));
         }
         return replaced;
+    }
+
+    /**
+     * {@code minecraft.getBlockRenderer()}, or the rebuilt dispatcher's {@code get(Object)} the bytecode pass put in
+     * its place. Both leave the {@code Minecraft} receiver as the only value they consume.
+     */
+    private static boolean isBlockRendererGetter(MethodInsnNode call) {
+        if (MINECRAFT.equals(call.owner) && "getBlockRenderer".equals(call.name)) return true;
+        return call.getOpcode() == Opcodes.INVOKESTATIC && "get".equals(call.name)
+                && isCopy(call.owner, BLOCK_RENDERER_COPY) && call.desc.startsWith("(Ljava/lang/Object;)");
+    }
+
+    /** Whether a name is a Retromod copy, as registered or embedded under a mod's own package. */
+    private static boolean isCopy(String name, String copy) {
+        return name.equals(copy) || name.endsWith("/" + copy);
     }
 
     private static MethodInsnNode findHeldBlockCall(AbstractInsnNode from, String castType) {
@@ -358,11 +389,12 @@ final class MixinFirstPersonRendererAdapter {
                 && host.hasMethod(STACK_STATE, "submit", STATE_SUBMIT);
     }
 
-    private static boolean isOldRendererMixin(byte[] classBytes) {
+    /** The mixin's sole target when it is the old renderer or Retromod's copy of it, else null. */
+    private static String oldRendererTarget(byte[] classBytes) {
         ClassNode probe = new ClassNode();
         new ClassReader(classBytes).accept(probe, ClassReader.SKIP_CODE);
         AnnotationNode mixin = mixinAnnotation(probe);
-        if (mixin == null || mixin.values == null) return false;
+        if (mixin == null || mixin.values == null) return null;
         List<String> targets = new ArrayList<>();
         for (int i = 0; i + 1 < mixin.values.size(); i += 2) {
             Object value = mixin.values.get(i + 1);
@@ -372,13 +404,31 @@ final class MixinFirstPersonRendererAdapter {
                 if (entry instanceof String name) targets.add(name.replace('.', '/'));
             }
         }
-        return targets.size() == 1 && OLD_RENDERER.equals(targets.get(0));
+        if (targets.size() != 1) return null;
+        String target = targets.get(0);
+        return OLD_RENDERER.equals(target) || isCopy(target, RENDERER_COPY) ? target : null;
     }
 
-    private static byte[] remapRenderer(byte[] classBytes) {
+    private static boolean callsStaticOn(byte[] classBytes, String owner) {
+        ClassNode node = new ClassNode();
+        new ClassReader(classBytes).accept(node, 0);
+        for (MethodNode method : node.methods) {
+            for (AbstractInsnNode insn : method.instructions) {
+                if (insn instanceof MethodInsnNode call && call.getOpcode() == Opcodes.INVOKESTATIC
+                        && call.owner.equals(owner)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static byte[] remapRenderer(byte[] classBytes, String oldTarget) {
         ClassWriter writer = new ClassWriter(0);
-        new ClassReader(classBytes).accept(
-                new ClassRemapper(writer, new SimpleRemapper(OLD_RENDERER, RENDERER)), 0);
+        java.util.Map<String, String> names = new java.util.HashMap<>();
+        names.put(OLD_RENDERER, RENDERER);
+        names.put(oldTarget, RENDERER);
+        new ClassReader(classBytes).accept(new ClassRemapper(writer, new SimpleRemapper(names)), 0);
         return writer.toByteArray();
     }
 

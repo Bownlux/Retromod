@@ -5,6 +5,7 @@
 package com.retromod.testmod.neoforge;
 
 import com.retromod.testlib.neoforge.RetromodTestLibNeoForge;
+import com.retromod.testnative.neoforge.RetromodTestNativeNeoForge;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.item.Tier;
@@ -29,6 +30,12 @@ final class LibraryCalls {
     static boolean manifestVersionedLibraryTranslatedLike(Class<?> mod, String modTitle)
             throws java.io.IOException {
         return translatedByRetromod(RetromodTestLibNeoForge.class, "retromod-test-lib-neoforge")
+                == translatedByRetromod(mod, modTitle);
+    }
+
+    /** Whether the jar NeoForge 1.21.1 runs as it is and {@code mod} were both translated, or both left as they are. */
+    static boolean nativeJarTranslatedLike(Class<?> mod, String modTitle) throws java.io.IOException {
+        return translatedByRetromod(RetromodTestNativeNeoForge.class, "retromod-test-native-neoforge")
                 == translatedByRetromod(mod, modTitle);
     }
 

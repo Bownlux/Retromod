@@ -5,4 +5,5 @@ import net.minecraft.network.protocol.PacketFlow;
 
 public class Connection {
     public Connection(PacketFlow receiving) {}
+    public void send(net.minecraft.network.protocol.Packet<?> packet) { throw new UnsupportedOperationException(); }
 }

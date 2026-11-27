@@ -35,4 +35,5 @@ public class GuiGraphicsExtractor {
     public void setTooltipForNextFrame(net.minecraft.network.chat.Component text, int x, int y) { throw new UnsupportedOperationException(); }
     public void setTooltipForNextFrame(List<FormattedCharSequence> lines, int x, int y) { throw new UnsupportedOperationException(); }
     public void setComponentTooltipForNextFrame(Font font, List<net.minecraft.network.chat.Component> lines, int x, int y) { throw new UnsupportedOperationException(); }
+    public void blit(RenderPipeline pipeline, Identifier texture, int x, int y, float u, float v, int width, int height, int uWidth, int vHeight, int textureWidth, int textureHeight) { throw new UnsupportedOperationException(); }
 }

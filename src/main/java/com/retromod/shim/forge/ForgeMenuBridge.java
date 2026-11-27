@@ -49,6 +49,9 @@ final class ForgeMenuBridge {
         t.registerSyntheticClass(MENUS, generateMenus());
 
         t.registerClassRedirect("net/minecraftforge/network/IContainerFactory", FACTORY);
+        // A 1.19.2 mod's new MenuType(factory) is built the same way, since the factory is no menu supplier here.
+        com.retromod.shim.common.LegacyMenuTypeBridge.register(t,
+                com.retromod.shim.common.LegacyMenuTypeBridge.MOJANG, FACTORY, MENUS);
 
         // Keyed on both spellings of the factory type, since the class move can apply first.
         for (String factory : new String[]{"net/minecraftforge/network/IContainerFactory", FACTORY}) {

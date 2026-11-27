@@ -19,7 +19,11 @@ cd test-mods/retromod-test-mod
 
 Each build also writes a small library mod next to the test mod: `retromod-test-lib`, `retromod-test-lib-forge`, or `retromod-test-lib-neoforge`. Install it alongside the test mod. The cross-jar case calls its API, which takes types Retromod rebuilds inside every translated jar, so without the library that case fails. The Forge and NeoForge libraries name their Minecraft version only in the jar manifest, and a separate case checks that Retromod translates them whenever it translates the test mod.
 
+The Forge and NeoForge builds also write `retromod-test-native-forge` or `retromod-test-native-neoforge`. Install it too. Each is shaped like a mod the loader runs as it is on 1.21.1. A case checks that Retromod leaves it alone there: the NeoForge one is translated exactly when the test mod is, and the Forge one only on Forge newer than 1.21.1. Without it, that case fails. The NeoForge test mod cannot run untranslated on 1.21.1, so the NeoForge jar also logs its own `native:` line, which on 1.21.1 says whether Retromod left it alone. Check it on the second launch, after in-place loading had its chance to serve a translation.
+
 The Fabric and Forge test mods compile a few calls against stand-ins in `src/mcstubs/` for Minecraft classes newer than the version they build for, such as 1.21.11's `EitherHolder`. The stand-ins are not packaged, so the jar carries the names a newer mod would.
+
+The Forge test mod's `src/legacy118/` cases are compiled against stand-ins of the Forge 1.18.2 API in `src/legacy118stubs/` instead of 1.20.1, so the jar carries the constructors, interfaces and registry event a 1.18.2 mod names. Only the cases are packaged.
 
 The Forge test mod also compiles against stand-ins of the Farmer's Delight 1.20.1 API in `src/fdstubs/`, which are not packaged. Its #302 case registers a knife through a deferred register and reads it and Farmer's Delight's registry fields once a server starts. Install Farmer's Delight for the host's Minecraft version, such as 1.21.1-1.3.4 on NeoForge 1.21.1, to run it. Without the library the case logs `skipped`.
 

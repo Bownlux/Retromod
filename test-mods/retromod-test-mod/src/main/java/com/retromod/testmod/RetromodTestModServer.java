@@ -38,6 +38,8 @@ import com.retromod.testmod.tests.Test77OldTextJson;
 import com.retromod.testmod.tests.Test78OldTextAdapterSubclass;
 import com.retromod.testmod.tests.Test87DeferredRegistryIds;
 import com.retromod.testmod.tests.Test88ConstructorInjectFollowsHost;
+import com.retromod.testmod.tests.Test92GeckoLibBone;
+import com.retromod.testmod.tests.Test93OldMenuTypeConstructor;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 
@@ -61,7 +63,7 @@ public class RetromodTestModServer implements ModInitializer {
                 // Item stacks built here, before a 26.x world binds item components; checked once the server starts.
                 new Test73EarlyItemStacks(),
                 // Registers a block and items built before their ids, so before the registries freeze.
-                new Test87DeferredRegistryIds()));
+                new Test87DeferredRegistryIds(), new Test93OldMenuTypeConstructor()));
         try {
             // The server cases wait for the server to start, because they need its worlds.
             ServerLifecycleEvents.SERVER_STARTED.register(server -> TestPhases.run("server-started", List.of(
@@ -75,6 +77,13 @@ public class RetromodTestModServer implements ModInitializer {
                     Test87DeferredRegistryIds.checkOnServer(server),
                     // Players hold an inventory, so a dedicated server applies this mixin too.
                     new Test88ConstructorInjectFollowsHost())));
+            // Only GeckoLib 4 has the bone API this case turns; without it the case is left out.
+            if (Test92GeckoLibBone.applies()) {
+                ServerLifecycleEvents.SERVER_STARTED.register(server -> TestPhases.run("server-started-geckolib",
+                        List.of(new Test92GeckoLibBone())));
+            } else {
+                System.out.println("[Retromod-Test] Test92 skipped: GeckoLib 4 is not installed");
+            }
         } catch (NoClassDefFoundError e) {
             System.err.println("[Retromod-Test] Fabric API not installed - server-started test phase skipped ("
                     + e.getMessage() + ")");

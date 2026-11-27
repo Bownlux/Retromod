@@ -15,6 +15,7 @@ public final class LegacyMapCodecsSynthetic {
 
     public static final String INTERNAL = "com/retromod/generated/LegacyMapCodecs";
     static final String OF_DESC = "(Ljava/lang/Object;)Ljava/lang/Object;";
+    static final String REMEMBER_DESC = "(Ljava/lang/Object;Ljava/lang/Object;)V";
     private static final String MAP_CODEC = "com/mojang/serialization/MapCodec";
     private static final String MAP_CODEC_CODEC = "com/mojang/serialization/MapCodec$MapCodecCodec";
     private static final String CODEC = "com/mojang/serialization/Codec";
@@ -27,10 +28,7 @@ public final class LegacyMapCodecsSynthetic {
         if (!t.getSyntheticClasses().containsKey(INTERNAL)) t.registerSyntheticClass(INTERNAL, generate());
     }
 
-    /**
-     * {@code static synchronized Object of(Object codec)}: a map codec as it is, a record codec's map codec, and for any
-     * other codec the one map codec made for it, so the registry finds by identity what a generator's codec() returns.
-     */
+    /** The shared map codecs: {@code of(codec)}, which the registry finds by identity, and {@code remember} and {@code remembered}. */
     static byte[] generate() {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
             @Override
@@ -51,8 +49,42 @@ public final class LegacyMapCodecsSynthetic {
         clinit.visitMaxs(0, 0);
         clinit.visitEnd();
 
+        // remember(codec, value): what a register event stored for the codec.
+        MethodVisitor remember = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_SYNCHRONIZED, "remember",
+                REMEMBER_DESC, null, null);
+        remember.visitCode();
+        remember.visitFieldInsn(Opcodes.GETSTATIC, INTERNAL, "MADE", "L" + MAP + ";");
+        remember.visitVarInsn(Opcodes.ALOAD, 0);
+        remember.visitVarInsn(Opcodes.ALOAD, 1);
+        remember.visitMethodInsn(Opcodes.INVOKEINTERFACE, MAP, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", true);
+        remember.visitInsn(Opcodes.POP);
+        remember.visitInsn(Opcodes.RETURN);
+        remember.visitMaxs(0, 0);
+        remember.visitEnd();
+
+        // remembered(codec): that value, or null.
+        MethodVisitor remembered = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_SYNCHRONIZED, "remembered",
+                OF_DESC, null, null);
+        remembered.visitCode();
+        remembered.visitFieldInsn(Opcodes.GETSTATIC, INTERNAL, "MADE", "L" + MAP + ";");
+        remembered.visitVarInsn(Opcodes.ALOAD, 0);
+        remembered.visitMethodInsn(Opcodes.INVOKEINTERFACE, MAP, "get", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
+        remembered.visitInsn(Opcodes.ARETURN);
+        remembered.visitMaxs(0, 0);
+        remembered.visitEnd();
+
         MethodVisitor of = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_SYNCHRONIZED, "of", OF_DESC, null, null);
         of.visitCode();
+        // A register event stored its own value for this codec; the generator must answer with that same object.
+        Label notRemembered = new Label();
+        of.visitFieldInsn(Opcodes.GETSTATIC, INTERNAL, "MADE", "L" + MAP + ";");
+        of.visitVarInsn(Opcodes.ALOAD, 0);
+        of.visitMethodInsn(Opcodes.INVOKEINTERFACE, MAP, "get", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
+        of.visitInsn(Opcodes.DUP);
+        of.visitJumpInsn(Opcodes.IFNULL, notRemembered);
+        of.visitInsn(Opcodes.ARETURN);
+        of.visitLabel(notRemembered);
+        of.visitInsn(Opcodes.POP);
         Label notMap = new Label();
         of.visitVarInsn(Opcodes.ALOAD, 0);
         of.visitTypeInsn(Opcodes.INSTANCEOF, MAP_CODEC);
@@ -70,13 +102,6 @@ public final class LegacyMapCodecsSynthetic {
         of.visitInsn(Opcodes.ARETURN);
         of.visitLabel(notRecord);
         // Any other codec is used as a map codec, made once so every caller gets the same object.
-        Label made = new Label();
-        of.visitFieldInsn(Opcodes.GETSTATIC, INTERNAL, "MADE", "L" + MAP + ";");
-        of.visitVarInsn(Opcodes.ALOAD, 0);
-        of.visitMethodInsn(Opcodes.INVOKEINTERFACE, MAP, "get", "(Ljava/lang/Object;)Ljava/lang/Object;", true);
-        of.visitVarInsn(Opcodes.ASTORE, 1);
-        of.visitVarInsn(Opcodes.ALOAD, 1);
-        of.visitJumpInsn(Opcodes.IFNONNULL, made);
         of.visitVarInsn(Opcodes.ALOAD, 0);
         of.visitTypeInsn(Opcodes.CHECKCAST, CODEC);
         of.visitMethodInsn(Opcodes.INVOKESTATIC, MAP_CODEC, "assumeMapUnsafe", "(L" + CODEC + ";)L" + MAP_CODEC + ";", false);
@@ -86,7 +111,6 @@ public final class LegacyMapCodecsSynthetic {
         of.visitVarInsn(Opcodes.ALOAD, 1);
         of.visitMethodInsn(Opcodes.INVOKEINTERFACE, MAP, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", true);
         of.visitInsn(Opcodes.POP);
-        of.visitLabel(made);
         of.visitVarInsn(Opcodes.ALOAD, 1);
         of.visitInsn(Opcodes.ARETURN);
         of.visitMaxs(0, 0);

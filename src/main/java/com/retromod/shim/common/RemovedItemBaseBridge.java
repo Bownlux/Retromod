@@ -5,6 +5,8 @@
 package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
 
 /**
  * Keeps mods that extend a deleted vanilla item class loadable on every host that removed it.
@@ -76,11 +78,17 @@ public final class RemovedItemBaseBridge {
         java.util.Map.entry("FireworkStarItem", "1.21.5"),
         java.util.Map.entry("SaddleItem", "1.21.5"));
 
+    /** Item marker interfaces Minecraft removed, with the version each went in; an empty stand-in lets the item load (#415). */
+    private static final java.util.Map<String, String> REMOVED_MARKERS_IN = java.util.Map.of("Vanishable", "1.20.5");
+    /** The same markers under their intermediary names, for Fabric hosts before 26.1. */
+    private static final java.util.Map<String, String> INTERMEDIARY_MARKERS = java.util.Map.of("net/minecraft/class_5150", "Vanishable");
+
     private RemovedItemBaseBridge() {}
 
     /** Registers every base. The 26.1 shim calls this, since all of them are gone by then. */
     public static void register(RetromodTransformer transformer) {
         for (String removed : REMOVED_IN.keySet()) registerBase(transformer, removed);
+        for (String removed : REMOVED_MARKERS_IN.keySet()) registerMarker(transformer, removed);
         LegacyEquipmentBridge.register(transformer);
 
         // Not bridged here: BedItem and ItemNameBlockItem sat on BlockItem, and SignItem on
@@ -95,12 +103,37 @@ public final class RemovedItemBaseBridge {
         REMOVED_IN.forEach((removed, version) -> {
             if (version.equals(mcVersion)) registerBase(transformer, removed);
         });
+        REMOVED_MARKERS_IN.forEach((removed, version) -> {
+            if (version.equals(mcVersion)) registerMarker(transformer, removed);
+        });
         LegacyEquipmentBridge.register(transformer);
+    }
+
+    /** Registers the removed markers under their intermediary names, which Fabric hosts before 26.1 run. */
+    public static void registerIntermediaryMarkers(RetromodTransformer transformer) {
+        INTERMEDIARY_MARKERS.forEach((intermediary, removed) -> registerMarker(transformer, intermediary, removed));
     }
 
     /** The version {@code simpleName} was removed in, or null when this bridge does not cover it. */
     static String removedIn(String simpleName) {
         return REMOVED_IN.get(simpleName);
+    }
+
+    private static void registerMarker(RetromodTransformer transformer, String removed) {
+        registerMarker(transformer, "net/minecraft/world/item/" + removed, removed);
+    }
+
+    /** Sends the removed marker to an empty interface of the same meaning, generated once. */
+    private static void registerMarker(RetromodTransformer transformer, String hostName, String removed) {
+        String generated = "com/retromod/generated/Legacy" + removed;
+        if (!transformer.getSyntheticClasses().containsKey(generated)) {
+            ClassWriter cw = new ClassWriter(0);
+            cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, generated, null,
+                    "java/lang/Object", null);
+            cw.visitEnd();
+            transformer.registerSyntheticClass(generated, cw.toByteArray());
+        }
+        transformer.registerClassRedirect(hostName, generated);
     }
 
     private static void registerBase(RetromodTransformer transformer, String removed) {

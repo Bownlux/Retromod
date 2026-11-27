@@ -63,7 +63,15 @@ public class Forge_1_18_2_to_1_19 implements VersionShim {
             "net/minecraft/network/chat/MutableComponent"
         );
         LegacyForge119Bridge.register(transformer);
+        // RegistryEvent.Register became RegisterEvent; a 1.18 handler gets its registry's event again.
+        LegacyRegistryEventBridge.register(transformer);
         com.retromod.shim.common.LegacyMinecraft119Bridge.register(transformer);
+        // 1.19 gave music discs a length; 1.21 removed RecordItem, which its own bridge rebuilds.
+        if (com.retromod.core.RetromodVersion.compareMcVersions(
+                com.retromod.core.RetromodVersion.TARGET_MC_VERSION, "1.21") < 0) {
+            com.retromod.shim.common.LegacyRecordItemBridge.register(transformer,
+                    com.retromod.shim.common.LegacyRecordItemBridge.MOJANG);
+        }
         com.retromod.shim.common.LegacyResourceApiBridge.register(transformer);
     }
 

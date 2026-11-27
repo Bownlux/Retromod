@@ -29,7 +29,7 @@ import java.util.function.Function;
  * a {@code Random}.
  *
  * <p>Methods the mod overrides or calls with a {@code Random} argument, such as a block's
- * {@code tick}, are not covered.
+ * {@code tick}, are moved by {@link LegacyRandomCallAdapter}.
  */
 public final class LegacyRandomSourceAdapter {
 

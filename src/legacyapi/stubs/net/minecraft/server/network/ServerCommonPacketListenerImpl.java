@@ -13,6 +13,7 @@ public abstract class ServerCommonPacketListenerImpl {
 
     public void send(Packet<?> packet) { throw new UnsupportedOperationException(); }
     public void send(Packet<?> packet, ChannelFutureListener listener) { throw new UnsupportedOperationException(); }
+    public int latency() { throw new UnsupportedOperationException(); }
     public void disconnect(Component reason) { throw new UnsupportedOperationException(); }
     public void disconnect(DisconnectionDetails details) { throw new UnsupportedOperationException(); }
 }

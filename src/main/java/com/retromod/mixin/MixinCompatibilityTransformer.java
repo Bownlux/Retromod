@@ -663,7 +663,8 @@ public final class MixinCompatibilityTransformer {
         // uses that copy, so a mixin on it changes nothing the mod expects. Decided by the redirect, so offline and at
         // run time alike, where Retromod's jar also answers for the copy.
         for (String target : targets) {
-            if (target.startsWith("net/minecraft/") && reachesRebuiltClass(target) && !hostKeeps(target, hostHasClass)) {
+            if (target.startsWith("net/minecraft/") && reachesRebuiltClass(target) && !hostKeeps(target, hostHasClass)
+                    && !movesToSplitRenderer(target, hostHasClass)) {
                 return target;
             }
         }
@@ -720,8 +721,7 @@ public final class MixinCompatibilityTransformer {
                     break;
                 }
             }
-            String resolved = chain.get(chain.size() - 1);
-            if (!exists && !MixinFirstPersonRendererAdapter.movesAfterRemap(resolved, hostHasClass)) {
+            if (!exists && !movesToSplitRenderer(target, hostHasClass)) {
                 return target; // removed: neutralize this mixin
             }
         }
@@ -770,6 +770,18 @@ public final class MixinCompatibilityTransformer {
             resolved = chain.get(hop);
         }
         return resolved;
+    }
+
+    /**
+     * Whether the target, under any name its redirects pass through, is the old first-person renderer that the
+     * post-remap adapter moves to 26.3's split renderer. On 26.3 its redirects end at Retromod's rebuilt copy, so the
+     * last name alone hides it.
+     */
+    private boolean movesToSplitRenderer(String target, java.util.function.Predicate<String> hostHasClass) {
+        for (String name : redirectChain(target)) {
+            if (MixinFirstPersonRendererAdapter.movesAfterRemap(name, hostHasClass)) return true;
+        }
+        return false;
     }
 
     /** Whether the name is one of the classes Retromod rebuilds inside each mod that uses them. */

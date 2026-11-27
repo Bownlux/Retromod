@@ -48,6 +48,11 @@ public class Fabric_1_19_2_to_1_19_3 implements VersionShim {
             "com/retromod/shim/fabric/embedded/ScreenShim", "renderBackground",
             "(Ljava/lang/Object;Ljava/lang/Object;)V"
         );
+        // 1.19.3 gave the screen handler type's constructor a feature flag set.
+        com.retromod.shim.common.LegacyMenuTypeBridge.register(transformer,
+                com.retromod.core.RetromodVersion.isUnobfuscatedTarget(com.retromod.core.RetromodVersion.TARGET_MC_VERSION)
+                        ? com.retromod.shim.common.LegacyMenuTypeBridge.MOJANG
+                        : com.retromod.shim.common.LegacyMenuTypeBridge.INTERMEDIARY, null, null);
         // Feature flags
         transformer.registerClassRedirect(
             "net/minecraft/resource/featuretoggle/FeatureFlags",
@@ -72,6 +77,9 @@ public class Fabric_1_19_2_to_1_19_3 implements VersionShim {
         // only after the 26.1 remap, as the Forge 1.19.3 shim moves them.
         if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
             com.retromod.shim.forge.LegacyRegistryKeyMoves.register(transformer);
+            // 1.19.3 replaced com.mojang.math's vectors, quaternions and matrices with JOML. After the 26.1 remap a
+            // Fabric mod names them as a Forge mod does, so the same bridge applies.
+            com.retromod.shim.common.LegacyMojangMathBridge.register(transformer);
         }
     }
 

@@ -41,6 +41,41 @@ public final class LegacyRandomView extends Random {
         return new LegacyRandomView(source, findNextLong(source.getClass()));
     }
 
+    /** The {@code RandomSource} behind a view, or a new one seeded from any other {@code Random}; null stays null. */
+    public static Object source(Object random) {
+        if (random instanceof LegacyRandomView view) {
+            return view.source;
+        }
+        if (!(random instanceof Random plain)) {
+            return random;
+        }
+        // Seeding from the old Random keeps a seeded caller deterministic.
+        try {
+            return sourceFactory().invoke(null, plain.nextLong());
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Could not create a RandomSource", e);
+        }
+    }
+
+    private static volatile Method sourceFactory;
+
+    /** {@code RandomSource.create(long)}, found by shape under whichever name the host uses for it. */
+    private static Method sourceFactory() throws ReflectiveOperationException {
+        Method found = sourceFactory;
+        if (found != null) {
+            return found;
+        }
+        Class<?> type = Class.forName("net.minecraft.util.RandomSource", false, LegacyRandomView.class.getClassLoader());
+        for (Method method : type.getMethods()) {
+            if (java.lang.reflect.Modifier.isStatic(method.getModifiers()) && method.getReturnType() == type
+                    && method.getParameterCount() == 1 && method.getParameterTypes()[0] == long.class) {
+                sourceFactory = method;
+                return method;
+            }
+        }
+        throw new NoSuchMethodException("RandomSource.create(long)");
+    }
+
     private static Method findNextLong(Class<?> type) {
         // RandomSource is usually reached through another interface, such as BitRandomSource.
         java.util.ArrayDeque<Class<?>> pending = new java.util.ArrayDeque<>();

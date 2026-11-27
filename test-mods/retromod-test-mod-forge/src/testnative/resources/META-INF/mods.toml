@@ -1,0 +1,11 @@
+# Built for Minecraft 1.21: only the manifest's Implementation-Version names the version, so the jar
+# loads on every Forge host. Forge 1.21.1 runs mods built for 1.21 as its own.
+modLoader = "javafml"
+loaderVersion = "[46,)"
+license = "MIT"
+
+[[mods]]
+modId = "retromod_test_native_forge"
+version = "${file.jarVersion}"
+displayName = "Retromod Test Native (Forge)"
+description = "Built for 1.21, which Forge 1.21.1 runs as its own. Install it next to the test mod."

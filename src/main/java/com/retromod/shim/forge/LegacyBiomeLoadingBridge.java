@@ -41,6 +41,8 @@ public final class LegacyBiomeLoadingBridge {
     static final String EVENT = LegacyForge119Bridge.BIOME_LOADING_STAND_IN;
     static final String MODIFIER = "com/retromod/generated/forge118/LegacyBiomeLoadingModifier";
     static final String SERIALIZER_NAME = "retromod_biome_loading";
+    static final String CATEGORY = "com/retromod/shim/forge/embedded/LegacyBiomeCategory";
+    static final String OLD_CATEGORY = "net/minecraft/world/level/biome/Biome$BiomeCategory";
 
     private static final String MOD_ANNOTATION = "Lnet/minecraftforge/fml/common/Mod;";
     private static final String FORGE_EVENT = "net/minecraftforge/eventbus/api/Event";
@@ -61,6 +63,10 @@ public final class LegacyBiomeLoadingBridge {
     public static void register(RetromodTransformer transformer) {
         // Its post call names the old event base, which Forge 26.2 removed.
         transformer.registerSyntheticClass(MODIFIER, LegacyEventBaseBridge.adaptGenerated(generateModifier()));
+        // The event's category and the constants a handler compares it with.
+        com.retromod.core.SyntheticEmbedder.registerClassResource(transformer, CATEGORY,
+                com.retromod.shim.forge.embedded.LegacyBiomeCategory.class);
+        transformer.registerClassRedirect(OLD_CATEGORY, CATEGORY);
     }
 
     /** The stand-in event, carrying what a 1.18 handler reads and edits. */
@@ -97,8 +103,15 @@ public final class LegacyBiomeLoadingBridge {
         init.visitMaxs(0, 0);
         init.visitEnd();
 
-        // The old getCategory and climate accessors are not provided, because 1.19 removed biome
-        // categories.
+        // 1.19 replaced biome categories with tags, so the category is the one the biome's id had; climate is not provided.
+        MethodVisitor category = cw.visitMethod(ACC_PUBLIC, "getCategory", "()L" + CATEGORY + ";", null, null);
+        category.visitCode();
+        category.visitVarInsn(ALOAD, 0);
+        category.visitFieldInsn(GETFIELD, EVENT, "name", "L" + LOCATION + ";");
+        category.visitMethodInsn(INVOKESTATIC, CATEGORY, "of", "(Ljava/lang/Object;)L" + CATEGORY + ";", false);
+        category.visitInsn(ARETURN);
+        category.visitMaxs(0, 0);
+        category.visitEnd();
         String[] getters = {"getName", "getGeneration", "getSpawns"};
         for (int i = 0; i < fields.length; i++) {
             MethodVisitor get = cw.visitMethod(ACC_PUBLIC, getters[i], "()L" + fields[i][1] + ";", null, null);

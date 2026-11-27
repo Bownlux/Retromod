@@ -48,6 +48,91 @@ class LegacyFallingBlockBridgeTest {
     }
 
     @Test
+    void plainFallingBlockIsBuiltAsTheGeneratedBlock() {
+        // 1.20.3 made FallingBlock abstract, so new FallingBlock(properties) is an InstantiationError (#415).
+        RetromodTransformer transformer = registeredOn("1.21.1");
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "com/example/PlainBlocks", null, "java/lang/Object", null);
+        MethodVisitor m = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "make", "(" + L_PROPERTIES + ")Ljava/lang/Object;", null, null);
+        m.visitCode();
+        m.visitTypeInsn(Opcodes.NEW, LegacyFallingBlockBridge.FALLING);
+        m.visitInsn(Opcodes.DUP);
+        m.visitVarInsn(Opcodes.ALOAD, 0);
+        m.visitMethodInsn(Opcodes.INVOKESPECIAL, LegacyFallingBlockBridge.FALLING, "<init>", "(" + L_PROPERTIES + ")V", false);
+        m.visitInsn(Opcodes.ARETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        cw.visitEnd();
+
+        ClassNode mod = read(transformer.transformClass(cw.toByteArray(), "com/example/PlainBlocks"));
+        List<MethodInsnNode> calls = new ArrayList<>();
+        for (AbstractInsnNode insn : mod.methods.stream().filter(mn -> mn.name.equals("make")).findFirst().orElseThrow().instructions) {
+            if (insn instanceof MethodInsnNode call) calls.add(call);
+            assertFalse(insn instanceof TypeInsnNode type && type.getOpcode() == Opcodes.NEW, "no new of the abstract block is left");
+        }
+        assertEquals(1, calls.size());
+        assertEquals(LegacyFallingBlockBridge.GENERATED, calls.get(0).owner);
+        assertEquals("plain", calls.get(0).name);
+        ClassNode generated = read(transformer.getSyntheticClasses().get(LegacyFallingBlockBridge.GENERATED));
+        assertTrue(generated.methods.stream().anyMatch(mn -> mn.name.equals("plain")));
+    }
+
+    @Test
+    void oldFallingBlockSubclassGetsThePlainDustColor() {
+        // 1.21.11 and 26.3 left getDustColor abstract, so the client's falling dust threw AbstractMethodError.
+        LegacyFallingBlockBridge.Names names = LegacyFallingBlockBridge.Names.MOJANG;
+        ClassNode bridged = read(LegacyFallingBlockBridge.addDustColor(fallingSubclass("com/example/AshBlock", names.falling(), null)));
+        MethodNode dust = bridged.methods.stream().filter(m -> m.name.equals("getDustColor")).findFirst().orElseThrow();
+        assertEquals(names.dustDesc(), dust.desc);
+        assertEquals(LegacyFallingBlockBridge.PLAIN_DUST_COLOR, ((org.objectweb.asm.tree.LdcInsnNode) dust.instructions.getFirst()).cst);
+
+        byte[] own = fallingSubclass("com/example/RedSandBlock", names.falling(), names);
+        assertSame(own, LegacyFallingBlockBridge.addDustColor(own), "a block with its own color keeps it");
+        byte[] colored = fallingSubclass("com/example/Tinted", names.colored(), null);
+        assertSame(colored, LegacyFallingBlockBridge.addDustColor(colored), "only a direct FallingBlock subclass lacks one");
+    }
+
+    @Test
+    void intermediaryFallingBlockSubclassGetsTheIntermediaryMethod() {
+        LegacyFallingBlockBridge.Names names = LegacyFallingBlockBridge.Names.INTERMEDIARY;
+        ClassNode bridged = read(LegacyFallingBlockBridge.addDustColor(fallingSubclass("com/example/AshBlock", names.falling(), null)));
+        assertTrue(bridged.methods.stream().anyMatch(m -> m.name.equals("method_10130") && m.desc.equals(names.dustDesc())));
+        ClassNode generated = read(LegacyFallingBlockBridge.generate(names));
+        assertEquals("net/minecraft/class_8812", generated.superName);
+        assertTrue(declares(generated, "(I" + names.propertiesDesc() + ")V"));
+    }
+
+    @Test
+    void dustColorFollowsTheHost() {
+        LegacyFallingBlockBridge.Names names = LegacyFallingBlockBridge.Names.MOJANG;
+        ClassNode host = new ClassNode();
+        host.methods.add(new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, names.dustName(), names.dustDesc(), null, null));
+        assertTrue(LegacyFallingBlockBridge.hostLeavesDustAbstract(host, names), "1.21.11 and 26.3");
+        host.methods.get(0).access = Opcodes.ACC_PUBLIC;
+        assertFalse(LegacyFallingBlockBridge.hostLeavesDustAbstract(host, names), "1.21.1 still has the plain color");
+        RetromodVersion.TARGET_MC_VERSION = "1.21.1";
+        assertFalse(LegacyFallingBlockBridge.hostLeavesDustAbstract(null, names));
+        RetromodVersion.TARGET_MC_VERSION = "1.21.11";
+        assertTrue(LegacyFallingBlockBridge.hostLeavesDustAbstract(null, names));
+    }
+
+    /** {@code class name extends parent}, with a dust color in {@code names}' shape when given. */
+    private static byte[] fallingSubclass(String name, String parent, LegacyFallingBlockBridge.Names names) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, name, null, parent, null);
+        if (names != null) {
+            MethodVisitor dust = cw.visitMethod(Opcodes.ACC_PUBLIC, names.dustName(), names.dustDesc(), null, null);
+            dust.visitCode();
+            dust.visitLdcInsn(0xFFDBD3A0);
+            dust.visitInsn(Opcodes.IRETURN);
+            dust.visitMaxs(0, 0);
+            dust.visitEnd();
+        }
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    @Test
     void oldSandAndGravelConstructorsLinkAgainstTheGeneratedBlock() {
         RetromodTransformer transformer = registeredOn("1.21.1");
         ClassNode generated = read(transformer.getSyntheticClasses().get(LegacyFallingBlockBridge.GENERATED));
