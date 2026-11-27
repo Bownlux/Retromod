@@ -227,9 +227,14 @@ public final class LegacyNeoForgeClientApiBridge {
     private static void registerDebugText(RetromodTransformer t) {
         redirectNested(t, DEBUG_TEXT, REBUILT_DEBUG_TEXT, List.of(""));
         // Forge 1.20.1 handed out the partial tick as a float; the rebuilt event keeps NeoForge 1.21.1's delta tracker.
+        // Its columns are Forge 1.20.1's ArrayList, which NeoForge 1.21.1 handed out as a List.
         for (String root : List.of(NEO, FORGE)) {
             t.registerMethodRedirect(root + DEBUG_TEXT, "getPartialTick", "()F", REBUILT_DEBUG_TEXT, "partialTickFloat",
                     "(L" + REBUILT_DEBUG_TEXT + ";)F", true);
+            t.registerMethodRedirect(root + DEBUG_TEXT, "getLeft", "()Ljava/util/List;", REBUILT_DEBUG_TEXT, "leftList",
+                    "(L" + REBUILT_DEBUG_TEXT + ";)Ljava/util/List;", true);
+            t.registerMethodRedirect(root + DEBUG_TEXT, "getRight", "()Ljava/util/List;", REBUILT_DEBUG_TEXT, "rightList",
+                    "(L" + REBUILT_DEBUG_TEXT + ";)Ljava/util/List;", true);
         }
         RebuiltApiClasses.registerTree(t, DEBUG_TEXT_INSTALL);
         ModConstructorHooks.Call install = new ModConstructorHooks.Call(ModConstructorHooks.Position.HEAD, DEBUG_TEXT_INSTALL,

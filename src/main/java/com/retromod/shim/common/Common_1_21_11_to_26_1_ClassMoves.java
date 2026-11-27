@@ -103,11 +103,8 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
             "net/minecraft/world/level/BlockAndTintGetter",
             "net/minecraft/client/renderer/block/BlockAndTintGetter");
 
-        // ItemNameBlockItem folded into BlockItem in 26.x; same (Block, Item.Properties)
-        // ctor, so an extending mod loads. Place-time custom naming is lost.
-        transformer.registerClassRedirect(
-            "net/minecraft/world/item/ItemNameBlockItem",
-            "net/minecraft/world/item/BlockItem");
+        // ItemNameBlockItem, gone since 1.21.2: a block item with the same constructor, named after itself.
+        LegacyItemNameBlockItemBridge.register(transformer);
 
         // ResourceKey.location() -> identifier() in 26.x. A method rename, not a redirect:
         // the call site is a method reference (ResourceKey::location in Resourceful Lib's

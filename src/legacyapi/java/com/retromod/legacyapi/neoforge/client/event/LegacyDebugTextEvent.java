@@ -12,6 +12,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.neoforged.bus.api.Event;
 
 import java.util.ArrayList;
+import java.util.List;
 
 /** NeoForge 1.21.1's and Forge 1.20.1's debug screen text event, rebuilt for NeoForge 26.x, which posts its debug text otherwise. */
 public final class LegacyDebugTextEvent extends Event {
@@ -27,6 +28,16 @@ public final class LegacyDebugTextEvent extends Event {
     /** The lines old code adds to the right column of the debug screen. */
     public ArrayList<String> getRight() {
         return right;
+    }
+
+    /** NeoForge 1.21.1's {@code getLeft()}, which hands out the same lines as a {@code List}. */
+    public static List<String> leftList(LegacyDebugTextEvent event) {
+        return event.left;
+    }
+
+    /** NeoForge 1.21.1's {@code getRight()}. */
+    public static List<String> rightList(LegacyDebugTextEvent event) {
+        return event.right;
     }
 
     /** NeoForge 1.21.1's {@code getPartialTick()}: the game's delta tracker. */

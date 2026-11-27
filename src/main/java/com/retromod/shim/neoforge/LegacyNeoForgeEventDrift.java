@@ -8,6 +8,7 @@ import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import com.retromod.shim.common.RebuiltApiClasses;
+import com.retromod.shim.common.RebuiltHostLinks;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldNode;
@@ -187,22 +188,24 @@ public final class LegacyNeoForgeEventDrift {
         String level = "Lnet/minecraft/world/level/Level;";
         String grief = "(" + level + "Lnet/minecraft/world/entity/Entity;)Z";
         String destroy = "(" + level + "Lnet/minecraft/core/BlockPos;" + LIVING_ENTITY + ")Z";
+        RebuiltHostLinks.Pruned hooks = linking(HOOK_READS);
         boolean helper = false;
-        if (lacks(EVENT_HOOKS, "canEntityGrief", grief, "1.21.2")) {
+        if (lacks(EVENT_HOOKS, "canEntityGrief", grief, "1.21.2") && keeps(hooks, HOOK_READS, "canEntityGrief", grief)) {
             t.registerMethodRedirect(EVENT_HOOKS, "canEntityGrief", grief, HOOK_READS, "canEntityGrief", grief);
             helper = true;
         }
-        if (lacks(COMMON_HOOKS, "canEntityDestroy", destroy, "1.21.2")) {
+        if (lacks(COMMON_HOOKS, "canEntityDestroy", destroy, "1.21.2") && keeps(hooks, HOOK_READS, "canEntityDestroy", destroy)) {
             t.registerMethodRedirect(COMMON_HOOKS, "canEntityDestroy", destroy, HOOK_READS, "canEntityDestroy", destroy);
             helper = true;
         }
         // 1.21 enchantments are data, so the drops event no longer computes a looting level.
         String drops = NEO + "event/entity/living/LivingDropsEvent";
-        if (lacks(drops, "getLootingLevel", "()I", "1.21")) {
-            t.registerMethodRedirect(drops, "getLootingLevel", "()I", HOOK_READS, "lootingLevel", "(L" + drops + ";)I", true);
+        String looting = "(L" + drops + ";)I";
+        if (lacks(drops, "getLootingLevel", "()I", "1.21") && keeps(hooks, HOOK_READS, "lootingLevel", looting)) {
+            t.registerMethodRedirect(drops, "getLootingLevel", "()I", HOOK_READS, "lootingLevel", looting, true);
             helper = true;
         }
-        if (helper) RebuiltApiClasses.registerTree(t, HOOK_READS);
+        if (helper) registerHelper(t, hooks, HOOK_READS);
     }
 
     /** Forge 1.20.1's registry object and register event members, which the class moves point at NeoForge's holder and event. */
@@ -210,18 +213,44 @@ public final class LegacyNeoForgeEventDrift {
         String register = NEO + "registries/RegisterEvent";
         rename(t, register, "getVanillaRegistry", "()Lnet/minecraft/core/Registry;", "getRegistry", "()Lnet/minecraft/core/Registry;", "1.20.2");
         String holder = NEO + "registries/DeferredHolder";
+        RebuiltHostLinks.Pruned objects = linking(REGISTRY_OBJECTS);
         boolean helper = false;
-        if (lacks(holder, "getHolder", "()Ljava/util/Optional;", "1.20.2")) {
-            t.registerMethodRedirect(holder, "getHolder", "()Ljava/util/Optional;", REGISTRY_OBJECTS, "getHolder",
-                    "(L" + holder + ";)Ljava/util/Optional;", true);
+        String getHolder = "(L" + holder + ";)Ljava/util/Optional;";
+        if (lacks(holder, "getHolder", "()Ljava/util/Optional;", "1.20.2") && keeps(objects, REGISTRY_OBJECTS, "getHolder", getHolder)) {
+            t.registerMethodRedirect(holder, "getHolder", "()Ljava/util/Optional;", REGISTRY_OBJECTS, "getHolder", getHolder, true);
             helper = true;
         }
-        String create = "(Lnet/minecraft/resources/Identifier;Lnet/minecraft/resources/ResourceKey;Ljava/lang/String;)L" + holder + ";";
-        if (lacks(holder, "create", create, "1.20.2")) {
+        // The id class is the host's: ResourceLocation before 1.21.11, where the helper is renamed to match.
+        String id = RebuiltApiClasses.idNames() == null ? "net/minecraft/resources/Identifier" : "net/minecraft/resources/ResourceLocation";
+        String create = "(L" + id + ";Lnet/minecraft/resources/ResourceKey;Ljava/lang/String;)L" + holder + ";";
+        if (lacks(holder, "create", create, "1.20.2") && keeps(objects, REGISTRY_OBJECTS, "create", create)) {
             t.registerMethodRedirect(holder, "create", create, REGISTRY_OBJECTS, "create", create);
             helper = true;
         }
-        if (helper) RebuiltApiClasses.registerTree(t, REGISTRY_OBJECTS);
+        if (helper) registerHelper(t, objects, REGISTRY_OBJECTS);
+    }
+
+    /** {@code root} cut down to what links on the host, in its id names, or null with no host to read, where all of it ships. */
+    private static RebuiltHostLinks.Pruned linking(String root) {
+        // Both a Minecraft and a NeoForge class must be readable, or every member would look missing.
+        if (ClassResourceInspector.read("net/minecraft/world/entity/Entity") == null
+                || ClassResourceInspector.read(NEO + "common/NeoForge") == null) {
+            return null;
+        }
+        return RebuiltHostLinks.prune(List.of(root), ClassResourceInspector::read, RebuiltApiClasses.idNames());
+    }
+
+    /** Whether the cut-down helper still has the method; with no host to read, every method stays. */
+    private static boolean keeps(RebuiltHostLinks.Pruned helper, String owner, String name, String desc) {
+        return helper == null || helper.has(owner, name, desc);
+    }
+
+    private static void registerHelper(RetromodTransformer t, RebuiltHostLinks.Pruned helper, String root) {
+        if (helper == null) {
+            RebuiltApiClasses.registerTree(t, root, RebuiltApiClasses.idNames());
+        } else {
+            helper.register(t);
+        }
     }
 
     /** The world worker manager, which NeoForge 1.21.2 removed and old mods use to spread a search over server ticks. */

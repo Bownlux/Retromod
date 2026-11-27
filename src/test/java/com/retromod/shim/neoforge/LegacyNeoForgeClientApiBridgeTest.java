@@ -125,6 +125,16 @@ public class LegacyNeoForgeClientApiBridgeTest {
         assertEquals(rebuilt, listenerType(NEO + debug));
         assertEquals(rebuilt, listenerType(FORGE + debug));
         assertEquals(rebuilt + ".partialTickFloat(L" + rebuilt + ";)F", call(INVOKEVIRTUAL, NEO + debug, "getPartialTick", "()F"));
+        // NeoForge 1.21.1 handed out each column as a List and Forge 1.20.1 as an ArrayList; both reach the same lines.
+        assertEquals(rebuilt + ".leftList(L" + rebuilt + ";)Ljava/util/List;", call(INVOKEVIRTUAL, NEO + debug, "getLeft", "()Ljava/util/List;"));
+        assertEquals(rebuilt + ".rightList(L" + rebuilt + ";)Ljava/util/List;", call(INVOKEVIRTUAL, NEO + debug, "getRight", "()Ljava/util/List;"));
+        assertEquals(rebuilt + ".getLeft()Ljava/util/ArrayList;", call(INVOKEVIRTUAL, FORGE + debug, "getLeft", "()Ljava/util/ArrayList;"));
+        ClassNode event = new ClassNode();
+        new ClassReader(transformer.getSyntheticClasses().get(rebuilt)).accept(event, 0);
+        for (String method : List.of("getLeft()Ljava/util/ArrayList;", "getRight()Ljava/util/ArrayList;",
+                "leftList(L" + rebuilt + ";)Ljava/util/List;", "rightList(L" + rebuilt + ";)Ljava/util/List;")) {
+            assertTrue(event.methods.stream().anyMatch(m -> (m.name + m.desc).equals(method)), "the rebuilt event declares " + method);
+        }
         assertTrue(transformer.getSyntheticClasses().containsKey(LegacyNeoForgeClientApiBridge.DEBUG_TEXT_INSTALL));
         assertTrue(transformer.getSyntheticClasses().containsKey(rebuilt), "the event travels with the install");
     }

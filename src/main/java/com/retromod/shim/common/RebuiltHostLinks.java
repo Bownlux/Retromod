@@ -10,6 +10,8 @@ import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Handle;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
+import org.objectweb.asm.commons.ClassRemapper;
+import org.objectweb.asm.commons.Remapper;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
@@ -80,7 +82,7 @@ public final class RebuiltHostLinks {
     /** Whether every class in the rebuilt tree under {@code root} links on the host whole. */
     public static boolean linksOn(String root, Function<String, ClassNode> host) {
         Set<String> tree = RebuiltApiClasses.tree(root);
-        Map<String, ClassNode> nodes = read(List.of(root));
+        Map<String, ClassNode> nodes = read(List.of(root), null);
         if (nodes.size() != tree.size()) return false;
         Function<String, ClassNode> cached = cache(host);
         for (ClassNode node : nodes.values()) {
@@ -96,7 +98,12 @@ public final class RebuiltHostLinks {
 
     /** The rebuilt trees under {@code roots}, each method that names what the host lacks removed with every method that calls it. */
     public static Pruned prune(List<String> roots, Function<String, ClassNode> host) {
-        Map<String, ClassNode> nodes = read(roots);
+        return prune(roots, host, null);
+    }
+
+    /** The same, with each class first renamed by {@code names}, such as into the id class a host before 1.21.11 has. */
+    public static Pruned prune(List<String> roots, Function<String, ClassNode> host, Remapper names) {
+        Map<String, ClassNode> nodes = read(roots, names);
         Function<String, ClassNode> cached = cache(host);
         Set<String> deadClasses = new HashSet<>();
         Map<String, Set<String>> deadMethods = new HashMap<>();
@@ -140,12 +147,12 @@ public final class RebuiltHostLinks {
             if (deadClasses.contains(node.name)) continue;
             Set<String> dead = deadMethods.get(node.name);
             live.put(node.name, node);
-            // A class that keeps every method ships as Retromod's own bytes, the same as another bridge registers it.
-            if (!node.methods.removeIf(m -> dead.contains(m.name + m.desc))) {
+            // A class that keeps every method and its names ships as Retromod's own bytes, as another bridge registers it.
+            if (!node.methods.removeIf(m -> dead.contains(m.name + m.desc)) && names == null) {
                 bytes.put(node.name, RebuiltApiClasses.read(node.name));
                 continue;
             }
-            // Only whole methods go, so each kept method keeps its own stack map frames.
+            // Only whole methods go and names change, so each kept method keeps its own stack map frames.
             ClassWriter out = new ClassWriter(0);
             node.accept(out);
             bytes.put(node.name, out.toByteArray());
@@ -169,7 +176,7 @@ public final class RebuiltHostLinks {
         return deadMethods.get(ref.owner()).contains(ref.name() + ref.desc());
     }
 
-    private static Map<String, ClassNode> read(List<String> roots) {
+    private static Map<String, ClassNode> read(List<String> roots, Remapper names) {
         Map<String, ClassNode> nodes = new LinkedHashMap<>();
         for (String root : roots) {
             for (String name : RebuiltApiClasses.tree(root)) {
@@ -177,7 +184,7 @@ public final class RebuiltHostLinks {
                 byte[] bytes = RebuiltApiClasses.read(name);
                 if (bytes == null) continue;
                 ClassNode node = new ClassNode();
-                new ClassReader(bytes).accept(node, 0);
+                new ClassReader(bytes).accept(names == null ? node : new ClassRemapper(node, names), 0);
                 nodes.put(name, node);
             }
         }

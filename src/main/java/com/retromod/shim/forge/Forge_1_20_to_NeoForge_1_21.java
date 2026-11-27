@@ -750,6 +750,24 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             }
             transformer.registerMethodRedirect(owner, "isRemotePresent",
                     "(Lnet/minecraft/network/Connection;)Z", wrapper, "isRemotePresent", "(Ljava/lang/Object;)Z");
+            for (String packetDirection : new String[]{forgeDirection, direction}) {
+                transformer.registerMethodRedirect(owner, "toVanillaPacket",
+                        "(Ljava/lang/Object;" + packetDirection + ")Lnet/minecraft/network/protocol/Packet;",
+                        wrapper, "toVanillaPacket", "(Ljava/lang/Object;" + direction + ")Ljava/lang/Object;");
+            }
+        }
+        // A target's send takes a built packet, and a direction answers with the loader's LogicalSide.
+        for (String target : new String[]{forgeDistributor + "$PacketTarget", distributor + "$PacketTarget"}) {
+            transformer.registerMethodRedirect(target, "send", "(Lnet/minecraft/network/protocol/Packet;)V",
+                    distributor + "$PacketTarget", "send", "(Ljava/lang/Object;)V");
+        }
+        for (String owner : new String[]{"net/minecraftforge/network/NetworkDirection", netShim + "$NetworkDirection"}) {
+            for (String side : new String[]{"Lnet/minecraftforge/fml/LogicalSide;", "Lnet/neoforged/fml/LogicalSide;"}) {
+                for (String name : new String[]{"getReceptionSide", "getOriginationSide"}) {
+                    transformer.registerMethodRedirect(owner, name, "()" + side,
+                            netShim + "$NetworkDirection", name, "()Ljava/lang/Object;");
+                }
+            }
         }
 
         String pointFactory = "(Ljava/lang/Object;DDDDLjava/lang/Object;)L" + targetPoint + ";";
@@ -785,6 +803,7 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor",
             "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor$PacketTarget",
             "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor$TargetPoint",
+            "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor$Custom",
             "com.retromod.shim.forge.embedded.NetworkShim$NetworkDirection",
             "com.retromod.shim.forge.embedded.NetworkShim$Context",
             "com.retromod.shim.forge.embedded.NetworkShim$PayloadBridge",
@@ -793,6 +812,7 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "com.retromod.shim.forge.embedded.NetworkShim$HandlerHandler",
             "com.retromod.shim.forge.embedded.NetworkShim$ChannelBuilder",
             "com.retromod.shim.forge.embedded.NetworkShim$ForgeChannels",
+            "com.retromod.shim.forge.embedded.NetworkShim$VanillaTargets",
             "com.retromod.shim.forge.embedded.LegacyEventChannel",
             "com.retromod.shim.forge.embedded.LegacyEventChannel$NetworkEvent",
             "com.retromod.shim.forge.embedded.LegacyEventChannel$ServerCustomPayloadEvent",

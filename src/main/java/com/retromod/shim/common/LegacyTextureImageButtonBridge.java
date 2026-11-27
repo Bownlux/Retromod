@@ -103,8 +103,17 @@ public final class LegacyTextureImageButtonBridge {
         for (String sprites : SPRITE_CONSTRUCTORS) emitSpriteConstructor(cw, sprites);
         for (String old : OLD_CONSTRUCTORS) emitFactory(cw, old);
         emitRender(cw);
+        emitUpdateTooltip(cw);
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    /** 1.20.1's {@code updateTooltip()}, which a mod's override calls as super; the host's tooltip holder does that work now. */
+    private static void emitUpdateTooltip(ClassWriter cw) {
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, "updateTooltip", "()V", null, null);
+        mv.visitCode();
+        mv.visitInsn(RETURN);
+        end(mv);
     }
 
     /** The full texture constructor: the sprites are never drawn, the texture region below takes their place. */

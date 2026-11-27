@@ -71,6 +71,20 @@ class LegacyGuiMembersBridgeTest {
     }
 
     @Test
+    @DisplayName("on 26.x the rebuilt image button answers a 1.20.1 subclass's super.updateTooltip(), which the host's tooltip holder replaced")
+    void imageButtonKeepsUpdateTooltip() {
+        savedVersion = RetromodVersion.TARGET_MC_VERSION;
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        RetromodTransformer t = RetromodTransformer.getInstance();
+        t.clearRedirectsForTesting();
+        LegacyGuiMembersBridge.registerImageButtons(t, null);
+        ClassNode rebuilt = new ClassNode();
+        new ClassReader(t.getSyntheticClasses().get(LegacyGuiMembersBridge.LEGACY_IMAGE_BUTTON)).accept(rebuilt, 0);
+        assertTrue(rebuilt.methods.stream().anyMatch(m -> m.name.equals("updateTooltip") && m.desc.equals("()V")
+                && (m.access & Opcodes.ACC_PUBLIC) != 0), "NoChatReports' button calls it as super");
+    }
+
+    @Test
     @DisplayName("offline for 26.1 vsync and shader transparency stay, since 26.1 still has both")
     void offline261KeepsVsyncAndTransparency() {
         List<String> refs = transformOldCalls("26.1", name -> null);

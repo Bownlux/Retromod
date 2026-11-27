@@ -7,8 +7,10 @@ package com.retromod.shim.forge;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.shim.common.LegacyWidgetInputAdapter;
 import com.retromod.shim.common.OldRenderShapes;
+import com.retromod.util.McReflect;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.ClassNode;
@@ -32,6 +34,8 @@ public final class LegacyRenderPropertiesBridge {
     static final String OLD_LOOKUP = "net/minecraftforge/client/RenderProperties";
     static final String ITEM_EXT = "net/minecraftforge/client/extensions/common/IClientItemExtensions";
     static final String BLOCK_EXT = "net/minecraftforge/client/extensions/common/IClientBlockExtensions";
+    static final String NEO_ITEM_EXT = "net/neoforged/neoforge/client/extensions/common/IClientItemExtensions";
+    static final String FONT_HELPER = "com/retromod/generated/LegacyItemFont";
 
     private static final String RENDERER = "Lnet/minecraft/client/renderer/BlockEntityWithoutLevelRenderer;";
     private static final String HUMANOID = "Lnet/minecraft/client/model/HumanoidModel;";
@@ -75,7 +79,39 @@ public final class LegacyRenderPropertiesBridge {
         t.registerMethodRedirect(OLD_LOOKUP, "get", state + "L" + OLD_BLOCK + ";", BLOCK_EXT, "of", state + "L" + BLOCK_EXT + ";");
         String block = "(Lnet/minecraft/world/level/block/Block;)";
         t.registerMethodRedirect(OLD_LOOKUP, "get", block + "L" + OLD_BLOCK + ";", BLOCK_EXT, "of", block + "L" + BLOCK_EXT + ";");
+        registerFontCall(t);
         t.enablePostProcess(FLAG);
+    }
+
+    /** {@code getFont(stack)} kept its name and gained a context, so an old call asks for the item count font, which it also drew. */
+    private static void registerFontCall(RetromodTransformer t) {
+        String ext = McReflect.isNeoForge() ? NEO_ITEM_EXT : ITEM_EXT;
+        t.registerSyntheticClass(FONT_HELPER, fontHelper(ext));
+        String old = "(" + STACK + ")" + FONT;
+        // Keyed on the old, Forge and NeoForge names, since the class moves can apply first.
+        for (String owner : List.of(OLD_ITEM, ITEM_EXT, ext)) {
+            t.registerWrappingMethodRedirect(owner, "getFont", old, FONT_HELPER, "getFont", "(Ljava/lang/Object;" + STACK + ")" + FONT);
+        }
+    }
+
+    /** {@code getFont(extensions, stack)}: the extensions' font for the item count, in the host loader's names. */
+    static byte[] fontHelper(String ext) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, FONT_HELPER, null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "getFont", "(Ljava/lang/Object;" + STACK + ")" + FONT,
+                null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, ext);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        String context = ext + "$FontContext";
+        mv.visitFieldInsn(Opcodes.GETSTATIC, context, "ITEM_COUNT", "L" + context + ";");
+        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, ext, "getFont", "(" + STACK + "L" + context + ";)" + FONT, true);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     /**

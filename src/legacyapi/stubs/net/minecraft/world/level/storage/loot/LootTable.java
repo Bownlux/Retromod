@@ -5,6 +5,7 @@ import java.util.function.Consumer;
 import net.minecraft.world.item.ItemStack;
 
 public class LootTable {
+    public static final LootTable EMPTY = null;
     public void getRandomItemsRaw(LootContext context, Consumer<ItemStack> output) { throw new UnsupportedOperationException(); }
     public void getRandomItems(LootParams params, long seed, Consumer<ItemStack> output) { throw new UnsupportedOperationException(); }
     public static Consumer<ItemStack> createStackSplitter(net.minecraft.server.level.ServerLevel level, Consumer<ItemStack> output) {

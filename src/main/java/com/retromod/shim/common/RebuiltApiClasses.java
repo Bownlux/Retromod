@@ -4,11 +4,14 @@
  */
 package com.retromod.shim.common;
 
+import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.commons.ClassRemapper;
 import org.objectweb.asm.commons.Remapper;
+import org.objectweb.asm.commons.SimpleRemapper;
 import org.objectweb.asm.tree.ClassNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +21,7 @@ import java.io.InputStream;
 import java.util.ArrayDeque;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /** Registers classes Retromod rebuilt for APIs a host removed (built from {@code src/legacyapi}) as synthetics. */
@@ -27,7 +31,24 @@ public final class RebuiltApiClasses {
 
     public static final String ROOT = "com/retromod/legacyapi/";
 
+    static final String IDENTIFIER = "net/minecraft/resources/Identifier";
+    static final String OLD_ID = "net/minecraft/resources/ResourceLocation";
+    static final String SERVER = "net/minecraft/server/MinecraftServer";
+
+    /** Renames a rebuilt class into a host before 1.21.11: ids are ResourceLocation, and a key's id is location(). */
+    public static final Remapper BEFORE_IDENTIFIER = new SimpleRemapper(Map.of(IDENTIFIER, OLD_ID,
+            "net/minecraft/resources/ResourceKey.identifier()L" + IDENTIFIER + ";", "location"));
+
     private RebuiltApiClasses() {}
+
+    /** The names rebuilt classes take on this host: null where ids are Identifier, else {@link #BEFORE_IDENTIFIER}; offline, by target. */
+    public static Remapper idNames() {
+        boolean running = ClassResourceInspector.read(SERVER) != null;
+        boolean identifier = running
+                ? ClassResourceInspector.read(IDENTIFIER) != null
+                : RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21.11") >= 0;
+        return identifier ? null : BEFORE_IDENTIFIER;
+    }
 
     /** Registers a rebuilt class and every rebuilt class it names, read from Retromod's own jar. */
     public static void registerTree(RetromodTransformer t, String root) {

@@ -102,8 +102,7 @@ public class ForgeRegistryApiShim implements MinecraftVersionedApiShim {
             // ForgeNeoForgeSynthetics, but registerSyntheticClass is idempotent, and this makes
             // the shim self-contained: a redirect to a synthetic that isn't registered would be
             // dropped by the transformer's phantom-target sweep (#119) and silently no-op.
-            transformer.registerSyntheticClass(B, RegistryIdBridgeSynthetic.generate());
-            RegistryIdBridgeSynthetic.registerWrapperHelpers(transformer);
+            RegistryIdBridgeSynthetic.registerBridge(transformer, RetromodVersion.TARGET_MC_VERSION);
             // The bridge builds and holds enchantments, which 26.x reads from data.
             com.retromod.shim.common.LegacyEnchantmentBridge.registerSynthetics(transformer);
             // dr.register(name, supplier) -> RegistryIdBridge.register(dr, name, supplier) [devirtualize: receiver becomes arg 0]

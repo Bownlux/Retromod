@@ -92,6 +92,38 @@ class ModelRenderRowsTest {
     }
 
     @Test
+    @DisplayName("A Fabric 1.20.x bake listener's id() reaches the rebuilt bake contexts, which declare it")
+    void bakeContextId() throws Exception {
+        prepare("26.3", true);
+        transformer.setModSourceVersion("1.20.1");
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "fixture/patchouli/Client", null, "java/lang/Object", null);
+        for (String phase : List.of("AfterBake", "BeforeBake")) {
+            String context = LOADING + "ModelModifier$" + phase + "$Context";
+            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "id" + phase, "(L" + context + ";)Ljava/lang/Object;", null, null);
+            mv.visitCode();
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, context, "id", "()Lnet/minecraft/class_2960;", true);
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+        }
+        cw.visitEnd();
+        List<String> calls = calls(translate(cw.toByteArray()));
+        for (String phase : List.of("AfterBake", "BeforeBake")) {
+            String rebuilt = REBUILT + "model/Legacy" + phase + "$Context";
+            assertTrue(calls.contains(rebuilt + ".id"), calls.toString());
+            ClassNode context = new ClassNode();
+            try (java.io.InputStream in = getClass().getClassLoader().getResourceAsStream(rebuilt + ".class")) {
+                assertNotNull(in, rebuilt + " is built");
+                new ClassReader(in).accept(context, 0);
+            }
+            assertTrue(context.methods.stream().anyMatch(m -> m.name.equals("id") && m.desc.equals("()Lnet/minecraft/resources/Identifier;")),
+                    rebuilt + " declares the 1.20.x id()");
+        }
+    }
+
+    @Test
     @DisplayName("An old plugin class gets initialize from its onInitializeModelLoader")
     void oldPluginGetsInitialize() {
         prepare("26.3", true);

@@ -38,9 +38,10 @@ final class LegacyModelContext implements LegacyModelResolver.Context, LegacyBef
         this.baker = baker == null || baker instanceof LegacyClaimingBaker ? baker : new LegacyClaimingBaker(baker, claims);
     }
 
+    // Fabric API 1.20.x named a block state's top-level model by its location, where 1.21 split the id in two.
     @Override
     public Identifier id() {
-        return resourceId;
+        return resourceId != null ? resourceId : topLevelId;
     }
 
     @Override

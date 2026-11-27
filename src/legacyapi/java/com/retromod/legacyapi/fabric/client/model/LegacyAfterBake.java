@@ -20,6 +20,9 @@ public interface LegacyAfterBake {
     BlockStateModel modifyModelAfterBake(BlockStateModel model, Context context);
 
     interface Context {
+        /** Fabric API 1.20.x's {@code id()}: the model file's id, or for a block state its top-level location. */
+        Identifier id();
+
         Identifier resourceId();
 
         Identifier topLevelId();

@@ -115,6 +115,44 @@ class LegacyRenderPropertiesBridgeTest {
     }
 
     @Test
+    @DisplayName("an old one-argument getFont call asks the client extensions for the item count font, in the host loader's names")
+    void oneArgumentGetFont() {
+        String stack = "Lnet/minecraft/world/item/ItemStack;";
+        String font = "Lnet/minecraft/client/gui/Font;";
+        String helper = LegacyRenderPropertiesBridge.FONT_HELPER;
+        String name = "test/jei/RenderHelper";
+        // PuzzlesLib forwards through the old interface; JEI calls the new one, which Forge 1.19 no longer answers in one argument.
+        for (String owner : List.of(OLD, NEW)) {
+            ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+            cw.visit(V17, ACC_PUBLIC, name, null, "java/lang/Object", null);
+            MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "font", "(L" + owner + ";" + stack + ")" + font, null, null);
+            mv.visitCode();
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitMethodInsn(INVOKEINTERFACE, owner, "getFont", "(" + stack + ")" + font, true);
+            mv.visitInsn(ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+            cw.visitEnd();
+            MethodInsnNode call = (MethodInsnNode) instructions(method(transform(name, cw.toByteArray()), "font",
+                    "(L" + NEW + ";" + stack + ")" + font)).stream().filter(MethodInsnNode.class::isInstance).findFirst().orElseThrow();
+            assertEquals(helper + ".getFont(Ljava/lang/Object;" + stack + ")" + font, call.owner + "." + call.name + call.desc, owner);
+        }
+
+        for (String ext : List.of(NEW, LegacyRenderPropertiesBridge.NEO_ITEM_EXT)) {
+            ClassNode generated = new ClassNode();
+            new ClassReader(LegacyRenderPropertiesBridge.fontHelper(ext)).accept(generated, 0);
+            List<AbstractInsnNode> body = instructions(method(generated, "getFont", "(Ljava/lang/Object;" + stack + ")" + font));
+            assertTrue(body.stream().anyMatch(i -> i instanceof FieldInsnNode f && f.owner.equals(ext + "$FontContext")
+                    && f.name.equals("ITEM_COUNT")), "the old call asked about the item, which the item count font answers");
+            assertTrue(body.stream().anyMatch(i -> i instanceof MethodInsnNode m && m.owner.equals(ext) && m.name.equals("getFont")
+                    && m.desc.equals("(" + stack + "L" + ext + "$FontContext;)" + font)));
+            new ClassReader(LegacyRenderPropertiesBridge.fontHelper(ext)).accept(new CheckClassAdapter(new ClassWriter(0), false), 0);
+        }
+        assertNotNull(transformer.getSyntheticClasses().get(helper), "the helper travels with the mod");
+    }
+
+    @Test
     @DisplayName("a block's old render properties keep their methods under the new interface")
     void blockPropertiesMove() {
         String name = "test/create/ReducedDestroyEffects";

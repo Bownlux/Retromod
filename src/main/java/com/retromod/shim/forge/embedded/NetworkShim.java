@@ -61,6 +61,29 @@ public final class NetworkShim {
     /** Forge's version string for a peer that does not have the channel. */
     private static final String ABSENT = "ABSENT \ud83e\udd14";
 
+    /** Forge's version string for a peer that may run without Forge's networking. */
+    public static final String ACCEPTVANILLA = "ALLOWVANILLA \ud83d\udc93\ud83d\udc93\ud83d\udc93";
+
+    /** NeoForge's and Forge's {@code LogicalSide}; a host has one of them. */
+    private static final String[] LOGICAL_SIDES = {"net.neoforged.fml.LogicalSide", "net.minecraftforge.fml.LogicalSide"};
+
+    /** The host's {@code LogicalSide} constant named {@code side}. */
+    static Object logicalSide(String side) {
+        return logicalSide(side, NetworkShim.class.getClassLoader(), LOGICAL_SIDES);
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    static Object logicalSide(String side, ClassLoader loader, String... candidates) {
+        for (String name : candidates) {
+            try {
+                return Enum.valueOf((Class) Class.forName(name, false, loader), side);
+            } catch (ClassNotFoundException otherLoader) {
+                // The other loader's name; try the next.
+            }
+        }
+        throw new IllegalStateException("Retromod found no LogicalSide on this loader to answer Forge's NetworkDirection");
+    }
+
     /** Mirrors NetworkRegistry.acceptMissingOr(version): the exact version, or a peer without the channel. */
     public static Predicate<String> acceptMissingOr(String version) {
         return acceptMissingOr(version::equals);
@@ -371,6 +394,7 @@ public final class NetworkShim {
         bridge = null;
         forgeChannels = null;
         forgeChecked = false;
+        VanillaTargets.serverForTesting = null;
     }
 
     private static PayloadBridge requireBridge() {
@@ -489,6 +513,11 @@ public final class NetworkShim {
             if (!(target instanceof PacketDistributor.PacketTarget packetTarget)) {
                 throw new IllegalArgumentException("Unsupported Forge packet target: " + target);
             }
+            // A mod's own distributor takes the built packet, as Forge handed it one.
+            if (packetTarget.argument() instanceof PacketDistributor.Custom) {
+                packetTarget.send(toVanillaPacket(message, packetTarget.getDirection()));
+                return;
+            }
             if (forge != null) {
                 forge.send(forgeChannel, packetTarget, message);
                 return;
@@ -538,6 +567,12 @@ public final class NetworkShim {
                 return;
             }
             requireBridge().reply(context.payloadContext, payload(message));
+        }
+
+        /** Forge's {@code toVanillaPacket(message, direction)}: the packet that carries it; the mod's call casts it back. */
+        public Object toVanillaPacket(Object message, NetworkDirection direction) {
+            if (forge != null) return forge.toVanillaPacket(forgeChannel, message, direction);
+            return requireBridge().packet(payload(message), direction.toServer());
         }
 
         /** NeoForge negotiates channels itself, so a remote that connected has this one. */
@@ -599,10 +634,38 @@ public final class NetworkShim {
      * though NeoForge registers both ways.
      */
     public enum NetworkDirection {
-        PLAY_TO_SERVER,
-        PLAY_TO_CLIENT,
-        LOGIN_TO_SERVER,
-        LOGIN_TO_CLIENT
+        PLAY_TO_SERVER(true),
+        PLAY_TO_CLIENT(false),
+        LOGIN_TO_SERVER(true),
+        LOGIN_TO_CLIENT(false);
+
+        private final boolean toServer;
+
+        NetworkDirection(boolean toServer) {
+            this.toServer = toServer;
+        }
+
+        /** Forge's {@code getReceptionSide()}: the host's side that reads the message; the mod's call casts it back. */
+        public Object getReceptionSide() {
+            return logicalSide(receptionSideName());
+        }
+
+        /** Forge's {@code getOriginationSide()}: the side that sends it. */
+        public Object getOriginationSide() {
+            return logicalSide(originationSideName());
+        }
+
+        String receptionSideName() {
+            return toServer ? "SERVER" : "CLIENT";
+        }
+
+        String originationSideName() {
+            return toServer ? "CLIENT" : "SERVER";
+        }
+
+        boolean toServer() {
+            return toServer;
+        }
     }
 
     /**
@@ -760,6 +823,29 @@ public final class NetworkShim {
             add();
             return channel;
         }
+
+        // Forge 1.20.1 also sent a login message during its login handshake. NeoForge and Forge 26.x do not
+        // run that handshake for these channels, so such a message registers and travels as an ordinary one.
+
+        /** Forge's {@code loginIndex(getter, setter)}, which numbered login messages. */
+        public MessageBuilder<T> loginIndex(Function<T, Integer> getter, BiConsumer<T, Integer> setter) {
+            return this;
+        }
+
+        /** Forge's {@code buildLoginPacketList(builder)}, the messages a connecting client got. */
+        public MessageBuilder<T> buildLoginPacketList(Function<Boolean, ?> builder) {
+            return this;
+        }
+
+        /** Forge's {@code markAsLoginPacket()}. */
+        public MessageBuilder<T> markAsLoginPacket() {
+            return this;
+        }
+
+        /** Forge's {@code noResponse()}, for a login message the client did not answer. */
+        public MessageBuilder<T> noResponse() {
+            return this;
+        }
     }
 
     public record PacketRegistration<T>(
@@ -798,27 +884,75 @@ public final class NetworkShim {
         public static final PacketDistributor TRACKING_CHUNK = new PacketDistributor("TRACKING_CHUNK");
         public static final PacketDistributor NMLIST = new PacketDistributor("NMLIST");
 
+        private static final String CUSTOM = "CUSTOM";
+
         private final String kind;
+        // A mod's own distributor: what builds its packet consumer, and the way its packets go.
+        private final BiFunction<Object, Object, Object> functor;
+        private final NetworkDirection direction;
 
         private PacketDistributor(String kind) {
+            this(kind, null, "SERVER".equals(kind) ? NetworkDirection.PLAY_TO_SERVER : NetworkDirection.PLAY_TO_CLIENT);
+        }
+
+        /** Forge's constructor for a mod's own distributor: {@code functor} turns the bound argument into a packet consumer. */
+        @SuppressWarnings("unchecked")
+        public PacketDistributor(BiFunction<?, ?, ?> functor, NetworkDirection allowedDirection) {
+            this(CUSTOM, (BiFunction<Object, Object, Object>) functor, allowedDirection);
+        }
+
+        private PacketDistributor(String kind, BiFunction<Object, Object, Object> functor, NetworkDirection direction) {
             this.kind = kind;
+            this.functor = functor;
+            this.direction = direction;
         }
 
         public PacketTarget with(Supplier<?> argument) {
+            if (functor != null) return custom(argument);
             return new PacketTarget(kind, argument.get());
         }
 
         /** Forge 1.20.2's form, which takes the player, entity, chunk, or point itself. */
         public PacketTarget with(Object argument) {
+            if (functor != null) return custom(() -> argument);
             return new PacketTarget(kind, argument);
         }
 
         public PacketTarget noArg() {
+            if (functor != null) return custom(() -> null);
             return new PacketTarget(kind, null);
         }
 
+        @SuppressWarnings("unchecked")
+        private PacketTarget custom(Supplier<?> argument) {
+            return new PacketTarget(CUSTOM, new Custom((Consumer<Object>) functor.apply(this, argument), direction));
+        }
+
+        /** A mod's own target: the packet consumer its distributor built, and the way the packets go. */
+        record Custom(Consumer<Object> packets, NetworkDirection direction) {}
+
         /** A bound target: the kind of send and the player, entity, chunk, or point it names. */
-        public record PacketTarget(String kind, Object argument) {}
+        public record PacketTarget(String kind, Object argument) {
+            /** Forge's {@code getDirection()}: to the server for SERVER, to clients for the rest, as built for a mod's own. */
+            public NetworkDirection getDirection() {
+                if (argument instanceof Custom custom) return custom.direction();
+                return "SERVER".equals(kind) ? NetworkDirection.PLAY_TO_SERVER : NetworkDirection.PLAY_TO_CLIENT;
+            }
+
+            /** Forge's {@code send(Packet)}: one built packet to this target; the mod's call passes it as Object. */
+            public void send(Object packet) {
+                if (argument instanceof Custom custom) {
+                    custom.packets().accept(packet);
+                    return;
+                }
+                ForgeChannels forge = forgeChannels();
+                if (forge != null) {
+                    forge.sendPacket(this, packet);
+                    return;
+                }
+                VanillaTargets.send(this, packet);
+            }
+        }
 
         /**
          * Forge's {@code TargetPoint}. Forge passes the radius squared; NeoForge takes the radius.
@@ -970,15 +1104,23 @@ public final class NetworkShim {
         }
 
         void sendToConnection(Object connection, Object payload, boolean serverbound) {
+            Object wrapped = packet(payload, serverbound);
+            try {
+                method(connection.getClass(), "send", 1, false).invoke(connection, wrapped);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("Could not send a Forge network message", e);
+            }
+        }
+
+        /** Minecraft's custom payload packet that carries {@code payload} to the server or to a client. */
+        Object packet(Object payload, boolean serverbound) {
             String packet = serverbound
                     ? "net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket"
                     : "net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket";
             try {
-                Object wrapped = Class.forName(packet, false, loader).getConstructors()[0]
-                        .newInstance(payload);
-                method(connection.getClass(), "send", 1, false).invoke(connection, wrapped);
+                return Class.forName(packet, false, loader).getConstructors()[0].newInstance(payload);
             } catch (ReflectiveOperationException e) {
-                throw new IllegalStateException("Could not send a Forge network message", e);
+                throw new IllegalStateException("Could not build a Forge network packet", e);
             }
         }
 
@@ -1057,7 +1199,7 @@ public final class NetworkShim {
             }
         }
 
-        private static Object call(Object target, String name, Object... args) {
+        static Object call(Object target, String name, Object... args) {
             try {
                 return method(target.getClass(), name, args.length, false).invoke(target, args);
             } catch (InvocationTargetException e) {
@@ -1105,6 +1247,109 @@ public final class NetworkShim {
         }
     }
 
+    /** A built packet sent the way Minecraft sends one, to the targets Forge's distributor named; used on NeoForge. */
+    static final class VanillaTargets {
+        private static final String[] SERVER_HOOKS = {
+                "net.neoforged.neoforge.server.ServerLifecycleHooks", "net.minecraftforge.server.ServerLifecycleHooks"};
+        // The running server a test stands in, since the hooks above are the loader's.
+        static volatile Object serverForTesting;
+
+        private VanillaTargets() {}
+
+        static void send(PacketDistributor.PacketTarget target, Object packet) {
+            Object argument = target.argument();
+            switch (target.kind()) {
+                case "PLAYER" -> toPlayer(argument, packet);
+                case "ALL" -> PayloadBridge.call(playerList(packet), "broadcastAll", packet);
+                case "DIMENSION" -> PayloadBridge.call(playerList(packet), "broadcastAll", packet, argument);
+                case "NEAR" -> {
+                    // Forge passed the radius squared, and the player list takes the radius.
+                    PacketDistributor.TargetPoint point = (PacketDistributor.TargetPoint) argument;
+                    PayloadBridge.call(playerList(packet), "broadcast", point.excluded(), point.x(), point.y(), point.z(),
+                            Math.sqrt(point.r2()), point.dimension(), packet);
+                }
+                // 1.21.11 renamed broadcast and broadcastAndSend; the older name is tried second.
+                case "TRACKING_ENTITY" -> callFirst(chunkSource(argument), new String[] {"sendToTrackingPlayers", "broadcast"},
+                        argument, packet);
+                case "TRACKING_ENTITY_AND_SELF" -> callFirst(chunkSource(argument),
+                        new String[] {"sendToTrackingPlayersAndSelf", "broadcastAndSend"}, argument, packet);
+                case "TRACKING_CHUNK" -> {
+                    Object chunkMap = field(PayloadBridge.call(PayloadBridge.call(argument, "getLevel"), "getChunkSource"),
+                            "chunkMap");
+                    for (Object player : (Iterable<?>) PayloadBridge.call(chunkMap, "getPlayers",
+                            PayloadBridge.call(argument, "getPos"), false)) {
+                        toPlayer(player, packet);
+                    }
+                }
+                case "NMLIST" -> {
+                    for (Object connection : (Iterable<?>) argument) PayloadBridge.call(connection, "send", packet);
+                }
+                case "SERVER" -> PayloadBridge.call(PayloadBridge.call(minecraft(packet), "getConnection"), "send", packet);
+                default -> throw new IllegalArgumentException("Unsupported Forge packet target " + target.kind());
+            }
+        }
+
+        private static void toPlayer(Object player, Object packet) {
+            PayloadBridge.call(field(player, "connection"), "send", packet);
+        }
+
+        private static Object chunkSource(Object entity) {
+            return PayloadBridge.call(PayloadBridge.call(entity, "level"), "getChunkSource");
+        }
+
+        /** Calls the first of {@code names} the target has with this many arguments. */
+        private static void callFirst(Object target, String[] names, Object... args) {
+            for (String name : names) {
+                try {
+                    PayloadBridge.method(target.getClass(), name, args.length, false);
+                } catch (NoSuchMethodException older) {
+                    continue;
+                }
+                PayloadBridge.call(target, name, args);
+                return;
+            }
+            throw new IllegalStateException("Retromod found none of " + Arrays.toString(names)
+                    + " on " + target.getClass().getName());
+        }
+
+        private static Object field(Object owner, String name) {
+            try {
+                return owner.getClass().getField(name).get(owner);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("Could not read " + name + " from " + owner, e);
+            }
+        }
+
+        private static Object playerList(Object packet) {
+            return PayloadBridge.call(server(packet.getClass().getClassLoader()), "getPlayerList");
+        }
+
+        /** The running server, through whichever loader's lifecycle hooks the host has. */
+        private static Object server(ClassLoader loader) {
+            if (serverForTesting != null) return serverForTesting;
+            for (String hooks : SERVER_HOOKS) {
+                try {
+                    Object server = Class.forName(hooks, false, loader).getMethod("getCurrentServer").invoke(null);
+                    if (server != null) return server;
+                } catch (ClassNotFoundException otherLoader) {
+                    // The other loader's hooks; try the next.
+                } catch (ReflectiveOperationException e) {
+                    throw new IllegalStateException("Could not reach the running server", e);
+                }
+            }
+            throw new IllegalStateException("Retromod found no running server to send a Forge packet to");
+        }
+
+        private static Object minecraft(Object packet) {
+            try {
+                return Class.forName("net.minecraft.client.Minecraft", false, packet.getClass().getClassLoader())
+                        .getMethod("getInstance").invoke(null);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("A Forge packet to the server can only be sent from a client", e);
+            }
+        }
+    }
+
     /** Forge 26.x's own SimpleChannel, reached by reflection: each old channel opens one and adds its messages. */
     static final class ForgeChannels {
         private final Class<?> builder;
@@ -1112,11 +1357,20 @@ public final class NetworkShim {
         private final Class<?> packetTarget;
         private final Class<?> targetPoint;
 
+        // Forge's NetworkDirection, whose constants build a channel's packet; null where only sends are needed.
+        private final Class<?> directions;
+
         ForgeChannels(Class<?> builder, Class<?> distributor, Class<?> packetTarget, Class<?> targetPoint) {
+            this(builder, distributor, packetTarget, targetPoint, null);
+        }
+
+        ForgeChannels(Class<?> builder, Class<?> distributor, Class<?> packetTarget, Class<?> targetPoint,
+                Class<?> directions) {
             this.builder = builder;
             this.distributor = distributor;
             this.packetTarget = packetTarget;
             this.targetPoint = targetPoint;
+            this.directions = directions;
         }
 
         /** Forge's channel API, or null on NeoForge, which has payloads instead, and on older Forge. */
@@ -1132,7 +1386,8 @@ public final class NetworkShim {
                 return new ForgeChannels(Class.forName(network + "ChannelBuilder", false, loader),
                         Class.forName(network + "PacketDistributor", false, loader),
                         Class.forName(network + "PacketDistributor$PacketTarget", false, loader),
-                        Class.forName(network + "PacketDistributor$TargetPoint", false, loader));
+                        Class.forName(network + "PacketDistributor$TargetPoint", false, loader),
+                        Class.forName(network + "NetworkDirection", false, loader));
             } catch (ClassNotFoundException olderForge) {
                 return null;
             }
@@ -1195,6 +1450,31 @@ public final class NetworkShim {
 
         void sendToConnection(Object channel, Object message, Object connection) {
             invokeTwo(channel, "send", message, connection);
+        }
+
+        /** The packet Forge's direction of the same name builds for this channel and message. */
+        Object toVanillaPacket(Object channel, Object message, NetworkDirection direction) {
+            if (directions == null) throw new IllegalStateException("Forge's NetworkDirection was not found");
+            try {
+                Object forgeDirection = directions.getField(direction.name()).get(null);
+                return PayloadBridge.method(directions, "buildPacket", 2, false).invoke(forgeDirection, channel, message);
+            } catch (InvocationTargetException e) {
+                throw rethrown(e);
+            } catch (ReflectiveOperationException e) {
+                throw failure("build a packet for a Forge network message", e);
+            }
+        }
+
+        /** A built packet to the old target, through Forge's own target of the same kind. */
+        void sendPacket(PacketDistributor.PacketTarget target, Object packet) {
+            Object forgeTarget = target(target.kind(), target.argument());
+            try {
+                PayloadBridge.method(forgeTarget.getClass(), "send", 1, false).invoke(forgeTarget, packet);
+            } catch (InvocationTargetException e) {
+                throw rethrown(e);
+            } catch (ReflectiveOperationException e) {
+                throw failure("send a packet to a Forge packet target", e);
+            }
         }
 
         void reply(Object channel, Object message, Object context) {

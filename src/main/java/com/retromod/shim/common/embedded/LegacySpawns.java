@@ -105,6 +105,10 @@ public final class LegacySpawns {
         }
     }
 
+    /** Old Fabric API {@code context.setPlayerSpawnFriendly(friendly)}: 1.18 removed that biome flag, so nothing changes. */
+    public static void setPlayerSpawnFriendly(Object context, boolean friendly) {
+    }
+
     /** Old structure override {@code addSpawn(entry)}, on hosts that only take an entry and a weight. */
     public static void addStructureSpawn(Object overrides, Object entry) {
         try {

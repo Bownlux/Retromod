@@ -89,6 +89,10 @@ public class LegacyImageButton extends ImageButton {
                 (float) row / textureHeight, (float) (row + height) / textureHeight);
     }
 
+    /** 1.20.1's {@code updateTooltip()}, which a mod's override calls as super; the host's tooltip holder does that work now. */
+    public void updateTooltip() {
+    }
+
     /** Factories for {@code new ImageButton(...)} with the old arguments. */
     public static ImageButton create(int x, int y, int width, int height, int u, int v, Identifier texture, Button.OnPress onPress) {
         return new LegacyImageButton(x, y, width, height, u, v, texture, onPress);

@@ -20,6 +20,8 @@ public class Forge_1_21_1_to_1_21_2 implements VersionShim {
         com.retromod.shim.common.RemovedRenderStateNeutralize.registerRemovedIn(transformer, "1.21.2");
         // Vanilla item bases removed in 1.21.2, rebased only on hosts that lost them.
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21.2");
+        // ItemNameBlockItem went in 1.21.2 too; its stand-in is a block item still named after itself.
+        com.retromod.shim.common.LegacyItemNameBlockItemBridge.register(transformer);
         // Reshaped vanilla block constructors, each only where the host has the new one and not the old.
         com.retromod.shim.common.LegacyBlockConstructorBridge.register(transformer);
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerRegistryValueGetterRename(

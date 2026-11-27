@@ -130,7 +130,7 @@ class MovedCallRowsTest {
     }
 
     @Test
-    @DisplayName("The old spawn settings context is the renamed one, and its weightless addSpawn reaches the weight-keeping helper")
+    @DisplayName("The old spawn settings context is the renamed one, its weightless addSpawn keeps the weight, and the removed spawn-friendly flag is a no-op")
     void spawnSettingsContext() {
         registerRuntime();
         String biome = API + "biome/v1/BiomeModificationContext";
@@ -141,12 +141,14 @@ class MovedCallRowsTest {
                 "itf " + old + ".addSpawn(Lnet/minecraft/world/entity/MobCategory;Lnet/minecraft/world/level/biome/MobSpawnSettings$SpawnerData;)V",
                 "itf " + old + ".setSpawnCost(Lnet/minecraft/world/entity/EntityType;DD)V",
                 "itf " + old + ".setCreatureSpawnProbability(F)V",
-                "itf " + old + ".clearSpawnCost(Lnet/minecraft/world/entity/EntityType;)V"));
+                "itf " + old + ".clearSpawnCost(Lnet/minecraft/world/entity/EntityType;)V",
+                "itf " + old + ".setPlayerSpawnFriendly(Z)V"));
         assertEquals(List.of("INVOKEINTERFACE " + biome + ".getMobSpawnSettings()L" + now + ";",
                 "INVOKESTATIC com/retromod/shim/common/embedded/LegacySpawns.addContextSpawn(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V",
                 "INVOKEINTERFACE " + now + ".addMobCharge(Lnet/minecraft/world/entity/EntityType;DD)V",
                 "INVOKEINTERFACE " + now + ".setCreatureGenerationProbability(F)V",
-                "INVOKEINTERFACE " + now + ".clearMobCharge(Lnet/minecraft/world/entity/EntityType;)V"), calls);
+                "INVOKEINTERFACE " + now + ".clearMobCharge(Lnet/minecraft/world/entity/EntityType;)V",
+                "INVOKESTATIC com/retromod/shim/common/embedded/LegacySpawns.setPlayerSpawnFriendly(Ljava/lang/Object;Z)V"), calls);
         assertTrue(transformer.getSyntheticClasses().containsKey("com/retromod/shim/common/embedded/LegacySpawns"));
     }
 

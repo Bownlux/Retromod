@@ -17,7 +17,7 @@
 # RenderRows, so jars translated with older rows are translated again. RowsVersionDigestTest
 # fails when what the runtime registers changes and rows_version does not.
 #
-# rows_version	18
+# rows_version	19
 kind	old_owner	old_name	old_desc	new_owner	new_name	new_desc	host_from	host_to	min_fabric_api	call_site_owners	batch	note
 D	net/fabricmc/loader/api/FabricLoader	getModContainer	(Ljava/lang/String;)Ljava/util/Optional;	com/retromod/compat/VersionSpoofer	getModContainer	(Ljava/lang/Object;Ljava/lang/String;)Ljava/util/Optional;	26.1	*	-	-	B0	Pins VersionSpoofShim, so the built-in redirect to a class that was never written cannot replace it
 D	net/fabricmc/loader/api/FabricLoader	isModLoaded	(Ljava/lang/String;)Z	com/retromod/compat/VersionSpoofer	isModLoaded	(Ljava/lang/Object;Ljava/lang/String;)Z	26.1	*	-	-	B0	Fabric API for 26.x no longer provides the fabric id
@@ -215,6 +215,7 @@ D	net/fabricmc/fabric/api/biome/v1/BiomeModificationContext$MobSpawnSettingsCont
 M	net/fabricmc/fabric/api/biome/v1/BiomeModificationContext$MobSpawnSettingsContext	setCreatureSpawnProbability	(F)V	net/fabricmc/fabric/api/biome/v1/BiomeModificationContext$MobSpawnSettingsContext	setCreatureGenerationProbability	(F)V	26.1	*	0.145.1	net/fabricmc/fabric/api/biome/v1/BiomeModificationContext$SpawnSettingsContext	T2	
 M	net/fabricmc/fabric/api/biome/v1/BiomeModificationContext$MobSpawnSettingsContext	setSpawnCost	(Lnet/minecraft/world/entity/EntityType;DD)V	net/fabricmc/fabric/api/biome/v1/BiomeModificationContext$MobSpawnSettingsContext	addMobCharge	(Lnet/minecraft/world/entity/EntityType;DD)V	26.1	*	0.145.1	net/fabricmc/fabric/api/biome/v1/BiomeModificationContext$SpawnSettingsContext	T2	
 M	net/fabricmc/fabric/api/biome/v1/BiomeModificationContext$MobSpawnSettingsContext	clearSpawnCost	(Lnet/minecraft/world/entity/EntityType;)V	net/fabricmc/fabric/api/biome/v1/BiomeModificationContext$MobSpawnSettingsContext	clearMobCharge	(Lnet/minecraft/world/entity/EntityType;)V	26.1	*	0.145.1	net/fabricmc/fabric/api/biome/v1/BiomeModificationContext$SpawnSettingsContext	T2	
+D	net/fabricmc/fabric/api/biome/v1/BiomeModificationContext$MobSpawnSettingsContext	setPlayerSpawnFriendly	(Z)V	com/retromod/shim/common/embedded/LegacySpawns	setPlayerSpawnFriendly	(Ljava/lang/Object;Z)V	26.1	*	-	net/fabricmc/fabric/api/biome/v1/BiomeModificationContext$SpawnSettingsContext	T2	1.18 removed the biome flag, so the call does nothing
 D	net/fabricmc/fabric/api/client/rendering/v1/level/LevelRenderContext	projectionMatrix	()Lorg/joml/Matrix4f;	com/retromod/polyfill/minecraft/LegacyWorldRenderContext	projectionMatrix	(Ljava/lang/Object;)Ljava/lang/Object;	26.1	*	-	net/fabricmc/fabric/api/client/rendering/v1/WorldRenderContext	W1	A copy of the camera projection from the level render state
 D	net/fabricmc/fabric/api/client/rendering/v1/level/LevelRenderContext	tickDelta	()F	com/retromod/polyfill/minecraft/LegacyWorldRenderContext	tickDelta	(Ljava/lang/Object;)F	26.1	*	-	net/fabricmc/fabric/api/client/rendering/v1/WorldRenderContext	W1	The frame partial tick
 D	net/fabricmc/fabric/api/client/rendering/v1/level/LevelRenderContext	blockOutlines	()Z	com/retromod/polyfill/minecraft/LegacyWorldRenderContext	blockOutlines	(Ljava/lang/Object;)Z	26.1	*	-	net/fabricmc/fabric/api/client/rendering/v1/WorldRenderContext	W1	Fabric API drew outlines by default
