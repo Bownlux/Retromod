@@ -2,7 +2,7 @@
 
 All user-facing changes to Retromod. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are [semver](https://semver.org/). The 1.0.0 line ran `1.0.0-beta.N` → `1.0.0-rc.N` → stable `1.0.0`; from 1.1.0 on, minor/major releases use `snapshot.N` → `rc.N` → stable (patch releases ship directly).
 
-## [1.4.0-snapshot.6] - 2026-11-26
+## [1.4.0-snapshot.6] - 2026-11-27
 
 Sixth 1.4.0 snapshot.
 

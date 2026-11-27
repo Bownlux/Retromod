@@ -10,7 +10,7 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.4.0 Snapshot Line
 
-### Snapshot 6, November 26, 2026
+### Snapshot 6, November 27, 2026
 
 - Repairs about 60 more removed game members for older mods on 26.x: block shading, dimension details, sounds, difficulty, tags, NBT lists, bundles, advancements, permissions, and old packets.
 - Carries more old Forge APIs to NeoForge: permissions, tags, mod info, Forge fluids, item pickup and spawn events; and old config tracker, burn time, and loot builder calls on newer Forge and NeoForge hosts.
@@ -22,15 +22,11 @@ This page keeps the release history readable. The [full technical changelog](htt
 - Runs old screens built with a pose stack on 26.x, with a fallback to their widgets, and repairs more removed calls, text classes, registry fields, and Forge 1.19 events for mods from 1.12.2 to 1.21.1.
 - Bridges the old armor model, texture and tint hooks, the ender mask hook and `PlayerRenderer` for 1.20.1 and 1.21.1 Forge and NeoForge mods on NeoForge 26.x and Forge 26.2 and newer.
 - Moves the old Minecraft class names that Forge mods for 1.14 to 1.16.5 use to the classes NeoForge and Forge 26.x hosts have, so more of those mods link. Mods for 1.13.2 and older keep their names.
-- Stops translating mods that Forge and NeoForge 1.21.1 load as their own, such as a 1.21 mod on 1.21.1.
-- Fixes held block draws from old first-person hand mixins on 26.x and adapts the old pipeline blend call on 26.1.
-- Bridges more vanilla members that 26.x removed or reshaped, including block materials, old furnace fuel times, screen tooltips, the attack packet, toasts, and 1.16 GL state calls, for old mods on every loader.
+- Stops translating mods that Forge and NeoForge 1.21.1 already load as their own, such as a 1.21 mod on 1.21.1.
+- Bridges more vanilla calls that 26.x removed or reshaped, such as block materials, furnace fuel times, tooltips, the attack packet, toasts and old GL calls, on every loader, and brings the ones 1.20.5 to 1.21.11 removed to NeoForge and Forge on those hosts.
 - Loads more Forge 1.18 and 1.19 mods on newer hosts: old menu types, music discs, item render properties, registry events, `Random` calls and biome categories.
-- Repairs more 1.20.1 Forge mods on NeoForge 1.21.1 and newer: GeckoLib 4 models, entity model draws, HUD overlays, shield listeners, and several blocks and triggers they build at startup.
-- Keeps more Forge 1.20.1 mods working on NeoForge 1.21.1 and newer: mod dimensions, sided block inventories, forced chunks, loot table lookups, biome tag checks, potion effect reads, mob path finding and pet follow goals. On NeoForge and Forge 1.21 and 1.21.1 it also rebuilds their texture image buttons.
-- Answers more renamed and retyped loader event members for 1.20.1 and 1.21.1 mods on NeoForge 26.x, Forge 26.2 and newer, and Fabric 26.x, and rebuilds NeoForge's effect cures, creative tab entry map, world workers and debug screen text event.
-- Rebuilds Fabric API's old renderer, model loading and fluid handler APIs on Fabric 26.x when the loader API runtime is on, so old custom block models draw again.
-- Repairs removed vanilla calls such as `ItemStack.getUseDuration()` for old Forge and NeoForge mods on NeoForge 1.20.5 to 1.21.11 and Forge 1.21 to 1.21.11, as on 26.x.
+- Keeps more Forge 1.20.1 mods working on NeoForge 1.21.1 and newer: GeckoLib 4 models, entity model draws, HUD overlays, shield events, mod dimensions, block inventories, forced chunks, path finding and pet follow goals.
+- Rebuilds more removed loader APIs: NeoForge's effect cures, creative tab entries, world workers and debug text, more renamed event members on NeoForge, Forge and Fabric 26.x, and Fabric API's old renderer, model loading and fluid handlers when the loader API runtime is on.
 
 ### Snapshot 5, November 20, 2026
 
