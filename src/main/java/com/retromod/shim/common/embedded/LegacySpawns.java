@@ -87,6 +87,28 @@ public final class LegacySpawns {
         }
     }
 
+    /** Old Fabric API {@code context.addSpawn(category, entry)}, with the weight the entry was built with. */
+    public static void addContextSpawn(Object context, Object category, Object entry) {
+        try {
+            // 26.x Fabric API: addSpawn(category, entry, weight).
+            for (Method method : LegacyPublicMethods.methods(context.getClass())) {
+                Class<?>[] parameters = method.getParameterTypes();
+                if (method.getName().equals("addSpawn") && parameters.length == 3 && parameters[0].isInstance(category)
+                        && parameters[1].isInstance(entry) && parameters[2] == int.class) {
+                    method.invoke(context, category, entry, weightOf(entry));
+                    return;
+                }
+            }
+            throw new NoSuchMethodException("MobSpawnSettingsContext.addSpawn(category, entry, weight)");
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Retromod could not add a spawn entry through a biome modification", e);
+        }
+    }
+
+    /** Old Fabric API {@code context.setPlayerSpawnFriendly(friendly)}: 1.18 removed that biome flag, so nothing changes. */
+    public static void setPlayerSpawnFriendly(Object context, boolean friendly) {
+    }
+
     /** Old structure override {@code addSpawn(entry)}, on hosts that only take an entry and a weight. */
     public static void addStructureSpawn(Object overrides, Object entry) {
         try {

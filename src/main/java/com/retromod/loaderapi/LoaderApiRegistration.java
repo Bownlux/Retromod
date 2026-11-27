@@ -96,6 +96,13 @@ public final class LoaderApiRegistration {
         transformer.registerInterfaceReplacement(iface, replacement);
     }
 
+    /** Claims {@code iface} in implements lists only and replaces it there for mods built before {@code firstVersionWithout}. */
+    public void replaceImplementedInterfaceForModsBefore(String iface, String replacement, String firstVersionWithout) {
+        claim(RedirectKey.implemented(iface));
+        transformer.registerInterfaceReplacement(iface, replacement);
+        transformer.limitInterfaceReplacementToModsBefore(iface, firstVersionWithout);
+    }
+
     /**
      * Registers a per-mod synthetic. {@code SyntheticEmbedder} relocates it into each jar that
      * references it, so it must never be a type another mod can name in a signature.

@@ -77,6 +77,7 @@ class LegacyVanillaGapsBridgeTest {
             new Call(Opcodes.INVOKEVIRTUAL, "net/minecraft/nbt/CompoundTag", "putIntArray", "(Ljava/lang/String;Ljava/util/List;)V"),
             new Call(Opcodes.INVOKESTATIC, EXTRA_CODECS, "validate",
                     "(Lcom/mojang/serialization/Codec;Ljava/util/function/Function;)Lcom/mojang/serialization/Codec;"),
+            new Call(Opcodes.INVOKESTATIC, EXTRA_CODECS, "lazyInitializedCodec", "(Ljava/util/function/Supplier;)Lcom/mojang/serialization/Codec;"),
             new Call(Opcodes.INVOKEVIRTUAL, CLIENT_LEVEL, "disconnect", "()V"),
             new Call(Opcodes.INVOKEVIRTUAL, MINECRAFT, "isSingleplayer", "()Z"),
             new Call(Opcodes.INVOKEVIRTUAL, LOCAL_PLAYER, "sendMessage", "(" + L_COMPONENT + "Ljava/util/UUID;)V"),
@@ -151,6 +152,7 @@ class LegacyVanillaGapsBridgeTest {
         assertTrue(refs.contains(WORLD + ".putIntArray(Lnet/minecraft/nbt/CompoundTag;Ljava/lang/String;Ljava/util/List;)V"), refs.toString());
         assertTrue(refs.contains(WORLD + ".validate(Lcom/mojang/serialization/Codec;Ljava/util/function/Function;)Lcom/mojang/serialization/Codec;"),
                 refs.toString());
+        assertTrue(refs.contains(WORLD + ".lazyInitializedCodec(Ljava/util/function/Supplier;)Lcom/mojang/serialization/Codec;"), refs.toString());
         assertTrue(refs.contains(CLIENT + ".disconnect(L" + CLIENT_LEVEL + ";)V"), refs.toString());
         assertTrue(refs.contains(MINECRAFT + ".hasSingleplayerServer()Z"), refs.toString());
         assertTrue(refs.contains(WORLD + ".sendMessage(L" + PLAYER + ";" + L_COMPONENT + "Ljava/util/UUID;)V"), "a local player too: " + refs);

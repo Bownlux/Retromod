@@ -8,7 +8,6 @@ import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import org.objectweb.asm.commons.Remapper;
-import org.objectweb.asm.commons.SimpleRemapper;
 
 /** Keeps a Mojang-named mod's loot table lookups by id working after 1.20.5 removed {@code LootDataManager}. */
 public final class LegacyLootDataBridge {
@@ -34,10 +33,7 @@ public final class LegacyLootDataBridge {
                 : RetromodVersion.compareMcVersions(target, "1.20.5") >= 0;
         if (!needed) return;
         // A host before 1.21.11 names ids ResourceLocation, so the stand-in is renamed to it there.
-        boolean identifier = running
-                ? ClassResourceInspector.read(IDENTIFIER) != null
-                : RetromodVersion.compareMcVersions(target, "1.21.11") >= 0;
-        registerUnchecked(t, identifier ? null : new SimpleRemapper(IDENTIFIER, OLD_ID));
+        registerUnchecked(t, RebuiltApiClasses.idNames());
     }
 
     /** Unconditional registration for transform-shape tests, on a host that names ids {@code Identifier}. */

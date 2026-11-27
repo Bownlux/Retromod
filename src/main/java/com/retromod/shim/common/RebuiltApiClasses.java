@@ -4,11 +4,14 @@
  */
 package com.retromod.shim.common;
 
+import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.commons.ClassRemapper;
 import org.objectweb.asm.commons.Remapper;
+import org.objectweb.asm.commons.SimpleRemapper;
 import org.objectweb.asm.tree.ClassNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +21,7 @@ import java.io.InputStream;
 import java.util.ArrayDeque;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /** Registers classes Retromod rebuilt for APIs a host removed (built from {@code src/legacyapi}) as synthetics. */
@@ -27,7 +31,24 @@ public final class RebuiltApiClasses {
 
     public static final String ROOT = "com/retromod/legacyapi/";
 
+    static final String IDENTIFIER = "net/minecraft/resources/Identifier";
+    static final String OLD_ID = "net/minecraft/resources/ResourceLocation";
+    static final String SERVER = "net/minecraft/server/MinecraftServer";
+
+    /** Renames a rebuilt class into a host before 1.21.11: ids are ResourceLocation, and a key's id is location(). */
+    public static final Remapper BEFORE_IDENTIFIER = new SimpleRemapper(Map.of(IDENTIFIER, OLD_ID,
+            "net/minecraft/resources/ResourceKey.identifier()L" + IDENTIFIER + ";", "location"));
+
     private RebuiltApiClasses() {}
+
+    /** The names rebuilt classes take on this host: null where ids are Identifier, else {@link #BEFORE_IDENTIFIER}; offline, by target. */
+    public static Remapper idNames() {
+        boolean running = ClassResourceInspector.read(SERVER) != null;
+        boolean identifier = running
+                ? ClassResourceInspector.read(IDENTIFIER) != null
+                : RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21.11") >= 0;
+        return identifier ? null : BEFORE_IDENTIFIER;
+    }
 
     /** Registers a rebuilt class and every rebuilt class it names, read from Retromod's own jar. */
     public static void registerTree(RetromodTransformer t, String root) {
@@ -41,8 +62,17 @@ public final class RebuiltApiClasses {
         while (!work.isEmpty()) {
             String name = work.poll();
             String registered = names == null ? name : names.mapType(name);
-            if (!seen.add(name) || t.getSyntheticClasses().containsKey(registered)) continue;
+            if (!seen.add(name)) continue;
             byte[] bytes = read(name);
+            if (t.getSyntheticClasses().containsKey(registered)) {
+                // A bridge that cut the class down to its host registered it first; the copy here must not need what it cut.
+                if (names == null && bytes != null && !java.util.Arrays.equals(t.getSyntheticClasses().get(registered),
+                        com.retromod.util.ShadedLibraryNames.toHostNames(bytes))) {
+                    LOGGER.warn("Retromod's rebuilt class {} was already added in a cut-down form, so this bridge uses that form. "
+                            + "Report this line with the Retromod version.", name);
+                }
+                continue;
+            }
             if (bytes == null) {
                 LOGGER.warn("Retromod's rebuilt class {} is missing from its jar, so it was not added to "
                         + "this mod. Report this line with the Retromod version.", name);
@@ -56,6 +86,19 @@ public final class RebuiltApiClasses {
         }
     }
 
+    /** The rebuilt classes {@link #registerTree} registers for {@code root}, read without registering them. */
+    public static Set<String> tree(String root) {
+        Set<String> seen = new java.util.LinkedHashSet<>();
+        ArrayDeque<String> work = new ArrayDeque<>(List.of(root));
+        while (!work.isEmpty()) {
+            String name = work.poll();
+            if (!seen.add(name)) continue;
+            byte[] bytes = read(name);
+            if (bytes != null) work.addAll(referencedClasses(bytes));
+        }
+        return seen;
+    }
+
     private static byte[] rename(byte[] bytes, Remapper names) {
         // Only names change, so the class keeps its own stack map frames.
         ClassWriter out = new ClassWriter(0);
@@ -63,7 +106,8 @@ public final class RebuiltApiClasses {
         return out.toByteArray();
     }
 
-    private static byte[] read(String name) {
+    /** A rebuilt class's bytes from Retromod's own jar, or null. */
+    static byte[] read(String name) {
         try (InputStream in = RebuiltApiClasses.class.getClassLoader().getResourceAsStream(name + ".class")) {
             return in == null ? null : in.readAllBytes();
         } catch (IOException e) {

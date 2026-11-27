@@ -37,7 +37,8 @@ class ThirdPartyAttributionTest {
     @DisplayName("Adapted files and THIRD_PARTY_NOTICES.md list the same files")
     void noticesMatchSources() throws IOException {
         Set<String> adapted = new TreeSet<>();
-        try (Stream<Path> files = Files.walk(Path.of("src/main/java"))) {
+        // The rebuilt APIs compiled against host stubs live in src/legacyapi/java and ship in the jar too.
+        try (Stream<Path> files = Stream.concat(Files.walk(Path.of("src/main/java")), Files.walk(Path.of("src/legacyapi/java")))) {
             for (Path file : files.filter(path -> path.toString().endsWith(".java")).toList()) {
                 String source = Files.readString(file, StandardCharsets.UTF_8);
                 if (!source.contains(ADAPTED)) continue;

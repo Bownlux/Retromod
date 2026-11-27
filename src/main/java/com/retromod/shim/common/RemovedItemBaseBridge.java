@@ -91,11 +91,12 @@ public final class RemovedItemBaseBridge {
         for (String removed : REMOVED_MARKERS_IN.keySet()) registerMarker(transformer, removed);
         LegacyEquipmentBridge.register(transformer);
 
-        // Not bridged here: BedItem and ItemNameBlockItem sat on BlockItem, and SignItem on
-        // StandingAndWallBlockItem. Both of those bases survive, so the right base is one of them
-        // rather than Item, and their constructors take the block before the properties while the
-        // old ones took it after. Rebasing those needs argument reordering, which the constructor
-        // absorber refuses on purpose, so they still report rather than guess.
+        // Not bridged here: BedItem sat on BlockItem, and SignItem on StandingAndWallBlockItem
+        // (ItemNameBlockItem has its own stand-in in LegacyItemNameBlockItemBridge). Both of those
+        // bases survive, so the right base is one of them rather than Item, and their constructors
+        // take the block before the properties while the old ones took it after. Rebasing those
+        // needs argument reordering, which the constructor absorber refuses on purpose, so they
+        // still report rather than guess.
     }
 
     /** Registers only the bases Minecraft removed in exactly {@code mcVersion}. */

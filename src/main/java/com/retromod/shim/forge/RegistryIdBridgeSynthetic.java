@@ -82,6 +82,20 @@ public final class RegistryIdBridgeSynthetic {
         com.retromod.shim.common.LegacyRegistryMapCodecBridge.registerClasses(transformer);
     }
 
+    /** The first host whose {@code RecipeSerializer} is a final class, where LegacyRecipeSerializerShim registers its adapter. */
+    static final String FIRST_RECIPE_SERIALIZER_CLASS_HOST = "26.1";
+
+    /** Whether the bridges for {@code host} adapt an old recipe serializer; an unknown host does, as a 26.x host. */
+    static boolean adaptsRecipeSerializers(String host) {
+        return !com.retromod.core.RetromodVersion.mcVersionExceeds(FIRST_RECIPE_SERIALIZER_CLASS_HOST, host);
+    }
+
+    /** Registers the NeoForge bridge in its shape for {@code host}, and the helpers its register wrappers call. */
+    public static void registerBridge(com.retromod.core.RetromodTransformer transformer, String host) {
+        transformer.registerSyntheticClass(INTERNAL, generate(adaptsRecipeSerializers(host)));
+        registerWrapperHelpers(transformer);
+    }
+
     /** System property that holds the per-thread key slot every embedded NeoForge and Forge bridge copy shares. */
     public static final String SHARED_CURRENT_KEY = "retromod.shared.registry-id.current.v1";
     /** System property that holds the shared per-thread slot for {@link #HANDED}. */
@@ -233,7 +247,13 @@ public final class RegistryIdBridgeSynthetic {
         };
     }
 
+    /** The bridge for a 26.x host, which adapts an old recipe serializer. */
     public static byte[] generate() {
+        return generate(true);
+    }
+
+    /** The bridge; {@code adaptRecipeSerializers} adds the step that calls the recipe serializer adapter. */
+    public static byte[] generate(boolean adaptRecipeSerializers) {
         // One class is the Function and carries the static helpers, so each mod embeds a single
         // synthetic (through SyntheticEmbedder) that references only itself, NeoForge, and Minecraft.
         ClassWriter cw = newWriter();
@@ -295,20 +315,23 @@ public final class RegistryIdBridgeSynthetic {
         a.visitVarInsn(ASTORE, 3);
         emitSupplierCall(a, INTERNAL, 3, 2, 4);
         // From 26.1 a 1.21 recipe serializer is no longer a RecipeSerializer, so the registry takes
-        // it adapted, as Registry.register does. Before 26.1 it still is one and stays as it is.
+        // it adapted, as Registry.register does. Before 26.1 it still is one, and the adapter it
+        // would call is never registered, so an embedded copy must not name it.
         Label registered = new Label();
-        a.visitVarInsn(ALOAD, 0);
-        a.visitFieldInsn(GETFIELD, INTERNAL, "key", L_RK);
-        a.visitFieldInsn(GETSTATIC, "net/minecraft/core/registries/Registries", "RECIPE_SERIALIZER", L_RK);
-        a.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Object", "equals", "(" + L_OBJ + ")Z", false);
-        a.visitJumpInsn(IFEQ, registered);
-        a.visitVarInsn(ALOAD, 2);
-        a.visitTypeInsn(INSTANCEOF, "net/minecraft/world/item/crafting/RecipeSerializer");
-        a.visitJumpInsn(IFNE, registered);
-        a.visitVarInsn(ALOAD, 2);
-        a.visitMethodInsn(INVOKESTATIC, com.retromod.shim.common.LegacyRecipeSerializerShim.BRIDGE, "adapt",
-                "(" + L_OBJ + ")" + L_OBJ, false);
-        a.visitVarInsn(ASTORE, 2);
+        if (adaptRecipeSerializers) {
+            a.visitVarInsn(ALOAD, 0);
+            a.visitFieldInsn(GETFIELD, INTERNAL, "key", L_RK);
+            a.visitFieldInsn(GETSTATIC, "net/minecraft/core/registries/Registries", "RECIPE_SERIALIZER", L_RK);
+            a.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Object", "equals", "(" + L_OBJ + ")Z", false);
+            a.visitJumpInsn(IFEQ, registered);
+            a.visitVarInsn(ALOAD, 2);
+            a.visitTypeInsn(INSTANCEOF, "net/minecraft/world/item/crafting/RecipeSerializer");
+            a.visitJumpInsn(IFNE, registered);
+            a.visitVarInsn(ALOAD, 2);
+            a.visitMethodInsn(INVOKESTATIC, com.retromod.shim.common.LegacyRecipeSerializerShim.BRIDGE, "adapt",
+                    "(" + L_OBJ + ")" + L_OBJ, false);
+            a.visitVarInsn(ASTORE, 2);
+        }
         a.visitLabel(registered);
         a.visitVarInsn(ALOAD, 2);
         a.visitInsn(ARETURN);
@@ -577,7 +600,8 @@ public final class RegistryIdBridgeSynthetic {
 
     /** Registers the Forge bridge and its redirects; the Forge 1.21.11 and 26.1 shims call it. */
     public static void registerForgeRedirects(com.retromod.core.RetromodTransformer t) {
-        t.registerSyntheticClass(FORGE_INTERNAL, generateForge());
+        t.registerSyntheticClass(FORGE_INTERNAL,
+                generateForge(adaptsRecipeSerializers(com.retromod.core.RetromodVersion.TARGET_MC_VERSION)));
         registerWrapperHelpers(t);
         // Also stamp blocks and items the mod stores in registered static fields.
         t.enablePostProcess(FORGE_STATIC_FIELDS_FLAG);
@@ -598,7 +622,13 @@ public final class RegistryIdBridgeSynthetic {
     private static final String BBP_NAME = BBP;
     private static final String IP_NAME = IP;
 
+    /** The Forge bridge for a 26.x host, which adapts an old recipe serializer. */
     public static byte[] generateForge() {
+        return generateForge(true);
+    }
+
+    /** The Forge bridge; {@code adaptRecipeSerializers} adds the step that calls the recipe serializer adapter. */
+    public static byte[] generateForge(boolean adaptRecipeSerializers) {
         ClassWriter cw = newWriter();
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL, FORGE_INTERNAL, null, "java/lang/Object",
                 new String[]{SUPPLIER});
@@ -636,22 +666,24 @@ public final class RegistryIdBridgeSynthetic {
         g.visitMethodInsn(INVOKEVIRTUAL, FRO, "getKey", "()" + L_RK, false);
         g.visitVarInsn(ASTORE, 2);
         emitSupplierCall(g, FORGE_INTERNAL, 2, 1, 3);
-        // An old recipe serializer goes in adapted, as on NeoForge. Left raw, every recipe of its
-        // type throws ClassCastException in the recipe reload and the world cannot load.
+        // From 26.1 an old recipe serializer goes in adapted, as on NeoForge. Left raw, every recipe
+        // of its type throws ClassCastException in the recipe reload and the world cannot load.
         Label registered = new Label();
-        g.visitVarInsn(ALOAD, 0);
-        g.visitFieldInsn(GETFIELD, FORGE_INTERNAL, "ro", L_FRO);
-        g.visitMethodInsn(INVOKEVIRTUAL, FRO, "getKey", "()" + L_RK, false);
-        g.visitFieldInsn(GETSTATIC, "net/minecraft/core/registries/Registries", "RECIPE_SERIALIZER", L_RK);
-        g.visitMethodInsn(INVOKEVIRTUAL, RK, "isFor", "(" + L_RK + ")Z", false);
-        g.visitJumpInsn(IFEQ, registered);
-        g.visitVarInsn(ALOAD, 1);
-        g.visitTypeInsn(INSTANCEOF, "net/minecraft/world/item/crafting/RecipeSerializer");
-        g.visitJumpInsn(IFNE, registered);
-        g.visitVarInsn(ALOAD, 1);
-        g.visitMethodInsn(INVOKESTATIC, com.retromod.shim.common.LegacyRecipeSerializerShim.BRIDGE, "adapt",
-                "(" + L_OBJ + ")" + L_OBJ, false);
-        g.visitVarInsn(ASTORE, 1);
+        if (adaptRecipeSerializers) {
+            g.visitVarInsn(ALOAD, 0);
+            g.visitFieldInsn(GETFIELD, FORGE_INTERNAL, "ro", L_FRO);
+            g.visitMethodInsn(INVOKEVIRTUAL, FRO, "getKey", "()" + L_RK, false);
+            g.visitFieldInsn(GETSTATIC, "net/minecraft/core/registries/Registries", "RECIPE_SERIALIZER", L_RK);
+            g.visitMethodInsn(INVOKEVIRTUAL, RK, "isFor", "(" + L_RK + ")Z", false);
+            g.visitJumpInsn(IFEQ, registered);
+            g.visitVarInsn(ALOAD, 1);
+            g.visitTypeInsn(INSTANCEOF, "net/minecraft/world/item/crafting/RecipeSerializer");
+            g.visitJumpInsn(IFNE, registered);
+            g.visitVarInsn(ALOAD, 1);
+            g.visitMethodInsn(INVOKESTATIC, com.retromod.shim.common.LegacyRecipeSerializerShim.BRIDGE, "adapt",
+                    "(" + L_OBJ + ")" + L_OBJ, false);
+            g.visitVarInsn(ASTORE, 1);
+        }
         g.visitLabel(registered);
         g.visitVarInsn(ALOAD, 1);
         g.visitInsn(ARETURN);

@@ -20,4 +20,6 @@ public class LivingEntity extends Entity {
     public boolean isBaby() { throw new UnsupportedOperationException(); }
     public final float getScale() { throw new UnsupportedOperationException(); }
     public net.minecraft.world.item.ItemStack getMainHandItem() { throw new UnsupportedOperationException(); }
+    public java.util.Collection<net.minecraft.world.effect.MobEffectInstance> getActiveEffects() { throw new UnsupportedOperationException(); }
+    public boolean removeEffect(net.minecraft.core.Holder<net.minecraft.world.effect.MobEffect> effect) { throw new UnsupportedOperationException(); }
 }

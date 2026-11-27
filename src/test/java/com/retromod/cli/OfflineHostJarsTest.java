@@ -64,6 +64,70 @@ class OfflineHostJarsTest {
     }
 
     @Test
+    @DisplayName("A 1.21.1 server patches only some classes in NeoForge's own folder, so the vanilla jar its arguments name is read too")
+    void olderLayoutReadsThePatchedAndTheVanillaJar() throws Exception {
+        Path server = jar("neoforge/21.1.252/neoforge-21.1.252-server.jar");
+        Path universal = jar("neoforge/21.1.252/neoforge-21.1.252-universal.jar");
+        Path vanilla = jar("../minecraft/server/1.21.1-20240808.144430/server-1.21.1-20240808.144430-srg.jar");
+        jar("../minecraft/server/1.21.1-20240101.000000/server-1.21.1-20240101.000000-srg.jar");
+        Path loader = jar("fancymodloader/loader/4.0.44/loader-4.0.44.jar");
+        jar("fancymodloader/loader/4.0.42/loader-4.0.42.jar");
+        Path dfu = jar("../../com/mojang/datafixerupper/8.0.16/datafixerupper-8.0.16.jar");
+        Files.writeString(libraries.resolve("net/neoforged/neoforge/21.1.252/unix_args.txt"),
+                "-p libraries/net/neoforged/fancymodloader/loader/4.0.44/loader-4.0.44.jar\n"
+                        + "-cp libraries/com/mojang/datafixerupper/8.0.16/datafixerupper-8.0.16.jar\n"
+                        + "--fml.mcVersion 1.21.1\n--fml.neoFormVersion 20240808.144430\n");
+
+        assertEquals(List.of(vanilla, universal, loader), OfflineHostJars.nextTo(server));
+        assertEquals(List.of(loader, dfu), OfflineHostJars.libraries(server));
+        assertEquals(List.of(), OfflineHostJars.nextTo(universal), "the universal jar is not a game jar");
+    }
+
+    @Test
+    @DisplayName("Without its vanilla jar, or with two and nothing to choose, an older line's patched jar is not read as the host")
+    void olderLayoutWithoutOneVanillaJarFindsNothing() throws Exception {
+        Path client = jar("neoforge/21.1.95/neoforge-21.1.95-client.jar");
+        jar("neoforge/21.1.95/neoforge-21.1.95-universal.jar");
+        assertEquals(List.of(), OfflineHostJars.nextTo(client));
+
+        jar("../minecraft/client/1.21.1-20240808.144430/client-1.21.1-20240808.144430-srg.jar");
+        jar("../minecraft/client/1.21.1-20240101.000000/client-1.21.1-20240101.000000-srg.jar");
+        assertEquals(List.of(), OfflineHostJars.nextTo(client));
+    }
+
+    @Test
+    @DisplayName("A server install's launch arguments name the game's libraries, which are read as the host's too")
+    void launchArgumentsNameTheLibraries() throws Exception {
+        Path server = jar("minecraft-server-patched/" + VERSION + "/minecraft-server-patched-" + VERSION + ".jar");
+        Path dfu = jar("../../com/mojang/datafixerupper/10.0.21/datafixerupper-10.0.21.jar");
+        Files.createDirectories(libraries.resolve("net/neoforged/neoforge/" + VERSION));
+        Files.writeString(libraries.resolve("net/neoforged/neoforge/" + VERSION + "/unix_args.txt"),
+                "-classpath\nlibraries/net/neoforged/fancymodloader/loader/12.0.8/loader-12.0.8.jar:"
+                        + "libraries/com/mojang/datafixerupper/10.0.21/datafixerupper-10.0.21.jar:libraries/com/missing/gone-1.jar\n");
+
+        assertEquals(List.of(dfu), OfflineHostJars.libraries(server));
+    }
+
+    @Test
+    @DisplayName("A launcher install lists the game's libraries in its file for the Minecraft version NeoForge is for")
+    void launcherFileNamesTheLibraries() throws Exception {
+        // A launcher folder of its own, whose meta/ sits beside libraries/.
+        Path root = libraries.resolve("launcher/libraries");
+        Path client = file(root.resolve("net/neoforged/minecraft-client-patched/21.11.42/minecraft-client-patched-21.11.42.jar"));
+        Path dfu = file(root.resolve("com/mojang/datafixerupper/9.0.19/datafixerupper-9.0.19.jar"));
+        Path meta = root.resolveSibling("meta").resolve("net.minecraft").resolve("1.21.11.json");
+        Files.createDirectories(meta.getParent());
+        Files.writeString(meta, "{\"libraries\": [{\"name\": \"com.mojang:datafixerupper:9.0.19\"},"
+                + " {\"name\": \"org.lwjgl:lwjgl:3.3.3:natives-macos\"}, {\"name\": \"com.mojang:brigadier:1.3.10\"}]}");
+
+        assertEquals(List.of(dfu), OfflineHostJars.libraries(client), "only libraries that are there, and no natives");
+        assertEquals("1.21.11", OfflineHostJars.minecraftVersion("21.11.42"));
+        assertEquals("1.21", OfflineHostJars.minecraftVersion("21.0.167"));
+        assertEquals("26.3", OfflineHostJars.minecraftVersion("26.3.0.43-beta"));
+        assertEquals("26.1.2", OfflineHostJars.minecraftVersion("26.1.2.60-beta"));
+    }
+
+    @Test
     @DisplayName("A vanilla game jar finds nothing")
     void vanillaJarFindsNothing() throws Exception {
         Path vanilla = jar("../com/mojang/minecraft/26.3/minecraft-26.3-client.jar");
@@ -142,7 +206,10 @@ class OfflineHostJarsTest {
 
     /** An empty jar at a path under {@code libraries/net/neoforged}. */
     private Path jar(String relative) throws Exception {
-        Path jar = libraries.resolve("net/neoforged").resolve(relative).normalize();
+        return file(libraries.resolve("net/neoforged").resolve(relative).normalize());
+    }
+
+    private static Path file(Path jar) throws Exception {
         Files.createDirectories(jar.getParent());
         Files.write(jar, LoaderApiFixtures.jar(Map.of("placeholder.txt", new byte[]{1})));
         return jar;

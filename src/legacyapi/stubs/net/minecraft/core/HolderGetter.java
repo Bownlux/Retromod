@@ -13,5 +13,7 @@ public interface HolderGetter<T> {
 
     interface Provider {
         default <T> Optional<Holder.Reference<T>> get(ResourceKey<T> key) { throw new UnsupportedOperationException(); }
+        // Abstract on the host, returning Optional<? extends HolderGetter<T>>; looser here, since the Registry stub is no getter.
+        default <T> Optional<?> lookup(ResourceKey<? extends Registry<? extends T>> key) { throw new UnsupportedOperationException(); }
     }
 }

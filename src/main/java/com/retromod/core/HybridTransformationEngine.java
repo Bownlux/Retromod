@@ -45,6 +45,11 @@ public final class HybridTransformationEngine {
     // Which mod owns each class, for crash reports and performance tracking.
     private final Map<String, String> classToModMap = new ConcurrentHashMap<>();
     private final Map<String, ModTransformInfo> modsToTransform = new ConcurrentHashMap<>();
+    // Each queued mod's version and jar, read once for every class of it this engine transforms.
+    private final Map<String, RetromodTransformer.ModContext> modContexts = new ConcurrentHashMap<>();
+    private static final RetromodTransformer.ModContext UNKNOWN_MOD = RetromodTransformer.ModContext.of(null, null);
+    // The jar a launch-time class load reads: none, since only the background pass opens a mod's jar.
+    private static final java.util.function.Function<String, byte[]> NO_JAR_CLASSES = name -> null;
 
     private final ExecutorService backgroundExecutor;
     private final AtomicBoolean aotCompletedFlag = new AtomicBoolean(false);
@@ -62,7 +67,11 @@ public final class HybridTransformationEngine {
     ) {}
     
     private HybridTransformationEngine() {
-        this.jitTransformer = RetromodTransformer.getInstance();
+        this(RetromodTransformer.getInstance());
+    }
+
+    HybridTransformationEngine(RetromodTransformer transformer) {
+        this.jitTransformer = transformer;
         this.mixinTransformer = new MixinCompatibilityTransformer(jitTransformer);
         this.versionDetector = new ModVersionDetector();
         this.performanceMonitor = MemorySafetyMonitor.getInstance();
@@ -170,8 +179,13 @@ public final class HybridTransformationEngine {
 
             jitFallbacks.incrementAndGet();
             LOGGER.trace("JIT fallback: {}", className);
-            result = transformWithMixinRepairs(
-                    jitTransformer, mixinTransformer, originalBytes, className);
+            // The class loads on a game thread while a translation may run beside it, so it reads its own mod,
+            // and none of that translation's jar classes, registry ids or opened finals.
+            try (var modScope = jitTransformer.pushThreadModContext(modContext(modOwning(className)));
+                 var openedFinals = jitTransformer.pushJarOpenedFinals(null)) {
+                result = transformWithMixinRepairs(jitTransformer, mixinTransformer, originalBytes, className,
+                        NO_JAR_CLASSES, com.retromod.shim.common.StaticFieldRegistryIds.NONE);
+            }
 
             if (result != null) {
                 cacheTransform(className, originalBytes, result);
@@ -357,7 +371,9 @@ public final class HybridTransformationEngine {
             java.util.function.Function<String, byte[]> jarClasses =
                     BundledJarClasses.attach(originalClasses::get, BundledJarClasses.fromJar(jar));
             // A final host method the jar's own access transformer or widener opens can still be overridden.
-            try (var openedFinals = jitTransformer.pushJarOpenedFinals(
+            // The foreground translation sets its own mod on the shared transformer, so this pass sets its mod per thread.
+            try (var modScope = jitTransformer.pushThreadModContext(modContext(mod));
+                 var openedFinals = jitTransformer.pushJarOpenedFinals(
                     com.retromod.shim.common.OpenedFinalMethods.read(jar, RetromodVersion.TARGET_MC_VERSION))) {
                 for (Map.Entry<String, byte[]> classEntry : originalClasses.entrySet()) {
                     String className = classEntry.getKey();
@@ -397,6 +413,26 @@ public final class HybridTransformationEngine {
 
             LOGGER.debug(RetromodLog.DETAIL, "AOT compiled {} classes for {}", compiled, mod.modId());
         }
+    }
+
+    /** The queued mod whose jar has {@code className}'s package, or null when none or several do. */
+    ModTransformInfo modOwning(String className) {
+        int slash = className.lastIndexOf('/');
+        String pkg = slash > 0 ? className.substring(0, slash + 1) : "";
+        ModTransformInfo owner = null;
+        for (ModTransformInfo mod : modsToTransform.values()) {
+            if (!mod.packages().contains(pkg)) continue;
+            if (owner != null) return null;
+            owner = mod;
+        }
+        return owner;
+    }
+
+    /** The version and jar {@code mod} is transformed with, or a mod of unknown version when none is known. */
+    RetromodTransformer.ModContext modContext(ModTransformInfo mod) {
+        if (mod == null) return UNKNOWN_MOD;
+        return modContexts.computeIfAbsent(mod.modId(),
+                id -> RetromodTransformer.ModContext.of(mod.sourceVersion(), mod.jarPath()));
     }
 
     static List<String> collectClassEntryNames(JarFile jar, int maxEntries) throws IOException {

@@ -11,6 +11,8 @@ public interface VertexConsumer {
     VertexConsumer setUv2(int u, int v);
     VertexConsumer setNormal(float x, float y, float z);
     VertexConsumer setLineWidth(float width);
+    // Abstract on 26.3 and newer, absent before; a default here leaves older implementors unchanged.
+    default VertexConsumer setUv3(float u, float v) { throw new UnsupportedOperationException(); }
     default void addVertex(float x, float y, float z, int argb, float u, float v, int overlay, int light, float normalX, float normalY,
             float normalZ) {
         throw new UnsupportedOperationException();

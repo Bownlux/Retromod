@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
@@ -233,5 +234,58 @@ class LegacyModConfigTypeBridgeTest {
         mv.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    @Test
+    @DisplayName("Forge 1.20.1's own config construction, with or without a file name, asks NeoForge's tracker, and the add does nothing")
+    void forgeConfigConstructionReachesTheTracker() {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        transformer.clearRedirectsForTesting();
+        LegacyModConfigTypeBridge.registerOldConstruction(transformer);
+        String forge = "net/minecraftforge/fml/";
+        String config = forge + "config/ModConfig";
+        String desc = "(L" + config + "$Type;L" + forge + "config/IConfigSpec;L" + forge + "ModContainer;Ljava/lang/String;)V";
+
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC, "test/mod/OwnConfigs", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "register", "(L" + forge + "ModContainer;)V", null, null);
+        mv.visitCode();
+        mv.visitTypeInsn(NEW, config);
+        mv.visitInsn(DUP);
+        mv.visitInsn(ACONST_NULL);
+        mv.visitInsn(ACONST_NULL);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitLdcInsn("balm/own.toml");
+        mv.visitMethodInsn(INVOKESPECIAL, config, "<init>", desc, false);
+        mv.visitVarInsn(ASTORE, 1);
+        // The three-argument form named its file modid-type.toml.
+        mv.visitTypeInsn(NEW, config);
+        mv.visitInsn(DUP);
+        mv.visitInsn(ACONST_NULL);
+        mv.visitInsn(ACONST_NULL);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKESPECIAL, config, "<init>", desc.replace("Ljava/lang/String;)V", ")V"), false);
+        mv.visitInsn(POP);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitVarInsn(ALOAD, 1);
+        mv.visitMethodInsn(INVOKEVIRTUAL, forge + "ModContainer", "addConfig", "(L" + config + ";)V", false);
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        ClassNode node = new ClassNode();
+        new ClassReader(transformer.transformClass(cw.toByteArray(), "test/mod/OwnConfigs")).accept(node, 0);
+
+        List<String> calls = new ArrayList<>();
+        for (var method : node.methods) {
+            for (AbstractInsnNode insn : method.instructions) {
+                if (insn instanceof MethodInsnNode call) {
+                    calls.add(call.getOpcode() + " " + call.owner + "." + call.name + Type.getArgumentTypes(call.desc).length);
+                }
+            }
+        }
+        assertEquals(List.of(INVOKESTATIC + " " + HELPER + ".create4", INVOKESTATIC + " " + HELPER + ".create3",
+                INVOKESTATIC + " " + HELPER + ".addConfig2"), calls);
+        assertTrue(transformer.getSyntheticClasses().containsKey(HELPER));
     }
 }

@@ -60,6 +60,8 @@ class LegacyRenderStageBridgeTest {
         assertTrue(refs.contains(LegacyRenderStageBridge.CALLS + ".getStage(L" + EVENT + ";)L" + LegacyRenderStageBridge.STAGE + ";"), refs.toString());
         assertTrue(refs.contains("F " + LegacyRenderStageBridge.STAGE + ".AFTER_PARTICLES"), refs.toString());
         assertTrue(refs.contains(LegacyRenderStageBridge.CALLS + ".getCamera(L" + EVENT + ";)Lnet/minecraft/client/Camera;"), refs.toString());
+        assertTrue(refs.contains(LegacyRenderStageBridge.CALLS + ".getPartialTickFloat(L" + EVENT + ";)F"),
+                "Forge 1.20.1's float partial tick: " + refs);
         assertTrue(refs.contains(LegacyRenderStageBridge.CALLS + ".getFrustum(L" + EVENT + ";)Lnet/minecraft/client/renderer/culling/Frustum;"),
                 refs.toString());
     }
@@ -214,6 +216,9 @@ class LegacyRenderStageBridgeTest {
         mv.visitInsn(Opcodes.POP);
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, EVENT, "getFrustum", "()Lnet/minecraft/client/renderer/culling/Frustum;", false);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, EVENT, "getPartialTick", "()F", false);
         mv.visitInsn(Opcodes.POP);
         mv.visitLabel(skip);
         mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);

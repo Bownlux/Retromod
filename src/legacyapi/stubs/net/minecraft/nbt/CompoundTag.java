@@ -15,6 +15,8 @@ public final class CompoundTag implements Tag {
     public java.util.Set<String> keySet() { throw new UnsupportedOperationException(); }
     public Tag put(String key, Tag value) { throw new UnsupportedOperationException(); }
     public int getIntOr(String key, int fallback) { throw new UnsupportedOperationException(); }
+    // 1.20.5 to 1.21.4 shape.
+    public int getInt(String key) { throw new UnsupportedOperationException(); }
     public long getLongOr(String key, long fallback) { throw new UnsupportedOperationException(); }
     public Optional<String> getString(String key) { throw new UnsupportedOperationException(); }
     public void putLong(String key, long value) { throw new UnsupportedOperationException(); }

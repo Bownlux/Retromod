@@ -16,6 +16,8 @@ public class NeoForge_1_21_5_to_1_21_6 implements VersionShim {
     
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // The same vanilla members, for a mod whose chain starts at this version.
+        com.retromod.shim.common.LegacyVanillaGapsOlderHosts.register(transformer);
         // The RenderSystem setters this version removed.
         com.retromod.shim.common.RemovedRenderStateNeutralize.registerRemovedIn(transformer, "1.21.6");
         // Font.drawInBatch stopped returning the end x.

@@ -33,6 +33,9 @@ public final class LegacyTradeCase {
     private static final String MOD_ID = "retromod_test_mod_forge";
     private static final String LIB_ID = "retromod_test_lib_forge";
 
+    // How often the handler's profession check found the farmer on a host that still posts the event.
+    private static int farmerTradesAdded;
+
     private LegacyTradeCase() {}
 
     /** One static handler, as Better Archeology ships: a farmer sells a diamond for an emerald. */
@@ -40,6 +43,7 @@ public final class LegacyTradeCase {
     public static void onVillagerTrades(VillagerTradesEvent event) {
         if (event.getType() != VillagerProfession.FARMER) return;
         event.getTrades().get(1).add(new BasicItemListing(1, new ItemStack(Items.DIAMOND), 12, 2));
+        farmerTradesAdded++;
     }
 
     static void register() {
@@ -54,6 +58,11 @@ public final class LegacyTradeCase {
     }
 
     private static void check(ServerStartedEvent event) {
+        // NeoForge 1.21.5 to 1.21.11 name the event's profession and FARMER by registry key, which Retromod reads back as professions.
+        if (!hostBuildsTradesFromData()) {
+            LOG.info("[Retromod-Test-Forge] the trade handler's event.getType() finds the farmer where the host posts the event (server started): {}",
+                    farmerTradesAdded > 0 ? "success" : "fail: the handler never matched the farmer");
+        }
         Path legacyTrades = FMLPaths.GAMEDIR.get().resolve("config").resolve("retromod").resolve("legacy-trades");
         Path data = legacyTrades.resolve("retromod_legacy_trades_" + MOD_ID).resolve("data");
         log("the farmer's emerald trade is written as a villager_trade file (server started)", () -> {

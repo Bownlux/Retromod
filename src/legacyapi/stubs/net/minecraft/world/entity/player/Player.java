@@ -8,6 +8,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 
 public class Player extends LivingEntity {
+    public void displayClientMessage(net.minecraft.network.chat.Component text, boolean overlay) { throw new UnsupportedOperationException(); }
     public net.minecraft.world.inventory.AbstractContainerMenu containerMenu;
     public Inventory getInventory() { throw new UnsupportedOperationException(); }
     public GameProfile getGameProfile() { throw new UnsupportedOperationException(); }

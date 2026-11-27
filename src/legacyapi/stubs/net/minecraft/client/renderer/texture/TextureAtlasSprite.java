@@ -7,6 +7,10 @@ public class TextureAtlasSprite {
     public float getU(float u) { throw new UnsupportedOperationException(); }
     public float getV(float v) { throw new UnsupportedOperationException(); }
     private TextureAtlasSprite() {}
+    public float getU0() { throw new UnsupportedOperationException(); }
+    public float getU1() { throw new UnsupportedOperationException(); }
+    public float getV0() { throw new UnsupportedOperationException(); }
+    public float getV1() { throw new UnsupportedOperationException(); }
     public Transparency transparency() { throw new UnsupportedOperationException(); }
     public SpriteContents contents() { throw new UnsupportedOperationException(); }
     // Declared here on 26.2 and inherited from UvMapping on 26.3; a virtual call resolves either way.

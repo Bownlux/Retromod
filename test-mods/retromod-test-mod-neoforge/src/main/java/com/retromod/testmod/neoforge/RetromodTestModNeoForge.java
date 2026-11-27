@@ -150,6 +150,8 @@ public class RetromodTestModNeoForge {
                 serverResult(() -> LegacyEffectTickCase.run(level)));
         LOG.info("{} registry(key) and an entity's getServer() on a running server: {}", PREFIX,
                 serverResult(() -> SmallMembersCase.server(event.getServer())));
+        LOG.info("{} a projectile's mayInteract(level, pos) and an entity's sendSystemMessage after 1.21.2 and 1.21.5: {}", PREFIX,
+                serverResult(() -> VanillaGapsCase.server(level)));
         LOG.info("{} level height getters renamed in 1.21.2, called and overridden: {}", PREFIX,
                 serverResult(() -> LevelHeightCase.run(level)));
         LOG.info("{} a 1.21.1 CommandBuildContext of the mod's own builds an item argument and keeps only its items: {}",
@@ -612,6 +614,7 @@ public class RetromodTestModNeoForge {
             return result.equals("success");
         });
         // Positions, a style's font, held-item results, and calls that lost arguments from 1.21.2 to 26.3.
+        n++; passed += check(n, "Direction.fromDelta finds a step's direction after 1.21.2", VanillaGapsCase::fromDelta);
         n++; passed += check(n, "small vanilla members removed or reshaped after 1.21.1", () -> {
             String result = SmallMembersCase.common();
             if (!result.equals("success")) LOG.warn("{} small vanilla members: {}", PREFIX, result);

@@ -254,6 +254,11 @@ public final class LegacyVanillaGaps {
         return codec.validate(check);
     }
 
+    /** {@code ExtraCodecs.lazyInitializedCodec(codec)}, which DataFixerUpper's codec answers itself from 1.20.5. */
+    public static <A> Codec<A> lazyInitializedCodec(java.util.function.Supplier<Codec<A>> codec) {
+        return Codec.lazyInitialized(codec);
+    }
+
     /** {@code ExtraCodecs.validate(mapCodec, check)}. */
     public static <A> MapCodec<A> validate(MapCodec<A> codec, Function<A, DataResult<A>> check) {
         return codec.validate(check);
@@ -329,10 +334,10 @@ public final class LegacyVanillaGaps {
         return entity.getAttachments().get(EntityAttachment.PASSENGER, 0, entity.getYRot()).y;
     }
 
-    /** {@code EntityType.updateCustomEntityTag(level, player, entity, tag)}: the tag as the entity data an item carries now. */
-    public static void updateCustomEntityTag(Level level, Player player, Entity entity, CompoundTag tag) {
-        if (tag == null || entity == null) return;
-        EntityType.updateCustomEntityTag(level, player, entity, TypedEntityData.of(entity.getType(), tag));
+    /** {@code EntityType.updateCustomEntityTag(level, player, entity, itemTag)}: the item tag's EntityTag, as the entity data an item carries now. */
+    public static void updateCustomEntityTag(Level level, Player player, Entity entity, CompoundTag itemTag) {
+        if (entity == null || itemTag == null || !(itemTag.get("EntityTag") instanceof CompoundTag data)) return;
+        EntityType.updateCustomEntityTag(level, player, entity, TypedEntityData.of(entity.getType(), data));
     }
 
     /** {@code contents.accountSimpleStack(stack)}: counted the way the item contents count it. */

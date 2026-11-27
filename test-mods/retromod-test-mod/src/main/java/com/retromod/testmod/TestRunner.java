@@ -58,6 +58,8 @@ import com.retromod.testmod.tests.Test85RenamedMixinTarget;
 import com.retromod.testmod.tests.Test86OldGuiDrawing;
 import com.retromod.testmod.tests.Test89KeyBindingSubclass;
 import com.retromod.testmod.tests.Test91FollowOwnerGoal;
+import com.retromod.testmod.tests.Test94OldFabricBakedModel;
+import com.retromod.testmod.tests.Test95FabricBakedModelOnHost;
 import com.retromod.testmod.tests.Test27OwnOverrideMob;
 import com.retromod.testmod.tests.Test28LegacyProcedureMembers;
 import com.retromod.testmod.tests.Test29OwnDamageOverride;
@@ -147,6 +149,7 @@ public final class TestRunner {
         // These register content, so they have to run before the registries freeze after initialization.
         all.add(new Test32CrossClassRegistryId());
         all.add(new Test33EntityTypeBuildKey());
+        all.add(new Test94OldFabricBakedModel());
         return List.copyOf(all);
     }
 
@@ -176,6 +179,8 @@ public final class TestRunner {
         // The rebuilt armor trim atlas is uploaded once the client has loaded its own atlases.
         all.add(new Test31LegacyTrimAtlas());
         all.add(Test67EarlyEntityModels.bakesInWorld());
+        // Block models are loaded once a world is joined, and the old model reached them through a model resolver.
+        all.add(new Test95FabricBakedModelOnHost());
         return List.copyOf(all);
     }
 

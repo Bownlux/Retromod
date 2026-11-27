@@ -6,6 +6,7 @@ package com.retromod.shim.fabric;
 
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.shim.common.LegacyPackSupplierLambdas;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -277,44 +278,9 @@ public final class Pre1_20_5PackApiBridge {
         return cw.toByteArray();
     }
 
-    /** A {@code ResourcesSupplier} that opens every pack by id through the mod's old lambda. */
+    /** A {@code ResourcesSupplier} that opens every pack by id through the mod's old lambda; a failed open ends that pack only. */
     static byte[] generateSupplierAdapter() {
-        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
-        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER,
-                SUPPLIER_ADAPTER, null, "java/lang/Object", new String[] {RESOURCES_SUPPLIER});
-        cw.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "open",
-                "Ljava/util/function/Function;", null, null).visitEnd();
-
-        MethodVisitor ctor = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>",
-                "(Ljava/util/function/Function;)V", null, null);
-        ctor.visitCode();
-        ctor.visitVarInsn(Opcodes.ALOAD, 0);
-        ctor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
-        ctor.visitVarInsn(Opcodes.ALOAD, 0);
-        ctor.visitVarInsn(Opcodes.ALOAD, 1);
-        ctor.visitFieldInsn(Opcodes.PUTFIELD, SUPPLIER_ADAPTER, "open", "Ljava/util/function/Function;");
-        ctor.visitInsn(Opcodes.RETURN);
-        ctor.visitMaxs(0, 0);
-        ctor.visitEnd();
-
-        openById(cw, OPEN_PRIMARY, OPEN_PRIMARY_DESC);
-        openById(cw, OPEN_FULL, OPEN_FULL_DESC);
-        cw.visitEnd();
-        return cw.toByteArray();
-    }
-
-    private static void openById(ClassWriter cw, String name, String descriptor) {
-        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC, name, descriptor, null, null);
-        mv.visitCode();
-        mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitFieldInsn(Opcodes.GETFIELD, SUPPLIER_ADAPTER, "open", "Ljava/util/function/Function;");
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, PACK_LOCATION_INFO, PACK_ID, "()Ljava/lang/String;", false);
-        mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/Function", "apply",
-                "(Ljava/lang/Object;)Ljava/lang/Object;", true);
-        mv.visitTypeInsn(Opcodes.CHECKCAST, PACK_RESOURCES);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitMaxs(0, 0);
-        mv.visitEnd();
+        return LegacyPackSupplierLambdas.generateAdapter(new LegacyPackSupplierLambdas.SupplierNames(SUPPLIER_ADAPTER, RESOURCES_SUPPLIER,
+                PACK_LOCATION_INFO, PACK_ID, PACK_RESOURCES, OPEN_PRIMARY, OPEN_PRIMARY_DESC, OPEN_FULL, OPEN_FULL_DESC), false);
     }
 }

@@ -12,4 +12,13 @@ public interface BlockStateModel extends IForgeBlockStateModel {
     Material.Baked particleMaterial();
     int materialFlags();
     default boolean hasMaterialFlag(int flag) { throw new UnsupportedOperationException(); }
+
+    interface Unbaked extends net.minecraft.client.resources.model.ResolvableModel {
+        BlockStateModel bake(net.minecraft.client.resources.model.ModelBaker baker);
+    }
+
+    interface UnbakedRoot extends net.minecraft.client.resources.model.ResolvableModel {
+        BlockStateModel bake(net.minecraft.world.level.block.state.BlockState state, net.minecraft.client.resources.model.ModelBaker baker);
+        Object visualEqualityGroup(net.minecraft.world.level.block.state.BlockState state);
+    }
 }

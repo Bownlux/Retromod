@@ -9,4 +9,16 @@ public interface ModelBaker {
     ResolvedModel getModel(Identifier id);
     BlockStateModelPart missingBlockModelPart();
     MaterialBaker materials();
+    Interner interner();
+    <T> T compute(SharedOperationKey<T> key);
+
+    interface SharedOperationKey<T> {
+        T compute(ModelBaker baker);
+    }
+
+    interface Interner {
+        org.joml.Vector3fc vector(org.joml.Vector3fc vector);
+        net.minecraft.client.resources.model.geometry.BakedQuad.MaterialInfo materialInfo(
+                net.minecraft.client.resources.model.geometry.BakedQuad.MaterialInfo info);
+    }
 }

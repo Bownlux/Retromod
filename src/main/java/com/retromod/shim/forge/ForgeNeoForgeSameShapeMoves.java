@@ -51,6 +51,8 @@ final class ForgeNeoForgeSameShapeMoves {
          "net/neoforged/neoforge/client/settings/KeyConflictContext"},
         // The modifiers keep their constants, isActive and matches; the three lookups that changed are bridged below.
         {"net/minecraftforge/client/settings/KeyModifier", "net/neoforged/neoforge/client/settings/KeyModifier"},
+        // INSTANCE and loadConfigs(type, folder), which config libraries call to load a type early; checked in FML 10 to 12.
+        {"net/minecraftforge/fml/config/ConfigTracker", "net/neoforged/fml/config/ConfigTracker"},
     };
 
     static final String KEY_MODIFIERS = com.retromod.shim.common.RebuiltApiClasses.ROOT + "forge/client/settings/LegacyKeyModifiers";
@@ -77,6 +79,17 @@ final class ForgeNeoForgeSameShapeMoves {
         transformer.registerMethodRedirect(KEY_MODIFIER, "getValues", "(Z)Ljava/util/List;", KEY_MODIFIERS, "getValues", "(Z)Ljava/util/List;");
     }
 
+    /** Forge's tracker handed out its config maps, which NeoForge keeps internal and answers through {@code ModConfigs}. */
+    static void registerConfigTrackerReads(RetromodTransformer transformer) {
+        String tracker = "net/neoforged/fml/config/ConfigTracker";
+        String helper = com.retromod.shim.neoforge.LegacyModConfigTypeBridge.HELPER;
+        com.retromod.shim.common.RebuiltApiClasses.registerTree(transformer, helper);
+        transformer.registerMethodRedirect(tracker, "fileMap", "()Ljava/util/concurrent/ConcurrentHashMap;", helper, "fileMap",
+                "(L" + tracker + ";)Ljava/util/concurrent/ConcurrentHashMap;", true);
+        transformer.registerMethodRedirect(tracker, "configSets", "()Ljava/util/Map;", helper, "configSets",
+                "(L" + tracker + ";)Ljava/util/Map;", true);
+    }
+
     private static boolean declares(org.objectweb.asm.tree.ClassNode node, String name, String desc) {
         return node.methods.stream().anyMatch(m -> m.name.equals(name) && m.desc.equals(desc));
     }
@@ -87,6 +100,7 @@ final class ForgeNeoForgeSameShapeMoves {
             transformer.registerClassRedirect(move[0], move[1]);
         }
         registerKeyModifierLookups(transformer, com.retromod.core.ClassResourceInspector.read(KEY_MODIFIER));
+        registerConfigTrackerReads(transformer);
         // Renamed too, but its buffer type changed, so it also needs per-class forwarders.
         LegacySpawnDataAdapter.register(transformer);
     }

@@ -16,6 +16,7 @@ public final class LegacyModConfigTypeBridge {
     static final String TYPE = "net/neoforged/fml/config/ModConfig$Type";
     static final String CONTAINER = "net/neoforged/fml/ModContainer";
     static final String TRACKER = "net/neoforged/fml/config/ConfigTracker";
+    static final String CONFIG = "net/neoforged/fml/config/ModConfig";
     public static final String HELPER = RebuiltApiClasses.ROOT + "neoforge/fml/LegacyModConfigs";
     /** NeoForge 26.3 beta 43 (FancyModLoader 12.0.8) is the first with the new names. */
     static final String FIRST_RENAMED_VERSION = "26.3";
@@ -53,6 +54,30 @@ public final class LegacyModConfigTypeBridge {
         oldModCall(t, TYPE, "extension", "()Ljava/lang/String;", "(" + L_TYPE + ")Ljava/lang/String;");
         oldModCall(t, TYPE, "name", "()Ljava/lang/String;", "(" + L_TYPE + ")Ljava/lang/String;");
         oldModCall(t, TYPE, "valueOf", "(Ljava/lang/String;)" + L_TYPE, "(Ljava/lang/String;)" + L_TYPE);
+    }
+
+    /** Forge 1.20.1's {@code new ModConfig(...)} and {@code container.addConfig(config)}, which NeoForge leaves to its config tracker. */
+    public static void registerOldConstruction(RetromodTransformer t) {
+        ClassNode config = ClassResourceInspector.read(CONFIG);
+        String[] roots = {"net/neoforged/fml/", "net/minecraftforge/fml/"};
+        String neoDesc = "(" + L_TYPE + L_SPEC + L_CONTAINER + "Ljava/lang/String;)V";
+        if (config != null && config.methods.stream().anyMatch(m -> m.name.equals("<init>") && m.desc.equals(neoDesc)
+                && (m.access & org.objectweb.asm.Opcodes.ACC_PUBLIC) != 0)) {
+            return;
+        }
+        RebuiltApiClasses.registerTree(t, HELPER);
+        // The constructor asks the tracker, which builds and tracks the config, so the add that followed it does nothing.
+        String named = "(" + L_TYPE + L_SPEC + L_CONTAINER + "Ljava/lang/String;)" + L_CONFIG;
+        String unnamed = "(" + L_TYPE + L_SPEC + L_CONTAINER + ")" + L_CONFIG;
+        for (String owner : roots) {
+            for (String descRoot : roots) {
+                String args = "L" + descRoot + "config/ModConfig$Type;L" + descRoot + "config/IConfigSpec;L" + descRoot + "ModContainer;";
+                t.registerConstructorRedirect(owner + "config/ModConfig", "(" + args + "Ljava/lang/String;)V", HELPER, "create", named);
+                t.registerConstructorRedirect(owner + "config/ModConfig", "(" + args + ")V", HELPER, "create", unnamed);
+            }
+            t.registerMethodRedirect(owner + "ModContainer", "addConfig", "(L" + owner + "config/ModConfig;)V", HELPER, "addConfig",
+                    "(" + L_CONTAINER + L_CONFIG + ")V", true);
+        }
     }
 
     /** Read from the host's own config type. Offline, a NeoForge 26.3 target has the new names. */

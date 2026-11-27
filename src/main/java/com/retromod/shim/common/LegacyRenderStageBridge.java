@@ -46,6 +46,8 @@ public final class LegacyRenderStageBridge {
                 event + "Lnet/minecraft/client/renderer/culling/Frustum;");
         call(t, "getModelViewMatrix", "()Lorg/joml/Matrix4f;", event + "Lorg/joml/Matrix4f;");
         call(t, "getRenderTick", "()I", event + "I");
+        // Forge 1.20.1's event handed out the partial tick as a float.
+        t.registerMethodRedirect(EVENT, "getPartialTick", "()F", CALLS, "getPartialTickFloat", event + "F", true);
         // A listener on the abstract event is refused by the bus; the pass gives it one listener per stage event,
         // and an addListener lambda goes through the shared helper that adds it to each.
         RebuiltApiClasses.registerTree(t, com.retromod.shim.forge.NeoForgeAbstractEventListeners.HELPER);

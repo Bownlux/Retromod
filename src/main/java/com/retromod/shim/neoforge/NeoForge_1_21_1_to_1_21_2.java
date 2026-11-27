@@ -16,10 +16,14 @@ public class NeoForge_1_21_1_to_1_21_2 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // The same vanilla members, for a mod whose chain starts at this version.
+        com.retromod.shim.common.LegacyVanillaGapsOlderHosts.register(transformer);
         // The RenderSystem setters this version removed.
         com.retromod.shim.common.RemovedRenderStateNeutralize.registerRemovedIn(transformer, "1.21.2");
         // Vanilla item bases removed in 1.21.2, rebased only on hosts that lost them.
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.21.2");
+        // ItemNameBlockItem went in 1.21.2 too; its stand-in is a block item still named after itself.
+        com.retromod.shim.common.LegacyItemNameBlockItemBridge.register(transformer);
         // NeoForge's own classes that moved package after 21.1, on hosts that moved them.
         NeoForgeMovedClasses.register(transformer);
         NeoForgeMovedMembers.register(transformer);

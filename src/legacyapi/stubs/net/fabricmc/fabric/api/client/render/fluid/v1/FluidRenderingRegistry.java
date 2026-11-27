@@ -9,6 +9,7 @@ public final class FluidRenderingRegistry {
     private FluidRenderingRegistry() {}
     public static void register(Fluid still, Fluid flowing, FluidModel.Unbaked model) { throw new UnsupportedOperationException(); }
     public static void register(Fluid fluid, FluidModel.Unbaked model) { throw new UnsupportedOperationException(); }
+    public static void register(Fluid fluid, FluidModel.Unbaked model, FluidRenderHandler renderer) { throw new UnsupportedOperationException(); }
     public static void setBlockTransparency(Block block, boolean transparent) { throw new UnsupportedOperationException(); }
     public static boolean isBlockTransparent(Block block) { throw new UnsupportedOperationException(); }
 }

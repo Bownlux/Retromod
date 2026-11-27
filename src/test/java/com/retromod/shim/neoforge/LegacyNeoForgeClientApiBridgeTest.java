@@ -97,11 +97,46 @@ public class LegacyNeoForgeClientApiBridgeTest {
                 "an override's super call of the removed fluid draw answers the old default");
         assertEquals(ROOT + "common/LegacyFluidStackTags.getOrCreateTag(L" + NEO + "fluids/FluidStack;)Lnet/minecraft/nbt/CompoundTag;",
                 call(INVOKEVIRTUAL, NEO + "fluids/FluidStack", "getOrCreateTag", "()Lnet/minecraft/nbt/CompoundTag;"));
+        String stack = "L" + NEO + "fluids/FluidStack;";
+        assertEquals(ROOT + "common/LegacyFluidStackTags.create(Lnet/minecraft/world/level/material/Fluid;ILnet/minecraft/nbt/CompoundTag;)" + stack,
+                call(INVOKESPECIAL, NEO + "fluids/FluidStack", "<init>", "(Lnet/minecraft/world/level/material/Fluid;ILnet/minecraft/nbt/CompoundTag;)V"));
+        assertEquals(ROOT + "common/LegacyFluidStackTags.copyWithAmount(" + stack + "I)" + stack,
+                call(INVOKESPECIAL, NEO + "fluids/FluidStack", "<init>", "(" + stack + "I)V"));
+        assertEquals(ROOT + "common/LegacyFluidStackTags.getTranslationKey(" + stack + ")Ljava/lang/String;",
+                call(INVOKEVIRTUAL, NEO + "fluids/FluidStack", "getTranslationKey", "()Ljava/lang/String;"));
+        String provider = "Lnet/minecraft/core/HolderLookup$Provider;";
+        assertEquals(ROOT + "common/LegacyFluidStackCodecs.parseOptional(" + provider + "Lnet/minecraft/nbt/CompoundTag;)" + stack,
+                call(INVOKESTATIC, NEO + "fluids/FluidStack", "parseOptional", "(" + provider + "Lnet/minecraft/nbt/CompoundTag;)" + stack));
+        assertEquals(ROOT + "common/LegacyFluidStackCodecs.saveOptional(" + stack + provider + ")Lnet/minecraft/nbt/Tag;",
+                call(INVOKEVIRTUAL, NEO + "fluids/FluidStack", "saveOptional", "(" + provider + ")Lnet/minecraft/nbt/Tag;"));
         assertEquals(ROOT + "client/model/LegacyNeoForgeModelMaps.getModels(L" + NEO + "client/event/ModelEvent$ModifyBakingResult;)Ljava/util/Map;",
                 call(INVOKEVIRTUAL, NEO + "client/event/ModelEvent$ModifyBakingResult", "getModels", "()Ljava/util/Map;"));
         // PlayerRenderer is AvatarRenderer for old mods now, so the old read reaches NeoForge's own renderer.
         assertEquals(NEO + "client/event/RenderPlayerEvent$Pre.getRenderer()L" + LegacyNeoForgeClientApiBridge.AVATAR_RENDERER + ";",
                 call(INVOKEVIRTUAL, NEO + "client/event/RenderPlayerEvent$Pre", "getRenderer", "()L" + LegacyNeoForgeClientApiBridge.PLAYER_RENDERER + ";"));
+    }
+
+    @Test
+    @DisplayName("The removed debug text event is rebuilt, its float partial tick read, and only jars that name it get its install")
+    void debugTextIsRebuilt() {
+        register("26.3", name -> null);
+        String debug = "client/event/CustomizeGuiOverlayEvent$DebugText";
+        String rebuilt = LegacyNeoForgeClientApiBridge.REBUILT_DEBUG_TEXT;
+        assertEquals(rebuilt, listenerType(NEO + debug));
+        assertEquals(rebuilt, listenerType(FORGE + debug));
+        assertEquals(rebuilt + ".partialTickFloat(L" + rebuilt + ";)F", call(INVOKEVIRTUAL, NEO + debug, "getPartialTick", "()F"));
+        // NeoForge 1.21.1 handed out each column as a List and Forge 1.20.1 as an ArrayList; both reach the same lines.
+        assertEquals(rebuilt + ".leftList(L" + rebuilt + ";)Ljava/util/List;", call(INVOKEVIRTUAL, NEO + debug, "getLeft", "()Ljava/util/List;"));
+        assertEquals(rebuilt + ".rightList(L" + rebuilt + ";)Ljava/util/List;", call(INVOKEVIRTUAL, NEO + debug, "getRight", "()Ljava/util/List;"));
+        assertEquals(rebuilt + ".getLeft()Ljava/util/ArrayList;", call(INVOKEVIRTUAL, FORGE + debug, "getLeft", "()Ljava/util/ArrayList;"));
+        ClassNode event = new ClassNode();
+        new ClassReader(transformer.getSyntheticClasses().get(rebuilt)).accept(event, 0);
+        for (String method : List.of("getLeft()Ljava/util/ArrayList;", "getRight()Ljava/util/ArrayList;",
+                "leftList(L" + rebuilt + ";)Ljava/util/List;", "rightList(L" + rebuilt + ";)Ljava/util/List;")) {
+            assertTrue(event.methods.stream().anyMatch(m -> (m.name + m.desc).equals(method)), "the rebuilt event declares " + method);
+        }
+        assertTrue(transformer.getSyntheticClasses().containsKey(LegacyNeoForgeClientApiBridge.DEBUG_TEXT_INSTALL));
+        assertTrue(transformer.getSyntheticClasses().containsKey(rebuilt), "the event travels with the install");
     }
 
     @Test

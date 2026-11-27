@@ -113,8 +113,7 @@ public final class ForgeNeoForgeSynthetics {
      */
     public static void registerAll(RetromodTransformer t, String target) {
         try {
-            t.registerSyntheticClass(RegistryIdBridgeSynthetic.INTERNAL, RegistryIdBridgeSynthetic.generate());
-            RegistryIdBridgeSynthetic.registerWrapperHelpers(t);
+            RegistryIdBridgeSynthetic.registerBridge(t, target);
             if (!com.retromod.core.RetromodVersion.mcVersionExceeds(CONTEXT_REMOVAL_CHECKED, target)) {
                 t.registerSyntheticClass(FMLJMLC, generateFmlJavaModLoadingContext());
             }
@@ -172,8 +171,7 @@ public final class ForgeNeoForgeSynthetics {
     /** Register the DeferredRegister id bridge (#87). Unconditional: it's Retromod-owned, never on the host. */
     private static void registerRegistryIdBridge(RetromodTransformer t) {
         try {
-            t.registerSyntheticClass(RegistryIdBridgeSynthetic.INTERNAL, RegistryIdBridgeSynthetic.generate());
-            RegistryIdBridgeSynthetic.registerWrapperHelpers(t);
+            RegistryIdBridgeSynthetic.registerBridge(t, com.retromod.core.RetromodVersion.TARGET_MC_VERSION);
         } catch (Throwable e) {
             LOGGER.warn("Could not register registry-id bridge: {}", e.toString());
         }

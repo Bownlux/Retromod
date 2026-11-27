@@ -192,6 +192,8 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         com.retromod.shim.common.LegacyTextureImageButtonBridge.register(transformer);
         // 1.21 dropped the pet follow goal's flying flag and the two curse checks.
         com.retromod.shim.common.Legacy121MembersBridge.register(transformer);
+        // Single vanilla members 1.20.5 and later removed, each rebuilt where the host lacks it.
+        com.retromod.shim.common.LegacyVanillaGapsOlderHosts.register(transformer);
 
         // The rest only applies on a NeoForge runtime. On Forge it would rewrite a mod's @Mod to the
         // NeoForge one, and Forge then reports "has mods that were not found".
@@ -387,6 +389,7 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         // client events
         // The NeoForge members later releases moved reach a Forge mod's calls once they name NeoForge's events. The
         // game registers them from the NeoForge chain for every mod; a Forge mod's offline chain has only this shim.
+        // They include the HUD event's window and float partial tick (#410) and the target event's getters (#406, #415).
         com.retromod.shim.neoforge.NeoForgeMovedMembers.register(transformer);
         // Forge 1.20.1's getScrollDelta is the vertical scroll, which NeoForge reports beside the horizontal one.
         String scrolled = "net/neoforged/neoforge/client/event/ScreenEvent$MouseScrolled";
@@ -400,12 +403,8 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         );
         // Forge's HUD overlays and their events run on NeoForge's GUI layers.
         com.retromod.shim.neoforge.LegacyNeoForgeGuiOverlayBridge.register(transformer);
-        // The HUD event's window and float partial tick, which NeoForge 1.21 dropped (#410).
-        com.retromod.shim.neoforge.LegacyNeoForgeGuiEventBridge.register(transformer);
         // Forge's ShieldBlockEvent is NeoForge's LivingShieldBlockEvent, with the shield damage and cancel renamed (#415).
         LegacyShieldBlockEventBridge.register(transformer);
-        // NeoForge renamed the target event's getters, which Box of Horrors and Penumbra Phantasm's mobs read (#406, #415).
-        registerChangeTargetRenames(transformer);
         // The datapack registry event kept its members. Moved even where 26.3 renamed it again, so that rename follows.
         for (String event : new String[]{"DataPackRegistryEvent", "DataPackRegistryEvent$NewRegistry"}) {
             transformer.registerClassRedirect("net/minecraftforge/registries/" + event, "net/neoforged/neoforge/registries/" + event);
@@ -751,6 +750,24 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             }
             transformer.registerMethodRedirect(owner, "isRemotePresent",
                     "(Lnet/minecraft/network/Connection;)Z", wrapper, "isRemotePresent", "(Ljava/lang/Object;)Z");
+            for (String packetDirection : new String[]{forgeDirection, direction}) {
+                transformer.registerMethodRedirect(owner, "toVanillaPacket",
+                        "(Ljava/lang/Object;" + packetDirection + ")Lnet/minecraft/network/protocol/Packet;",
+                        wrapper, "toVanillaPacket", "(Ljava/lang/Object;" + direction + ")Ljava/lang/Object;");
+            }
+        }
+        // A target's send takes a built packet, and a direction answers with the loader's LogicalSide.
+        for (String target : new String[]{forgeDistributor + "$PacketTarget", distributor + "$PacketTarget"}) {
+            transformer.registerMethodRedirect(target, "send", "(Lnet/minecraft/network/protocol/Packet;)V",
+                    distributor + "$PacketTarget", "send", "(Ljava/lang/Object;)V");
+        }
+        for (String owner : new String[]{"net/minecraftforge/network/NetworkDirection", netShim + "$NetworkDirection"}) {
+            for (String side : new String[]{"Lnet/minecraftforge/fml/LogicalSide;", "Lnet/neoforged/fml/LogicalSide;"}) {
+                for (String name : new String[]{"getReceptionSide", "getOriginationSide"}) {
+                    transformer.registerMethodRedirect(owner, name, "()" + side,
+                            netShim + "$NetworkDirection", name, "()Ljava/lang/Object;");
+                }
+            }
         }
 
         String pointFactory = "(Ljava/lang/Object;DDDDLjava/lang/Object;)L" + targetPoint + ";";
@@ -786,6 +803,7 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor",
             "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor$PacketTarget",
             "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor$TargetPoint",
+            "com.retromod.shim.forge.embedded.NetworkShim$PacketDistributor$Custom",
             "com.retromod.shim.forge.embedded.NetworkShim$NetworkDirection",
             "com.retromod.shim.forge.embedded.NetworkShim$Context",
             "com.retromod.shim.forge.embedded.NetworkShim$PayloadBridge",
@@ -794,6 +812,7 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
             "com.retromod.shim.forge.embedded.NetworkShim$HandlerHandler",
             "com.retromod.shim.forge.embedded.NetworkShim$ChannelBuilder",
             "com.retromod.shim.forge.embedded.NetworkShim$ForgeChannels",
+            "com.retromod.shim.forge.embedded.NetworkShim$VanillaTargets",
             "com.retromod.shim.forge.embedded.LegacyEventChannel",
             "com.retromod.shim.forge.embedded.LegacyEventChannel$NetworkEvent",
             "com.retromod.shim.forge.embedded.LegacyEventChannel$ServerCustomPayloadEvent",
@@ -812,19 +831,6 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         }
         // Calls name the mod's own entity or Player, so the redirect follows the hierarchy.
         transformer.registerInheritedMethodRedirect(entity, "getLevel", desc, entity, "level", desc);
-    }
-
-    /** Forge's {@code LivingChangeTargetEvent} target getters and setter under the names NeoForge gave them, where the host has those. */
-    static void registerChangeTargetRenames(RetromodTransformer transformer) {
-        String event = "net/neoforged/neoforge/event/entity/living/LivingChangeTargetEvent";
-        String entity = "Lnet/minecraft/world/entity/LivingEntity;";
-        ClassNode host = ClassResourceInspector.read(event);
-        if (host != null && host.methods.stream().noneMatch(m -> m.name.equals("getNewAboutToBeSetTarget"))) return;
-        for (String owner : new String[]{"net/minecraftforge/event/entity/living/LivingChangeTargetEvent", event}) {
-            transformer.registerMethodRedirect(owner, "getNewTarget", "()" + entity, event, "getNewAboutToBeSetTarget", "()" + entity);
-            transformer.registerMethodRedirect(owner, "setNewTarget", "(" + entity + ")V", event, "setNewAboutToBeSetTarget", "(" + entity + ")V");
-            transformer.registerMethodRedirect(owner, "getOriginalTarget", "()" + entity, event, "getOriginalAboutToBeSetTarget", "()" + entity);
-        }
     }
 
     /** Answers the removed {@code Item.getShareTag(stack)} with the item's own override, else the stack's custom data. */

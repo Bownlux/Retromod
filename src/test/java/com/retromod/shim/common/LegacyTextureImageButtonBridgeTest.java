@@ -120,6 +120,28 @@ class LegacyTextureImageButtonBridgeTest {
     }
 
     @Test
+    @DisplayName("a mod's button that overrides 1.20.1's updateTooltip and calls super reaches the stand-in's, which leaves it to the host")
+    void updateTooltipSuperCallLinks() throws Exception {
+        RetromodVersion.TARGET_MC_VERSION = "1.21.1";
+        LegacyTextureImageButtonBridge.register(transformer, name -> null);
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "mod/AdvancedImageButton", null, BUTTON, null);
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, "updateTooltip", "()V", null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKESPECIAL, BUTTON, "updateTooltip", "()V", false);
+        mv.visitInsn(RETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        ClassNode own = node(transformer.transformClass(cw.toByteArray(), "mod/AdvancedImageButton"));
+        assertTrue(calls(own).contains(LegacyTextureImageButtonBridge.CLASS + ".updateTooltip()V"), calls(own).toString());
+        Class<?> rebuilt = standIns().loadClass(LegacyTextureImageButtonBridge.CLASS.replace('/', '.'));
+        assertEquals(void.class, rebuilt.getMethod("updateTooltip").getReturnType(), "the stand-in declares the super call's target");
+    }
+
+    @Test
     @DisplayName("hosts from 1.21.2 and 26.x keep their own image buttons, as does a host that still has the old constructors")
     void otherHostsAreLeftAlone() {
         for (String host : List.of("1.20.1", "1.21.2", "1.21.11", "26.3")) {

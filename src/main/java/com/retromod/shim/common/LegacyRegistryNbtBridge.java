@@ -96,7 +96,9 @@ public final class LegacyRegistryNbtBridge {
     static void registerValueIoRedirects(RetromodTransformer transformer, boolean serverHooks) {
         RebuiltApiClasses.registerTree(transformer, CONTEXT);
         RebuiltApiClasses.registerTree(transformer, MEMBERS);
-        transformer.registerSyntheticClass(HELPER, generateHelper(serverHooks, false));
+        // The typed world data lookup calls Retromod's factory stand-in, so only a host that gets the stand-in has it.
+        boolean typed = hostLooksUpSavedDataByType();
+        transformer.registerSyntheticClass(HELPER, generateHelper(serverHooks, false, typed));
         // The provider forms of these calls are gone too, so they go to rebuilt members that read the current save.
         String list = L_COMPOUND + L_LIST;
         transformer.registerMethodRedirect(CONTAINER_HELPER, "loadAllItems", "(" + list + ")V",
@@ -125,17 +127,19 @@ public final class LegacyRegistryNbtBridge {
         transformer.registerWrappingMethodRedirect(BLOCK_ENTITY, "getUpdateTag", OLD_UPDATE_TAG,
                 MEMBERS, "getUpdateTag", "(L" + BLOCK_ENTITY + ";)" + L_COMPOUND);
         transformer.registerMethodRedirect(DATA_PACKET, "create", OLD_PACKET, MEMBERS, "dataPacket", OLD_PACKET);
-        registerSavedDataTypeRedirects(transformer);
+        if (typed) registerSavedDataTypeRedirects(transformer);
+    }
+
+    /** Whether the host looks world data up by type in 26.1's {@code SavedDataStorage}; offline, the version decides. */
+    static boolean hostLooksUpSavedDataByType() {
+        boolean running = ClassResourceInspector.read(BLOCK_ENTITY) != null;
+        return running ? ClassResourceInspector.read(LegacySavedDataFactoryShim.STORAGE) != null
+                && ClassResourceInspector.read(FACTORY) == null
+                : RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.1") >= 0;
     }
 
     /** 1.20.1 world data on a host that looks it up by {@code SavedDataType}, through Retromod's factory stand-in. */
     static void registerSavedDataTypeRedirects(RetromodTransformer transformer) {
-        // The stand-in needs SavedDataStorage, which 26.1 named; offline, the version decides.
-        boolean running = ClassResourceInspector.read(BLOCK_ENTITY) != null;
-        boolean typed = running ? ClassResourceInspector.read(LegacySavedDataFactoryShim.STORAGE) != null
-                && ClassResourceInspector.read(FACTORY) == null
-                : RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.1") >= 0;
-        if (!typed) return;
         if (!transformer.getSyntheticClasses().containsKey(LegacySavedDataFactoryShim.FACTORY)) {
             LegacySavedDataFactoryShim.register(transformer);
         }
@@ -500,6 +504,11 @@ public final class LegacyRegistryNbtBridge {
 
     /** The helper; {@code providerHost} adds the calls that reach a 1.20.5 to 1.21.5 host's provider forms. */
     static byte[] generateHelper(boolean serverHooks, boolean providerHost) {
+        return generateHelper(serverHooks, providerHost, !providerHost);
+    }
+
+    /** The helper; {@code typedLookup} adds the world data lookup through Retromod's {@code SavedDataType} factory. */
+    static byte[] generateHelper(boolean serverHooks, boolean providerHost, boolean typedLookup) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
             @Override
             protected String getCommonSuperClass(String first, String second) {
@@ -529,7 +538,7 @@ public final class LegacyRegistryNbtBridge {
         if (providerHost) {
             emitProviderCalls(cw);
             emitSavedDataFactoryLookups(cw);
-        } else {
+        } else if (typedLookup) {
             // Newer hosts get the other calls from the rebuilt members, which read the current save's registries.
             emitSavedDataTypeLookup(cw);
         }

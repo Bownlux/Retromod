@@ -11,6 +11,8 @@ import net.minecraft.resources.ResourceKey;
 public interface HolderLookup<T> extends HolderGetter<T> {
     Stream<Holder.Reference<T>> listElements();
     Stream<HolderSet.Named<T>> listTags();
+    // A default method on the host.
+    default Stream<ResourceKey<T>> listElementIds() { throw new UnsupportedOperationException(); }
 
     interface RegistryLookup<T> extends HolderLookup<T> {
         ResourceKey<? extends Registry<? extends T>> key();

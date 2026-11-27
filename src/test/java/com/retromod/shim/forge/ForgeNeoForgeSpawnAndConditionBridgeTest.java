@@ -77,6 +77,10 @@ class ForgeNeoForgeSpawnAndConditionBridgeTest {
                 redirects.get("net/minecraftforge/common/command/IEntitySelectorType"));
         assertEquals(LegacySpawnDataAdapter.NEOFORGE_INTERFACE,
                 redirects.get(LegacySpawnDataAdapter.FORGE_INTERFACE));
+        assertEquals("net/neoforged/fml/config/ConfigTracker", redirects.get("net/minecraftforge/fml/config/ConfigTracker"),
+                "a config library's early loadConfigs reaches NeoForge's tracker");
+        assertTrue(transformer.getSyntheticClasses().containsKey(com.retromod.shim.neoforge.LegacyModConfigTypeBridge.HELPER),
+                "the tracker's old map reads are answered by the config helper");
     }
 
     @Test

@@ -17,6 +17,8 @@ public class NeoForge_1_20_4_to_1_20_5 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // Single vanilla members later hosts removed, each rebuilt where the host lacks it; the first chain here registers them.
+        com.retromod.shim.common.LegacyVanillaGapsOlderHosts.register(transformer);
         // 1.20.5 split Properties.copy into ofFullCopy and ofLegacyCopy; the legacy one copies what copy did.
         com.retromod.shim.common.LegacyBlockPropertiesBridge.register(transformer);
         com.retromod.shim.forge.LegacyEntityTemplateAdapter.register(transformer);
