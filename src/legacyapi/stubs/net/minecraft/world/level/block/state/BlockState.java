@@ -11,9 +11,15 @@ public class BlockState {
     public Block getBlock() { throw new UnsupportedOperationException(); }
     // Declared on BlockBehaviour.BlockStateBase on the host.
     public boolean isSolid() { throw new UnsupportedOperationException(); }
+    // Declared on BlockBehaviour.BlockStateBase on the host.
+    public net.minecraft.world.phys.shapes.VoxelShape getFaceOcclusionShape(net.minecraft.core.Direction face) { throw new UnsupportedOperationException(); }
+    // Declared on BlockBehaviour.BlockStateBase on the host.
+    public boolean isPathfindable(net.minecraft.world.level.pathfinder.PathComputationType type) { throw new UnsupportedOperationException(); }
     // Declared on StateHolder on the host.
     public boolean hasProperty(net.minecraft.world.level.block.state.properties.Property<?> property) { throw new UnsupportedOperationException(); }
     // Returns the generic S of StateHolder, erased to Object on the host.
     public <T extends Comparable<T>, V extends T> Object setValue(net.minecraft.world.level.block.state.properties.Property<T> property, V value) { throw new UnsupportedOperationException(); }
     public <T extends Comparable<T>> T getValue(net.minecraft.world.level.block.state.properties.Property<T> property) { throw new UnsupportedOperationException(); }
+    // Declared on BlockBehaviour.BlockStateBase on the host; a virtual call resolves either way.
+    public net.minecraft.world.level.material.FluidState getFluidState() { throw new UnsupportedOperationException(); }
 }

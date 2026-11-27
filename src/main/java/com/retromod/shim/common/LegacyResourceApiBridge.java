@@ -4,9 +4,14 @@
  */
 package com.retromod.shim.common;
 
+import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.tree.ClassNode;
+
+import java.util.function.Function;
 
 import static org.objectweb.asm.Opcodes.*;
 
@@ -40,7 +45,14 @@ public final class LegacyResourceApiBridge {
     }
 
     public static void register(RetromodTransformer transformer) {
-        transformer.registerSyntheticClass(SYNTH, generateHelpers());
+        register(transformer, ClassResourceInspector::read);
+    }
+
+    static void register(RetromodTransformer transformer, Function<String, ClassNode> host) {
+        boolean selectorHost = hostListsBySelector(host.apply(MANAGER));
+        // 26.3 lists through a ResourceManager.Selector, which the 26.3 selector bridge already wraps a predicate in.
+        if (selectorHost) LegacyResourceSelectorBridge.register(transformer);
+        transformer.registerSyntheticClass(SYNTH, generateHelpers(selectorHost));
         transformer.registerSyntheticClass(FILTER, generateFilter());
 
         // Both were interfaces before 1.19. Their unchanged calls need a class method reference.
@@ -73,7 +85,19 @@ public final class LegacyResourceApiBridge {
                 SYNTH, "close", "(" + resource + ")V", true);
     }
 
+    /** Whether the host's listResources takes a selector; offline, a target from 26.3. */
+    static boolean hostListsBySelector(ClassNode manager) {
+        if (manager == null) return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.3") >= 0;
+        String selectorListing = "(Ljava/lang/String;L" + LegacyResourceSelectorBridge.SELECTOR + ";)Ljava/util/Map;";
+        return manager.methods.stream().anyMatch(method -> method.name.equals("listResources")
+                && method.desc.equals(selectorListing));
+    }
+
     static byte[] generateHelpers() {
+        return generateHelpers(hostListsBySelector(null));
+    }
+
+    static byte[] generateHelpers(boolean selectorHost) {
         ClassWriter cw = writer();
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, SYNTH, null, "java/lang/Object", null);
         String resource = "L" + RESOURCE + ";";
@@ -123,8 +147,13 @@ public final class LegacyResourceApiBridge {
         list.visitInsn(DUP);
         list.visitVarInsn(ALOAD, 2);
         list.visitMethodInsn(INVOKESPECIAL, FILTER, "<init>", "(L" + PREDICATE + ";)V", false);
-        list.visitMethodInsn(INVOKEINTERFACE, MANAGER, "listResources",
-                "(Ljava/lang/String;L" + PREDICATE + ";)Ljava/util/Map;", true);
+        if (selectorHost) {
+            list.visitMethodInsn(INVOKESTATIC, LegacyResourceSelectorBridge.HELPER, "listResources",
+                    "(L" + MANAGER + ";Ljava/lang/String;L" + PREDICATE + ";)Ljava/util/Map;", false);
+        } else {
+            list.visitMethodInsn(INVOKEINTERFACE, MANAGER, "listResources",
+                    "(Ljava/lang/String;L" + PREDICATE + ";)Ljava/util/Map;", true);
+        }
         list.visitMethodInsn(INVOKEINTERFACE, "java/util/Map", "keySet", "()Ljava/util/Set;", true);
         list.visitInsn(ARETURN);
         list.visitMaxs(0, 0);

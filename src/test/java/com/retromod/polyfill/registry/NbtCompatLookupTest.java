@@ -53,6 +53,18 @@ class NbtCompatLookupTest {
     }
 
     @Test
+    @DisplayName("list getters read floats, doubles and int arrays by index, with the old defaults")
+    void listGettersKeepTheOldDefaults() {
+        ModernList list = new ModernList(java.util.List.of(2.5F, 7.25, new int[]{4, 5}));
+        assertEquals(2.5F, NbtCompatLookup.listGetFloat(list, 0));
+        assertEquals(7.25, NbtCompatLookup.listGetDouble(list, 1));
+        assertArrayEquals(new int[]{4, 5}, NbtCompatLookup.listGetIntArray(list, 2));
+        assertEquals(0.0F, NbtCompatLookup.listGetFloat(list, 9), "an index out of range read as 0");
+        assertEquals(0.0, NbtCompatLookup.listGetDouble(list, 2), "an int array read as a double was 0");
+        assertEquals(0, NbtCompatLookup.listGetIntArray(list, 0).length);
+    }
+
+    @Test
     @DisplayName("putUUID stores four ints and getUUID and hasUUID read them back")
     void uuidKeepsTheIntArrayFormat() {
         ModernCompound tag = new ModernCompound();
@@ -219,6 +231,21 @@ class NbtCompatLookupTest {
 
         public void putIntArray(String key, int[] value) {
             tags.put(key, value);
+        }
+    }
+
+    /** The 1.21.5 ListTag getters, under Mojang names. */
+    public record ModernList(java.util.List<Object> tags) {
+        public Optional<Float> getFloat(int index) {
+            return index < tags.size() && tags.get(index) instanceof Number n ? Optional.of(n.floatValue()) : Optional.empty();
+        }
+
+        public Optional<Double> getDouble(int index) {
+            return index < tags.size() && tags.get(index) instanceof Number n ? Optional.of(n.doubleValue()) : Optional.empty();
+        }
+
+        public Optional<int[]> getIntArray(int index) {
+            return index < tags.size() && tags.get(index) instanceof int[] value ? Optional.of(value) : Optional.empty();
         }
     }
 

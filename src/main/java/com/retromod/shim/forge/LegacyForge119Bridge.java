@@ -29,8 +29,8 @@ import com.retromod.util.McReflect;
  * <p>The packet builder's {@code consumer} became {@code consumerNetworkThread} in the same
  * release, with the same handler contract.
  *
- * <p>Forge host only. NeoForge has its own package for these events, which
- * {@code ForgeEventApiShim} handles.
+ * <p>On NeoForge only the getter renames apply: {@code ForgeEventApiShim} moves the event classes
+ * to NeoForge's package, which kept the 1.19 getter names.
  */
 public final class LegacyForge119Bridge {
 
@@ -64,10 +64,15 @@ public final class LegacyForge119Bridge {
 
     public static void register(RetromodTransformer transformer) {
         if (McReflect.isNeoForge()) {
+            // NeoForge kept Forge 1.19's getter and client event names, and entity and level randoms are vanilla.
+            renameGetters(transformer);
+            LegacyForgeClientEvents119.registerNeoForge(transformer);
+            registerRandomView(transformer);
             return;
         }
         registerClassMoves(transformer);
-        registerGetterRenames(transformer);
+        renameGetters(transformer);
+        registerSpawnCheckMove(transformer);
         registerBiomeLoadingStandIn(transformer);
         LegacyForgeClientEvents119.register(transformer);
 
@@ -83,9 +88,14 @@ public final class LegacyForge119Bridge {
         registerRegistryRenames(transformer);
         registerCapabilityConstants(transformer);
         LegacyForge119Calls.register(transformer);
-        // Entity and Level randoms became RandomSource; LegacyRandomSourceAdapter wraps the reads.
-        SyntheticEmbedder.registerClassResource(transformer, LegacyRandomSourceAdapter.VIEW,
-                LegacyRandomView.class);
+        registerRandomView(transformer);
+        // On Forge a mod that names no version still takes the private entity field rewrite, as it did before.
+        transformer.enablePostProcess(LegacyEntityPrivateFieldAdapter.UNKNOWN_VERSION_FLAG);
+    }
+
+    /** Entity and level randoms became {@code RandomSource}; {@link LegacyRandomSourceAdapter} wraps the reads. */
+    public static void registerRandomView(RetromodTransformer transformer) {
+        SyntheticEmbedder.registerClassResource(transformer, LegacyRandomSourceAdapter.VIEW, LegacyRandomView.class);
     }
 
     /**
@@ -156,7 +166,7 @@ public final class LegacyForge119Bridge {
                 LIVING + "MobEffectEvent$Remove");
     }
 
-    private static void registerGetterRenames(RetromodTransformer transformer) {
+    private static void renameGetters(RetromodTransformer transformer) {
         String level = "()Lnet/minecraft/world/level/Level;";
         String levelAccessor = "()Lnet/minecraft/world/level/LevelAccessor;";
         String living = "()Lnet/minecraft/world/entity/LivingEntity;";
@@ -179,7 +189,9 @@ public final class LegacyForge119Bridge {
                 "getEntityLiving", "getEntity", living);
         rename(transformer, FORGE_EVENT + "entity/player/PlayerEvent",
                 FORGE_EVENT + "entity/player/PlayerEvent", "getPlayer", "getEntity", player);
-        registerSpawnCheckMove(transformer);
+        // 1.12.2 named the same getter getEntityPlayer.
+        rename(transformer, FORGE_EVENT + "entity/player/PlayerEvent",
+                FORGE_EVENT + "entity/player/PlayerEvent", "getEntityPlayer", "getEntity", player);
     }
 
     /**

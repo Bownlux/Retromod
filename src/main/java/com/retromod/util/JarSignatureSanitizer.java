@@ -94,7 +94,7 @@ public final class JarSignatureSanitizer {
      */
     public static void sanitizeJar(Path jarPath) throws IOException {
         sanitizeJar(jarPath, ZipSecurity.DEFAULT_MAX_ENTRY_SIZE,
-                ZipSecurity.DEFAULT_MAX_TOTAL_SIZE, DEFAULT_MAX_ENTRIES);
+                ArchiveLimits.maxTotalBytes(), DEFAULT_MAX_ENTRIES);
     }
 
     /** Testable bounded variant for an already generated JAR. */
@@ -134,7 +134,17 @@ public final class JarSignatureSanitizer {
                             ? canonicalName + "/" : canonicalName;
                     JarEntry written = new JarEntry(outputName);
                     output.putNextEntry(written);
-                    if (!entry.isDirectory()) {
+                    if (!entry.isDirectory() && entry.getSize() > maxEntryBytes
+                            && !isManifest(canonicalName)) {
+                        // Too large to hold in memory, and copied as it is.
+                        long copied;
+                        try (InputStream stream = input.getInputStream(entry)) {
+                            copied = ZipSecurity.copyBounded(stream, output,
+                                    Math.max(0, maxExpandedBytes - expandedInput), name);
+                        }
+                        expandedInput = reserve(expandedInput, copied, maxExpandedBytes, name);
+                        expandedOutput = reserve(expandedOutput, copied, maxExpandedBytes, name);
+                    } else if (!entry.isDirectory()) {
                         byte[] data;
                         try (InputStream stream = input.getInputStream(entry)) {
                             long remaining = maxExpandedBytes - expandedInput;

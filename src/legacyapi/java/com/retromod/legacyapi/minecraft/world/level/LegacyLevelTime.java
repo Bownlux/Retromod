@@ -35,8 +35,20 @@ public final class LegacyLevelTime {
         return angle == null ? 0.0F : angle / 360.0F;
     }
 
+    /** {@code getSunAngle(partialTick)}: the same turn in radians, as Level gave it until 1.21.11. */
+    public static float getSunAngle(Object level, float partialTick) {
+        return getTimeOfDay(level, partialTick) * (float) (Math.PI * 2.0);
+    }
+
     /** {@code dayTime()}: the overworld's clock, which every dimension reported in 1.20.1. */
     public static long dayTime(Object level) {
         return level instanceof Level world ? world.getOverworldClockTime() : 0L;
+    }
+
+    /** {@code ClientLevel.getSkyDarken(partialTick)}: how much of the sky's light reaches the world, from the attribute that replaced it. */
+    public static float getSkyDarken(Object level, float partialTick) {
+        if (!(level instanceof LevelReader reader)) return 1.0F;
+        Float factor = reader.environmentAttributes().getDimensionValue(EnvironmentAttributes.SKY_LIGHT_FACTOR);
+        return factor == null ? 1.0F : factor;
     }
 }

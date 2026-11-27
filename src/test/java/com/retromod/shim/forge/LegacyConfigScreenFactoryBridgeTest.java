@@ -37,6 +37,21 @@ class LegacyConfigScreenFactoryBridgeTest {
     @Test
     @DisplayName("the factory becomes the rebuilt one and its registration goes through the key swap")
     void factoryAndRegistrationAreBridged() {
+        List<String> refs = registration(LegacyConfigScreenFactoryBridge.FORGE_FACTORY);
+        assertTrue(refs.contains("class " + LegacyConfigScreenFactoryBridge.STAND_IN), refs.toString());
+        assertTrue(refs.contains(LegacyConfigScreenFactoryBridge.EXTENSION_POINTS + ".registerExtensionPoint(Ljava/lang/Object;"
+                + LegacyConfigScreenFactoryBridge.REGISTER_DESC.substring(1)), refs.toString());
+    }
+
+    @Test
+    @DisplayName("Forge 1.18's ConfigGuiFactory becomes the same rebuilt factory")
+    void oldConfigGuiFactoryIsBridged() {
+        List<String> refs = registration(LegacyConfigScreenFactoryBridge.OLD_FORGE_FACTORY);
+        assertTrue(refs.contains("class " + LegacyConfigScreenFactoryBridge.STAND_IN), refs.toString());
+    }
+
+    /** The calls and class constants of a mod that registers {@code factory} as its config screen extension point. */
+    private static List<String> registration(String factory) {
         RetromodTransformer t = RetromodTransformer.getInstance();
         t.clearRedirectsForTesting();
         LegacyConfigScreenFactoryBridge.register(t);
@@ -46,7 +61,7 @@ class LegacyConfigScreenFactoryBridgeTest {
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "init", "(L" + CONTEXT + ";)V", null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
-        mv.visitLdcInsn(Type.getObjectType(LegacyConfigScreenFactoryBridge.FORGE_FACTORY));
+        mv.visitLdcInsn(Type.getObjectType(factory));
         mv.visitInsn(Opcodes.ACONST_NULL);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, CONTEXT, "registerExtensionPoint", LegacyConfigScreenFactoryBridge.REGISTER_DESC, false);
         mv.visitInsn(Opcodes.RETURN);
@@ -63,8 +78,6 @@ class LegacyConfigScreenFactoryBridgeTest {
                 if (insn instanceof LdcInsnNode ldc && ldc.cst instanceof Type type) refs.add("class " + type.getInternalName());
             }
         }
-        assertTrue(refs.contains("class " + LegacyConfigScreenFactoryBridge.STAND_IN), refs.toString());
-        assertTrue(refs.contains(LegacyConfigScreenFactoryBridge.EXTENSION_POINTS + ".registerExtensionPoint(Ljava/lang/Object;"
-                + LegacyConfigScreenFactoryBridge.REGISTER_DESC.substring(1)), refs.toString());
+        return refs;
     }
 }

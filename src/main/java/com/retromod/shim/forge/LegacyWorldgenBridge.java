@@ -7,6 +7,7 @@ package com.retromod.shim.forge;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
 import com.retromod.core.SyntheticEmbedder;
+import com.retromod.shim.common.RebuiltApiClasses;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -81,6 +82,7 @@ public final class LegacyWorldgenBridge {
             "net/minecraft/world/level/biome/BiomeGenerationSettings$PlainBuilder";
     private static final String DECORATION = "net/minecraft/world/level/levelgen/GenerationStep$Decoration";
     private static final String CARVING = "net/minecraft/world/level/levelgen/GenerationStep$Carving";
+    static final String LEGACY_CARVING = RebuiltApiClasses.ROOT + "minecraft/world/level/levelgen/LegacyCarvingStep";
     private static final String CODEC = "com/mojang/serialization/Codec";
     private static final String DYNAMIC_OPS = "com/mojang/serialization/DynamicOps";
     private static final String JSON_OPS = "com/mojang/serialization/JsonOps";
@@ -160,9 +162,15 @@ public final class LegacyWorldgenBridge {
                 "(I" + L_HOLDER + ")" + L_GEN_BUILDER,
                 GENERATED, "addFeatureAt", "(" + L_GEN_BUILDER + "I" + L_HOLDER + ")" + L_GEN_BUILDER,
                 true);
+        boolean oneCarverStep = hostCarvesInOneStep();
+        // 1.21.2 removed the carving step class, so the AIR and LIQUID a mod passes come from a stand-in.
+        if (oneCarverStep) {
+            RebuiltApiClasses.registerTree(transformer, LEGACY_CARVING);
+            transformer.registerClassRedirect(CARVING, LEGACY_CARVING);
+        }
         transformer.registerMethodRedirect(GEN_BUILDER, "addCarver",
                 "(L" + CARVING + ";" + L_HOLDER + ")" + L_GEN_BUILDER,
-                GENERATED, "addCarver", "(" + L_GEN_BUILDER + "L" + CARVING + ";" + L_HOLDER + ")" + L_GEN_BUILDER,
+                GENERATED, "addCarver", "(" + L_GEN_BUILDER + carverStepDesc(oneCarverStep) + L_HOLDER + ")" + L_GEN_BUILDER,
                 true);
 
         // 1.19.3 made this vanilla helper private; it is rebuilt from the same four modifiers.
@@ -375,7 +383,7 @@ public final class LegacyWorldgenBridge {
         emitNewGenerationBuilder(cw);
         emitBuilderAdder(cw, "addFeature", "L" + DECORATION + ";", ALOAD);
         emitBuilderAdder(cw, "addFeatureAt", "I", ILOAD);
-        emitBuilderAdder(cw, "addCarver", "L" + CARVING + ";", ALOAD);
+        emitCarverAdder(cw, hostCarvesInOneStep());
         emitEncoder(cw, "encodeConfigured", featureInterface ? FEATURE : CONFIGURED, "configured feature");
         emitEncoder(cw, "encodePlaced", PLACED, "placed feature");
         emitEncoder(cw, "encodeBiome", BIOME, "biome");
@@ -585,6 +593,51 @@ public final class LegacyWorldgenBridge {
         mv.visitVarInsn(ALOAD, 2);
         mv.visitMethodInsn(INVOKEVIRTUAL, PLAIN_BUILDER, plainName,
                 "(" + stepDesc + L_HOLDER + ")L" + PLAIN_BUILDER + ";", false);
+        mv.visitInsn(POP);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+    }
+
+    /**
+     * Whether the host keeps one carver list, as 1.21.2 and newer do, so {@code GenerationStep.Carving}
+     * is gone; offline or on an SRG host, a target from 1.21.2.
+     */
+    static boolean hostCarvesInOneStep() {
+        return hostCarvesInOneStep(com.retromod.core.ClassResourceInspector.read(PLAIN_BUILDER));
+    }
+
+    static boolean hostCarvesInOneStep(org.objectweb.asm.tree.ClassNode plainBuilder) {
+        String oneStep = "(" + L_HOLDER + ")L" + PLAIN_BUILDER + ";";
+        String twoSteps = "(L" + CARVING + ";" + L_HOLDER + ")L" + PLAIN_BUILDER + ";";
+        if (plainBuilder != null) {
+            for (org.objectweb.asm.tree.MethodNode method : plainBuilder.methods) {
+                if (!method.name.equals("addCarver")) continue;
+                if (method.desc.equals(oneStep)) return true;
+                if (method.desc.equals(twoSteps)) return false;
+            }
+        }
+        return RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.21.2") >= 0;
+    }
+
+    /** The step parameter of the generated adder: the carving step, or any object where the step is gone. */
+    private static String carverStepDesc(boolean oneStep) {
+        return oneStep ? L_OBJECT : "L" + CARVING + ";";
+    }
+
+    /** {@code addCarver(builder, step, carver)}; with one carver list the step is dropped, as every step carves together now. */
+    private static void emitCarverAdder(ClassWriter cw, boolean oneStep) {
+        if (!oneStep) {
+            emitBuilderAdder(cw, "addCarver", "L" + CARVING + ";", ALOAD);
+            return;
+        }
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "addCarver",
+                "(" + L_GEN_BUILDER + L_OBJECT + L_HOLDER + ")" + L_GEN_BUILDER, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitVarInsn(ALOAD, 2);
+        mv.visitMethodInsn(INVOKEVIRTUAL, PLAIN_BUILDER, "addCarver", "(" + L_HOLDER + ")L" + PLAIN_BUILDER + ";", false);
         mv.visitInsn(POP);
         mv.visitVarInsn(ALOAD, 0);
         mv.visitInsn(ARETURN);

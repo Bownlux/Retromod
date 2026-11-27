@@ -20,6 +20,9 @@ public final class LegacyMetadataSectionBridge {
     static final String TYPE = PACKS + "metadata/MetadataSectionType";
     static final String HELPER = "com/retromod/generated/LegacyMetadataSections";
     private static final String METADATA = PACKS + "resources/ResourceMetadata";
+    static final String ANIMATION = "net/minecraft/client/resources/metadata/animation/AnimationMetadataSection";
+    static final String TEXTURE = "net/minecraft/client/resources/metadata/texture/TextureMetadataSection";
+    static final String ANIMATIONS = RebuiltApiClasses.ROOT + "minecraft/client/resources/LegacyAnimationSections";
     private static final String FROM_STREAM = "(L" + TYPE + ";Ljava/io/InputStream;)Ljava/lang/Object;";
 
     private LegacyMetadataSectionBridge() {}
@@ -37,6 +40,17 @@ public final class LegacyMetadataSectionBridge {
                         HELPER, "metadataFromStream", FROM_STREAM);
             }
         }
+        registerClientSections(t);
+    }
+
+    /** Each client section's own serializer constant became its TYPE, and the empty animation went with it. */
+    static void registerClientSections(RetromodTransformer t) {
+        for (String section : new String[]{ANIMATION, TEXTURE}) {
+            t.registerFieldRedirect(section, "SERIALIZER", "L" + section + "Serializer;", section, "TYPE", "L" + TYPE + ";");
+        }
+        // A section with no frames, the old EMPTY; one instance per mod, so a mod's identity checks against it still work.
+        RebuiltApiClasses.registerTree(t, ANIMATIONS);
+        t.registerFieldRedirect(ANIMATION, "EMPTY", "L" + ANIMATION + ";", ANIMATIONS, "EMPTY", "L" + ANIMATION + ";");
     }
 
     /** Whether the host has the type and no serializer; offline, a target from 1.21.4, the first without the serializer. */

@@ -30,6 +30,8 @@ public final class UnversionedJarEvidence {
     // A scan this large gives up and leaves the jar to the normal path.
     private static final long MAX_BYTES = 2L * 1024 * 1024 * 1024;
     private static final int MAX_ENTRIES = 200_000;
+    // A loader descriptor is a small text file; the transforms read it with the same cap.
+    private static final long MAX_METADATA_BYTES = 2L * 1024 * 1024;
 
     private static final byte[] MINECRAFT = "net/minecraft/".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] MINECRAFT_DOTTED = "net.minecraft.".getBytes(StandardCharsets.US_ASCII);
@@ -100,7 +102,9 @@ public final class UnversionedJarEvidence {
                 if (++entries > MAX_ENTRIES) return false;
                 String name = entry.getName();
                 if (name.endsWith(".class")) {
-                    byte[] data = zip.readAllBytes();
+                    // Each read has its own cap, so one entry never fills memory before the total is checked.
+                    byte[] data = com.retromod.util.ZipSecurity.safeReadAllBytes(zip,
+                            com.retromod.util.ZipSecurity.MAX_CLASS_ENTRY_SIZE);
                     bytes += data.length;
                     if (bytes > MAX_BYTES) return false;
                     // A multi-release copy for a newer Java says nothing about the level the mod targets.
@@ -108,7 +112,7 @@ public final class UnversionedJarEvidence {
                 } else if (name.equals("fabric.mod.json") || name.equals("quilt.mod.json")) {
                     // Only the outer jar's descriptor makes it a Fabric or Quilt mod; nested ones may name the host.
                     if (depth == 0) fabricOrQuilt = true;
-                    byte[] data = zip.readAllBytes();
+                    byte[] data = com.retromod.util.ZipSecurity.safeReadAllBytes(zip, MAX_METADATA_BYTES);
                     bytes += data.length;
                     if (bytes > MAX_BYTES) return false;
                     readConstraint(new String(data, StandardCharsets.UTF_8));

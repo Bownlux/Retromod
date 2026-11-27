@@ -8,6 +8,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 
 public class Player extends LivingEntity {
+    public net.minecraft.world.inventory.AbstractContainerMenu containerMenu;
     public Inventory getInventory() { throw new UnsupportedOperationException(); }
     public GameProfile getGameProfile() { throw new UnsupportedOperationException(); }
     public ItemEntity drop(ItemStack stack, boolean randomly, Prediction prediction) { throw new UnsupportedOperationException(); }

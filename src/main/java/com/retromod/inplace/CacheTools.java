@@ -330,6 +330,8 @@ public final class CacheTools {
             case PENDING, RETRY, STARTED ->
                     "not translated yet. Launch the game once, then export again";
             case SKIPPED -> "translation was turned off for this file";
+            case AWAITING_APPROVAL -> "it waits for approval to translate"
+                    + (entry.failure() == null ? "" : ": " + entry.failure());
             case OK -> "it is translated";
         };
     }

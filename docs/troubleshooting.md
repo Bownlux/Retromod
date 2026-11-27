@@ -112,13 +112,17 @@ Forge 1.20.1 and modern NeoForge use substantially different APIs. Retromod brid
 
 ## A Very Large Mod Is Skipped
 
-Retromod refuses a jar whose contents exceed 500 MB unpacked, or that holds a single file over 50 MB. In the game log, `ZIP entry too large` names the oversized file, and `total extracted size exceeds limit` means the whole jar is over the limit. The CLI prints `ZIP entry exceeds` or `mod jar exceeds max total decompressed size` instead. The limit stops a crafted archive from exhausting memory during a transform. A jar above it stays untransformed, so the loader then rejects it for its declared Minecraft version, which looks like Retromod having done nothing. Very large jars are usually a mod plus bundled assets. Try a build without the bundled resource pack, or an earlier version below the limit.
+Retromod translates a jar that unpacks to 1 GB or less without a check. A larger jar first passes an archive check, which reads its headers and then unpacks each entry once to count it. A jar that passes is translated within the size it declares, up to 25 GB. Over 25 GB, or when the check fails, Retromod holds the jar back and asks on the title screen. The log line starting `Retromod held back` names the jar, its size, what the check found, and the SHA-256 to approve. A failed check means the jar has a shape zip bombs use, so allow it only if you trust where it came from. See [Config Reference]({{ '/config' | relative_url }}) for `allow_huge_jars` and the approval lists. A dedicated server has no prompt, so add the hash from the log to the config by hand.
+
+A class file over 32 MB, or more than 512 MB of class files in one jar, stops a translation, since no real mod comes close. A file a translation step reads, such as a mixin config, an access widener, or a nested jar, stops it at 128 MB. Other files, such as textures, sounds, and native libraries, are copied at any size without being held in memory. AOT precompilation holds the whole jar in memory, so it takes jars up to 500 MB and names `transform` for a larger one.
+
+In the game log, `ZIP entry too large` names an oversized file, and `unpacks to more than` means the jar held more than it declared, so Retromod stopped reading it. The CLI prints `ZIP entry exceeds` for an oversized file.
 
 ## Cache Looks Stale
 
 Current builds stamp AOT caches and invalidate mismatches automatically. During same-version development runs, delete `config/retromod/aot-cache/` to force a rebuild.
 
-The Forge and NeoForge translation cache is rebuilt after a Retromod or loader update, or a change to `polyfills_enabled` or `transform_mixins`. Edits to `config/retromod/mixin-blocklist.json` do not rebuild it. To force it, close the game and run `java -jar retromod-1.4.0-snapshot.5-cli.jar cache clear <game-dir>`. `cache status <game-dir>` shows what the cache holds and why a mod failed.
+The Forge and NeoForge translation cache is rebuilt after a Retromod or loader update, or a change to `polyfills_enabled` or `transform_mixins`. Edits to `config/retromod/mixin-blocklist.json` do not rebuild it. To force it, close the game and run `java -jar retromod-1.4.0-snapshot.6-cli.jar cache clear <game-dir>`. `cache status <game-dir>` shows what the cache holds and why a mod failed.
 
 ## A Current Mod Requires an Old Mod
 

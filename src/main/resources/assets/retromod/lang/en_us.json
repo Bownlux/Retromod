@@ -39,6 +39,14 @@
 
   "retromod.restart.converted": "Mods converted for this Minecraft version: %s\nRestart Minecraft to load the converted mods.\n\nClick Yes to close Minecraft, then relaunch from your launcher.",
   "retromod.restart.cache": "Mods translated for this Minecraft version: %s\nRestart Minecraft to load the translated mods. Your files in mods/ were not changed.\n\nClick Yes to close Minecraft, then relaunch from your launcher.",
+  "retromod.huge_jar.title": "Large mod jar",
+  "retromod.huge_jar.unverified_title": "Unverified mod jar",
+  "retromod.huge_jar.message": "%s unpacks to %s (the file is %s). Its headers passed Retromod's archive check: %s entries, none overlapping.\n\nRetromod translates jars over 25 GB only with your approval. Allow translates it on the next launch. Skip leaves it untranslated in %s, and Retromod asks again next time.",
+  "retromod.huge_jar.unverified": "%s unpacks to %s (the file is %s) and did not pass Retromod's archive check. It may be a zip bomb. The game log says what the check found.\n\nAllow it only if you trust where it came from. Allow translates it on the next launch. Skip leaves it untranslated in %s, and Retromod asks again next time.",
+  "retromod.huge_jar.allow": "Allow",
+  "retromod.huge_jar.skip": "Skip",
+  "retromod.huge_jar.approved": "Approved. Retromod translates %s the next time Minecraft starts.",
+  "retromod.huge_jar.not_saved": "Retromod could not save the approval for %s. The game log names the hash to add to config/retromod/config.json by hand.",
 
   "retromod.filepicker.title": "Retromod: Choose Mod Jars",
 

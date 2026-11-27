@@ -90,6 +90,7 @@ public class Forge_1_21_11_to_26_1 implements VersionShim {
         com.retromod.shim.neoforge.LegacyNeoForgeAddLayersBridge.register(transformer);
         // NeoForge 26.1 replaced the block color event with block tint sources, and 1.21.4 removed the item color event.
         com.retromod.shim.neoforge.LegacyNeoForgeColorBridge.register(transformer);
+        com.retromod.shim.neoforge.LegacyNeoForgeClientApiBridge.register(transformer);
 
         // Forge 26.x builds network channels its own way; old SimpleChannel code opens one through it.
         // Capabilities and registries have their own shims, ForgeCapabilitiesShim and ForgeRegistryApiShim.

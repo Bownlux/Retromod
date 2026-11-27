@@ -114,6 +114,106 @@ class LegacyClientBridgesTest {
         assertTrue(calls.contains(LegacyPoseGuiBridge.HELPER + ".fill"), "saw " + calls);
     }
 
+    @Test
+    @DisplayName("a 1.16 texture bind and tint feed the next old GUI blit, and a 1.20 mod's bindForSetup stays its own")
+    void oldBindAndTintReachTheHelper() {
+        String manager = "net/minecraft/client/renderer/texture/TextureManager";
+        String id = "Lnet/minecraft/resources/ResourceLocation;";
+        byte[] binder = method("mod/Gui", "draw", "(L" + manager + ";" + id + ")V", mv -> {
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitMethodInsn(INVOKEVIRTUAL, manager, "bind", "(" + id + ")V", false);
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitMethodInsn(INVOKEVIRTUAL, manager, "bindForSetup", "(" + id + ")V", false);
+            for (String[] tint : new String[][] {{"com/mojang/blaze3d/systems/RenderSystem", "color4f"},
+                    {"com/mojang/blaze3d/platform/GlStateManager", "_color4f"}}) {
+                for (int i = 0; i < 4; i++) mv.visitInsn(FCONST_1);
+                mv.visitMethodInsn(INVOKESTATIC, tint[0], tint[1], "(FFFF)V", false);
+            }
+            mv.visitInsn(RETURN);
+        });
+        RetromodTransformer transformer = fresh();
+        LegacyPoseGuiBridge.registerOldBinds(transformer, null, null);
+
+        transformer.setModSourceVersion("1.16.5");
+        List<String> old = calls(read(transformer.transformClass(binder, "mod/Gui.class")));
+        transformer.setModSourceVersion("1.20.1");
+        List<String> newer = calls(read(transformer.transformClass(binder, "mod/Gui.class")));
+        transformer.setModSourceVersion(null);
+
+        assertEquals(2, old.stream().filter((LegacyPoseGuiBridge.HELPER + ".bindTexture")::equals).count(), "saw " + old);
+        assertEquals(2, old.stream().filter((LegacyPoseGuiBridge.HELPER + ".setShaderColor")::equals).count(), "saw " + old);
+        assertTrue(newer.contains(manager + ".bindForSetup"),
+                "from 1.20 GUI code names its texture in the blit, so bindForSetup is renderer setup, saw " + newer);
+        assertTrue(newer.contains(LegacyPoseGuiBridge.HELPER + ".bindTexture"), "bind is 1.16 only and still bridged, saw " + newer);
+
+        // A host that still has the methods keeps every call.
+        ClassNode host = new ClassNode();
+        host.methods.add(new MethodNode(ACC_PUBLIC, "bind", "(" + id + ")V", null, null));
+        host.methods.add(new MethodNode(ACC_PUBLIC, "bindForSetup", "(" + id + ")V", null, null));
+        ClassNode system = new ClassNode();
+        system.methods.add(new MethodNode(ACC_PUBLIC | ACC_STATIC, "color4f", "(FFFF)V", null, null));
+        transformer = fresh();
+        LegacyPoseGuiBridge.registerOldBinds(transformer, system, host);
+        List<String> kept = calls(read(transformer.transformClass(binder, "mod/Gui.class")));
+        assertFalse(kept.contains(LegacyPoseGuiBridge.HELPER + ".bindTexture"), "saw " + kept);
+        assertFalse(kept.contains(LegacyPoseGuiBridge.HELPER + ".setShaderColor"), "saw " + kept);
+    }
+
+    @Test
+    @DisplayName("a Fabric mod's Font.draw, which the 26.x name table calls drawInBatch, reaches the drawing helper")
+    void fontDrawUnderItsHostNameIsBridged() {
+        RetromodTransformer transformer = fresh();
+        LegacyPoseGuiBridge.registerRedirects(transformer, null);
+        String font = "net/minecraft/client/gui/Font";
+        byte[] handler = method("mod/Hud", "label", "(L" + font + ";" + POSE + ")V", mv -> {
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitLdcInsn("hi");
+            mv.visitInsn(FCONST_0);
+            mv.visitInsn(FCONST_0);
+            mv.visitInsn(ICONST_M1);
+            mv.visitMethodInsn(INVOKEVIRTUAL, font, "drawInBatch", "(" + POSE + "Ljava/lang/String;FFI)I", false);
+            mv.visitInsn(POP);
+            mv.visitInsn(RETURN);
+        });
+        List<String> calls = calls(read(transformer.transformClass(handler, "mod/Hud.class")));
+        assertTrue(calls.contains(LegacyPoseGuiBridge.HELPER + ".fontDraw"), "saw " + calls);
+    }
+
+    @Test
+    @DisplayName("the old six-argument Button constructor builds through the builder on Fabric, Forge and NeoForge")
+    void oldButtonConstructorOnEveryLoader() {
+        RetromodVersion.TARGET_MC_VERSION = "26.3";
+        String button = "net/minecraft/client/gui/components/Button";
+        String component = "Lnet/minecraft/network/chat/Component;";
+        String press = "L" + button + "$OnPress;";
+        byte[] screen = method("mod/Menu", "init", "()Ljava/lang/Object;", mv -> {
+            mv.visitTypeInsn(NEW, button);
+            mv.visitInsn(DUP);
+            mv.visitInsn(ICONST_1);
+            mv.visitInsn(ICONST_2);
+            mv.visitInsn(ICONST_3);
+            mv.visitInsn(ICONST_4);
+            mv.visitInsn(ACONST_NULL);
+            mv.visitInsn(ACONST_NULL);
+            mv.visitMethodInsn(INVOKESPECIAL, button, "<init>", "(IIII" + component + press + ")V", false);
+            mv.visitInsn(ARETURN);
+        });
+        List<Runnable> loaders = List.of(
+                () -> new com.retromod.shim.fabric.Fabric_1_21_11_to_26_1().registerRedirects(RetromodTransformer.getInstance()),
+                () -> new com.retromod.shim.forge.Forge_1_21_11_to_26_1().registerRedirects(RetromodTransformer.getInstance()),
+                () -> new com.retromod.shim.neoforge.NeoForge_1_21_11_to_26_1().registerRedirects(RetromodTransformer.getInstance()));
+        for (Runnable register : loaders) {
+            RetromodTransformer transformer = fresh();
+            register.run();
+            List<String> calls = calls(read(transformer.transformClass(screen, "mod/Menu.class")));
+            assertTrue(calls.contains(LegacyPoseScreenAdapter.HELPER + ".button"), "saw " + calls);
+            assertFalse(calls.contains(button + ".<init>"), "saw " + calls);
+        }
+    }
+
     private static RetromodTransformer fresh() {
         RetromodTransformer transformer = RetromodTransformer.getInstance();
         transformer.clearRedirectsForTesting();

@@ -2,4 +2,5 @@
 package net.minecraft.world.attribute;
 
 public class EnvironmentAttribute<Value> {
+    public Value defaultValue() { throw new UnsupportedOperationException(); }
 }

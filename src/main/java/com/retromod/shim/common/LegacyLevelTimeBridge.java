@@ -15,25 +15,27 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
-/** Rebuilds LevelTimeAccess's moon phase, moon brightness, time of day and day time, which 1.21.11 replaced with environment attributes. */
+/** Rebuilds LevelTimeAccess's moon phase, moon brightness, time of day, sun angle and day time, which 1.21.11 replaced with environment attributes. */
 public final class LegacyLevelTimeBridge {
 
     public static final String HELPER = RebuiltApiClasses.ROOT + "minecraft/world/level/LegacyLevelTime";
     static final String TIME_ACCESS = "net/minecraft/world/level/LevelTimeAccess";
     static final String LEVEL = "net/minecraft/world/level/Level";
     static final String ATTRIBUTES = "net/minecraft/world/attribute/EnvironmentAttributes";
+    static final String CLIENT_LEVEL = "net/minecraft/client/multiplayer/ClientLevel";
     static final String FIRST_HOST = "1.21.11";
     static final String FIRST_CLOCK_HOST = "26.1";
     // Javac names the class a call is made on, so each level type that inherited the members from LevelTimeAccess is listed.
     static final List<String> OWNERS = List.of(TIME_ACCESS, "net/minecraft/world/level/LevelAccessor",
             "net/minecraft/world/level/ServerLevelAccessor", "net/minecraft/world/level/WorldGenLevel", LEVEL,
-            "net/minecraft/client/multiplayer/ClientLevel", "net/minecraft/server/level/ServerLevel",
+            CLIENT_LEVEL, "net/minecraft/server/level/ServerLevel",
             "net/minecraft/server/level/WorldGenRegion");
     // Name, the old descriptor, and the helper's, which takes the level first.
     static final String[][] MEMBERS = {
             {"getMoonPhase", "()I", "(Ljava/lang/Object;)I"},
             {"getMoonBrightness", "()F", "(Ljava/lang/Object;)F"},
             {"getTimeOfDay", "(F)F", "(Ljava/lang/Object;F)F"},
+            {"getSunAngle", "(F)F", "(Ljava/lang/Object;F)F"},
             {"dayTime", "()J", "(Ljava/lang/Object;)J"}};
 
     private LegacyLevelTimeBridge() {}
@@ -52,6 +54,8 @@ public final class LegacyLevelTimeBridge {
                 t.registerMethodRedirect(owner, member[0], member[1], HELPER, member[0], member[2], true);
             }
         }
+        // The client level's sky darkening went with them; the sky light factor attribute holds the same fraction.
+        t.registerMethodRedirect(CLIENT_LEVEL, "getSkyDarken", "(F)F", HELPER, "getSkyDarken", "(Ljava/lang/Object;F)F", true);
     }
 
     /** Whether the host has the environment attributes and no LevelTimeAccess; offline the target decides. */

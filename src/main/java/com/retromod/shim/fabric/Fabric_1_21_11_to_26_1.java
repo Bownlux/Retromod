@@ -240,6 +240,9 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
         com.retromod.shim.api.fabric.LegacyLevelRenderBridge.register(transformer);
         // BuiltinItemRendererRegistry, which Fabric API removed in 1.21.4, rebuilt on item model wrapping.
         LegacyBuiltinItemRendererBridge.register(transformer);
+        // Fabric API for 26.1 dropped the fluid render handlers, FabricBakedModel, the core shader callback and the
+        // buffer form of extended menu types.
+        LegacyFabricClientApiBridge.register(transformer);
         transformer.registerClassRedirect(
             "net/fabricmc/fabric/api/client/rendering/v1/WorldRenderContext",
             "net/fabricmc/fabric/api/client/rendering/v1/level/LevelRenderContext"
@@ -412,22 +415,7 @@ public class Fabric_1_21_11_to_26_1 implements VersionShim {
             "(Ljava/lang/String;Ljava/lang/Object;ILjava/lang/String;)Ljava/lang/Object;"
         );
 
-        // Button gained a 7th CreateNarration param in 26.1.
-        // new Button(...) calls -> ButtonShim factory.
-        transformer.registerConstructorRedirect(
-            "net/minecraft/client/gui/components/Button",
-            "(IIIILnet/minecraft/network/chat/Component;Lnet/minecraft/client/gui/components/Button$OnPress;)V",
-            "com/retromod/shim/fabric/embedded/ButtonShim", "create",
-            "(IIIILjava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"
-        );
-        // super(...) calls in Button subclasses: add DEFAULT_NARRATION as the 7th arg.
-        transformer.registerSuperConstructorRedirect(
-            "net/minecraft/client/gui/components/Button",
-            "(IIIILnet/minecraft/network/chat/Component;Lnet/minecraft/client/gui/components/Button$OnPress;)V",
-            "(IIIILnet/minecraft/network/chat/Component;Lnet/minecraft/client/gui/components/Button$OnPress;Lnet/minecraft/client/gui/components/Button$CreateNarration;)V",
-            "net/minecraft/client/gui/components/Button", "DEFAULT_NARRATION",
-            "Lnet/minecraft/client/gui/components/Button$CreateNarration;"
-        );
+        // The old six-argument Button constructor goes through LegacyPoseGuiBridge, registered with the common moves above.
 
         // TranslatableContents ctor: 1-arg/2-arg forms removed, now (key, fallback, args).
         // Super-ctor redirect inserts the missing params (null fallback, empty args) into

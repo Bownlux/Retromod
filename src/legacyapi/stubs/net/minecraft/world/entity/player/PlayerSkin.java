@@ -8,4 +8,5 @@ public final class PlayerSkin {
         throw new UnsupportedOperationException();
     }
     public PlayerModelType model() { throw new UnsupportedOperationException(); }
+    public ClientAsset.Texture body() { throw new UnsupportedOperationException(); }
 }

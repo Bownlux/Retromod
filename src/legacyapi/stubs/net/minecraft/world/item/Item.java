@@ -21,4 +21,6 @@ public class Item implements ItemLike {
     public net.minecraft.core.component.DataComponentMap components() { throw new UnsupportedOperationException(); }
 
     public final String getDescriptionId() { throw new UnsupportedOperationException(); }
+    public boolean canDestroyBlock(ItemStack stack, net.minecraft.world.level.block.state.BlockState state, net.minecraft.world.level.Level level,
+            net.minecraft.core.BlockPos pos, net.minecraft.world.entity.LivingEntity user) { throw new UnsupportedOperationException(); }
 }

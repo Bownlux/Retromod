@@ -56,6 +56,7 @@ class NbtGetterLoaderCoverageTest {
             "compoundGetDouble", "compoundGetBoolean", "compoundGetByte", "compoundGetShort",
             "compoundGetByteArray", "compoundGetIntArray", "compoundGetLongArray", "compoundGetUUID",
             "compoundHasUUID", "compoundPutUUID", "compoundGetTagType", "tagGetAsString", "listGetString", "listGetInt",
+            "listGetFloat", "listGetDouble", "listGetIntArray",
             "numericGetAsInt", "numericGetAsNumber");
 
     private RetromodTransformer transformer;
@@ -280,11 +281,12 @@ class NbtGetterLoaderCoverageTest {
             mv.visitMethodInsn(INVOKEVIRTUAL, COMPOUND, getter[0], "(Ljava/lang/String;)" + getter[1], false);
             mv.visitInsn(getter[1].equals("J") || getter[1].equals("D") ? POP2 : POP);
         }
-        for (String[] getter : new String[][]{{"getString", "Ljava/lang/String;"}, {"getInt", "I"}}) {
+        for (String[] getter : new String[][]{{"getString", "Ljava/lang/String;"}, {"getInt", "I"}, {"getFloat", "F"},
+                {"getDouble", "D"}, {"getIntArray", "[I"}}) {
             mv.visitVarInsn(ALOAD, 1);
             mv.visitInsn(ICONST_0);
             mv.visitMethodInsn(INVOKEVIRTUAL, LIST, getter[0], "(I)" + getter[1], false);
-            mv.visitInsn(POP);
+            mv.visitInsn(getter[1].equals("D") ? POP2 : POP);
         }
         mv.visitVarInsn(ALOAD, 0);
         mv.visitLdcInsn("items");
@@ -340,11 +342,12 @@ class NbtGetterLoaderCoverageTest {
             mv.visitMethodInsn(INVOKEVIRTUAL, INT_COMPOUND, getter[0], "(Ljava/lang/String;)" + getter[1], false);
             mv.visitInsn(getter[1].equals("J") || getter[1].equals("D") ? POP2 : POP);
         }
-        for (String[] getter : new String[][]{{"method_10608", "Ljava/lang/String;"}, {"method_10600", "I"}}) {
+        for (String[] getter : new String[][]{{"method_10608", "Ljava/lang/String;"}, {"method_10600", "I"},
+                {"method_10604", "F"}, {"method_10611", "D"}, {"method_36111", "[I"}, {"method_10610", "[I"}}) {
             mv.visitVarInsn(ALOAD, 1);
             mv.visitInsn(ICONST_0);
             mv.visitMethodInsn(INVOKEVIRTUAL, INT_LIST, getter[0], "(I)" + getter[1], false);
-            mv.visitInsn(POP);
+            mv.visitInsn(getter[1].equals("D") ? POP2 : POP);
         }
         mv.visitVarInsn(ALOAD, 0);
         mv.visitLdcInsn("Owner");

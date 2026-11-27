@@ -18,12 +18,31 @@ Settings live in `config/retromod/config.json`. Retromod creates the file on fir
 | `check_for_native_versions` | `false` | Opt in to a Modrinth API lookup for a native build of a selected mod |
 | `restart_prompt` | `true` when absent | Show the restart prompt after files are prepared |
 | `write_translated_jars` | `false` when absent | On Forge and NeoForge, `true` writes translated jars into `mods/` instead of loading them from `retromod-cache/` |
+| `allow_huge_jars` | `false` | Translate any mod jar that unpacks to more than 25 GB once it passes the archive check, without asking |
+| `approved_huge_jars` | `[]` when absent | SHA-256 hashes of jars over 25 GB that passed the archive check and were approved. **Allow** on the title-screen prompt adds one |
+| `approved_unverified_jars` | `[]` when absent | SHA-256 hashes of jars approved after their archive check did not pass. `allow_huge_jars` never covers these |
 | `loader_api_runtime` | `"auto"` when absent | Turn the Fabric API runtime for Minecraft 26.1 and newer on or off. See [Loader API Runtime](#loader-api-runtime) |
 | `log_level` | `"INFO"` | `"DEBUG"` also writes Retromod's detail lines to `logs/latest.log`. See [Log Detail](#log-detail) |
 
 Leave these defaults in place unless you are diagnosing a specific transform.
 
 `write_translated_jars` is read at startup, so a change takes effect on the next launch. `-Dretromod.writeTranslatedJars=true` or `false` overrides the file for one launch. Fabric and Quilt ignore the key. They always write translated jars into `mods/`. Changing `polyfills_enabled` or `transform_mixins` translates the Forge and NeoForge cache again on the next launch.
+
+A mod jar that unpacks to 1 GB or less is translated without a check. A larger one passes an archive check first: Retromod reads its headers, then unpacks each entry once to count it. The check fails when:
+
+- entries overlap, repeat a name, or carry headers that disagree with each other or with Java's own zip reader
+- an entry is encrypted, uses a compression method Java cannot read, or unpacks to a size other than the one it declares
+- a class file is over 32 MB, or the jar's class files together pass 512 MB
+- an entry over 4 MB unpacks to more than 100 times its stored size, or the jar to more than 20 times overall
+- the jar and the archives inside it hold more than 100,000 entries together
+- a nested jar in `META-INF/jars/` or `META-INF/jarjar/` is over 128 MB, or the archives inside the jar unpack to more than 500 MB together
+- a nested archive fails any of these
+
+A jar that passes is translated within the size it declares, up to 25 GB.
+
+A jar whose check fails is held back, not translated, and the title screen asks about it with a warning that it may be a zip bomb. Allow it only if you trust where it came from. **Allow** records its SHA-256 in `approved_unverified_jars` and translates it on the next launch. `allow_huge_jars` does not cover it.
+
+Past 25 GB, Retromod holds every jar back and asks the same way. When the headers pass, **Allow** records the hash in `approved_huge_jars`, and `allow_huge_jars` set to `true` allows such jars without asking. A dedicated server has no prompt, so its log names the hash to add. `-Dretromod.allowHugeJars=true` sets `allow_huge_jars` for one launch. The CLI takes `--allow-huge-jars` and `--allow-unverified-jars`.
 
 `check_for_native_versions` is the only setting here that enables routine outbound HTTP. It checks Modrinth metadata and does not download a mod jar. You can also opt in for one run with `-Dretromod.checkForNativeVersions=true`. The in-game settings screen does not expose this key or `restart_prompt`. Set them by editing the JSON file.
 

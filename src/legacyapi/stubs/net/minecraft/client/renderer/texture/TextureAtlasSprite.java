@@ -9,4 +9,6 @@ public class TextureAtlasSprite {
     private TextureAtlasSprite() {}
     public Transparency transparency() { throw new UnsupportedOperationException(); }
     public SpriteContents contents() { throw new UnsupportedOperationException(); }
+    // Declared here on 26.2 and inherited from UvMapping on 26.3; a virtual call resolves either way.
+    public com.mojang.blaze3d.vertex.VertexConsumer wrap(com.mojang.blaze3d.vertex.VertexConsumer consumer) { throw new UnsupportedOperationException(); }
 }

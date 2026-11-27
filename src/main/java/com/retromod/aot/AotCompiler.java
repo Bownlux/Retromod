@@ -213,14 +213,19 @@ public class AotCompiler {
 
         // As in the game and the CLI batch, an addon's frames read the libraries translated before it.
         // They are set before registration, where the GeckoLib moves read which GeckoLib a library holds.
-        transformer.setLinkedLibraries(libraries);
-        try {
-            // The CLI's registration, in the game's order, so an AOT jar matches a transformed one.
-            com.retromod.shim.OfflineRegistration.register(
-                    transformer, shimRegistry, modInfo, targetMcVersion, shimChain);
-            compileJar(validatedModJar, outputJar, modInfo, explicitTransform);
-        } finally {
-            transformer.clearLinkedLibraries();
+        // AOT holds the whole jar in memory, so a jar past its budget is refused with the path that takes it.
+        try (com.retromod.util.ArchiveLimits.Scope admitted = com.retromod.core.ArchiveAdmission.admitInMemory(
+                validatedModJar, MAX_EXPANDED_BYTES, "AOT precompilation", "Translate it with the transform "
+                        + "or batch command without --aot, or from retromod-input/ in the game.")) {
+            transformer.setLinkedLibraries(libraries);
+            try {
+                // The CLI's registration, in the game's order, so an AOT jar matches a transformed one.
+                com.retromod.shim.OfflineRegistration.register(
+                        transformer, shimRegistry, modInfo, targetMcVersion, shimChain);
+                compileJar(validatedModJar, outputJar, modInfo, explicitTransform);
+            } finally {
+                transformer.clearLinkedLibraries();
+            }
         }
         // Runtime and GUI callers embed nothing themselves, so their stand-ins are relocated here.
         // Offline inputs come from the CLI, which embeds after this call with its batch's libraries.
@@ -246,6 +251,8 @@ public class AotCompiler {
     /** The link check the runtime and CLI paths run, on the jar that ships and the jars it nests. */
     private void reportMissingFabricApi(Path jar, Path input) {
         try {
+            // The check reads the whole jar into memory, so a very large one is left out, as on the other paths.
+            if (Files.size(jar) > ZipSecurity.DEFAULT_MAX_ENTRY_SIZE) return;
             com.retromod.loaderapi.fabric.v26.FabricApiLinkCheck.reportJar(Files.readAllBytes(jar),
                     input.getFileName().toString(), targetMcVersion);
         } catch (IOException | RuntimeException e) {
@@ -1287,13 +1294,13 @@ public class AotCompiler {
         @Override
         public void visit(int version, int access, String name, String signature,
                 String superName, String[] interfaces) {
-            String newSuper = transformer.getClassRedirects().getOrDefault(superName, superName);
+            String newSuper = transformer.getClassRedirectsForCurrentMod().getOrDefault(superName, superName);
             
             String[] newInterfaces = interfaces;
             if (interfaces != null) {
                 newInterfaces = new String[interfaces.length];
                 for (int i = 0; i < interfaces.length; i++) {
-                    newInterfaces[i] = transformer.getClassRedirects()
+                    newInterfaces[i] = transformer.getClassRedirectsForCurrentMod()
                         .getOrDefault(interfaces[i], interfaces[i]);
                 }
             }
@@ -1319,20 +1326,20 @@ public class AotCompiler {
                 super.visitMethodInsn(opcode, target.owner(), target.name(),
                     target.desc(), isInterface);
             } else {
-                String newOwner = transformer.getClassRedirects().getOrDefault(owner, owner);
+                String newOwner = transformer.getClassRedirectsForCurrentMod().getOrDefault(owner, owner);
                 super.visitMethodInsn(opcode, newOwner, name, descriptor, isInterface);
             }
         }
         
         @Override
         public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
-            String newOwner = transformer.getClassRedirects().getOrDefault(owner, owner);
+            String newOwner = transformer.getClassRedirectsForCurrentMod().getOrDefault(owner, owner);
             super.visitFieldInsn(opcode, newOwner, name, descriptor);
         }
         
         @Override
         public void visitTypeInsn(int opcode, String type) {
-            String newType = transformer.getClassRedirects().getOrDefault(type, type);
+            String newType = transformer.getClassRedirectsForCurrentMod().getOrDefault(type, type);
             super.visitTypeInsn(opcode, newType);
         }
         
@@ -1340,7 +1347,7 @@ public class AotCompiler {
         public void visitLdcInsn(Object value) {
             if (value instanceof Type type) {
                 if (type.getSort() == Type.OBJECT) {
-                    String newName = transformer.getClassRedirects()
+                    String newName = transformer.getClassRedirectsForCurrentMod()
                         .getOrDefault(type.getInternalName(), type.getInternalName());
                     super.visitLdcInsn(Type.getObjectType(newName));
                     return;
@@ -1356,7 +1363,7 @@ public class AotCompiler {
         }
 
         private String redirectDescriptor(String descriptor) {
-            for (var entry : transformer.getClassRedirects().entrySet()) {
+            for (var entry : transformer.getClassRedirectsForCurrentMod().entrySet()) {
                 descriptor = descriptor.replace(
                     "L" + entry.getKey() + ";",
                     "L" + entry.getValue() + ";"

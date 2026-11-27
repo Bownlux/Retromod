@@ -74,7 +74,13 @@ public record CacheEntry(
          */
         STARTED,
         /** The player chose not to translate this file. */
-        SKIPPED
+        SKIPPED,
+        /**
+         * The jar waits for the player's approval: it unpacks to more than 25 GB, or to more than
+         * 1 GB with an archive check that did not pass. Checked again on every launch, so an
+         * approval takes effect on the next.
+         */
+        AWAITING_APPROVAL
     }
 
     public CacheEntry {
@@ -88,6 +94,7 @@ public record CacheEntry(
 
     /** True when the cache may try to translate this source again on this launch. */
     public boolean allowsAttempt() {
-        return status == Status.RETRY || status == Status.PENDING || status == Status.STARTED;
+        return status == Status.RETRY || status == Status.PENDING || status == Status.STARTED
+                || status == Status.AWAITING_APPROVAL;
     }
 }

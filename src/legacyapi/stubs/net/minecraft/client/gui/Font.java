@@ -14,5 +14,6 @@ public class Font {
 
     public int width(String text) { throw new UnsupportedOperationException(); }
     public int width(FormattedCharSequence text) { throw new UnsupportedOperationException(); }
+    public int width(net.minecraft.network.chat.FormattedText text) { throw new UnsupportedOperationException(); }
     public List<FormattedCharSequence> split(FormattedText text, int width) { throw new UnsupportedOperationException(); }
 }

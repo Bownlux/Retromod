@@ -14,5 +14,8 @@ public abstract class MinecraftServer {
     public final net.minecraft.server.level.ServerLevel overworld() { throw new UnsupportedOperationException(); }
     // 1.21.2 to 26.2 only.
     public net.minecraft.world.level.block.entity.FuelValues fuelValues() { throw new UnsupportedOperationException(); }
+    public net.minecraft.server.permissions.LevelBasedPermissionSet getProfilePermissions(net.minecraft.server.players.NameAndId player) { throw new UnsupportedOperationException(); }
+    // Abstract on the host.
+    public net.minecraft.server.permissions.LevelBasedPermissionSet operatorUserPermissions() { throw new UnsupportedOperationException(); }
     public java.nio.file.Path getWorldPath(net.minecraft.world.level.storage.LevelResource resource) { throw new UnsupportedOperationException(); }
 }

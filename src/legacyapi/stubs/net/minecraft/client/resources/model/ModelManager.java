@@ -10,4 +10,5 @@ public class ModelManager {
     public ItemModel getItemModel(Identifier id) { throw new UnsupportedOperationException(); }
     public BlockStateModelSet getBlockStateModelSet() { throw new UnsupportedOperationException(); }
     public java.util.function.Supplier<net.minecraft.client.model.geom.EntityModelSet> entityModels() { throw new UnsupportedOperationException(); }
+    public net.minecraft.client.renderer.block.FluidStateModelSet getFluidStateModelSet() { throw new UnsupportedOperationException(); }
 }

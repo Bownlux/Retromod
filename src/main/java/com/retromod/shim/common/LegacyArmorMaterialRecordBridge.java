@@ -97,13 +97,15 @@ public final class LegacyArmorMaterialRecordBridge {
         mv.visitEnd();
     }
 
-    /** {@code ArmorMaterial.Layer}: its asset name, from either of its constructors. */
+    /** {@code ArmorMaterial.Layer}: its asset name and suffix, from either of its constructors, and its old texture path. */
     static byte[] generateLayer() {
         String id = "L" + ID + ";";
+        String string = "Ljava/lang/String;";
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, LAYER, null, "java/lang/Object", null);
         cw.visitField(ACC_PRIVATE | ACC_FINAL, "assetName", id, null, null).visitEnd();
-        for (String desc : List.of("(" + id + ")V", "(" + id + "Ljava/lang/String;Z)V")) {
+        cw.visitField(ACC_PRIVATE | ACC_FINAL, "suffix", string, null, null).visitEnd();
+        for (String desc : List.of("(" + id + ")V", "(" + id + string + "Z)V")) {
             MethodVisitor init = cw.visitMethod(ACC_PUBLIC, "<init>", desc, null, null);
             init.visitCode();
             init.visitVarInsn(ALOAD, 0);
@@ -111,6 +113,13 @@ public final class LegacyArmorMaterialRecordBridge {
             init.visitVarInsn(ALOAD, 0);
             init.visitVarInsn(ALOAD, 1);
             init.visitFieldInsn(PUTFIELD, LAYER, "assetName", id);
+            // The one-argument layer had no suffix; a null one reads as none too.
+            init.visitVarInsn(ALOAD, 0);
+            if (desc.contains(string)) init.visitVarInsn(ALOAD, 2);
+            else init.visitInsn(ACONST_NULL);
+            init.visitLdcInsn("");
+            init.visitMethodInsn(INVOKESTATIC, "java/util/Objects", "toString", "(Ljava/lang/Object;" + string + ")" + string, false);
+            init.visitFieldInsn(PUTFIELD, LAYER, "suffix", string);
             init.visitInsn(RETURN);
             init.visitMaxs(0, 0);
             init.visitEnd();
@@ -122,7 +131,42 @@ public final class LegacyArmorMaterialRecordBridge {
         getter.visitInsn(ARETURN);
         getter.visitMaxs(0, 0);
         getter.visitEnd();
+        texture(cw, id, string);
         cw.visitEnd();
         return cw.toByteArray();
+    }
+
+    /** {@code texture(inner)}: the old armor texture, {@code <ns>:textures/models/armor/<name>_layer_<1 or 2><suffix>.png}. */
+    private static void texture(ClassWriter cw, String id, String string) {
+        String builder = "java/lang/StringBuilder";
+        MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, "texture", "(Z)" + id, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitFieldInsn(GETFIELD, LAYER, "assetName", id);
+        mv.visitTypeInsn(NEW, builder);
+        mv.visitInsn(DUP);
+        mv.visitLdcInsn("textures/models/armor/");
+        mv.visitMethodInsn(INVOKESPECIAL, builder, "<init>", "(" + string + ")V", false);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitFieldInsn(GETFIELD, LAYER, "assetName", id);
+        mv.visitMethodInsn(INVOKEVIRTUAL, ID, "getPath", "()" + string, false);
+        mv.visitMethodInsn(INVOKEVIRTUAL, builder, "append", "(" + string + ")L" + builder + ";", false);
+        mv.visitLdcInsn("_layer_");
+        mv.visitMethodInsn(INVOKEVIRTUAL, builder, "append", "(" + string + ")L" + builder + ";", false);
+        // The inner layer, used for leggings, is layer 2: the flag plus one, without a branch.
+        mv.visitVarInsn(ILOAD, 1);
+        mv.visitInsn(ICONST_1);
+        mv.visitInsn(IADD);
+        mv.visitMethodInsn(INVOKEVIRTUAL, builder, "append", "(I)L" + builder + ";", false);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitFieldInsn(GETFIELD, LAYER, "suffix", string);
+        mv.visitMethodInsn(INVOKEVIRTUAL, builder, "append", "(" + string + ")L" + builder + ";", false);
+        mv.visitLdcInsn(".png");
+        mv.visitMethodInsn(INVOKEVIRTUAL, builder, "append", "(" + string + ")L" + builder + ";", false);
+        mv.visitMethodInsn(INVOKEVIRTUAL, builder, "toString", "()" + string, false);
+        mv.visitMethodInsn(INVOKEVIRTUAL, ID, "withPath", "(" + string + ")" + id, false);
+        mv.visitInsn(ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
     }
 }

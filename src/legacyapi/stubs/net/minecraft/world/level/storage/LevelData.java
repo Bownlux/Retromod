@@ -2,6 +2,8 @@
 package net.minecraft.world.level.storage;
 
 public interface LevelData {
+    // Abstract on the host; a default here keeps the stub implementations compiling.
+    default long getGameTime() { throw new UnsupportedOperationException(); }
     // A record on the host.
     final class RespawnData {
         public static RespawnData of(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension,

@@ -346,7 +346,16 @@ public class ModVersionDetector {
     }
     
     private ModVersionInfo parseLegacyForgeMod(JarFile jar, JarEntry entry) throws IOException {
-        JsonArray array = mcmodEntries(readJsonMetadata(jar, entry, "mcmod.info"));
+        String content = readJsonMetadata(jar, entry, "mcmod.info");
+        JsonArray array;
+        try {
+            array = mcmodEntries(content);
+        } catch (MalformedMcmodInfoException malformed) {
+            // FML 1.12 skipped an mcmod.info it could not parse and loaded the mod anyway.
+            LOGGER.warn("The mcmod.info in {} is not valid JSON ({}), so Retromod reads its mod id and Minecraft "
+                    + "version from the text instead.", Path.of(jar.getName()).getFileName(), malformed.getMessage());
+            return parseLenientLegacyForgeMod(jar, content);
+        }
         if (array.isEmpty() || !array.get(0).isJsonObject()) return null;
 
         JsonObject first = array.get(0).getAsJsonObject();
@@ -354,7 +363,26 @@ public class ModVersionDetector {
         String modId = first.has("modid") ? first.get("modid").getAsString() : "unknown";
         String modVersion = first.has("version") ? first.get("version").getAsString() : "unknown";
         String mcVersion = first.has("mcversion") ? first.get("mcversion").getAsString() : null;
-            
+        return legacyForgeInfo(jar, modId, modVersion, mcVersion);
+    }
+
+    /** The first mod id, version and Minecraft version written in a broken mcmod.info; without an id, the {@code @Mod} annotation. */
+    private ModVersionInfo parseLenientLegacyForgeMod(JarFile jar, String content) throws IOException {
+        String modId = firstJsonString(content, "modid");
+        if (modId == null) return parseLegacyModAnnotation(jar);
+        String modVersion = firstJsonString(content, "version");
+        return legacyForgeInfo(jar, modId, modVersion == null ? "unknown" : modVersion, firstJsonString(content, "mcversion"));
+    }
+
+    /** The value of the first {@code "key": "value"} pair in text that is not valid JSON, or null. */
+    private static String firstJsonString(String content, String key) {
+        java.util.regex.Matcher value = java.util.regex.Pattern
+                .compile("\"" + key + "\"\\s*:\\s*\"([^\"]+)\"").matcher(content);
+        return value.find() ? value.group(1) : null;
+    }
+
+    private ModVersionInfo legacyForgeInfo(JarFile jar, String modId, String modVersion, String mcVersion)
+            throws IOException {
         Set<String> packages = scanModPackages(jar, modId);
         Set<String> apiDeps = scanApiDependencies(jar);
             
@@ -377,9 +405,9 @@ public class ModVersionDetector {
         try {
             root = GSON.fromJson(content, JsonElement.class);
         } catch (JsonParseException | IllegalStateException e) {
-            throw new IOException("Could not parse mcmod.info: " + e.getMessage(), e);
+            throw new MalformedMcmodInfoException("Could not parse mcmod.info: " + e.getMessage(), e);
         }
-        if (root == null) throw new IOException("mcmod.info root is missing");
+        if (root == null) throw new MalformedMcmodInfoException("mcmod.info root is missing", null);
         // Most files are a bare array.
         if (root.isJsonArray()) return root.getAsJsonArray();
         // The version 2 format wraps the array as {"modListVersion": 2, "modList": [...]}, which
@@ -391,7 +419,14 @@ public class ModVersionDetector {
             single.add(object);
             return single;
         }
-        throw new IOException("mcmod.info is neither a list nor an object");
+        throw new MalformedMcmodInfoException("mcmod.info is neither a list nor an object", null);
+    }
+
+    /** An mcmod.info that is not readable JSON, which FML 1.12 skipped rather than refusing the mod. */
+    private static final class MalformedMcmodInfoException extends IOException {
+        MalformedMcmodInfoException(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 
     /** A 1.12 Forge mod without mcmod.info, read from its {@code @Mod} annotation. */

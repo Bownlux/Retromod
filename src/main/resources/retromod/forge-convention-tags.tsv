@@ -262,6 +262,7 @@ tools/crossbows	tools/crossbow	1.21
 tools/fishing_rods	tools/fishing_rod	1.21
 tools/shears	tools/shear	1.21
 tools/shields	tools/shield	1.21
+tools/tridents	tools/trident	26.1
 tools/wrench	=	1.21.4	1.21.1
 tools/wrenches	tools/wrench	1.21.4	1.21.1
 vegetable	foods/vegetable	1.21

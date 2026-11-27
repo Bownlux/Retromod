@@ -54,6 +54,12 @@ public final class LegacyOptionsBridge {
                 t.registerMethodRedirect(owner, "getId", "()I", presets, "getId", "(L" + GRAPHICS_PRESET + ";)I", true);
                 t.registerMethodRedirect(owner, "byId", "(I)L" + owner + ";", presets, "byId", "(I)L" + GRAPHICS_PRESET + ";");
             }
+            // Before 1.19 the mode was a plain options field, which reads and sets the preset the same way.
+            ClassNode optionsClass = host.apply(OPTIONS);
+            if (optionsClass == null || optionsClass.fields.stream().noneMatch(field -> field.name.equals("graphicsMode"))) {
+                t.registerFieldStaticBridge(OPTIONS, "graphicsMode", presets, "closest", "(L" + OPTIONS + ";)L" + GRAPHICS_PRESET + ";",
+                        "apply", "(L" + OPTIONS + ";L" + GRAPHICS_PRESET + ";)V");
+            }
         }
         ClassNode options = host.apply(OPTIONS);
         if (options == null || !declares(options, "graphicsMode", GRAPHICS_MODE)) {

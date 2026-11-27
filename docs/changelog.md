@@ -10,6 +10,19 @@ This page keeps the release history readable. The [full technical changelog](htt
 
 ## 1.4.0 Snapshot Line
 
+### Snapshot 6, November 26, 2026
+
+- Repairs about 60 more removed game members for older mods on 26.x: block shading, dimension details, sounds, difficulty, tags, NBT lists, bundles, advancements, permissions, and old packets.
+- Carries more old Forge APIs to NeoForge: permissions, tags, mod info, Forge fluids, item pickup and spawn events; and old config tracker, burn time, and loot builder calls on newer Forge and NeoForge hosts.
+- Repairs old screens on 26.x: text click handling, widget click and drag code, image buttons, tooltip components, window scale and frame rate calls, and sky darkness.
+- Repairs old rendering calls on 26.x so more 1.20.1 and 1.21.1 mods link: text draws, item transforms, held-item and head layers, old shader code, and several removed render helpers.
+- Repairs old text draws, resource listings, biome carvers, game events, villager professions, and `RegistryObject.isPresent()` for mods from older eras, and reads a 1.12.2 `mcmod.info` that is not valid JSON.
+- Translates mod jars up to 1 GB without a check, checks larger jars before translating them, and asks on the title screen before translating a jar over 25 GB or one whose check fails.
+- Rebuilds more removed loader events and calls that 1.20.1 and 1.21.1 mods use on NeoForge 26.x, Forge 26.2 and newer, and Fabric 26.x, including the shader, container screen and player render events, old fluid textures, and buffer menu types.
+- Runs old screens built with a pose stack on 26.x, with a fallback to their widgets, and repairs more removed calls, text classes, registry fields, and Forge 1.19 events for mods from 1.12.2 to 1.21.1.
+- Bridges the old armor model, texture and tint hooks, the ender mask hook and `PlayerRenderer` for 1.20.1 and 1.21.1 Forge and NeoForge mods on NeoForge 26.x and Forge 26.2 and newer.
+- Moves the old Minecraft class names that Forge mods for 1.14 to 1.16.5 use to the classes NeoForge and Forge 26.x hosts have, so more of those mods link. Mods for 1.13.2 and older keep their names.
+
 ### Snapshot 5, November 20, 2026
 
 - Fixes crashes from old boat items on 26.2 and newer, old saplings on 26.3, and Forge mods that ask a mod container for its event bus on Forge 26.2 and newer.

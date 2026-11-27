@@ -6,4 +6,5 @@ import java.nio.file.Path;
 
 public interface IoSupplier<T> {
     static IoSupplier<InputStream> create(Path path) { throw new UnsupportedOperationException(); }
+    T get() throws java.io.IOException;
 }

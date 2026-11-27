@@ -8,4 +8,6 @@ public class StructureManager {
     }
     public net.minecraft.world.level.levelgen.structure.StructureStart getStructureWithPieceAt(int x, int y, int z,
             net.minecraft.world.level.levelgen.structure.Structure structure) { throw new UnsupportedOperationException(); }
+    public net.minecraft.world.level.levelgen.structure.StructureStart getStructureWithPieceAt(net.minecraft.core.BlockPos pos,
+            java.util.function.Predicate<net.minecraft.core.Holder<net.minecraft.world.level.levelgen.structure.Structure>> filter) { throw new UnsupportedOperationException(); }
 }

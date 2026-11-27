@@ -73,6 +73,16 @@ public class Fabric_1_19_3_to_1_19_4 implements VersionShim {
             "net/minecraft/world/entity/Entity", "dismountsUnderwater",
             "()Z"
         );
+        // Limb swing, the text display mode, the float inverse square root and the rounding block
+        // positions, by the Mojang names a Fabric mod carries only after the 26.1 remap.
+        if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            com.retromod.shim.common.LegacyClientRenderBridge.register(transformer);
+            // 1.19.4 removed the rounding BlockPos constructors, as the Forge 1.19.4 shim bridges them.
+            String blockPos = "net/minecraft/core/BlockPos";
+            transformer.registerConstructorRedirect(blockPos, "(DDD)V", blockPos, "containing", "(DDD)L" + blockPos + ";");
+            transformer.registerConstructorRedirect(blockPos, "(Lnet/minecraft/core/Position;)V",
+                    blockPos, "containing", "(Lnet/minecraft/core/Position;)L" + blockPos + ";");
+        }
     }
 
     @Override

@@ -42,6 +42,9 @@ public final class NbtCompatLookup {
             Map.entry("putIntArray(String,int[])", "method_10539"),
             Map.entry("getString(int)", "method_10608"),
             Map.entry("getInt(int)", "method_10600"),
+            Map.entry("getFloat(int)", "method_10604"),
+            Map.entry("getDouble(int)", "method_10611"),
+            Map.entry("getIntArray(int)", "method_36111"),
             Map.entry("asString()", "method_68658"),
             Map.entry("getAsString()", "method_10714"),
             Map.entry("getId()", "method_10711"),
@@ -215,6 +218,24 @@ public final class NbtCompatLookup {
     public static int listGetInt(Object list, int index) {
         Object v = unwrap(invokeIndexedGetter(list, "getInt", int.class, index));
         return v instanceof Number n ? n.intValue() : 0;
+    }
+
+    /** {@code getFloat(index)}: 0 for an index out of range or a tag that is not a number. */
+    public static float listGetFloat(Object list, int index) {
+        Object v = unwrap(invokeIndexedGetter(list, "getFloat", float.class, index));
+        return v instanceof Number n ? n.floatValue() : 0.0F;
+    }
+
+    /** {@code getDouble(index)}: 0 for an index out of range or a tag that is not a number. */
+    public static double listGetDouble(Object list, int index) {
+        Object v = unwrap(invokeIndexedGetter(list, "getDouble", double.class, index));
+        return v instanceof Number n ? n.doubleValue() : 0.0;
+    }
+
+    /** {@code getIntArray(index)}: the tag's own array, else a new empty one. */
+    public static int[] listGetIntArray(Object list, int index) {
+        Object v = unwrap(invokeIndexedGetter(list, "getIntArray", int[].class, index));
+        return v instanceof int[] array ? array : new int[0];
     }
 
     /** Unwrap an {@code Optional} result, or pass through a direct one. */

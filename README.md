@@ -2,11 +2,11 @@
 
 [![Minecraft 1.20-26.3](https://img.shields.io/badge/Minecraft-1.20--26.3-green.svg)](https://minecraft.net/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.4.0--snapshot.5-blueviolet.svg)](https://github.com/Bownlux/Retromod/releases)
+[![Version](https://img.shields.io/badge/Version-1.4.0--snapshot.6-blueviolet.svg)](https://github.com/Bownlux/Retromod/releases)
 [![Modrinth](https://img.shields.io/badge/Download-Modrinth-00AF5C.svg)](https://modrinth.com/mod/retromod)
 [![CurseForge](https://img.shields.io/badge/Download-CurseForge-F16436.svg)](https://www.curseforge.com/minecraft/mc-mods/retromod)
 
-[Download on Modrinth](https://modrinth.com/mod/retromod) · [CurseForge](https://www.curseforge.com/minecraft/mc-mods/retromod) · [Docs](https://bownlux.github.io/Retromod/) · [Compatibility database](https://bownlux.github.io/Retromod/compatdb/)
+[Download on Modrinth](https://modrinth.com/mod/retromod) · [CurseForge](https://www.curseforge.com/minecraft/mc-mods/retromod) · [Docs](https://bownlux.dev/retromod/) · [Compatibility database](https://bownlux.dev/retromod/compatdb/)
 
 Retromod runs older Minecraft mods on newer versions of the game, without waiting for the mod's author to update it. It works on Fabric, Quilt, and Forge for Minecraft 1.20 through 26.3, and on NeoForge 1.20.1 through 26.3. Mods built around their own renderer or deep loader internals, such as Create or OptiFine, still need a real port.
 
@@ -23,11 +23,11 @@ Put Retromod in `mods/`. On Forge and NeoForge, put old mods in `mods/` too, lau
 
 On Fabric and Quilt, also install Fabric API, then launch once and close the game. Put old mods in `retromod-input/`, launch, and restart when prompted. Fabric and Quilt check mod versions before Retromod runs, so an old jar in `mods/` stops the game. Retromod moves each translated jar to `mods/` and keeps the original in `retromod-input/processed/`.
 
-Back up your worlds first, because Retromod keeps mod jars, not saves. The [installation guide](https://bownlux.github.io/Retromod/installation) covers resource packs, data packs, sharing translated mods, updating, and uninstalling.
+Back up your worlds first, because Retromod keeps mod jars, not saves. The [installation guide](https://bownlux.dev/retromod/installation) covers resource packs, data packs, sharing translated mods, updating, and uninstalling.
 
 ## 🙇 Getting Help
 
-Start with `logs/latest.log`. The first Retromod, loader, or mixin error usually explains more than the final crash. The [troubleshooting guide](https://bownlux.github.io/Retromod/troubleshooting) covers common errors, and the [FAQ](https://bownlux.github.io/Retromod/faq) covers servers, modpacks, and safety. The full [documentation](https://bownlux.github.io/Retromod/) also covers configuration, the CLI, and internals.
+Start with `logs/latest.log`. The first Retromod, loader, or mixin error usually explains more than the final crash. The [troubleshooting guide](https://bownlux.dev/retromod/troubleshooting) covers common errors, and the [FAQ](https://bownlux.dev/retromod/faq) covers servers, modpacks, and safety. The full [documentation](https://bownlux.dev/retromod/) also covers configuration, the CLI, and internals.
 
 ## 📬 Reporting Issues
 
@@ -37,7 +37,7 @@ Report security problems privately through [GitHub's private vulnerability repor
 
 ## 💬 Join the Community
 
-Ask questions and propose designs in [GitHub Discussions](https://github.com/Bownlux/Retromod/discussions). Small, focused pull requests are welcome. Open a discussion before you start a large new subsystem. See [Contributing](https://bownlux.github.io/Retromod/contributing).
+Ask questions and propose designs in [GitHub Discussions](https://github.com/Bownlux/Retromod/discussions). Small, focused pull requests are welcome. Open a discussion before you start a large new subsystem. See [Contributing](https://bownlux.dev/retromod/contributing).
 
 After you test a mod, file a [compatibility report](https://github.com/Bownlux/Retromod/issues/new?template=compat_report.yml), including partial results. Merged reports appear in the compatibility database.
 
@@ -52,18 +52,18 @@ Retromod ships one jar per loader and Minecraft version.
 | Forge | 1.20 through 26.3 | 1.12.2 and newer |
 | NeoForge | 1.20.1 through 26.3 | 1.20.1 and newer |
 
-Content mods, libraries, and quality-of-life mods work best. Test each mod in game: the [compatibility database](https://bownlux.github.io/Retromod/compatdb/) lists reported results, and [Mods That Can't Be Translated](https://bownlux.github.io/Retromod/incompatible-mods) lists the known gaps.
+Content mods, libraries, and quality-of-life mods work best. Test each mod in game: the [compatibility database](https://bownlux.dev/retromod/compatdb/) lists reported results, and [Mods That Can't Be Translated](https://bownlux.dev/retromod/incompatible-mods) lists the known gaps.
 
 ## ⌨️ Command-Line Tool
 
 The standalone CLI runs the same transform core without launching Minecraft. Use it for servers, modpacks, CI, and compatibility checks.
 
 ```bash
-java -jar retromod-1.4.0-snapshot.5-cli.jar batch path/to/mods \
+java -jar retromod-1.4.0-snapshot.6-cli.jar batch path/to/mods \
   --aot --mc-jar path/to/minecraft-26.3-client.jar --verify
 ```
 
-`batch` writes to `<input>/retromod-output/` and leaves the source jars untouched. `--aot` prepares cached transforms. `--mc-jar` gives mixin repair the exact target jar. `--verify` writes unresolved-reference reports to `config/retromod/verify-reports/` in the working directory. `export <game-dir>` copies the translations a Forge or NeoForge game made, so you can share them with a game that runs the same loader, Minecraft version, and Retromod. Run `--help` for every command, or read the [CLI guide](https://bownlux.github.io/Retromod/cli).
+`batch` writes to `<input>/retromod-output/` and leaves the source jars untouched. `--aot` prepares cached transforms. `--mc-jar` gives mixin repair the exact target jar. `--verify` writes unresolved-reference reports to `config/retromod/verify-reports/` in the working directory. `export <game-dir>` copies the translations a Forge or NeoForge game made, so you can share them with a game that runs the same loader, Minecraft version, and Retromod. Run `--help` for every command, or read the [CLI guide](https://bownlux.dev/retromod/cli).
 
 ## 🛠️ Building from Source
 
@@ -83,7 +83,7 @@ To build the jars you install in a game, run the release script. It also needs P
 bash build-all.sh
 ```
 
-It writes 71 loader jars to `dist/{Fabric,Forge,NeoForge}/<mc>/retromod-<version>+<mc>.jar` and the CLI to `dist/CLI/retromod-<version>-cli.jar`. A complete build also writes `dist/SHA256SUMS.txt` for all 72 artifacts. Test in game with these jars, not the raw `-all.jar`. That jar bundles its own ASM, which conflicts with the copy every loader already provides. See [Contributing](https://bownlux.github.io/Retromod/contributing) for tests and release steps.
+It writes 71 loader jars to `dist/{Fabric,Forge,NeoForge}/<mc>/retromod-<version>+<mc>.jar` and the CLI to `dist/CLI/retromod-<version>-cli.jar`. A complete build also writes `dist/SHA256SUMS.txt` for all 72 artifacts. Test in game with these jars, not the raw `-all.jar`. That jar bundles its own ASM, which conflicts with the copy every loader already provides. See [Contributing](https://bownlux.dev/retromod/contributing) for tests and release steps.
 
 ## 📜 License
 

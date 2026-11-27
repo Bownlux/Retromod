@@ -4,6 +4,8 @@ package net.minecraft.client.renderer.entity;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
 
 public class EntityRenderDispatcher {
+    // 26.1 and 26.2 only.
+    public net.minecraft.client.renderer.ItemInHandRenderer getItemInHandRenderer() { throw new UnsupportedOperationException(); }
     public <S extends EntityRenderState> EntityRenderer<?, ? super S> getRenderer(S state) { throw new UnsupportedOperationException(); }
     public <E extends net.minecraft.world.entity.Entity> EntityRenderState extractEntity(E entity, float partialTick) {
         throw new UnsupportedOperationException();

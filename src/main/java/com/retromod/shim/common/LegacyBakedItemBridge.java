@@ -80,7 +80,10 @@ public final class LegacyBakedItemBridge {
         redirectRemovedClass(t, host, OLD_ITEM_OVERRIDES, OVERRIDES);
         redirectRemovedClass(t, host, OLD_ITEM_SHAPER, ITEM_SHAPER);
         redirectRemovedClass(t, host, OLD_BLOCK_DISPATCHER, BLOCKS);
-        redirectRemovedClass(t, host, OLD_BLOCK_SHAPER, BLOCK_SHAPER);
+        if (redirectRemovedClass(t, host, OLD_BLOCK_SHAPER, BLOCK_SHAPER)) {
+            // ModelManager.getBlockModelShaper() and any other game call returning the old shaper answer the rebuilt one.
+            t.registerStandInType(BLOCK_SHAPER, BLOCK_SHAPER + ".of(Ljava/lang/Object;)L" + BLOCK_SHAPER + ";");
+        }
 
         // Mods keep the block renderer from reload listeners and constructors on, so each getter answers at any time.
         redirectGetter(t, host, LegacyItemDrawBridge.MINECRAFT, "getBlockRenderer");
@@ -141,10 +144,11 @@ public final class LegacyBakedItemBridge {
         t.registerMethodRedirect(owner, name, "()L" + OLD_BLOCK_DISPATCHER + ";", BLOCKS, "get", "(Ljava/lang/Object;)L" + BLOCKS + ";", true);
     }
 
-    private static void redirectRemovedClass(RetromodTransformer t, Function<String, ClassNode> host, String old, String rebuilt) {
+    private static boolean redirectRemovedClass(RetromodTransformer t, Function<String, ClassNode> host, String old, String rebuilt) {
         // A client host that still has the class keeps it; a server or an offline run answers by the target, which lost it.
-        if (host.apply(HostBuffers.CLIENT_ANCHOR) != null && host.apply(old) != null) return;
+        if (host.apply(HostBuffers.CLIENT_ANCHOR) != null && host.apply(old) != null) return false;
         t.registerClassRedirect(old, rebuilt);
+        return true;
     }
 
     // Whether the host class or one of its interfaces already declares the member; an unread class declares nothing.

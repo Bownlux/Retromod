@@ -44,10 +44,10 @@ public final class LegacyForge119Calls {
 
     public static void register(RetromodTransformer transformer) {
         String result = "L" + LegacyEventBaseBridge.resultEnum() + ";";
-        transformer.registerSyntheticClass(SYNTH, generate(result));
+        boolean spawnFactory = buildsSpawnPacketFromEntity(RetromodVersion.TARGET_MC_VERSION);
+        transformer.registerSyntheticClass(SYNTH, generate(result, spawnFactory));
 
-        // 1.20.5 gave the spawn packet a ServerEntity argument, so the factory stops there.
-        if (RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "1.20.5") < 0) {
+        if (spawnFactory) {
             String factory = "(" + LIVING + ")L" + ADD_ENTITY + ";";
             for (String owner : new String[]{ADD_MOB, ADD_ENTITY}) {
                 transformer.registerConstructorRedirect(owner, "(" + LIVING + ")V", SYNTH, "addMob", factory);
@@ -77,12 +77,20 @@ public final class LegacyForge119Calls {
                 SYNTH, "withRandom", lootDesc, true);
     }
 
-    static byte[] generate() {
-        return generate("L" + LegacyEventBaseBridge.resultEnum() + ";");
+    /** Whether the host still builds a spawn packet from the entity alone: 1.20.5 added a ServerEntity argument. */
+    static boolean buildsSpawnPacketFromEntity(String host) {
+        return RetromodVersion.compareMcVersions(host, "1.20.5") < 0;
     }
 
-    /** The helpers, with despawn answers typed on {@code result}: Forge 26.2 replaced the old result enum. */
-    static byte[] generate(String result) {
+    static byte[] generate() {
+        return generate("L" + LegacyEventBaseBridge.resultEnum() + ";", true);
+    }
+
+    /**
+     * The helpers, with despawn answers typed on {@code result}: Forge 26.2 replaced the old result enum. The spawn
+     * packet factory is left out where its constructor is gone, so the embedded class names nothing the host lacks.
+     */
+    static byte[] generate(String result, boolean spawnFactory) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
             @Override
             protected String getCommonSuperClass(String first, String second) {
@@ -91,17 +99,19 @@ public final class LegacyForge119Calls {
         };
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, SYNTH, null, "java/lang/Object", null);
 
-        MethodVisitor packet = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "addMob",
-                "(" + LIVING + ")L" + ADD_ENTITY + ";", null, null);
-        packet.visitCode();
-        packet.visitTypeInsn(NEW, ADD_ENTITY);
-        packet.visitInsn(DUP);
-        packet.visitVarInsn(ALOAD, 0);
-        packet.visitMethodInsn(INVOKESPECIAL, ADD_ENTITY, "<init>",
-                "(Lnet/minecraft/world/entity/Entity;)V", false);
-        packet.visitInsn(ARETURN);
-        packet.visitMaxs(0, 0);
-        packet.visitEnd();
+        if (spawnFactory) {
+            MethodVisitor packet = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "addMob",
+                    "(" + LIVING + ")L" + ADD_ENTITY + ";", null, null);
+            packet.visitCode();
+            packet.visitTypeInsn(NEW, ADD_ENTITY);
+            packet.visitInsn(DUP);
+            packet.visitVarInsn(ALOAD, 0);
+            packet.visitMethodInsn(INVOKESPECIAL, ADD_ENTITY, "<init>",
+                    "(Lnet/minecraft/world/entity/Entity;)V", false);
+            packet.visitInsn(ARETURN);
+            packet.visitMaxs(0, 0);
+            packet.visitEnd();
+        }
 
         // Despawn checks only run on the server, where the level is always a ServerLevelAccessor.
         MethodVisitor despawn = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "canEntityDespawn",

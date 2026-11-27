@@ -7,4 +7,6 @@ public abstract class Either<L, R> {
     private Either() {}
     public abstract Optional<L> left();
     public abstract Optional<R> right();
+    public static <L, R> Either<L, R> left(L value) { throw new UnsupportedOperationException(); }
+    public static <L, R> Either<L, R> right(R value) { throw new UnsupportedOperationException(); }
 }

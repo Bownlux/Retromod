@@ -42,6 +42,7 @@ class LegacyLevelTimeBridgeTest {
         assertEquals(0.25f, run.call("mod/Sky", "timeOfDay"));
         assertEquals(12345L, run.call("mod/Sky", "dayTime"));
         assertEquals(5.0, run.call("mod/Sky", "phaseReference"), "GeckoLib's level::getMoonPhase method reference");
+        assertEquals(0.4f, run.call("mod/Sky", "skyDarken"), "the client level's sky darkening is the sky light factor");
     }
 
     @Test
@@ -100,6 +101,7 @@ class LegacyLevelTimeBridgeTest {
                 package net.minecraft.client.multiplayer;
                 public class ClientLevel extends net.minecraft.world.level.Level {
                     public static ClientLevel get() { return null; }
+                    public float getSkyDarken(float partialTick) { return 1f; }
                 }""");
         s.put("mod/Sky.java", """
                 package mod;
@@ -110,6 +112,7 @@ class LegacyLevelTimeBridgeTest {
                     public static float brightness() { return ClientLevel.get().getMoonBrightness(); }
                     public static float timeOfDay() { return ClientLevel.get().getTimeOfDay(0.5f); }
                     public static long dayTime() { return ClientLevel.get().dayTime(); }
+                    public static float skyDarken() { return ClientLevel.get().getSkyDarken(0.5f); }
                     public static double phaseReference() {
                         DoubleSupplier phase = ClientLevel.get()::getMoonPhase;
                         return phase.getAsDouble();
@@ -135,6 +138,7 @@ class LegacyLevelTimeBridgeTest {
                 public final class EnvironmentAttributes {
                     public static final EnvironmentAttribute<Float> SUN_ANGLE = new EnvironmentAttribute<>();
                     public static final EnvironmentAttribute<net.minecraft.world.level.MoonPhase> MOON_PHASE = new EnvironmentAttribute<>();
+                    public static final EnvironmentAttribute<Float> SKY_LIGHT_FACTOR = new EnvironmentAttribute<>();
                 }""");
         s.put("net/minecraft/world/attribute/EnvironmentAttributeReader.java", """
                 package net.minecraft.world.attribute;
@@ -160,6 +164,7 @@ class LegacyLevelTimeBridgeTest {
                             @SuppressWarnings("unchecked")
                             public <Value> Value getDimensionValue(EnvironmentAttribute<Value> attribute) {
                                 if (attribute == EnvironmentAttributes.MOON_PHASE) return (Value) MoonPhase.WAXING_CRESCENT;
+                                if (attribute == EnvironmentAttributes.SKY_LIGHT_FACTOR) return (Value) Float.valueOf(0.4f);
                                 return (Value) Float.valueOf(90f);
                             }
                         };

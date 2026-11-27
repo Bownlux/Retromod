@@ -39,6 +39,14 @@
 
   "retromod.restart.converted": "\u5df2\u4e3a\u6b64 Minecraft \u7248\u672c\u8f6c\u6362\u7684\u6a21\u7ec4\uff1a%s\n\u91cd\u65b0\u542f\u52a8 Minecraft \u4ee5\u52a0\u8f7d\u8f6c\u6362\u540e\u7684\u6a21\u7ec4\u3002\n\n\u70b9\u51fb\u201c\u662f\u201d\u5173\u95ed Minecraft\uff0c\u7136\u540e\u4ece\u542f\u52a8\u5668\u91cd\u65b0\u542f\u52a8\u3002",
   "retromod.restart.cache": "\u5df2\u4e3a\u6b64 Minecraft \u7248\u672c\u7ffb\u8bd1\u7684\u6a21\u7ec4\uff1a%s\n\u91cd\u65b0\u542f\u52a8 Minecraft \u4ee5\u52a0\u8f7d\u7ffb\u8bd1\u540e\u7684\u6a21\u7ec4\u3002mods/ \u4e2d\u7684\u6587\u4ef6\u6ca1\u6709\u88ab\u66f4\u6539\u3002\n\n\u70b9\u51fb\u201c\u662f\u201d\u5173\u95ed Minecraft\uff0c\u7136\u540e\u4ece\u542f\u52a8\u5668\u91cd\u65b0\u542f\u52a8\u3002",
+  "retromod.huge_jar.title": "大型模组文件",
+  "retromod.huge_jar.unverified_title": "未通过验证的模组文件",
+  "retromod.huge_jar.message": "%s 解压后为 %s（文件大小 %s）。其文件头通过了 Retromod 的压缩包检查：%s 个条目，没有重叠。\n\nRetromod 只在你允许时翻译超过 25 GB 的文件。“允许”会在下次启动时翻译它。“跳过”会将它保留在 %s 中不翻译，下次会再次询问。",
+  "retromod.huge_jar.unverified": "%s 解压后为 %s（文件大小 %s），未通过 Retromod 的压缩包检查。它可能是 zip 炸弹。游戏日志记录了检查发现的问题。\n\n只有在你信任其来源时才允许。“允许”会在下次启动时翻译它。“跳过”会将它保留在 %s 中不翻译，下次会再次询问。",
+  "retromod.huge_jar.allow": "允许",
+  "retromod.huge_jar.skip": "跳过",
+  "retromod.huge_jar.approved": "已允许。下次启动 Minecraft 时 Retromod 会翻译 %s。",
+  "retromod.huge_jar.not_saved": "Retromod 无法保存 %s 的许可。游戏日志中记录了需要手动添加到 config/retromod/config.json 的哈希值。",
 
   "retromod.filepicker.title": "Retromod: \u9009\u62e9\u8981\u8f6c\u6362\u7684\u6a21\u7ec4 JAR",
 

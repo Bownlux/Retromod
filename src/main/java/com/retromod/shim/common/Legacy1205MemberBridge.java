@@ -154,6 +154,9 @@ public final class Legacy1205MemberBridge {
             new Member(ITEM_STACK, "hurtAndBreak", "(IL" + LIVING + ";Ljava/util/function/Consumer;)V"),
             new Member(LIVING, "broadcastBreakEvent", "(L" + HAND + ";)V"),
             new Member(LIVING, "broadcastBreakEvent", "(L" + SLOT + ";)V"),
+            // A Fabric mod's broadcastBreakEvent keeps its intermediary id, which the 26.x name table
+            // names onEquippedItemBroken, with the old descriptor.
+            new Member(LIVING, "onEquippedItemBroken", "(L" + SLOT + ";)V"),
             new Member(ITEM_STACK, "hurt", ITEM_HURT),
             // A Fabric mod's hurt keeps its intermediary id, which the 26.x name table names
             // hurtAndBreak, with the old descriptor.
@@ -450,7 +453,7 @@ public final class Legacy1205MemberBridge {
                     mv.visitInsn(Opcodes.IRETURN);
                 }
                 case "hurtAndBreak" -> emitHurtAndBreak(mv);
-                case "broadcastBreakEvent" -> emitBreakEvent(mv, member.desc().contains(HAND), shape);
+                case "broadcastBreakEvent", "onEquippedItemBroken" -> emitBreakEvent(mv, member.desc().contains(HAND), shape);
                 case "finalizeSpawn" -> emitFinalizeSpawn(cw, mv, member);
                 default -> throw new IllegalArgumentException("No helper for " + member.name());
             }

@@ -58,6 +58,21 @@ public final class ForgeNeoForgeApiBridge {
             {"common/world/ModifiableStructureInfo", "common/world/ModifiableStructureInfo"},
             {"common/world/ModifiableStructureInfo$StructureInfo", "common/world/ModifiableStructureInfo$StructureInfo"},
             {"common/world/ModifiableStructureInfo$StructureInfo$Builder", "common/world/ModifiableStructureInfo$StructureInfo$Builder"},
+            // The permission API kept every member an old mod calls; checked against NeoForge 21.1 and 26.3.
+            {"server/permission/PermissionAPI", "server/permission/PermissionAPI"},
+            {"server/permission/nodes/PermissionNode", "server/permission/nodes/PermissionNode"},
+            {"server/permission/nodes/PermissionNode$PermissionResolver", "server/permission/nodes/PermissionNode$PermissionResolver"},
+            {"server/permission/nodes/PermissionType", "server/permission/nodes/PermissionType"},
+            {"server/permission/nodes/PermissionTypes", "server/permission/nodes/PermissionTypes"},
+            {"server/permission/nodes/PermissionDynamicContext", "server/permission/nodes/PermissionDynamicContext"},
+            {"server/permission/nodes/PermissionDynamicContextKey", "server/permission/nodes/PermissionDynamicContextKey"},
+            {"server/permission/events/PermissionGatherEvent", "server/permission/events/PermissionGatherEvent"},
+            {"server/permission/events/PermissionGatherEvent$Nodes", "server/permission/events/PermissionGatherEvent$Nodes"},
+            {"server/permission/events/PermissionGatherEvent$Handler", "server/permission/events/PermissionGatherEvent$Handler"},
+            {"server/permission/handler/IPermissionHandler", "server/permission/handler/IPermissionHandler"},
+            {"server/permission/handler/IPermissionHandlerFactory", "server/permission/handler/IPermissionHandlerFactory"},
+            {"server/permission/handler/DefaultPermissionHandler", "server/permission/handler/DefaultPermissionHandler"},
+            {"server/permission/exceptions/UnregisteredPermissionException", "server/permission/exceptions/UnregisteredPermissionException"},
             {"common/world/StructureModifier", "common/world/StructureModifier"},
             // A mod's own biome modifier: the same interface, phases, and builders. Its serializer
             // becomes a MapCodec as it registers (LegacyLootModifierCodecs).
@@ -159,6 +174,11 @@ public final class ForgeNeoForgeApiBridge {
                     "net/neoforged/neoforgespi/language/ModFileScanData$AnnotationData"},
             {"net/minecraftforge/forgespi/language/ModFileScanData$ClassData",
                     "net/neoforged/neoforgespi/language/ModFileScanData$ClassData"},
+            // A mod's own entries (getModId, getVersion, getOwningFile, getFilePath, getFileName); same members
+            // on FancyModLoader 4 and 12, and LegacyModFileBridge answers findResource where 1.21.9 dropped it.
+            {"net/minecraftforge/fml/loading/moddiscovery/ModInfo", "net/neoforged/fml/loading/moddiscovery/ModInfo"},
+            {"net/minecraftforge/fml/loading/moddiscovery/ModFile", "net/neoforged/fml/loading/moddiscovery/ModFile"},
+            {"net/minecraftforge/forgespi/language/IConfigurable", "net/neoforged/neoforgespi/language/IConfigurable"},
     };
 
     /**
@@ -198,8 +218,15 @@ public final class ForgeNeoForgeApiBridge {
         com.retromod.shim.forge.capability.ForgeCapabilityStorage.listen();
         registerEventCalls(transformer);
         LegacyForgeHooksBridge.register(transformer, ForgeNeoForgeApiBridge::hostHasClass);
+        LegacyForgeHooksBridge.registerClientHooks(transformer, com.retromod.core.ClassResourceInspector::read);
         LegacyFluidSupplierBridge.register(transformer);
         LegacyForgeModAttributes.register(transformer);
+        LegacyForgeModFluids.register(transformer);
+        LegacyRenamedEventsBridge.register(transformer, ForgeNeoForgeApiBridge::hostHasClass);
+        LegacyNetworkHooksBridge.registerNeoForge(transformer);
+        com.retromod.shim.neoforge.LegacyBurnTimeBridge.registerForgeHooksRead(transformer, com.retromod.core.ClassResourceInspector::read);
+        // Forge's forge: tag constants became NeoForge c: constants, many under new names.
+        LegacyNeoForgeTagsBridge.register(transformer);
         registerStrictIngredient(transformer, ForgeNeoForgeApiBridge::hostHasClass);
         registerCombinedIngredients(transformer, ForgeNeoForgeApiBridge::hostHasClass);
         LOGGER.debug(RetromodLog.DETAIL, "Bridged {} renamed Forge API classes and the Forge capability system", moved);

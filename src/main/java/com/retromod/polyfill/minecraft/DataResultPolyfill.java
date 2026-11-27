@@ -14,6 +14,7 @@ import java.lang.reflect.Method;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Polyfill methods for DataResult API changes.
@@ -63,6 +64,30 @@ public class DataResultPolyfill {
             return eitherLeftMethod.invoke(null, (Object) null);
         } catch (Exception e) {
             throw new RuntimeException("DataResult.get() polyfill failed", e);
+        }
+    }
+
+    /** DataFixerUpper 6's {@code DataResult.error(message)}, which 1.20.5 replaced with a message supplier. */
+    public static Object error(String message) {
+        try {
+            Supplier<String> text = () -> message;
+            return Class.forName(DATA_RESULT).getMethod("error", Supplier.class).invoke(null, text);
+        } catch (InvocationTargetException e) {
+            throw new RuntimeException(e.getCause());
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Retromod could not build a DataResult error for: " + message, e);
+        }
+    }
+
+    /** {@code DataResult.error(message, partial)}: the same, keeping the partial result. */
+    public static Object error(String message, Object partial) {
+        try {
+            Supplier<String> text = () -> message;
+            return Class.forName(DATA_RESULT).getMethod("error", Supplier.class, Object.class).invoke(null, text, partial);
+        } catch (InvocationTargetException e) {
+            throw new RuntimeException(e.getCause());
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Retromod could not build a DataResult error for: " + message, e);
         }
     }
 

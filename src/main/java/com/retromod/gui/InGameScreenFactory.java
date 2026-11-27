@@ -262,6 +262,57 @@ public final class InGameScreenFactory {
         };
     }
 
+    /**
+     * Shows a question with two named buttons over {@code parentScreen}. Each answer runs its
+     * callback, which chooses the next screen. Where ConfirmScreen takes no button labels, the
+     * buttons read Yes and No. Returns true when the screen opened.
+     */
+    static boolean showChoice(Object parentScreen, Object titleText, Object messageText,
+            Object yesText, Object noText, Runnable onYes, Runnable onNo) {
+        if (!resolveClasses() || confirmScreenClass == null || titleText == null || messageText == null) {
+            LOGGER.warn("The question screen is unavailable on this Minecraft version.");
+            return false;
+        }
+        try {
+            Class<?> boolConsumerClass = Class.forName("it.unimi.dsi.fastutil.booleans.BooleanConsumer");
+            Object callback = Proxy.newProxyInstance(boolConsumerClass.getClassLoader(),
+                    new Class<?>[]{boolConsumerClass}, answerHandler(onYes, onNo));
+            Object screen;
+            try {
+                // ConfirmScreen(callback, title, message, yesButton, noButton)
+                screen = confirmScreenClass.getConstructor(boolConsumerClass, textClass, textClass,
+                        textClass, textClass).newInstance(callback, titleText, messageText, yesText, noText);
+            } catch (NoSuchMethodException noLabels) {
+                screen = confirmScreenClass.getConstructor(boolConsumerClass, textClass, textClass)
+                        .newInstance(callback, titleText, messageText);
+            }
+            return setScreen(screen);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            LOGGER.warn("Could not show the question screen: {}", e.toString());
+            return false;
+        }
+    }
+
+    /** Shows a message, built as Minecraft text, with one button that returns to {@code parentScreen}. */
+    static boolean showAlertText(Object parentScreen, Object titleText, Object messageText) {
+        if (!resolveClasses() || alertScreenClass == null || titleText == null || messageText == null) {
+            return false;
+        }
+        try {
+            Constructor<?> ctor = alertScreenClass.getConstructor(Runnable.class, textClass, textClass);
+            Runnable back = () -> setScreen(parentScreen);
+            return setScreen(ctor.newInstance(back, titleText, messageText));
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            LOGGER.warn("Could not show the message screen: {}", e.toString());
+            return false;
+        }
+    }
+
+    /** Returns to {@code parentScreen}. */
+    static void showScreen(Object parentScreen) {
+        setScreen(parentScreen);
+    }
+
     /** Shows a message with one button that returns to {@code parentScreen}. */
     static void showAlert(Object parentScreen, String title, String message) {
         if (!resolveClasses() || alertScreenClass == null) {

@@ -353,7 +353,7 @@ public final class MixinCompatibilityTransformer {
         byte[] bridged = applyLegacyMemberBridges(translated);
         // The jar's own classes let a repair check what the mixin's code would load with it.
         bridged = new MixinHostDriftRepair(transformer.getFuzzyResolver(),
-                transformer.getMethodRedirects(), transformer.getClassRedirects(),
+                transformer.getMethodRedirects(), transformer.getClassRedirectsForCurrentMod(),
                 RetromodTransformer::readCurrentJarClassForAdapter).apply(bridged);
         bridged = retargetLambdaInjections(bridged);
         return gateMissingShadows(softenMissingNewSites(deferStaticItemStacks(adaptValueIoHandlers(bridged))));
@@ -520,7 +520,7 @@ public final class MixinCompatibilityTransformer {
         // must link on the host, so the repair needs the indexed host jar.
         com.retromod.core.FuzzyMethodResolver host = transformer.getFuzzyResolver();
         MixinLinkCheck linkCheck = host != null && host.isIndexed() ? new MixinLinkCheck(host,
-                transformer.getClassRedirects(), RetromodTransformer::readCurrentJarClassForAdapter) : null;
+                transformer.getClassRedirectsForCurrentMod(), RetromodTransformer::readCurrentJarClassForAdapter) : null;
         modified |= MixinMaterialRuleRepair.apply(classNode, linkCheck);
         // 26.3 resolves biomes through createResolver; an old head handler on the removed lookup moves onto it.
         modified |= MixinBiomeResolverRepair.apply(classNode);

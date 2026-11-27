@@ -204,10 +204,24 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         LegacyQuadGettersBridge.register(transformer);
         LegacyOptionsBridge.register(transformer);
         LegacyGameDataShapesBridge.register(transformer);
+        // 1.20.2 made LootContext.Builder.create take an Optional table id.
+        LegacyLootContextCreateBridge.register(transformer);
         LegacyClientGapsBridge.register(transformer);
         LegacyScatteredMembersBridge.register(transformer);
+        // Window, screen click, list, option range and tooltip members old GUI mods call.
+        LegacyGuiMembersBridge.register(transformer);
+        // Old text draws, buffer-source graphics and sprite lookups, rebuilt on 26.x render classes.
+        LegacyStandInCallsBridge.register(transformer);
+        // Item transforms on a pose stack, prefixed dynamic textures, the culled translucent type and the blend equation.
+        LegacyRenderGapsBridge.register(transformer);
+        // Old shader program and uniform members, which link to inert stand-ins.
+        LegacyShaderMembersBridge.register(transformer);
         // Members 1.20.1 mods call that later versions removed: respawn points, game profiles, portal targets.
         Legacy1201MemberBridge.register(transformer);
+        // Registry tags, structure lookups, curses, permission levels and other calls 1.20.1 and 1.21.1 mods make.
+        LegacyGameplayCallsBridge.register(transformer);
+        // Command feedback, item comparison, skins and other members mods for 1.19.4 and older call.
+        LegacyEraCallsBridge.register(transformer);
         // Removed members the big content mods call, rebuilt on their replacements.
         LegacyContentCallsBridge.register(transformer);
         LegacyDepthBlendBridge.registerDepthState(transformer);
@@ -1369,7 +1383,12 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
     /** The ListTag getters 1.21.5 turned into Optional getters, each taking an int index. */
     static final List<NbtLookupCall> LIST_LOOKUPS = List.of(
             new NbtLookupCall("getString", "method_10608", "Ljava/lang/String;", "listGetString"),
-            new NbtLookupCall("getInt", "method_10600", "I", "listGetInt"));
+            new NbtLookupCall("getInt", "method_10600", "I", "listGetInt"),
+            new NbtLookupCall("getFloat", "method_10604", "F", "listGetFloat"),
+            new NbtLookupCall("getDouble", "method_10611", "D", "listGetDouble"),
+            // ListTag.getIntArray took a new intermediary id in 1.17; mods built for 1.16.5 still carry the old one.
+            new NbtLookupCall("getIntArray", "method_36111", "[I", "listGetIntArray"),
+            new NbtLookupCall("getIntArray", "method_10610", "[I", "listGetIntArray"));
 
     /** The NumericTag getters 1.21.5 renamed when it made NumericTag an interface; intermediary kept their ids. */
     static final List<NbtLookupCall> NUMERIC_LOOKUPS = List.of(

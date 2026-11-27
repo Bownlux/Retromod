@@ -5,4 +5,5 @@ public class Matrix3x2fStack extends Matrix3x2f {
     public Matrix3x2fStack(int stackSize) {}
     public Matrix3x2fStack pushMatrix() { throw new UnsupportedOperationException(); }
     public Matrix3x2fStack popMatrix() { throw new UnsupportedOperationException(); }
+    @Override public Object clone() throws CloneNotSupportedException { throw new UnsupportedOperationException(); }
 }

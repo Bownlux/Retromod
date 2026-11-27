@@ -3,4 +3,5 @@ package net.minecraft.network.chat.contents;
 
 public class TranslatableContents implements net.minecraft.network.chat.ComponentContents {
     public String getKey() { throw new UnsupportedOperationException(); }
+    public Object[] getArgs() { throw new UnsupportedOperationException(); }
 }

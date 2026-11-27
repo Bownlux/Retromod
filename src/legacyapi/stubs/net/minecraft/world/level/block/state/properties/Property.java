@@ -5,4 +5,6 @@ public abstract class Property<T extends Comparable<T>> {
     protected Property() {}
     public String getName() { throw new UnsupportedOperationException(); }
     public abstract String getName(T value);
+    // Abstract on the host.
+    public java.util.Optional<T> getValue(String name) { throw new UnsupportedOperationException(); }
 }

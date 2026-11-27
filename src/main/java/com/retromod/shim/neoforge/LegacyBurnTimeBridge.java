@@ -24,6 +24,7 @@ public final class LegacyBurnTimeBridge {
     static final String RECIPE_TYPE = "Lnet/minecraft/world/item/crafting/RecipeType;";
     static final String STACK_DESC = "(" + RECIPE_TYPE + ")I";
     static final String ITEM_DESC = "(L" + STACK + ";" + RECIPE_TYPE + ")I";
+    static final String COMMON_HOOKS = "net/neoforged/neoforge/common/CommonHooks";
     static final String FUEL_VALUES = "net/minecraft/world/level/block/entity/FuelValues";
     static final String COMPONENTS = "net/minecraft/core/component/DataComponents";
     static final String ROOT = RebuiltApiClasses.ROOT + "neoforge/common/extensions/";
@@ -46,6 +47,9 @@ public final class LegacyBurnTimeBridge {
         // Mods call the stack read on ItemStack or on the extension, and the item read on Item or the extension.
         t.registerMethodRedirect(STACK, "getBurnTime", STACK_DESC, helper, "getBurnTime", "(L" + STACK + ";" + STACK_DESC.substring(1), true);
         t.registerMethodRedirect(STACK_EXTENSION, "getBurnTime", STACK_DESC, helper, "getBurnTime", "(L" + STACK + ";" + STACK_DESC.substring(1), true);
+        // Forge 1.20.1's ForgeHooks.getBurnTime(stack, type), which the Forge move renames to CommonHooks, is the stack read.
+        t.registerMethodRedirect(COMMON_HOOKS, "getBurnTime", "(L" + STACK + ";" + STACK_DESC.substring(1),
+                helper, "getBurnTime", "(L" + STACK + ";" + STACK_DESC.substring(1));
         String itemHelperDesc = "(L" + ITEM + ";" + ITEM_DESC.substring(1);
         t.registerInheritedMethodRedirect(ITEM, "getBurnTime", ITEM_DESC, helper, "getBurnTime", itemHelperDesc);
         t.registerMethodRedirect(ITEM_EXTENSION, "getBurnTime", ITEM_DESC, helper, "getBurnTime", itemHelperDesc, true);
@@ -53,6 +57,36 @@ public final class LegacyBurnTimeBridge {
         t.registerSuperCallHelper(helper, "getBurnTime", itemHelperDesc, "superGetBurnTime");
         // Those hosts' furnaces call the fuel values form, so an old item override gets one that answers through it.
         if (helper.equals(FUEL_VALUES_HELPER)) t.enablePostProcess(com.retromod.shim.common.LegacyBurnTimeOverrideAdapter.FLAG);
+    }
+
+    static final String STACK_READ_HELPER = "com/retromod/generated/LegacyStackBurnTimes";
+    static final String HOOK_DESC = "(L" + STACK + ";" + STACK_DESC.substring(1);
+
+    /**
+     * NeoForge 21.1 has no {@code CommonHooks.getBurnTime}, only the stack read, so a Forge 1.20.1 mod's renamed
+     * {@code ForgeHooks.getBurnTime(stack, type)} becomes {@code stack.getBurnTime(type)} there. Later hosts take
+     * the helper {@link #register} picks.
+     */
+    public static void registerForgeHooksRead(RetromodTransformer t, Function<String, ClassNode> host) {
+        ClassNode extension = host.apply(STACK_EXTENSION);
+        ClassNode hooks = host.apply(COMMON_HOOKS);
+        if (extension == null || hooks == null || !declares(extension, "getBurnTime", STACK_DESC)
+                || declares(hooks, "getBurnTime", HOOK_DESC)) return;
+        org.objectweb.asm.ClassWriter cw = new org.objectweb.asm.ClassWriter(org.objectweb.asm.ClassWriter.COMPUTE_MAXS);
+        cw.visit(org.objectweb.asm.Opcodes.V17, org.objectweb.asm.Opcodes.ACC_PUBLIC | org.objectweb.asm.Opcodes.ACC_FINAL
+                | org.objectweb.asm.Opcodes.ACC_SUPER, STACK_READ_HELPER, null, "java/lang/Object", null);
+        org.objectweb.asm.MethodVisitor mv = cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC | org.objectweb.asm.Opcodes.ACC_STATIC,
+                "getBurnTime", HOOK_DESC, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 0);
+        mv.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 1);
+        mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKEVIRTUAL, STACK, "getBurnTime", STACK_DESC, false);
+        mv.visitInsn(org.objectweb.asm.Opcodes.IRETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        t.registerSyntheticClass(STACK_READ_HELPER, cw.toByteArray());
+        t.registerMethodRedirect(COMMON_HOOKS, "getBurnTime", HOOK_DESC, STACK_READ_HELPER, "getBurnTime", HOOK_DESC);
     }
 
     /** The helper this host needs, or null when the host still has the 21.1 read or is not NeoForge. */

@@ -6,6 +6,7 @@ import com.mojang.serialization.MapCodec;
 
 public final class Style {
     public boolean isEmpty() { throw new UnsupportedOperationException(); }
+    public ClickEvent getClickEvent() { throw new UnsupportedOperationException(); }
 
     public static class Serializer {
         public static final MapCodec<Style> MAP_CODEC = null;

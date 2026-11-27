@@ -95,6 +95,15 @@ public class LegacyDfuRenames implements MinecraftVersionedApiShim {
             transformer.registerMethodRedirect(DATA_RESULT, "getOrThrow", OLD_GET_OR_THROW, GET_OR_THROW_HELPER,
                     "getOrThrow", "(Ljava/lang/Object;ZLjava/util/function/Consumer;)Ljava/lang/Object;", true);
         }
+        // A plain message became a message supplier in the same rebuild; the helper wraps the old message.
+        ClassNode dataResult = host.apply(DATA_RESULT);
+        for (String partial : new String[] {"", "Ljava/lang/Object;"}) {
+            String oldError = "(Ljava/lang/String;" + partial + ")L" + DATA_RESULT + ";";
+            boolean gone = dataResult == null ? offlineGetOrThrowGone : !declares(dataResult, "error", oldError);
+            if (!gone) continue;
+            transformer.registerMethodRedirect(DATA_RESULT, "error", oldError, GET_OR_THROW_HELPER, "error",
+                    "(Ljava/lang/String;" + partial + ")Ljava/lang/Object;");
+        }
     }
 
     /** Whether the host's DataResult lacks DFU 6's getOrThrow(boolean, Consumer); when DFU cannot be read, the target version answers. */

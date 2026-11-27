@@ -39,6 +39,14 @@
 
   "retromod.restart.converted": "Mod trasformate per questa versione di Minecraft: %s\nRiavvia Minecraft per caricare le mod trasformate.\n\nFai clic su S\u00ec per chiudere Minecraft, poi riaprilo dal tuo launcher.",
   "retromod.restart.cache": "Mod tradotte per questa versione di Minecraft: %s\nRiavvia Minecraft per caricare le mod tradotte. I tuoi file in mods/ non sono stati modificati.\n\nFai clic su S\u00ec per chiudere Minecraft, poi riaprilo dal tuo launcher.",
+  "retromod.huge_jar.title": "File mod di grandi dimensioni",
+  "retromod.huge_jar.unverified_title": "File mod non verificato",
+  "retromod.huge_jar.message": "%s occupa %s una volta estratto (il file pesa %s). Le sue intestazioni hanno superato il controllo dell'archivio di Retromod: %s voci, nessuna sovrapposta.\n\nRetromod traduce i file oltre 25 GB solo con la tua approvazione. Consenti lo traduce al prossimo avvio. Salta lo lascia non tradotto in %s, e Retromod lo chiederà di nuovo la prossima volta.",
+  "retromod.huge_jar.unverified": "%s occupa %s una volta estratto (il file pesa %s) e non ha superato il controllo dell'archivio di Retromod. Potrebbe essere una zip bomb. Il log del gioco indica cosa ha trovato il controllo.\n\nConsentilo solo se ti fidi della sua provenienza. Consenti lo traduce al prossimo avvio. Salta lo lascia non tradotto in %s, e Retromod lo chiederà di nuovo la prossima volta.",
+  "retromod.huge_jar.allow": "Consenti",
+  "retromod.huge_jar.skip": "Salta",
+  "retromod.huge_jar.approved": "Approvato. Retromod tradurrà %s al prossimo avvio di Minecraft.",
+  "retromod.huge_jar.not_saved": "Retromod non è riuscito a salvare l'approvazione per %s. Il log del gioco indica l'hash da aggiungere a mano in config/retromod/config.json.",
 
   "retromod.filepicker.title": "Retromod: Seleziona i JAR delle mod da trasformare",
 

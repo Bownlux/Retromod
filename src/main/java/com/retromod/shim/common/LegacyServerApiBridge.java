@@ -281,7 +281,8 @@ public final class LegacyServerApiBridge {
             if (!method.name.equals(name) || !method.desc.startsWith("(" + entity)) continue;
             String old = "(" + PLAYER + method.desc.substring(entity.length() + 1);
             if (hasMethod(level, name, old)) continue;
-            for (String owner : new String[] {LEVEL, SERVER_LEVEL}) {
+            // A client level call names ClientLevel, which took the same widening.
+            for (String owner : new String[] {LEVEL, SERVER_LEVEL, "net/minecraft/client/multiplayer/ClientLevel"}) {
                 t.registerMethodRedirect(owner, name, old, owner, name, method.desc);
             }
         }

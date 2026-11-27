@@ -32,8 +32,8 @@ public class FabricModTransformer {
     private static final long MAX_ENTRY_SIZE = ZipSecurity.DEFAULT_MAX_ENTRY_SIZE;
     /** Loader metadata cap. These files are parsed as text and should stay small. */
     private static final long MAX_METADATA_SIZE = 2L * 1024 * 1024;
-    /** Total extraction cap (zip-bomb guard). */
-    private static final long MAX_TOTAL_SIZE = 500 * 1024 * 1024;
+    /** Total extraction cap for a nested jar (zip-bomb guard); the outer jar uses its ArchiveLimits allowance. */
+    private static final long MAX_TOTAL_SIZE = ZipSecurity.DEFAULT_MAX_TOTAL_SIZE;
     /** Bound for one archive traversal. */
     private static final int MAX_ENTRY_COUNT = 100_000;
     /** Maximum number of nested archive levels processed below the outer mod. */
@@ -104,6 +104,8 @@ public class FabricModTransformer {
     private final RetromodTransformer bytecodeTransformer;
     /** Libraries translated before the current jar, whose stand-in copies it may reuse. */
     private SyntheticLibraries syntheticLibraries = SyntheticLibraries.NONE;
+    // The outer jar's assets and data that stay in the source jar while it is translated, or null.
+    private com.retromod.resources.StreamedJarResources streamedResources;
 
     public FabricModTransformer(String targetMcVersion) {
         this.targetMcVersion = targetMcVersion;
@@ -233,7 +235,11 @@ public class FabricModTransformer {
                         com.retromod.loaderapi.LoaderApiContext.TransformPath.FABRIC_JAR,
                         modMcVersion));
 
+        com.retromod.util.ArchiveLimits.Scope admitted = null;
         try {
+            // A jar over 1 GB passes the archive check first; one over 25 GB waits for approval.
+            admitted = ArchiveAdmission.admit(sourceJar);
+            streamedResources = com.retromod.resources.StreamedJarResources.open(sourceJar);
             extractJar(sourceJar, tempDir);
 
             com.retromod.mixin.MixinRefmapRepairIndex refmapRepairs =
@@ -259,8 +265,12 @@ public class FabricModTransformer {
 
             // The mod's own resources and data, through the same converters every path runs.
             // The source version comes from the source jar, never the rewritten tree.
-            int dataMigrated = com.retromod.resources.ModResourceMigrations.migrateDirectory(
-                    tempDir, resourceContext(sourceJar, false));
+            int dataMigrated = streamedResources.isEmpty()
+                    ? com.retromod.resources.ModResourceMigrations.migrateDirectory(
+                            tempDir, resourceContext(sourceJar, false))
+                    : com.retromod.resources.ModResourceMigrations.standard().run(
+                            streamedResources.over(com.retromod.resources.DirectoryResourceTree.open(tempDir)),
+                            resourceContext(sourceJar, false));
             if (dataMigrated > 0) {
                 LOGGER.debug(RetromodLog.DETAIL, "Updated {} resource and data file(s)", dataMigrated);
             }
@@ -305,6 +315,9 @@ public class FabricModTransformer {
 
             return outputJar;
 
+        } catch (ArchiveAdmission.HeldException held) {
+            // The decision already logged what the player can do, so it is not a crash to report.
+            throw held;
         } catch (Exception e) {
             LOGGER.error("Failed to transform mod: {}", originalName);
 
@@ -317,12 +330,30 @@ public class FabricModTransformer {
         } finally {
             bytecodeTransformer.setModSourceVersion(null);
             deleteRecursively(tempDir);
+            closeStreamedResources();
+            if (admitted != null) admitted.close();
         }
+    }
+
+    private void closeStreamedResources() {
+        if (streamedResources == null) return;
+        try {
+            streamedResources.close();
+        } catch (IOException e) {
+            LOGGER.debug("Could not close the source jar: {}", e.getMessage());
+        }
+        streamedResources = null;
     }
 
     /** Logs the Fabric API references the host lacks, in the jar and the jars it nests; never fails the transform. */
     private void reportMissingFabricApi(Path outputJar, String originalName) {
         try {
+            // The check reads the whole jar into memory, so a very large one is left out.
+            if (Files.size(outputJar) > ZipSecurity.DEFAULT_MAX_ENTRY_SIZE) {
+                LOGGER.debug("Skipped the Fabric API reference check of {}: the jar is over {}",
+                        originalName, com.retromod.util.ArchiveCheck.humanBytes(ZipSecurity.DEFAULT_MAX_ENTRY_SIZE));
+                return;
+            }
             com.retromod.loaderapi.fabric.v26.FabricApiLinkCheck.reportJar(
                     Files.readAllBytes(outputJar), originalName, targetMcVersion);
         } catch (IOException | RuntimeException e) {
@@ -520,11 +551,15 @@ public class FabricModTransformer {
     /** Extracts one archive using caller-provided traversal limits when present. */
     private void extractJar(Path jarPath, Path outputDir,
             RetromodTransformer.NestedArchiveBudget nestedBudget) throws IOException {
+        // The outer jar follows its admission allowance; a nested jar keeps the fixed limits.
+        boolean outer = nestedBudget == null;
+        long maxTotal = outer ? com.retromod.util.ArchiveLimits.maxTotalBytes() : MAX_TOTAL_SIZE;
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             var entries = jar.entries();
             long totalSize = 0;
             int totalEntries = 0;
             Set<String> entryNames = new HashSet<>();
+            var classBytes = new com.retromod.util.ArchiveLimits.ClassBytes(String.valueOf(jarPath.getFileName()));
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
                 if (++totalEntries > MAX_ENTRY_COUNT) {
@@ -544,12 +579,20 @@ public class FabricModTransformer {
                         nestedBudget.reserve(0, entry.getName());
                     }
                     Files.createDirectories(outputPath);
+                } else if (outer && streamedResources != null && entry.getName().equals(canonicalName)
+                        && com.retromod.resources.StreamedJarResources.leftInSourceJar(canonicalName, entry.getSize())) {
+                    // Left in the source jar and copied at repackaging; its declared size counts now.
+                    streamedResources.add(canonicalName);
+                    totalSize += entry.getSize();
+                    if (totalSize > maxTotal) throw totalExceeded(jarPath, maxTotal, totalSize);
                 } else {
                     Files.createDirectories(outputPath.getParent());
                     long writtenBytes;
-                    long readLimit = MAX_ENTRY_SIZE;
+                    // No file in the folder passes 128 MiB, or 32 MiB for a class, since steps read them whole.
+                    long readLimit = com.retromod.util.ArchiveLimits.entryLimit(entry.getName(),
+                            outer ? maxTotal - totalSize : MAX_ENTRY_SIZE);
                     if (nestedBudget != null) {
-                        readLimit = nestedBudget.beginRead(MAX_ENTRY_SIZE, entry.getName());
+                        readLimit = nestedBudget.beginRead(readLimit, entry.getName());
                     }
                     try (InputStream is = jar.getInputStream(entry)) {
                         writtenBytes = ZipSecurity.copyBounded(
@@ -559,14 +602,20 @@ public class FabricModTransformer {
                         nestedBudget.completeRead(readLimit, writtenBytes);
                     }
                     totalSize += writtenBytes;
-                    if (totalSize > MAX_TOTAL_SIZE) {
-                        throw new IOException("ZIP total extracted size exceeds limit ("
-                            + MAX_TOTAL_SIZE + " bytes) - possible zip bomb (decompressed "
-                            + totalSize + " bytes so far)");
-                    }
+                    if (totalSize > maxTotal) throw totalExceeded(jarPath, maxTotal, totalSize);
+                    classBytes.add(entry.getName(), writtenBytes);
                 }
             }
         }
+    }
+
+    /** The error for a jar that unpacks past its limit, naming the jar and the limit. */
+    static IOException totalExceeded(Path jar, long limit, long sizeSoFar) {
+        return new IOException(jar.getFileName() + " unpacks to more than "
+                + com.retromod.util.ArchiveCheck.humanBytes(limit) + " (" + sizeSoFar
+                + " bytes so far). It may be a zip bomb, or a jar that declared smaller sizes "
+                + "than it holds. Retromod stopped unpacking it. Download the jar again from where "
+                + "you got it, or leave it out.");
     }
 
     /**
@@ -1832,6 +1881,11 @@ public class FabricModTransformer {
             // ZIP directory entries: package resources (ClassLoader.getResources) and classpath
             // scanners (Reflections - YungsApi @AutoRegister) silently find nothing without them.
             com.retromod.util.JarDirectoryEntries.writeAll(jos, sourceDir);
+            // Files left in the source jar are copied last, and their folders are listed here.
+            java.util.List<String> streamed = depth == 0 && streamedResources != null
+                    && !streamedResources.isEmpty() ? streamedResources.remaining(sourceDir)
+                    : java.util.List.of();
+            com.retromod.util.JarDirectoryEntries.writeAllForNames(jos, streamed);
 
             // Populated lazily while processing mixin configs; modified class bytes are
             // written from here rather than re-read from disk.
@@ -1937,6 +1991,12 @@ public class FabricModTransformer {
                     Files.copy(file, jos);
                     jos.closeEntry();
                 }
+            }
+            for (String name : streamed) {
+                if (!writtenEntries.add(name)) continue;
+                jos.putNextEntry(new JarEntry(name));
+                streamedResources.copy(name, jos);
+                jos.closeEntry();
             }
             }
             try (JarFile ignored = new JarFile(stagedJar.toFile())) {

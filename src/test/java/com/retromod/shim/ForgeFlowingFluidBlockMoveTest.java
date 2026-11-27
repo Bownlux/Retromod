@@ -44,6 +44,19 @@ class ForgeFlowingFluidBlockMoveTest {
     }
 
     @Test
+    void registryObjectMovesToTheRegistriesPackage() {
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        new Forge_1_16_5_to_1_17().registerRedirects(transformer);
+
+        byte[] output = transformer.transformClass(subclass("net/minecraftforge/fml/RegistryObject"),
+                "example/ModItemHolder");
+
+        assertEquals("net/minecraftforge/registries/RegistryObject", new ClassReader(output).getSuperName(),
+                "a 1.16.5 mod's RegistryObject moved to the registries package in 1.17 with the same members");
+    }
+
+    @Test
     void legacyMcpMovesUseTheHostValidated1201Table() {
         RetromodVersion.TARGET_MC_VERSION = "1.20.1";
         RetromodTransformer transformer = RetromodTransformer.getInstance();

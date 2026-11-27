@@ -74,6 +74,14 @@ public class QuiltModTransformer {
             return directCopy;
         }
 
+        // The Quilt metadata pass unpacks the translated jar again, under the same allowance.
+        try (com.retromod.util.ArchiveLimits.Scope admitted = ArchiveAdmission.admit(sourceJar)) {
+            return transformStaged(sourceJar, outputDir, modMcVersion, libraries);
+        }
+    }
+
+    private Path transformStaged(Path sourceJar, Path outputDir, String modMcVersion,
+            SyntheticLibraries libraries) throws IOException {
         Path stagingDirectory = createOutputStagingDirectory(outputDir);
         try {
             Path transformed = fabricTransformer.transformModWithAuthoritativeMinecraftVersion(
@@ -100,6 +108,8 @@ public class QuiltModTransformer {
         try {
             // A mod entry can misreport its size, so count bytes actually decompressed.
             long quiltTotalSize = 0;
+            long maxTotal = com.retromod.util.ArchiveLimits.maxTotalBytes();
+            java.util.List<String> copied = new java.util.ArrayList<>();
             try (JarFile jar = new JarFile(jarPath.toFile())) {
                 validateArchiveEntries(jar);
                 var entries = jar.entries();
@@ -109,21 +119,26 @@ public class QuiltModTransformer {
                     Path outPath = ZipSecurity.safeResolve(tempDir, entryName);
                     if (entry.isDirectory()) {
                         Files.createDirectories(outPath);
+                    } else if (copiedAtRepack(entryName, entry)) {
+                        // This pass rewrites only quilt.mod.json, so a file too large to unpack is copied.
+                        copied.add(entryName);
+                        quiltTotalSize += entry.getSize();
+                        if (quiltTotalSize > maxTotal) {
+                            throw FabricModTransformer.totalExceeded(jarPath, maxTotal, quiltTotalSize);
+                        }
                     } else {
                         Files.createDirectories(outPath.getParent());
                         long writtenBytes;
                         try (InputStream is = jar.getInputStream(entry)) {
                             long entryLimit = entryName.equals("quilt.mod.json")
                                 ? QuiltMetadataCompat.MAX_METADATA_BYTES
-                                : ZipSecurity.DEFAULT_MAX_ENTRY_SIZE;
+                                : com.retromod.util.ArchiveLimits.entryLimit(entryName, maxTotal - quiltTotalSize);
                             writtenBytes = ZipSecurity.copyBounded(
                                 is, outPath, entryLimit, entryName);
                         }
                         quiltTotalSize += writtenBytes;
-                        if (quiltTotalSize > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
-                            throw new IOException("Quilt mod total extracted size exceeds limit ("
-                                + ZipSecurity.DEFAULT_MAX_TOTAL_SIZE + " bytes) - possible zip bomb "
-                                + "(decompressed " + quiltTotalSize + " bytes so far)");
+                        if (quiltTotalSize > maxTotal) {
+                            throw FabricModTransformer.totalExceeded(jarPath, maxTotal, quiltTotalSize);
                         }
                     }
                 }
@@ -142,10 +157,16 @@ public class QuiltModTransformer {
                     java.nio.charset.StandardCharsets.UTF_8);
             }
 
-            repackJar(tempDir, jarPath);
+            repackJar(tempDir, jarPath, copied);
         } finally {
             deleteDirectory(tempDir);
         }
+    }
+
+    /** Whether the metadata pass copies an entry from the jar instead of unpacking it: a large file it never reads. */
+    private static boolean copiedAtRepack(String entryName, JarEntry entry) throws IOException {
+        return entry.getSize() > ZipSecurity.DEFAULT_MAX_ENTRY_SIZE && entryName.equals(entry.getName())
+                && !entryName.equals("quilt.mod.json") && !JarSignatureSanitizer.isManifest(entryName);
     }
     
     String updateVersionInQuiltJson(String content) throws IOException {
@@ -207,7 +228,7 @@ public class QuiltModTransformer {
         }
     }
 
-    private void repackJar(Path sourceDir, Path targetJar) throws IOException {
+    private void repackJar(Path sourceDir, Path targetJar, java.util.List<String> copied) throws IOException {
         Path parent = targetJar.toAbsolutePath().getParent();
         if (parent == null) throw new IOException("Quilt jar has no parent: " + targetJar);
         Path staged = Files.createTempFile(parent,
@@ -217,6 +238,7 @@ public class QuiltModTransformer {
 
                 // ZIP directory entries keep package resource and classpath scans working.
                 com.retromod.util.JarDirectoryEntries.writeAll(jos, sourceDir);
+                com.retromod.util.JarDirectoryEntries.writeAllForNames(jos, copied);
 
                 try (var stream = Files.walk(sourceDir)) {
                     for (Path path : stream
@@ -236,6 +258,19 @@ public class QuiltModTransformer {
                             jos.write(JarSignatureSanitizer.sanitizeManifest(manifestBytes));
                         } else {
                             Files.copy(path, jos);
+                        }
+                        jos.closeEntry();
+                    }
+                }
+                // The large files left in the jar follow, each bounded by the size it declares.
+                try (JarFile source = new JarFile(targetJar.toFile())) {
+                    for (String name : copied) {
+                        if (JarSignatureSanitizer.isSigningArtifact(name)) continue;
+                        JarEntry entry = source.getJarEntry(name);
+                        if (entry == null) throw new IOException("Quilt mod lost entry " + name + " while repacking");
+                        jos.putNextEntry(new JarEntry(name));
+                        try (InputStream input = source.getInputStream(entry)) {
+                            ZipSecurity.copyBounded(input, jos, entry.getSize(), name);
                         }
                         jos.closeEntry();
                     }

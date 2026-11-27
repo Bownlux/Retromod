@@ -21,6 +21,11 @@ public class LegacyBlockModelShaper {
 
     public LegacyBlockModelShaper() {}
 
+    /** {@code ModelManager.getBlockModelShaper()}: the one shaper, which reads the running game's models on each call. */
+    public static LegacyBlockModelShaper of(Object manager) {
+        return INSTANCE;
+    }
+
     /** The state's model; an empty one while Minecraft has no models yet, as old code never expected null. */
     public BlockStateModel getBlockModel(BlockState state) {
         BlockStateModelSet models = models();

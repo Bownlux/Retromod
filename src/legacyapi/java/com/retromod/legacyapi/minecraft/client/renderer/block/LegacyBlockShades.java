@@ -18,4 +18,18 @@ public final class LegacyBlockShades {
         CardinalLighting lighting = getter.cardinalLighting();
         return shaded ? lighting.byFace(face) : lighting.up();
     }
+
+    // Set once a dedicated server shows it lacks the client block getter, so later calls skip the lookup.
+    private static volatile boolean noClientClasses;
+
+    /** {@code level.getShade(face, shaded)} on any level type: only a client level lights faces, so others read full light. */
+    public static float getLevelShade(Object level, Direction face, boolean shaded) {
+        if (noClientClasses) return 1.0F;
+        try {
+            return level instanceof BlockAndTintGetter getter ? getShade(getter, face, shaded) : 1.0F;
+        } catch (NoClassDefFoundError dedicatedServer) {
+            noClientClasses = true;
+            return 1.0F;
+        }
+    }
 }

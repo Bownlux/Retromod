@@ -25,6 +25,8 @@ class LegacyDfuRenamesTest {
 
     private static final String UNIT_OBJECT = "(Ljava/lang/Object;)Lcom/mojang/serialization/Codec;";
     private static final String UNIT_SUPPLIER = "(Ljava/util/function/Supplier;)Lcom/mojang/serialization/Codec;";
+    private static final String OLD_ERROR = "(Ljava/lang/String;)Lcom/mojang/serialization/DataResult;";
+    private static final String OLD_PARTIAL_ERROR = "(Ljava/lang/String;Ljava/lang/Object;)Lcom/mojang/serialization/DataResult;";
 
     private final RetromodTransformer transformer = RetromodTransformer.getInstance();
 
@@ -42,6 +44,20 @@ class LegacyDfuRenamesTest {
         assertNull(redirect(UNIT_SUPPLIER));
         assertNull(transformer.getClassRedirects().get(LegacyDfuRenames.PARTIAL_RESULT));
         assertNull(getOrThrow(), "DFU 6 still has getOrThrow(boolean, Consumer)");
+        assertNull(error(OLD_ERROR), "DFU 6 still has DataResult.error(String)");
+        assertNull(error(OLD_PARTIAL_ERROR));
+    }
+
+    @Test
+    @DisplayName("DFU 10 takes a message supplier, so DataResult.error(String) and its partial form go to the helper")
+    void dfu10WrapsTheOldErrorMessage() {
+        LegacyDfuRenames.register(transformer, dfu10(), "26.3");
+        for (String desc : new String[] {OLD_ERROR, OLD_PARTIAL_ERROR}) {
+            MethodTarget target = error(desc);
+            assertNotNull(target, "DataResult.error" + desc + " must be redirected");
+            assertEquals(LegacyDfuRenames.GET_OR_THROW_HELPER + ".error" + desc.replace("Lcom/mojang/serialization/DataResult;", "Ljava/lang/Object;"),
+                    target.owner() + "." + target.name() + target.desc());
+        }
     }
 
     @Test
@@ -101,6 +117,10 @@ class LegacyDfuRenamesTest {
         assertTrue(target.devirtualize(), "the receiver becomes the helper's first argument");
     }
 
+    private MethodTarget error(String desc) {
+        return transformer.getMethodRedirects().get(new MethodKey(LegacyDfuRenames.DATA_RESULT, "error", desc));
+    }
+
     private MethodTarget redirect(String desc) {
         return transformer.getMethodRedirects().get(new MethodKey(LegacyDfuRenames.CODEC, "unit", desc));
     }
@@ -119,7 +139,7 @@ class LegacyDfuRenamesTest {
         classes.put(LegacyDfuRenames.CODEC, node(LegacyDfuRenames.CODEC, "unit", UNIT_OBJECT, "unit", UNIT_SUPPLIER));
         classes.put(LegacyDfuRenames.MAP_CODEC, node(LegacyDfuRenames.MAP_CODEC));
         classes.put(LegacyDfuRenames.DATA_RESULT, node(LegacyDfuRenames.DATA_RESULT,
-                "getOrThrow", LegacyDfuRenames.OLD_GET_OR_THROW));
+                "getOrThrow", LegacyDfuRenames.OLD_GET_OR_THROW, "error", OLD_ERROR, "error", OLD_PARTIAL_ERROR));
         classes.put(LegacyDfuRenames.PARTIAL_RESULT, node(LegacyDfuRenames.PARTIAL_RESULT, "message", "()Ljava/lang/String;"));
         return classes::get;
     }

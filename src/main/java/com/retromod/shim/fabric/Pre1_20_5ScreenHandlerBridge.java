@@ -6,6 +6,10 @@ package com.retromod.shim.fabric;
 
 import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.commons.ClassRemapper;
+import org.objectweb.asm.commons.SimpleRemapper;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -13,6 +17,8 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.MethodNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.Map;
 
 /**
  * Bridges Fabric API's extended screen handlers from the buffer form older mods use to the
@@ -93,6 +99,65 @@ public final class Pre1_20_5ScreenHandlerBridge {
                 FACTORY, "create", "(L" + FACTORY_IFACE + ";)L" + HANDLER_TYPE + ";");
         transformer.registerLambdaSamRetype(FACTORY_IFACE, "create", OLD_CREATE, ERASED_CREATE);
         transformer.registerInterfaceReplacement(MENU_PROVIDER, LEGACY_MENU_PROVIDER);
+        registerSubclassConstructor(transformer, HANDLER_TYPE, OLD_CTOR, MODERN_CTOR, CODEC);
+    }
+
+    /** A mod's own subclass calls {@code super(factory)}, which a constructor redirect cannot replace, so the codec is added there. */
+    static void registerSubclassConstructor(RetromodTransformer transformer, String type, String oldCtor, String modernCtor, String codec) {
+        transformer.registerSuperConstructorAdapter(type, oldCtor, modernCtor, mv -> {
+            mv.visitTypeInsn(Opcodes.NEW, codec);
+            mv.visitInsn(Opcodes.DUP);
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, codec, "<init>", "()V", false);
+        });
+    }
+
+    // ---- the same bridge in the names Fabric API for 26.1 and newer uses ----
+
+    static final String MENU_API = "net/fabricmc/fabric/api/menu/v1/";
+    static final String MENU_TYPE = MENU_API + "ExtendedMenuType";
+    static final String MENU_FACTORY = MENU_TYPE + "$ExtendedFactory";
+    static final String MENU_PROVIDER_26 = MENU_API + "ExtendedMenuProvider";
+    static final String FIRST_MOJANG_HOST = "26.1";
+    /** Each intermediary name the generated classes use, and its 26.x name; the synthetics get names of their own. */
+    static final Map<String, String> MOJANG_NAMES = Map.ofEntries(
+            Map.entry(HANDLER_TYPE, MENU_TYPE), Map.entry(FACTORY_IFACE, MENU_FACTORY), Map.entry(MENU_PROVIDER, MENU_PROVIDER_26),
+            Map.entry(STREAM_CODEC, "net/minecraft/network/codec/StreamCodec"), Map.entry(BUF, "net/minecraft/network/FriendlyByteBuf"),
+            Map.entry(REGISTRY_BUF, "net/minecraft/network/RegistryFriendlyByteBuf"), Map.entry(REGISTRY_ACCESS, "net/minecraft/core/RegistryAccess"),
+            Map.entry(SERVER_PLAYER, "net/minecraft/server/level/ServerPlayer"), Map.entry(ENTITY, "net/minecraft/world/entity/Entity"),
+            Map.entry(INVENTORY, "net/minecraft/world/entity/player/Inventory"), Map.entry(MENU, "net/minecraft/world/inventory/AbstractContainerMenu"),
+            Map.entry(FACTORY, "com/retromod/generated/LegacyMenuTypes"), Map.entry(CODEC, "com/retromod/generated/LegacyMenuOpeningDataCodec"),
+            Map.entry(LEGACY_MENU_PROVIDER, "com/retromod/generated/LegacyExtendedMenuProvider"),
+            Map.entry(ENTITY + "." + ENTITY_REGISTRY_ACCESS + "()L" + REGISTRY_ACCESS + ";", "registryAccess"),
+            Map.entry(REGISTRY_BUF + "." + BUF_REGISTRY_ACCESS + "()L" + REGISTRY_ACCESS + ";", "registryAccess"));
+
+    /**
+     * The bridge for 1.20.1 Fabric mods on Fabric API for 26.x, which renamed the screen handler API to menus and runs Mojang
+     * names. Offline the menu classes cannot be read, so the target decides.
+     */
+    public static void registerMojang(RetromodTransformer transformer) {
+        ClassNode type = ClassResourceInspector.read(MENU_TYPE);
+        String oldCtor = "(L" + MENU_FACTORY + ";)V";
+        if (type != null && (hasMethod(type, "<init>", oldCtor) || !hasMethod(type, "<init>", "(L" + MENU_FACTORY + ";L"
+                + MOJANG_NAMES.get(STREAM_CODEC) + ";)V"))) {
+            return;
+        }
+        if (type == null && RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, FIRST_MOJANG_HOST) < 0) return;
+        SimpleRemapper names = new SimpleRemapper(MOJANG_NAMES);
+        String factory = MOJANG_NAMES.get(FACTORY);
+        transformer.registerSyntheticClass(factory, rename(generateFactory(), names));
+        transformer.registerSyntheticClass(MOJANG_NAMES.get(CODEC), rename(generateCodec(), names));
+        transformer.registerSyntheticClass(MOJANG_NAMES.get(LEGACY_MENU_PROVIDER), rename(generateMenuProvider(), names));
+        transformer.registerConstructorRedirect(MENU_TYPE, oldCtor, factory, "create", "(L" + MENU_FACTORY + ";)L" + MENU_TYPE + ";");
+        transformer.registerLambdaSamRetype(MENU_FACTORY, "create", names.mapMethodDesc(OLD_CREATE), names.mapMethodDesc(ERASED_CREATE));
+        transformer.registerInterfaceReplacement(MENU_PROVIDER_26, MOJANG_NAMES.get(LEGACY_MENU_PROVIDER));
+        registerSubclassConstructor(transformer, MENU_TYPE, oldCtor, "(L" + MENU_FACTORY + ";L" + MOJANG_NAMES.get(STREAM_CODEC) + ";)V",
+                MOJANG_NAMES.get(CODEC));
+    }
+
+    static byte[] rename(byte[] bytes, SimpleRemapper names) {
+        ClassWriter out = new ClassWriter(0);
+        new ClassReader(bytes).accept(new ClassRemapper(out, names), 0);
+        return out.toByteArray();
     }
 
     private static boolean hasMethod(ClassNode owner, String name, String descriptor) {

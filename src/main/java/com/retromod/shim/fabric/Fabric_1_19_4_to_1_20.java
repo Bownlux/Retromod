@@ -81,11 +81,12 @@ public class Fabric_1_19_4_to_1_20 implements VersionShim {
             "net/minecraft/server/level/ServerPlayer", "serverLevel",
             "()Lnet/minecraft/server/level/ServerLevel;"
         );
+        // 1.20 made the comparison static; the receiver becomes its first argument.
         transformer.registerMethodRedirect(
             "net/minecraft/world/item/ItemStack", "sameItem",
             "(Lnet/minecraft/world/item/ItemStack;)Z",
             "net/minecraft/world/item/ItemStack", "isSameItem",
-            "(Lnet/minecraft/world/item/ItemStack;)Z"
+            "(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/item/ItemStack;)Z", true
         );
         // wasKilled descriptor unverified
         transformer.registerMethodRedirect(

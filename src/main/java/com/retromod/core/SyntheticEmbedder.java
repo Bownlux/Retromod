@@ -400,12 +400,22 @@ public final class SyntheticEmbedder {
     private static int embedIntoJarChecked(Path jarPath, String uniqueKey,
             RetromodTransformer transformer, SyntheticLibraries libraries) throws IOException {
         Map<String, byte[]> synthetics = transformer.getSyntheticClasses();
+        // A null value is an entry the embed copies unchanged, streamed from the jar when it is written.
         java.util.LinkedHashMap<String, byte[]> entries = new java.util.LinkedHashMap<>();
         Set<String> canonicalNames = new HashSet<>();
+        long maxTotal = com.retromod.util.ArchiveLimits.maxTotalBytes();
         long total = 0;
-        try (var zis = new java.util.zip.ZipInputStream(Files.newInputStream(jarPath))) {
-            java.util.zip.ZipEntry e;
-            while ((e = zis.getNextEntry()) != null) {
+        Path targetJar = jarPath.toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(targetJar)) {
+            throw new IOException("refusing to replace symlinked mod jar: " + targetJar);
+        }
+        ZipSecurity.validateNotSymlink(targetJar);
+        Path tmp;
+        Relocation relocation;
+        String base;
+        try (var zip = new java.util.zip.ZipFile(targetJar.toFile())) {
+            for (var all = zip.entries(); all.hasMoreElements(); ) {
+                java.util.zip.ZipEntry e = all.nextElement();
                 if (entries.size() >= MAX_ARCHIVE_ENTRIES) {
                     throw new IOException("jar has too many entries during synthetic embed: "
                             + jarPath.getFileName());
@@ -417,108 +427,124 @@ public final class SyntheticEmbedder {
                         () -> "jar contains duplicate normalized entry during synthetic embed: " + entryName)) {
                     continue;
                 }
-                // Bound per-entry (50MB) and aggregate (500MB) like the other extract paths:
-                // this reads an untrusted jar fully into memory, and the per-entry cap alone
-                // doesn't stop a many-entry decompression bomb. On overflow, bail: the outer
-                // catch returns 0 and the original jar is untouched, since writes go through
+                // Only classes, mixin configs and the manifest are read now; the rest stream on write.
+                // The aggregate cap stops a many-entry decompression bomb. On overflow, bail: the
+                // outer catch returns 0 and the original jar is untouched, since writes go through
                 // the temp-then-move below.
-                byte[] data = e.isDirectory() ? new byte[0]
-                        : ZipSecurity.safeReadAllBytes(zis);
-                total += data.length;
-                if (total > ZipSecurity.DEFAULT_MAX_TOTAL_SIZE) {
+                byte[] data;
+                if (e.isDirectory()) {
+                    data = new byte[0];
+                } else if (keptInMemory(entryName)) {
+                    try (var input = zip.getInputStream(e)) {
+                        data = ZipSecurity.safeReadAllBytes(input, entryName.endsWith(".class")
+                                ? ZipSecurity.MAX_CLASS_ENTRY_SIZE : ZipSecurity.DEFAULT_MAX_ENTRY_SIZE);
+                    }
+                    total += data.length;
+                } else {
+                    data = null;
+                }
+                if (total > maxTotal) {
                     throw new java.io.IOException("jar exceeds max total size during synthetic embed: "
                             + jarPath.getFileName());
                 }
                 // directory entries are retained: dropping them breaks package-resource
                 // lookups and classpath scanners in the rewritten jar
-                if (entries.putIfAbsent(entryName, data) != null) {
+                if (entries.containsKey(entryName)) {
                     throw new IOException("jar contains duplicate entry during synthetic embed: "
                             + entryName);
                 }
+                entries.put(entryName, data);
             }
-        }
-        Set<String> referenced = new HashSet<>();
-        Map<String, byte[]> ownClasses = new HashMap<>();
-        for (var en : entries.entrySet()) {
-            if (!en.getKey().endsWith(".class")) continue;
-            referenced.addAll(referencedClasses(en.getValue()));
-            if (!en.getKey().startsWith("META-INF/")) {
-                ownClasses.put(en.getKey().substring(0, en.getKey().length() - ".class".length()),
-                        en.getValue());
-            }
-        }
-        synthetics = CompiledHelpers.withHelpers(synthetics, referenced);
-        referenced.retainAll(synthetics.keySet());
-        if (referenced.isEmpty()) return 0;
-        expandTransitively(referenced, synthetics, transformer.getClassRedirectsForHostCode());
-
-        String base = embeddedBase(uniqueKey);
-        Relocation relocation = relocate(base, referenced, ownClasses, synthetics, libraries);
-        Map<String, String> rename = relocation.names();
-        Remapper remapper = new SimpleRemapper(modClassRemapping(rename, transformer, ownClasses.keySet()));
-        Remapper syntheticRemapper = memberAware(
-                new SimpleRemapper(syntheticRemapping(rename, transformer)), synthetics, transformer);
-
-        // Calls and overrides crossing into a library that took another copy convert the value there.
-        StandInAdapters adapters = adaptersFor(base, relocation, referenced, ownClasses, synthetics, libraries);
-        if (adapters != null) {
+            Set<String> referenced = new HashSet<>();
+            Map<String, byte[]> ownClasses = new HashMap<>();
             for (var en : entries.entrySet()) {
-                if (StandInAdapters.mayBeMixinConfig(en.getKey())) adapters.readMixinConfig(en.getValue());
-            }
-        }
-        java.util.LinkedHashMap<String, byte[]> out = new java.util.LinkedHashMap<>();
-        for (var en : entries.entrySet()) {
-            byte[] v = en.getValue();
-            if (en.getKey().endsWith(".class")) {
-                if (adapters != null && !en.getKey().startsWith("META-INF/")) v = adapters.rewrite(v, ownClasses);
-                v = remap(v, remapper);
-            }
-            out.put(en.getKey(), v);
-        }
-        if (!relocation.borrowed().isEmpty() || adapters != null) {
-            out.put(SyntheticLibraries.LINKS_ENTRY, SyntheticLibraries.linksFile(relocation.borrowed(),
-                    adapters == null ? Set.of() : adapters.crossed()));
-        }
-        if (adapters != null) {
-            for (Map.Entry<String, byte[]> adapter : adapters.adapters().entrySet()) {
-                String adapterName = validateEntryName(adapter.getKey() + ".class", false);
-                if (out.containsKey(adapterName)) {
-                    throw new IOException("synthetic output collides with an existing jar entry: " + adapterName);
+                if (!en.getKey().endsWith(".class")) continue;
+                referenced.addAll(referencedClasses(en.getValue()));
+                if (!en.getKey().startsWith("META-INF/")) {
+                    ownClasses.put(en.getKey().substring(0, en.getKey().length() - ".class".length()),
+                            en.getValue());
                 }
-                out.put(adapterName, remap(adapter.getValue(), remapper));
             }
-        }
-        for (String n : relocation.local()) {
-            if (out.size() >= MAX_ARCHIVE_ENTRIES) {
-                throw new IOException("synthetic output would exceed the jar entry limit");
-            }
-            String generatedName = validateEntryName(rename.get(n) + ".class", false);
-            if (out.containsKey(generatedName)) {
-                throw new IOException("synthetic output collides with an existing jar entry: "
-                        + generatedName);
-            }
-            out.put(generatedName, remap(synthetics.get(n), syntheticRemapper));
-        }
-        JarSignatureSanitizer.sanitizeEntries(out);
+            synthetics = CompiledHelpers.withHelpers(synthetics, referenced);
+            referenced.retainAll(synthetics.keySet());
+            if (referenced.isEmpty()) return 0;
+            expandTransitively(referenced, synthetics, transformer.getClassRedirectsForHostCode());
 
-        // write to a sibling temp + move: rewriting in place with a truncating stream
-        // destroys the jar if anything throws mid-write (review finding)
-        Path targetJar = jarPath.toAbsolutePath().normalize();
-        if (Files.isSymbolicLink(targetJar)) {
-            throw new IOException("refusing to replace symlinked mod jar: " + targetJar);
-        }
-        ZipSecurity.validateNotSymlink(targetJar);
-        Path tmp = Files.createTempFile(targetJar.getParent(), "retromod-embed-", ".rmtmp");
-        try {
-            try (var zos = new java.util.zip.ZipOutputStream(Files.newOutputStream(tmp))) {
-                for (var en : out.entrySet()) {
-                    String entryName = validateEntryName(en.getKey(),
-                            en.getKey().endsWith("/"));
-                    zos.putNextEntry(new java.util.zip.ZipEntry(entryName));
-                    zos.write(en.getValue());
-                    zos.closeEntry();
+            base = embeddedBase(uniqueKey);
+            relocation = relocate(base, referenced, ownClasses, synthetics, libraries);
+            Map<String, String> rename = relocation.names();
+            Remapper remapper = new SimpleRemapper(modClassRemapping(rename, transformer, ownClasses.keySet()));
+            Remapper syntheticRemapper = memberAware(
+                    new SimpleRemapper(syntheticRemapping(rename, transformer)), synthetics, transformer);
+
+            // Calls and overrides crossing into a library that took another copy convert the value there.
+            StandInAdapters adapters = adaptersFor(base, relocation, referenced, ownClasses, synthetics, libraries);
+            if (adapters != null) {
+                for (var en : entries.entrySet()) {
+                    if (StandInAdapters.mayBeMixinConfig(en.getKey())) adapters.readMixinConfig(en.getValue());
                 }
             }
+            java.util.LinkedHashMap<String, byte[]> out = new java.util.LinkedHashMap<>();
+            for (var en : entries.entrySet()) {
+                byte[] v = en.getValue();
+                if (en.getKey().endsWith(".class")) {
+                    if (adapters != null && !en.getKey().startsWith("META-INF/")) v = adapters.rewrite(v, ownClasses);
+                    v = remap(v, remapper);
+                }
+                out.put(en.getKey(), v);
+            }
+            if (!relocation.borrowed().isEmpty() || adapters != null) {
+                out.put(SyntheticLibraries.LINKS_ENTRY, SyntheticLibraries.linksFile(relocation.borrowed(),
+                        adapters == null ? Set.of() : adapters.crossed()));
+            }
+            if (adapters != null) {
+                for (Map.Entry<String, byte[]> adapter : adapters.adapters().entrySet()) {
+                    String adapterName = validateEntryName(adapter.getKey() + ".class", false);
+                    if (out.containsKey(adapterName)) {
+                        throw new IOException("synthetic output collides with an existing jar entry: " + adapterName);
+                    }
+                    out.put(adapterName, remap(adapter.getValue(), remapper));
+                }
+            }
+            for (String n : relocation.local()) {
+                if (out.size() >= MAX_ARCHIVE_ENTRIES) {
+                    throw new IOException("synthetic output would exceed the jar entry limit");
+                }
+                String generatedName = validateEntryName(rename.get(n) + ".class", false);
+                if (out.containsKey(generatedName)) {
+                    throw new IOException("synthetic output collides with an existing jar entry: "
+                            + generatedName);
+                }
+                out.put(generatedName, remap(synthetics.get(n), syntheticRemapper));
+            }
+            JarSignatureSanitizer.sanitizeEntries(out);
+
+            // write to a sibling temp + move: rewriting in place with a truncating stream
+            // destroys the jar if anything throws mid-write (review finding)
+            tmp = Files.createTempFile(targetJar.getParent(), "retromod-embed-", ".rmtmp");
+            try {
+                try (var zos = new java.util.zip.ZipOutputStream(Files.newOutputStream(tmp))) {
+                    for (var en : out.entrySet()) {
+                        String entryName = validateEntryName(en.getKey(),
+                                en.getKey().endsWith("/"));
+                        zos.putNextEntry(new java.util.zip.ZipEntry(entryName));
+                        if (en.getValue() != null) {
+                            zos.write(en.getValue());
+                        } else {
+                            try (var input = zip.getInputStream(zip.getEntry(en.getKey()))) {
+                                total += ZipSecurity.copyBounded(input, zos, Math.max(0, maxTotal - total),
+                                        entryName);
+                            }
+                        }
+                        zos.closeEntry();
+                    }
+                }
+            } catch (IOException | RuntimeException failed) {
+                Files.deleteIfExists(tmp);
+                throw failed;
+            }
+        }
+        try {
             try (var ignored = new java.util.zip.ZipFile(tmp.toFile())) {
                 // Opening the completed temporary file verifies its central directory before
                 // it replaces the original mod.
@@ -529,6 +555,12 @@ public final class SyntheticEmbedder {
         }
         relocation.log("jar '" + uniqueKey + "'", base);
         return relocation.local().size();
+    }
+
+    /** Whether the embed needs an entry's bytes: classes, mixin configs and the manifest. */
+    private static boolean keptInMemory(String entryName) throws IOException {
+        return entryName.endsWith(".class") || StandInAdapters.mayBeMixinConfig(entryName)
+                || JarSignatureSanitizer.isManifest(entryName);
     }
 
     /**

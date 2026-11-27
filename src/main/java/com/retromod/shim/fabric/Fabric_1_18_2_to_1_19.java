@@ -50,6 +50,13 @@ public class Fabric_1_18_2_to_1_19 implements VersionShim {
             "net/minecraft/world/event/GameEvent$Callback",
             "net/minecraft/world/event/GameEvent$Emitter"
         );
+        // The 1.19 resource manager, the entity and level randoms and the old text classes, by the Mojang
+        // names a Fabric mod carries only after the 26.1 remap.
+        if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            com.retromod.shim.common.LegacyResourceApiBridge.register(transformer);
+            com.retromod.shim.forge.LegacyForge119Bridge.registerRandomView(transformer);
+            Pre1_19MojangTextBridge.register(transformer);
+        }
     }
 
     @Override

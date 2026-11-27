@@ -68,6 +68,11 @@ public class Fabric_1_19_2_to_1_19_3 implements VersionShim {
             "net/minecraft/data/loot/EntityLoot",
             "net/minecraft/data/loot/EntityLootSubProvider"
         );
+        // The registries and registry keys that left Registry, by the Mojang names a Fabric mod carries
+        // only after the 26.1 remap, as the Forge 1.19.3 shim moves them.
+        if (com.retromod.core.RetromodVersion.isUnobfuscatedTarget(com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            com.retromod.shim.forge.LegacyRegistryKeyMoves.register(transformer);
+        }
     }
 
     @Override
