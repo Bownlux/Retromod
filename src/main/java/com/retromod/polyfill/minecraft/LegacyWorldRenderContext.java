@@ -74,6 +74,39 @@ public final class LegacyWorldRenderContext {
         }
     }
 
+    /** {@code WorldRenderContext.projectionMatrix()}: a copy of the camera's projection from the level render state. */
+    public static Object projectionMatrix(Object context) {
+        try {
+            Object state = call(context, "levelState");
+            Object camera = state.getClass().getField("cameraRenderState").get(state);
+            Object projection = camera.getClass().getField("projectionMatrix").get(camera);
+            // A copy, so old code that changes the matrix leaves the game's own alone.
+            Class<?> matrix = Class.forName("org.joml.Matrix4f", false, LegacyWorldRenderContext.class.getClassLoader());
+            Class<?> readOnly = Class.forName("org.joml.Matrix4fc", false, LegacyWorldRenderContext.class.getClassLoader());
+            return matrix.getConstructor(readOnly).newInstance(projection);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            throw new IllegalStateException("Retromod could not reach the projection matrix for a legacy "
+                    + "world render callback", e);
+        }
+    }
+
+    /** {@code WorldRenderContext.tickDelta()}: the frame's partial tick from the client's delta tracker. */
+    public static float tickDelta(Object context) {
+        try {
+            Object tracker = tickCounter(context);
+            Method partialTick = LegacyPublicMethods.method(tracker.getClass(), "getGameTimeDeltaPartialTick", boolean.class);
+            return (Float) partialTick.invoke(tracker, false);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            throw new IllegalStateException("Retromod could not reach the partial tick for a legacy "
+                    + "world render callback", e);
+        }
+    }
+
+    /** {@code WorldRenderContext.blockOutlines()}: whether the block outline draws this frame, which Fabric API left on by default. */
+    public static boolean blockOutlines(Object context) {
+        return true;
+    }
+
     /**
      * {@code Camera.getNearPlane()}: 26.1 takes the field of view as an argument; the old method
      * used the camera's own.

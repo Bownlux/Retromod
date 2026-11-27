@@ -98,9 +98,10 @@ public final class LoaderApiTestSupport {
         public static final String TARGET = "com/retromod/loaderapi/OwnershipTarget";
         public static final List<String> TYPES = List.of(
                 "net/fabricmc/fabric/api/item/v1/FabricItemSettings",
-                "net/fabricmc/fabric/api/renderer/v1/Renderer",
-                "net/fabricmc/fabric/api/renderer/v1/material/MaterialFinder",
-                "net/fabricmc/fabric/api/renderer/v1/material/RenderMaterial",
+                // Types only shims redirect, which the bundled provider does not serve.
+                "net/fabricmc/fabric/api/client/rendering/v1/CoreShaderRegistrationCallback",
+                "net/fabricmc/fabric/api/client/rendereregistry/v1/BlockEntityRendererRegistry",
+                "net/fabricmc/fabric/api/client/rendereregistry/v1/EntityRendererRegistry",
                 "net/fabricmc/fabric/api/client/rendering/v1/WorldRenderEvents",
                 "net/fabricmc/fabric/api/client/rendering/v1/WorldRenderContext");
         public static final RedirectKey ENTITY_BUILDER = RedirectKey.type(

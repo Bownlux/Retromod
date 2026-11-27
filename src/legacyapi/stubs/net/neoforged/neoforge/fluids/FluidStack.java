@@ -21,6 +21,7 @@ public final class FluidStack implements MutableDataComponentHolder {
     public FluidStack copy() { throw new UnsupportedOperationException(); }
     public FluidStack copyWithAmount(int amount) { throw new UnsupportedOperationException(); }
     public Fluid getFluid() { throw new UnsupportedOperationException(); }
+    public String getDescriptionId() { throw new UnsupportedOperationException(); }
     public static boolean isSameFluid(FluidStack first, FluidStack second) { throw new UnsupportedOperationException(); }
     public static boolean isSameFluidSameComponents(FluidStack first, FluidStack second) { throw new UnsupportedOperationException(); }
     @Override public <T> T get(DataComponentType<? extends T> type) { throw new UnsupportedOperationException(); }

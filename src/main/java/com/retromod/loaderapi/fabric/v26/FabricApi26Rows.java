@@ -5,8 +5,11 @@
 package com.retromod.loaderapi.fabric.v26;
 
 import com.retromod.core.RedirectKey;
+import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
+import com.retromod.core.SyntheticEmbedder;
 import com.retromod.loaderapi.LoaderApiRegistration;
+import com.retromod.shim.common.RebuiltApiClasses;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -16,7 +19,9 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /** Loads {@code retromod/loaderapi/fabric-26x/renames.tsv} and registers its rows for one host. */
@@ -168,6 +173,7 @@ public final class FabricApi26Rows {
     /** Registers every row of {@code table} that applies to {@code host}. */
     public static int register(Table table, LoaderApiRegistration registration, String host) {
         int registered = 0;
+        Set<String> shipped = new HashSet<>();
         for (Row row : table.rows()) {
             if (!row.appliesTo(host)) continue;
             switch (row.kind()) {
@@ -179,9 +185,36 @@ public final class FabricApi26Rows {
                         row.newDesc());
                 case RECEIVER_HELPER -> registerReceiverHelper(row, registration);
             }
+            if (row.kind() != Kind.SUPPRESS && row.newOwner() != null && shipped.add(row.newOwner())) {
+                shipHelper(registration, row.newOwner());
+            }
             registered++;
         }
         return registered;
+    }
+
+    /** Registers a target Retromod keeps outside the runtime as a synthetic, so it travels inside each mod that calls it. */
+    private static void shipHelper(LoaderApiRegistration registration, String owner) {
+        RetromodTransformer transformer = registration.transformer();
+        // Each type is claimed first, because a claim clears what is registered under it, the synthetic included.
+        if (owner.startsWith(RebuiltApiClasses.ROOT)) {
+            // A class rebuilt from src/legacyapi brings the rebuilt classes it names.
+            shipRebuilt(registration, owner);
+        } else if (owner.startsWith("com/retromod/polyfill/") || owner.startsWith("com/retromod/shim/common/embedded/")) {
+            registration.claim(RedirectKey.type(owner));
+            SyntheticEmbedder.registerClassResource(transformer, owner, FabricApi26Rows.class);
+        }
+    }
+
+    /** Registers a rebuilt class and the rebuilt classes it names, claiming each one no other bridge registered first. */
+    static void shipRebuilt(LoaderApiRegistration registration, String root) {
+        RetromodTransformer transformer = registration.transformer();
+        // A class a shim or an earlier batch already registered stays theirs: claiming it would clear and ship it again,
+        // and a host switch would then take it away from them.
+        for (String type : RebuiltApiClasses.tree(root)) {
+            if (!transformer.getSyntheticClasses().containsKey(type)) registration.claim(RedirectKey.type(type));
+        }
+        RebuiltApiClasses.registerTree(transformer, root);
     }
 
     /**

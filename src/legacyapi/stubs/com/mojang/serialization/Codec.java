@@ -9,6 +9,7 @@ public interface Codec<A> extends Encoder<A>, Decoder<A> {
     com.mojang.serialization.codecs.PrimitiveCodec<Float> FLOAT = null;
     com.mojang.serialization.codecs.PrimitiveCodec<Boolean> BOOL = null;
     static <A> Codec<A> of(Encoder<A> encoder, Decoder<A> decoder) { throw new UnsupportedOperationException(); }
+    static <A> Codec<A> lazyInitialized(java.util.function.Supplier<Codec<A>> codec) { throw new UnsupportedOperationException(); }
     static Codec<Integer> intRange(int min, int max) { throw new UnsupportedOperationException(); }
     default MapCodec<A> fieldOf(String name) { throw new UnsupportedOperationException(); }
     default MapCodec<Optional<A>> optionalFieldOf(String name) { throw new UnsupportedOperationException(); }

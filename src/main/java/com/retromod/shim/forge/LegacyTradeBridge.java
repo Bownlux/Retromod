@@ -36,6 +36,9 @@ public final class LegacyTradeBridge {
     static final String WANDERER_EVENT = "com/retromod/generated/LegacyWandererTradesEvent";
     static final String STORE = "com/retromod/shim/forge/embedded/LegacyTradeStore";
     public static final String PROFESSIONS = "com/retromod/generated/LegacyVillagerProfessions";
+    static final String KEYED_PROFESSIONS = "com/retromod/generated/LegacyTradeProfessions";
+    static final String NEOFORGE_VILLAGER_EVENT = "net/neoforged/neoforge/event/village/VillagerTradesEvent";
+    private static final String KEY = "Lnet/minecraft/resources/ResourceKey;";
 
     static final String NEOFORGE_EVENT = "net/neoforged/bus/api/Event";
     static final String FORGE_EVENT = "net/minecraftforge/eventbus/api/event/MutableEvent";
@@ -137,6 +140,61 @@ public final class LegacyTradeBridge {
         transformer.registerSyntheticClass(PROFESSIONS, generateProfessions());
         transformer.registerStaticFieldTypeDrift(PROFESSION, "L" + PROFESSION + ";", "Lnet/minecraft/resources/ResourceKey;",
                 PROFESSIONS, "of", "(Lnet/minecraft/resources/ResourceKey;)L" + PROFESSION + ";");
+    }
+
+    /** NeoForge 1.21.5 to 1.21.11, whose trade event names its profession by registry key, as the profession constants are. */
+    public static void registerProfessionKeys(RetromodTransformer transformer) {
+        registerProfessionKeys(transformer, ClassResourceInspector::read);
+    }
+
+    static void registerProfessionKeys(RetromodTransformer transformer, java.util.function.Function<String, ClassNode> host) {
+        ClassNode event = host.apply(NEOFORGE_VILLAGER_EVENT);
+        if (event == null || event.methods.stream().noneMatch(m -> (m.name + m.desc).equals("getType()" + KEY))) return;
+        // 1.21.11 moved the profession into npc/villager.
+        String profession = null;
+        for (String type : new String[]{PROFESSION, "net/minecraft/world/entity/npc/VillagerProfession"}) {
+            ClassNode node = host.apply(type);
+            if (node != null && node.fields.stream().anyMatch(f -> f.name.equals("FARMER") && f.desc.equals(KEY))) profession = type;
+        }
+        if (profession == null) return;
+        transformer.registerSyntheticClass(KEYED_PROFESSIONS, generateKeyedProfessions(profession));
+        // A listener compares the event's profession with VillagerProfession.FARMER and the like, so both read as professions.
+        transformer.registerStaticFieldTypeDrift(profession, "L" + profession + ";", KEY, KEYED_PROFESSIONS, "of",
+                "(" + KEY + ")L" + profession + ";");
+        // The call may name either package, depending on whether the villager move already applied.
+        for (String named : new String[]{PROFESSION, "net/minecraft/world/entity/npc/VillagerProfession"}) {
+            String old = "()L" + named + ";";
+            transformer.registerMethodRedirect(NEOFORGE_VILLAGER_EVENT, "getType", old, KEYED_PROFESSIONS, "type",
+                    "(L" + NEOFORGE_VILLAGER_EVENT + ";)L" + profession + ";", true);
+            transformer.limitRedirectToModsBefore(NEOFORGE_VILLAGER_EVENT, "getType", old, "1.21.5");
+        }
+    }
+
+    /** {@code of(key)}, the profession registered under a key, and {@code type(event)}, the trade event's profession. */
+    static byte[] generateKeyedProfessions(String profession) {
+        ClassWriter cw = newWriter();
+        cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, KEYED_PROFESSIONS, null, "java/lang/Object", null);
+        MethodVisitor of = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "of", "(" + KEY + ")L" + profession + ";", null, null);
+        of.visitCode();
+        of.visitFieldInsn(GETSTATIC, "net/minecraft/core/registries/BuiltInRegistries", "VILLAGER_PROFESSION",
+                "Lnet/minecraft/core/DefaultedRegistry;");
+        of.visitVarInsn(ALOAD, 0);
+        of.visitMethodInsn(INVOKEINTERFACE, "net/minecraft/core/Registry", "getValue", "(" + KEY + ")Ljava/lang/Object;", true);
+        of.visitTypeInsn(CHECKCAST, profession);
+        of.visitInsn(ARETURN);
+        of.visitMaxs(0, 0);
+        of.visitEnd();
+        MethodVisitor type = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "type", "(L" + NEOFORGE_VILLAGER_EVENT + ";)L" + profession + ";",
+                null, null);
+        type.visitCode();
+        type.visitVarInsn(ALOAD, 0);
+        type.visitMethodInsn(INVOKEVIRTUAL, NEOFORGE_VILLAGER_EVENT, "getType", "()" + KEY, false);
+        type.visitMethodInsn(INVOKESTATIC, KEYED_PROFESSIONS, "of", "(" + KEY + ")L" + profession + ";", false);
+        type.visitInsn(ARETURN);
+        type.visitMaxs(0, 0);
+        type.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     /** {@code static VillagerProfession of(ResourceKey key)}: the profession registered under the key. */

@@ -14,6 +14,8 @@ public class Forge_1_21_10_to_1_21_11 implements VersionShim {
     @Override public String getTargetVersion() { return "1.21.11"; }
     @Override public String getModLoaderType() { return "forge"; }
     @Override public void registerRedirects(RetromodTransformer transformer) {
+        // The same vanilla members, for a mod whose chain starts at this version.
+        com.retromod.shim.common.LegacyVanillaGapsOlderHosts.register(transformer);
         // The RenderSystem setters this version removed.
         com.retromod.shim.common.RemovedRenderStateNeutralize.registerRemovedIn(transformer, "1.21.11");
         // The client calls 1.21.11 already lacks; each is checked against the host's classes.

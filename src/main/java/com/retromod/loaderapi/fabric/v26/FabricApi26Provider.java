@@ -57,6 +57,10 @@ public final class FabricApi26Provider implements LoaderApiProvider {
         RenderRows.register(registration);
         ScreenRows.register(registration);
         ContentRows.register(registration);
+        ModelRenderRows.register(registration);
         FabricApi26Rows.register(FabricApi26Rows.bundled(), registration, rowHost);
+        OlderModRows.register(registration);
+        // Limits on calls the table's rows claim come after them, since a claim clears what was registered for its key.
+        ModelRenderRows.registerAfterRows(registration);
     }
 }

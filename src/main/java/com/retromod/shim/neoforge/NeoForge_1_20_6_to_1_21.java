@@ -17,6 +17,8 @@ public class NeoForge_1_20_6_to_1_21 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // The same vanilla members, for a mod whose chain starts at this version.
+        com.retromod.shim.common.LegacyVanillaGapsOlderHosts.register(transformer);
         // 1.21 made enchantments data and Enchantment a final record (code-defined enchantments).
         com.retromod.shim.common.LegacyEnchantmentBridge.register(transformer);
         // Vanilla item bases removed in 1.21, rebased only on hosts that lost them.
@@ -27,8 +29,8 @@ public class NeoForge_1_20_6_to_1_21 implements VersionShim {
         com.retromod.shim.common.Legacy1205MemberBridge.registerChunkStatusRename(transformer);
         // 1.21 replaced Minecraft.getFrameTime() with the delta tracker.
         com.retromod.shim.common.LegacyFrameTimeBridge.register(transformer);
-        // The HUD event lost its window and float partial tick the same way.
-        LegacyNeoForgeGuiEventBridge.register(transformer);
+        // The HUD event lost its window and float partial tick the same way. The drift pass adds them only from 1.21.2.
+        LegacyNeoForgeEventDrift.registerGuiReads(transformer);
         // 1.21 replaced the VertexConsumer builder chain (vertex, color, uv, endVertex) with addVertex and setters.
         com.retromod.shim.common.LegacyVertexApiBridge.register(transformer);
         // It also took a model's and a part's color as one int.

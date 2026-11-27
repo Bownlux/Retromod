@@ -36,6 +36,8 @@ public final class ItemStack implements ItemInstance, DataComponentHolder, Mutab
     public Item getItem() { throw new UnsupportedOperationException(); }
     public net.minecraft.network.chat.Component getItemName() { throw new UnsupportedOperationException(); }
     public net.minecraft.core.Holder<Item> typeHolder() { throw new UnsupportedOperationException(); }
+    // 1.20.5 to 1.21.11 shape.
+    public net.minecraft.core.Holder<Item> getItemHolder() { throw new UnsupportedOperationException(); }
     public boolean hasFoil() { throw new UnsupportedOperationException(); }
     public static com.mojang.serialization.DataResult<ItemStack> validateStrict(ItemStack stack) { throw new UnsupportedOperationException(); }
     public static boolean isSameItem(ItemStack first, ItemStack second) { throw new UnsupportedOperationException(); }

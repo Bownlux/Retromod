@@ -16,6 +16,8 @@ public class NeoForge_1_21_4_to_1_21_5 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // The same vanilla members, for a mod whose chain starts at this version.
+        com.retromod.shim.common.LegacyVanillaGapsOlderHosts.register(transformer);
         // The RenderSystem setters this version removed.
         com.retromod.shim.common.RemovedRenderStateNeutralize.registerRemovedIn(transformer, "1.21.5");
         // RenderTarget.bindWrite went too, and DynamicTexture's constructors gained a debug label.
@@ -56,6 +58,8 @@ public class NeoForge_1_21_4_to_1_21_5 implements VersionShim {
         com.retromod.shim.common.LegacyWeightedEntryBridge.register(transformer);
         // VillagerData.getProfession() became profession(), which returns a holder.
         com.retromod.shim.common.LegacyVillagerBridge.registerProfessionGetter(transformer);
+        // NeoForge's trade event names that profession by its registry key, as the profession constants are.
+        com.retromod.shim.forge.LegacyTradeBridge.registerProfessionKeys(transformer);
         // ClickEvent and HoverEvent became interfaces, so their old constructors go through a factory.
         com.retromod.shim.common.Common_1_21_11_to_26_1_ClassMoves.registerTextEventBridges26x(transformer);
         // Variants moved to data components and VariantHolder went away where the host proves it.

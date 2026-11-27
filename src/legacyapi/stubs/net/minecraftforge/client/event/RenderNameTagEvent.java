@@ -5,6 +5,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraftforge.eventbus.api.event.MutableEvent;
 
 public final class RenderNameTagEvent extends MutableEvent {
+    public <T extends net.minecraft.client.renderer.entity.state.EntityRenderState> T getState() { throw new UnsupportedOperationException(); }
+
     public void setContent(Component content) { throw new UnsupportedOperationException(); }
 
     public void setScoreContent(Component content) { throw new UnsupportedOperationException(); }

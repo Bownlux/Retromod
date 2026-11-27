@@ -34,6 +34,7 @@ public final class LegacyNeoForgeClientApiBridge {
     static final String FLUID_STACK = "fluids/FluidStack";
     static final String RENDER_PLAYER = "client/event/RenderPlayerEvent";
     static final String MODIFY_BAKING = "client/event/ModelEvent$ModifyBakingResult";
+    static final String DEBUG_TEXT = "client/event/CustomizeGuiOverlayEvent$DebugText";
     static final String NEO_FINALIZE = NEO + "event/entity/living/FinalizeSpawnEvent";
     static final String FORGE_FINALIZE = FORGE + "event/entity/living/MobSpawnEvent$FinalizeSpawn";
     // Every NeoForge host ships this class, so reading it tells a running NeoForge host from an offline run.
@@ -47,9 +48,13 @@ public final class LegacyNeoForgeClientApiBridge {
     static final String FLUID_READS = ROOT + "client/extensions/LegacyFluidTypeReads";
     // Beside the other rebuilt common classes; neoforge/fluids holds the rebuilt transfer API.
     static final String STACK_TAGS = ROOT + "common/LegacyFluidStackTags";
+    static final String STACK_CODECS = ROOT + "common/LegacyFluidStackCodecs";
     static final String FINALIZE_FACTORY = ROOT + "event/LegacyFinalizeSpawn";
     static final String RENDER_MEMBERS = ROOT + "client/event/RenderLivingMembers";
     static final String MODEL_MAPS = ROOT + "client/model/LegacyNeoForgeModelMaps";
+    static final String REBUILT_DEBUG_TEXT = ROOT + "client/event/LegacyDebugTextEvent";
+    static final String DEBUG_TEXT_INSTALL = ROOT + "client/event/LegacyDebugTextInstall";
+    static final String DEBUG_TEXT_HOOK_KEY = "legacy-debug-text-neoforge";
     /** The rebuilt class whose {@code install()} posts the old client events and registers old fluid models. */
     public static final String INSTALLER = ROOT + "client/event/LegacyNeoForgeClientEvents";
     // 1.21.9 renamed PlayerRenderer to AvatarRenderer, which LegacyAvatarRendererBridge gives old mods.
@@ -104,6 +109,7 @@ public final class LegacyNeoForgeClientApiBridge {
             registerFluidReads(t);
             install = true;
         }
+        if (gone(host, NEO + DEBUG_TEXT, FIRST_HOST)) registerDebugText(t);
         if (lacks(host, NEO + FLUID_STACK, "getTag", "()" + TAG)) registerStackTags(t);
         if (lacks(host, NEO + RENDER_PLAYER, "getPackedLight", "()I") && RenderStateLookupHost.supported()) registerPlayerReads(t);
         if (lacks(host, NEO_FINALIZE, "<init>", oldFinalize())) registerFinalizeFactory(t);
@@ -185,6 +191,7 @@ public final class LegacyNeoForgeClientApiBridge {
 
     private static void registerStackTags(RetromodTransformer t) {
         RebuiltApiClasses.registerTree(t, STACK_TAGS);
+        RebuiltApiClasses.registerTree(t, STACK_CODECS);
         String stack = "L" + NEO + FLUID_STACK + ";";
         String[][] members = {{"getTag", "()" + TAG}, {"getOrCreateTag", "()" + TAG}, {"hasTag", "()Z"}, {"setTag", "(" + TAG + ")V"},
                 {"getChildTag", "(Ljava/lang/String;)" + TAG}, {"getOrCreateChildTag", "(Ljava/lang/String;)" + TAG},
@@ -194,6 +201,47 @@ public final class LegacyNeoForgeClientApiBridge {
                 t.registerMethodRedirect(owner, member[0], member[1], STACK_TAGS, member[0], "(" + stack + member[1].substring(1), true);
             }
         }
+        // The old constructors with a tag or a source stack, and the old name of the description id.
+        String fluid = "Lnet/minecraft/world/level/material/Fluid;";
+        for (String owner : List.of(NEO + FLUID_STACK, FORGE + FLUID_STACK)) {
+            t.registerConstructorRedirect(owner, "(" + fluid + "I" + TAG + ")V", STACK_TAGS, "create", "(" + fluid + "I" + TAG + ")" + stack);
+            for (String source : List.of(stack, "L" + FORGE + FLUID_STACK + ";")) {
+                t.registerConstructorRedirect(owner, "(" + source + "I)V", STACK_TAGS, "copyWithAmount", "(" + stack + "I)" + stack);
+            }
+            t.registerMethodRedirect(owner, "getTranslationKey", "()Ljava/lang/String;", STACK_TAGS, "getTranslationKey",
+                    "(" + stack + ")Ljava/lang/String;", true);
+            // NeoForge 1.21.1's tag reads and writes, which 26.x left to the stack's codecs.
+            String provider = "Lnet/minecraft/core/HolderLookup$Provider;";
+            String nbt = "Lnet/minecraft/nbt/Tag;";
+            t.registerMethodRedirect(owner, "parseOptional", "(" + provider + TAG + ")" + stack, STACK_CODECS, "parseOptional",
+                    "(" + provider + TAG + ")" + stack);
+            t.registerMethodRedirect(owner, "parse", "(" + provider + nbt + ")Ljava/util/Optional;", STACK_CODECS, "parse",
+                    "(" + provider + nbt + ")Ljava/util/Optional;");
+            t.registerMethodRedirect(owner, "saveOptional", "(" + provider + ")" + nbt, STACK_CODECS, "saveOptional",
+                    "(" + stack + provider + ")" + nbt, true);
+            t.registerMethodRedirect(owner, "save", "(" + provider + ")" + nbt, STACK_CODECS, "save", "(" + stack + provider + ")" + nbt, true);
+        }
+    }
+
+    /** The old debug text event, posted from a debug screen entry per mod, which the player turns on in the debug options. */
+    private static void registerDebugText(RetromodTransformer t) {
+        redirectNested(t, DEBUG_TEXT, REBUILT_DEBUG_TEXT, List.of(""));
+        // Forge 1.20.1 handed out the partial tick as a float; the rebuilt event keeps NeoForge 1.21.1's delta tracker.
+        for (String root : List.of(NEO, FORGE)) {
+            t.registerMethodRedirect(root + DEBUG_TEXT, "getPartialTick", "()F", REBUILT_DEBUG_TEXT, "partialTickFloat",
+                    "(L" + REBUILT_DEBUG_TEXT + ";)F", true);
+        }
+        RebuiltApiClasses.registerTree(t, DEBUG_TEXT_INSTALL);
+        ModConstructorHooks.Call install = new ModConstructorHooks.Call(ModConstructorHooks.Position.HEAD, DEBUG_TEXT_INSTALL,
+                "install", "()V", List.of());
+        byte[] neoName = bytes(NEO + DEBUG_TEXT);
+        byte[] forgeName = bytes(FORGE + DEBUG_TEXT);
+        ModConstructorHooks.register(t, DEBUG_TEXT_HOOK_KEY, (classes, modIds) -> {
+            for (byte[] original : classes.values()) {
+                if (contains(original, neoName) || contains(original, forgeName)) return (modClass, modId) -> List.of(install);
+            }
+            return null;
+        });
     }
 
     private static void registerPlayerReads(RetromodTransformer t) {

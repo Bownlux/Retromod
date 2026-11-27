@@ -60,6 +60,9 @@ public class RetromodTestModForge {
                 .addListener(this::checkMobAttributes);
         net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()
                 .addListener(this::checkAttributeModification);
+        // A block whose old clone stack override asks its parent's.
+        net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()
+                .addListener(VanillaGapsCases::registerBlocks);
         // A block built in a common class and registered from this loader class by id.
         net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext.get().getModEventBus()
                 .addListener(CrossClassRegistration::register);
@@ -156,6 +159,8 @@ public class RetromodTestModForge {
         NeoForgeStartupCases.register();
         // Gameplay calls NeoForge 1.21.1 and newer lost: entity data ids, forced chunks, sided handlers, loot and goals.
         NeoForge121GameplayCases.register();
+        // Single vanilla members NeoForge and Forge 1.20.5 to 1.21.11 lack: use duration, crash text, riding offset and more.
+        VanillaGapsCases.register();
         if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) {
             LOG.info("{} #392 new ImageButton(x, y, width, height, u, v, hoverOffset, texture, onPress) (startup): {}", PREFIX,
                     NeoForge121GameplayCases.imageButton());

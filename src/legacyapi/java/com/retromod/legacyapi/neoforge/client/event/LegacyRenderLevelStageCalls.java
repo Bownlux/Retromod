@@ -30,6 +30,11 @@ public final class LegacyRenderLevelStageCalls {
         return Minecraft.getInstance().getDeltaTracker();
     }
 
+    /** Forge 1.20.1's {@code event.getPartialTick()}, a float: the game's partial tick for this frame. */
+    public static float getPartialTickFloat(RenderLevelStageEvent event) {
+        return Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(false);
+    }
+
     /** {@code event.getCamera()}: the main camera, named mainCamera() from 26.2 and getMainCamera() before. */
     public static Camera getCamera(RenderLevelStageEvent event) {
         Object renderer = Minecraft.getInstance().gameRenderer;

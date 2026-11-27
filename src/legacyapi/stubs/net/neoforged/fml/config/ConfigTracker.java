@@ -4,6 +4,7 @@ package net.neoforged.fml.config;
 import net.neoforged.fml.ModContainer;
 
 public class ConfigTracker {
+    public static final ConfigTracker INSTANCE = null;
     public ModConfig registerConfig(ModConfig.Type type, IConfigSpec spec, ModContainer container) { throw new UnsupportedOperationException(); }
     public ModConfig registerConfig(ModConfig.Type type, IConfigSpec spec, ModContainer container, String fileName) { throw new UnsupportedOperationException(); }
 }

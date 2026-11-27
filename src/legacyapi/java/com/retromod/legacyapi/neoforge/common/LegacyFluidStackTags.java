@@ -10,6 +10,7 @@ import java.lang.reflect.Modifier;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.level.material.Fluid;
 import net.neoforged.neoforge.fluids.FluidStack;
 
 /** Forge 1.20.1's fluid stack tag, which NeoForge's FluidStack dropped for data components in 1.20.5, kept in the custom data component. */
@@ -38,6 +39,23 @@ public final class LegacyFluidStackTags {
 
     public static boolean hasTag(FluidStack stack) {
         return !stack.isEmpty() && stack.get(DataComponents.CUSTOM_DATA) != null;
+    }
+
+    /** {@code new FluidStack(fluid, amount, tag)}: the tag becomes the stack's custom data. */
+    public static FluidStack create(Fluid fluid, int amount, CompoundTag tag) {
+        FluidStack stack = new FluidStack(fluid, amount);
+        if (tag != null) setTag(stack, tag.copy());
+        return stack;
+    }
+
+    /** {@code new FluidStack(stack, amount)}: the same fluid and data with another amount. */
+    public static FluidStack copyWithAmount(FluidStack stack, int amount) {
+        return stack.copyWithAmount(amount);
+    }
+
+    /** {@code getTranslationKey()}: the fluid's description id. */
+    public static String getTranslationKey(FluidStack stack) {
+        return stack.getDescriptionId();
     }
 
     /** {@code setTag(tag)}: null removes the tag, as it did. */

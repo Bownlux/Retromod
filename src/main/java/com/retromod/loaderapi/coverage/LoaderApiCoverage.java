@@ -421,6 +421,8 @@ public final class LoaderApiCoverage {
                 yield target == null ? null : target.owner() + "." + target.name()
                         + (target.newDesc() == null ? "" : ":" + target.newDesc());
             }
+            // Coverage rows name classes and members, never an implements list.
+            case IMPLEMENTS -> null;
         };
     }
 

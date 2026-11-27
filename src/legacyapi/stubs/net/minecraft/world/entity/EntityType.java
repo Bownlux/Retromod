@@ -5,4 +5,7 @@ public class EntityType<T extends Entity> {
     public net.minecraft.core.Holder.Reference<EntityType<?>> builtInRegistryHolder() { throw new UnsupportedOperationException(); }
     public static void updateCustomEntityTag(net.minecraft.world.level.Level level, LivingEntity user, Entity entity,
             net.minecraft.world.item.component.TypedEntityData<EntityType<?>> data) { throw new UnsupportedOperationException(); }
+    // 1.20.5 to 1.21.8 shape.
+    public static void updateCustomEntityTag(net.minecraft.world.level.Level level, net.minecraft.world.entity.player.Player player, Entity entity,
+            net.minecraft.world.item.component.CustomData data) { throw new UnsupportedOperationException(); }
 }

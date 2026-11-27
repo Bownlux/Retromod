@@ -65,7 +65,7 @@ Retromod rebuilds APIs that newer Minecraft versions and loaders removed, so old
 
 - Forge: the old event base and event bus, capabilities, registries, `DistExecutor`, `FakePlayer`, HUD overlays, render stages, block and item colors, render type sets, baked models, and ingredient serializers, under `com.retromod.legacyapi.forge`.
 - NeoForge: capabilities and the old energy, fluid, and item handlers, under `com.retromod.legacyapi.neoforge`.
-- Fabric API: old modules on 26.x hosts, under `com.retromod.loaderapi.fabric`. Quilt mods run through the same Fabric artifact.
+- Fabric API: old modules on 26.x hosts, under `com.retromod.loaderapi.fabric` and `com.retromod.legacyapi.fabric`. Quilt mods run through the same Fabric artifact.
 - Minecraft members that newer versions removed, and stand-ins for old mod APIs such as Baubles, CoFH, NEI, and Waila.
 
 These classes keep the old names and signatures so old mods link against them. Retromod writes their code from the public signatures and the documented and observed behavior. No code from Minecraft, Forge, NeoForge, Fabric API, or Quilt is included. Forge and NeoForge are licensed under LGPL-2.1, so Retromod reimplements their behavior instead of copying it. A few short error messages use the same wording as Forge's, so old mods that show or match them behave the same.

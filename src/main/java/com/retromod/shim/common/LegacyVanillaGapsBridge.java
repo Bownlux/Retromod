@@ -300,7 +300,7 @@ public final class LegacyVanillaGapsBridge {
         if (lacks(helper, "getEnchantmentLevel", "(" + L_TAG + ")I")) {
             staticCall(t, WORLD, ENCHANTMENT_HELPER, "getEnchantmentLevel", "(" + L_TAG + ")I", "1.20.5");
         }
-        if (lacksInherited(host, ITEM_STACK, "getUseDuration", "()I")) receiverCall(t, WORLD, ITEM_STACK, "getUseDuration", "()I", "1.20.5");
+        if (lacksInherited(host, ITEM_STACK, "getUseDuration", "()I")) receiverCall(t, WORLD, ITEM_STACK, "getUseDuration", "()I", "1.21");
         String foodProperties = "(" + L_STACK + "Lnet/minecraft/world/entity/LivingEntity;)Lnet/minecraft/world/food/FoodProperties;";
         if (lacksInherited(host, ITEM, "getFoodProperties", foodProperties)) receiverCall(t, WORLD, ITEM, "getFoodProperties", foodProperties, "1.20.5");
         String craftedBy = "(" + L_STACK + L_LEVEL + L_PLAYER + ")V";
@@ -333,6 +333,8 @@ public final class LegacyVanillaGapsBridge {
         String mayInteract = "(" + L_LEVEL + L_POS + ")Z";
         if (lacksInherited(host, PROJECTILE, "mayInteract", mayInteract)) receiverCall(t, WORLD, PROJECTILE, "mayInteract", mayInteract, "1.21.2");
         if (lacksInherited(host, ENTITY, "getPassengersRidingOffset", "()D")) {
+            // Mobs call their parent's offset from their own override, so the call may name any entity class.
+            t.registerInheritedMethodRedirect(ENTITY, "getPassengersRidingOffset", "()D", WORLD, "getPassengersRidingOffset", "(L" + ENTITY + ";)D");
             receiverCall(t, WORLD, ENTITY, "getPassengersRidingOffset", "()D", "1.20.5");
         }
         String customTag = "(" + L_LEVEL + L_PLAYER + L_ENTITY + L_TAG + ")V";
@@ -365,13 +367,22 @@ public final class LegacyVanillaGapsBridge {
         }
         if (lacksInherited(host, WALK_ANIMATION, "update", "(FF)V")) receiverCall(t, WORLD, WALK_ANIMATION, "update", "(FF)V", "1.21.5");
         String clone = "(Lnet/minecraft/world/level/BlockGetter;" + L_POS + L_STATE + ")" + L_STACK;
-        if (lacksInherited(host, BLOCK, "getCloneItemStack", clone)) receiverCall(t, WORLD, BLOCK, "getCloneItemStack", clone, "1.21");
+        if (lacksInherited(host, BLOCK, "getCloneItemStack", clone)) registerCloneStack(t);
         if (lacksField(host.apply(SLOT_ACCESS), "NULL") && host.apply(SLOT_ACCESS) != null) {
             t.registerFieldRedirect(SLOT_ACCESS, "NULL", "L" + SLOT_ACCESS + ";", WORLD, "nullSlot", "()L" + SLOT_ACCESS + ";");
         }
         if (lacks(host.apply(EFFECT_INSTANCE), "setNoCounter", "(Z)V")) {
             t.registerRemovedMethodNeutralize(EFFECT_INSTANCE, "setNoCounter", "(Z)V");
         }
+    }
+
+    /** 1.20.1's {@code block.getCloneItemStack(getter, pos, state)}, answered by the state the host asks from 1.21.5. */
+    static void registerCloneStack(RetromodTransformer t) {
+        String clone = "(Lnet/minecraft/world/level/BlockGetter;" + L_POS + L_STATE + ")" + L_STACK;
+        // LegacyBlockOverridesAdapter turns an override's super call into the host form, so it keeps its INVOKESPECIAL;
+        // sent to the helper, it would reach the override again through the state.
+        t.registerWrappingMethodRedirect(BLOCK, "getCloneItemStack", clone, WORLD, "getCloneItemStack", "(L" + BLOCK + ";" + clone.substring(1));
+        t.limitRedirectToModsBefore(BLOCK, "getCloneItemStack", clone, "1.21");
     }
 
     /** Math, direction, codec, crash report, JSON, chunk and pack members in their old shapes. */
@@ -420,6 +431,8 @@ public final class LegacyVanillaGapsBridge {
             String validate = "(" + codec + "Ljava/util/function/Function;)" + codec;
             if (lacks(extraCodecs, "validate", validate)) staticCall(t, WORLD, EXTRA_CODECS, "validate", validate, "1.20.5");
         }
+        String lazy = "(Ljava/util/function/Supplier;)Lcom/mojang/serialization/Codec;";
+        if (lacks(extraCodecs, "lazyInitializedCodec", lazy)) staticCall(t, WORLD, EXTRA_CODECS, "lazyInitializedCodec", lazy, "1.20.5");
         // The overworld, nether and end sky ids became environment attributes in 26.1; the ids themselves are kept.
         ClassNode dimensions = host.apply(BUILTIN_DIMENSIONS);
         String[][] effects = {{"OVERWORLD_EFFECTS", "overworldEffects"}, {"NETHER_EFFECTS", "netherEffects"}, {"END_EFFECTS", "endEffects"}};
@@ -488,6 +501,8 @@ public final class LegacyVanillaGapsBridge {
         if (lacks(host.apply(PACK), "readMetaAndCreate", OLD_READ_META)) {
             staticCall(t, WORLD, PACK, "readMetaAndCreate", OLD_READ_META, "1.20.5");
         }
+        // The supplier a mod hands it is a lambda of 1.20.1's open(String); 26.1 and 26.2 open packs by location.
+        LegacyPackSupplierLambdas.register(t, host);
     }
 
     /** The attack packet, which 26.1 split from the interaction packet, and the calls that hand one on. */

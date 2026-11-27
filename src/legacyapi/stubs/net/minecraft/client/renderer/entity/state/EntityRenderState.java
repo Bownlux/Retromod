@@ -10,6 +10,7 @@ public class EntityRenderState {
     public double z;
     public float ageInTicks;
     public int lightCoords;
+    public net.minecraft.network.chat.Component nameTag;
     public float shadowRadius;
     public final java.util.List<Object> shadowPieces = null;
 }

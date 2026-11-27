@@ -40,6 +40,7 @@ public final class NeoForgeMovedMembers {
         registerKeyEvents(t);
         registerRetypedEvents(t);
         registerRenderAndCharacterEvents(t);
+        LegacyNeoForgeEventDrift.register(t);
     }
 
     /** 26.3 named the key event members after its KeyEvent: the key, and the keycode that was the scan code. */

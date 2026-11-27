@@ -9,6 +9,13 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.PlayerModelType;
 
 public interface EntityRenderersEvent {
+    final class CreateSkullModels implements EntityRenderersEvent {
+        public void registerSkullModel(net.minecraft.world.level.block.SkullBlock.Type type,
+                java.util.function.Function<net.minecraft.client.model.geom.EntityModelSet, net.minecraft.client.model.object.skull.SkullModelBase> factory) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
     final class AddLayers implements EntityRenderersEvent {
         public Set<PlayerModelType> getModelTypes() { throw new UnsupportedOperationException(); }
         public <R extends EntityRenderer<?, ?>> R getPlayerRenderer(PlayerModelType type) { throw new UnsupportedOperationException(); }

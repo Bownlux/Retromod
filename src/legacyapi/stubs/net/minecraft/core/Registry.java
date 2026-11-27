@@ -19,4 +19,6 @@ public interface Registry<T> extends Iterable<T>, HolderOwner<T> {
     int size();
     Holder<T> wrapAsHolder(T value);
     default T getValueOrThrow(ResourceKey<T> key) { throw new UnsupportedOperationException(); }
+    // 1.20.5 to 1.21.1 shape, before a registry was its own lookup.
+    default HolderLookup.RegistryLookup<T> asLookup() { throw new UnsupportedOperationException(); }
 }

@@ -28,6 +28,9 @@ This page keeps the release history readable. The [full technical changelog](htt
 - Loads more Forge 1.18 and 1.19 mods on newer hosts: old menu types, music discs, item render properties, registry events, `Random` calls and biome categories.
 - Repairs more 1.20.1 Forge mods on NeoForge 1.21.1 and newer: GeckoLib 4 models, entity model draws, HUD overlays, shield listeners, and several blocks and triggers they build at startup.
 - Keeps more Forge 1.20.1 mods working on NeoForge 1.21.1 and newer: mod dimensions, sided block inventories, forced chunks, loot table lookups, biome tag checks, potion effect reads, mob path finding and pet follow goals. On NeoForge and Forge 1.21 and 1.21.1 it also rebuilds their texture image buttons.
+- Answers more renamed and retyped loader event members for 1.20.1 and 1.21.1 mods on NeoForge 26.x, Forge 26.2 and newer, and Fabric 26.x, and rebuilds NeoForge's effect cures, creative tab entry map, world workers and debug screen text event.
+- Rebuilds Fabric API's old renderer, model loading and fluid handler APIs on Fabric 26.x when the loader API runtime is on, so old custom block models draw again.
+- Repairs removed vanilla calls such as `ItemStack.getUseDuration()` for old Forge and NeoForge mods on NeoForge 1.20.5 to 1.21.11 and Forge 1.21 to 1.21.11, as on 26.x.
 
 ### Snapshot 5, November 20, 2026
 

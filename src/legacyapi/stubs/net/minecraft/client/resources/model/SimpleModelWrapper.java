@@ -11,6 +11,10 @@ import net.minecraft.core.Direction;
 // A record on the host.
 public final class SimpleModelWrapper implements BlockStateModelPart {
     public SimpleModelWrapper(QuadCollection quads, boolean useAmbientOcclusion, Material.Baked particleMaterial) { throw new UnsupportedOperationException(); }
+    public static BlockStateModelPart bake(ModelBaker baker, net.minecraft.resources.Identifier id,
+            net.minecraft.client.renderer.block.dispatch.ModelState state) {
+        throw new UnsupportedOperationException();
+    }
     public QuadCollection quads() { throw new UnsupportedOperationException(); }
     public List<BakedQuad> getQuads(Direction side) { throw new UnsupportedOperationException(); }
     public boolean useAmbientOcclusion() { throw new UnsupportedOperationException(); }

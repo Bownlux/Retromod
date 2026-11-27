@@ -230,6 +230,14 @@ class LoaderApiOwnershipTest {
             assertEquals(OverlapProvider.TARGET, transformer.getClassRedirects().get(type),
                     when + ": " + type + " must stay on the runtime's target");
         }
+        // The bundled provider serves the old renderer types through batch D2; FabricRendererMaterialBridge and the
+        // 1.21.6 shim register stand-ins for them on every order.
+        for (String[] served : new String[][]{{"Renderer", "LegacyRenderer"}, {"material/MaterialFinder", "LegacyMaterialFinder"},
+                {"material/RenderMaterial", "LegacyRenderMaterial"}}) {
+            assertEquals("com/retromod/legacyapi/fabric/client/renderer/" + served[1],
+                    transformer.getClassRedirects().get("net/fabricmc/fabric/api/renderer/v1/" + served[0]),
+                    when + ": the old " + served[0] + " must stay on the runtime's rebuilt type");
+        }
         // The bundled provider serves these two through batch S1; FabricApiShim and the 1.21.6 HUD
         // shim registered broken and per-mod targets for them on every order (D1, critique 12).
         assertEquals("com/retromod/loaderapi/fabric/v26/screen/shared/LegacyHudRenderCallback",

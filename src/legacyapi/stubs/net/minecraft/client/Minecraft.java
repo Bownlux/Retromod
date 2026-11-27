@@ -39,6 +39,7 @@ public class Minecraft {
     public boolean hasControlDown() { throw new UnsupportedOperationException(); }
     public boolean hasAltDown() { throw new UnsupportedOperationException(); }
     public DeltaTracker getDeltaTracker() { throw new UnsupportedOperationException(); }
+    public net.minecraft.client.model.geom.EntityModelSet getEntityModels() { throw new UnsupportedOperationException(); }
     public net.minecraft.server.packs.resources.ResourceManager getResourceManager() { throw new UnsupportedOperationException(); }
     public net.minecraft.client.renderer.texture.TextureManager getTextureManager() { throw new UnsupportedOperationException(); }
     public net.minecraft.client.resources.model.sprite.AtlasManager getAtlasManager() { throw new UnsupportedOperationException(); }

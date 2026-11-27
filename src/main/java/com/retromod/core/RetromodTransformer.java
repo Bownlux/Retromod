@@ -78,6 +78,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     private volatile String modBuildVersion;
     /** The translated jars the current mod was linked with, kept past the class pass for the embedder. */
     private volatile SyntheticLibraries modLibraries = SyntheticLibraries.NONE;
+    /** A mod a thread set for itself with {@link #pushThreadModContext}, which wins over the shared one above. */
+    private final ThreadLocal<ModContext> threadModContext = new ThreadLocal<>();
 
     // Exact method aliases that also apply when javac writes the CALLER'S subclass as the
     // constant-pool owner of an inherited invocation. The ordinary redirect table cannot match
@@ -336,6 +338,11 @@ public class RetromodTransformer implements ClassFileTransformer {
         this.modLibraries = this.linkedLibraries;
     }
 
+    /** The current mod's linked libraries; a background pass's own mod is translated without any. */
+    private SyntheticLibraries linkedLibraries() {
+        return threadModContext.get() != null ? SyntheticLibraries.NONE : linkedLibraries;
+    }
+
     public void clearLinkedLibraries() {
         this.linkedLibraries = SyntheticLibraries.NONE;
         linkedLibraryMembers.clear();
@@ -350,7 +357,7 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     private Set<String> readLinkedLibraryMembers(String owner) {
-        byte[] bytes = linkedLibraries.classBytes(owner);
+        byte[] bytes = linkedLibraries().classBytes(owner);
         if (bytes == null) return Set.of();
         Set<String> members = new HashSet<>();
         try {
@@ -377,7 +384,7 @@ public class RetromodTransformer implements ClassFileTransformer {
 
     /** Read one translated class of a library the current jar builds on, or null. */
     public static byte[] readLinkedLibraryClassForAdapter(String internalName) {
-        return INSTANCE.linkedLibraries.classBytes(internalName);
+        return INSTANCE.linkedLibraries().classBytes(internalName);
     }
 
     /**
@@ -399,14 +406,14 @@ public class RetromodTransformer implements ClassFileTransformer {
     private boolean shippedByJarOrLibrary(String internalName) {
         Function<String, byte[]> provider = currentJarClassBytesProvider();
         if (provider != null && provider.apply(internalName) != null) return true;
-        return linkedLibraries.classBytes(internalName) != null;
+        return linkedLibraries().classBytes(internalName) != null;
     }
 
     private byte[] jarOrLibraryClassRemapped(String internalName) {
         Function<String, byte[]> provider = currentJarClassBytesProvider();
         byte[] own = provider != null ? provider.apply(internalName) : null;
         if (own == null) {
-            byte[] library = linkedLibraries.classBytes(internalName);
+            byte[] library = linkedLibraries().classBytes(internalName);
             if (library != null) return library;
             // The same reader inheritsFrom falls back to; a class read there may still carry its old names.
             own = readClassBytes(internalName, null);
@@ -586,7 +593,7 @@ public class RetromodTransformer implements ClassFileTransformer {
             Function<String, byte[]> provider, String internalName) {
         byte[] jarClass = provider != null ? provider.apply(internalName) : null;
         if (jarClass != null) return jarClassShape(jarClass, internalName);
-        byte[] library = linkedLibraries.classBytes(internalName);
+        byte[] library = linkedLibraries().classBytes(internalName);
         if (library != null) return jarClassShape(library, null);
         return hostClassShapes.computeIfAbsent(internalName, name -> Optional.ofNullable(readHostClassShape(name)))
                 .orElse(null);
@@ -1035,7 +1042,7 @@ public class RetromodTransformer implements ClassFileTransformer {
     private Function<String, byte[]> hierarchyClasses() {
         // A join of two types from a jar's bundled library (Create's BlockEntry and ItemEntry from
         // Registrate) has its answer only in that library, so the walk reads bundled jars too.
-        return withLibraries(BundledJarClasses.withBundled(currentJarClassBytesProvider()), linkedLibraries);
+        return withLibraries(BundledJarClasses.withBundled(currentJarClassBytesProvider()), linkedLibraries());
     }
 
     /** The shared ancestor from the jar's classes and the target Minecraft index, or the conservative guess. */
@@ -1383,7 +1390,44 @@ public class RetromodTransformer implements ClassFileTransformer {
 
     /** The Minecraft version the mod being transformed was built for, or null when unknown. */
     public String getModSourceVersion() {
-        return modSourceVersion;
+        return modSourceVersion();
+    }
+
+    private String modSourceVersion() {
+        ModContext own = threadModContext.get();
+        return own != null ? own.sourceVersion : modSourceVersion;
+    }
+
+    /** One mod's version and jar, which a thread that transforms it beside the shared transform paths holds. */
+    public static final class ModContext {
+        private final String sourceVersion;
+        private final String buildVersion;
+        private final java.nio.file.Path jar;
+        private volatile Boolean predates113;
+
+        private ModContext(String sourceVersion, String buildVersion, java.nio.file.Path jar) {
+            this.sourceVersion = sourceVersion;
+            this.buildVersion = buildVersion;
+            this.jar = jar;
+        }
+
+        /** Reads the mod's versions as {@link #setModSourceVersion} and {@link #setModSourceJar} do, once. */
+        public static ModContext of(String declared, java.nio.file.Path jar) {
+            java.util.regex.Matcher version = declared == null ? null : FIRST_VERSION_NUMBER.matcher(declared);
+            String source = version != null && version.find() ? version.group() : null;
+            String build = jar == null ? null : ModVersionDetector.metadataOnly().buildVersion(jar, source);
+            return new ModContext(source, build, jar);
+        }
+    }
+
+    /** Sets the mod this thread transforms until the scope closes, for a pass that runs beside the shared translation. */
+    public JarClassBytesScope pushThreadModContext(ModContext context) {
+        ModContext previous = threadModContext.get();
+        threadModContext.set(context);
+        return () -> {
+            if (previous == null) threadModContext.remove();
+            else threadModContext.set(previous);
+        };
     }
 
     /**
@@ -1400,6 +1444,15 @@ public class RetromodTransformer implements ClassFileTransformer {
 
     /** Whether the current mod's jar is a 1.12-era build whatever its mods.toml declares; read once per mod. */
     private boolean modJarPredates113() {
+        ModContext own = threadModContext.get();
+        if (own != null) {
+            Boolean read = own.predates113;
+            if (read == null) {
+                read = McpEraJarSigns.predates113(own.jar);
+                own.predates113 = read;
+            }
+            return read;
+        }
         Boolean known = modJarPredates113;
         if (known == null) {
             known = McpEraJarSigns.predates113(modJar);
@@ -1410,8 +1463,9 @@ public class RetromodTransformer implements ClassFileTransformer {
 
     /** The Minecraft version the mod's saved data comes from: the newest its jar shows, else its source version. */
     public String getModBuildVersion() {
-        String build = modBuildVersion;
-        return build != null ? build : modSourceVersion;
+        ModContext own = threadModContext.get();
+        String build = own != null ? own.buildVersion : modBuildVersion;
+        return build != null ? build : modSourceVersion();
     }
 
     private static final java.util.regex.Pattern FIRST_VERSION_NUMBER =
@@ -1434,7 +1488,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         // A declared floor such as >=1.21 can lag the build, so the newest version the jar shows counts. A mod that
         // declares no version keeps every shim, even where its metadata format alone implies a floor, such as 1.20.5
         // for neoforge.mods.toml, so the same jar takes the same redirects on every path.
-        return modSourceVersion == null ? null : getModBuildVersion();
+        return modSourceVersion() == null ? null : getModBuildVersion();
     }
 
     /** Applies a class redirect, and every redirect keyed on that class, only to mods built before {@code firstVersionWithout}. */
@@ -1519,7 +1573,12 @@ public class RetromodTransformer implements ClassFileTransformer {
     private boolean yieldsToLibrary(String name, Predicate<String> jarDefines) {
         if (libraryYieldingClassRedirects.isEmpty()) return false;
         String libraryClass = libraryYieldingClassRedirects.get(name);
-        return libraryClass != null && (jarDefines.test(libraryClass) || modLibraries.defines(libraryClass));
+        return libraryClass != null && (jarDefines.test(libraryClass) || currentModLibraries().defines(libraryClass));
+    }
+
+    /** The translated jars the current mod was linked with; a thread's own mod has none. */
+    private SyntheticLibraries currentModLibraries() {
+        return threadModContext.get() != null ? SyntheticLibraries.NONE : modLibraries;
     }
 
     /** Whether the class this pass reads extends {@code name}, whose redirect keeps out of subclasses. */
@@ -1547,7 +1606,8 @@ public class RetromodTransformer implements ClassFileTransformer {
         if (firstVersionWith == null) return false;
         // Only the declared version decides. A jar's own version number can read as a newer build, as 26.6.0 does for
         // a 1.12.2 mod at that version, and the game registers before it has read any jar.
-        if (modSourceVersion == null || RetromodVersion.compareMcVersions(modSourceVersion, firstVersionWith) < 0) {
+        String source = modSourceVersion();
+        if (source == null || RetromodVersion.compareMcVersions(source, firstVersionWith) < 0) {
             return true;
         }
         // A 1.12.2 jar can carry a stale mods.toml that declares a newer version; its other metadata tells.
@@ -2384,7 +2444,7 @@ public class RetromodTransformer implements ClassFileTransformer {
      * {@code IncompatibleClassChangeError}. Callers then adapt the object where it reaches the API.
      */
     public void registerDroppedInterface(String iface) {
-        if (!admitsType(iface)) return;
+        if (!admitsType(iface) || !admitsImplements(iface)) return;
         implementedInterfaceRewrites.put(iface, "");
     }
 
@@ -2394,13 +2454,13 @@ public class RetromodTransformer implements ClassFileTransformer {
      * one. Unlike a class redirect, references to the interface elsewhere stay unchanged.
      */
     public void registerInterfaceReplacement(String iface, String replacement) {
-        if (!admitsType(iface)) return;
+        if (!admitsType(iface) || !admitsImplements(iface)) return;
         implementedInterfaceRewrites.put(iface, replacement);
     }
 
     /** Applies the replacement of {@code iface} only to mods built before {@code firstVersionWithout}; an unknown version keeps it. */
     public void limitInterfaceReplacementToModsBefore(String iface, String firstVersionWithout) {
-        if (!admitsType(iface)) return;
+        if (!admitsType(iface) || !admitsImplements(iface)) return;
         legacyOnlyInterfaceRewrites.put(iface, firstVersionWithout);
     }
 
@@ -2931,7 +2991,9 @@ public class RetromodTransformer implements ClassFileTransformer {
      * range that starts before it. Null when the id never drifted or the version is unknown.
      */
     private String driftedSrgName(String kind, String srgName) {
-        String version = srgSourceVersion;
+        // A thread's own mod is read in its own version, which is its SRG version too.
+        ModContext own = threadModContext.get();
+        String version = own != null ? own.sourceVersion : srgSourceVersion;
         if (version == null || srgDrift.isEmpty()) return null;
         List<SrgDrift> ranges = srgDrift.get(kind + ' ' + srgName);
         if (ranges == null) return null;
@@ -4438,6 +4500,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         indyTypedRewrites.clear();
         indyTypedOwners.clear();
         claimedTypes.clear();
+        claimedImplements.clear();
         claimedMembers.clear();
         claimedMemberNames.clear();
         suppressedKeys.clear();
@@ -4898,6 +4961,7 @@ public class RetromodTransformer implements ClassFileTransformer {
      * regardless of how many iterative passes it needed.
      */
     private byte[] postProcess(byte[] stableBytes, String className) {
+        String modSourceVersion = modSourceVersion();
         byte[] repaired = normalizeEmbeddedShimCalls(stableBytes);
         // After the loop, so the check names the redirected type and is rewritten once.
         repaired = InstanceofHelperAdapter.apply(repaired, instanceofHelpers);
@@ -9608,6 +9672,8 @@ public class RetromodTransformer implements ClassFileTransformer {
     // These sets stay empty while the runtime is off, so every admission check returns at once.
 
     private final Set<String> claimedTypes = ConcurrentHashMap.newKeySet();
+    /** Interfaces whose place in implements lists the runtime owns; calls keyed on them stay open to other registrations. */
+    private final Set<String> claimedImplements = ConcurrentHashMap.newKeySet();
     private final Set<RedirectKey> claimedMembers = ConcurrentHashMap.newKeySet();
     /** {@code owner#name} for every claimed method and field, for the name-only tables. */
     private final Set<String> claimedMemberNames = ConcurrentHashMap.newKeySet();
@@ -9657,6 +9723,7 @@ public class RetromodTransformer implements ClassFileTransformer {
         Objects.requireNonNull(key, "key");
         switch (key.kind()) {
             case TYPE -> claimedTypes.add(key.owner());
+            case IMPLEMENTS -> claimedImplements.add(key.owner());
             case METHOD, FIELD -> {
                 claimedMembers.add(key);
                 claimedMemberNames.add(key.owner() + "#" + key.name());
@@ -9681,6 +9748,8 @@ public class RetromodTransformer implements ClassFileTransformer {
         suppressedKeys.remove(key);
         if (key.kind() == RedirectKey.Kind.TYPE) {
             claimedTypes.remove(key.owner());
+        } else if (key.kind() == RedirectKey.Kind.IMPLEMENTS) {
+            claimedImplements.remove(key.owner());
         } else if (claimedMembers.remove(key)) {
             String name = key.owner() + "#" + key.name();
             if (claimedMembers.stream().noneMatch(k -> name.equals(k.owner() + "#" + k.name()))) {
@@ -9724,7 +9793,15 @@ public class RetromodTransformer implements ClassFileTransformer {
     }
 
     private boolean nothingClaimed() {
-        return claimedTypes.isEmpty() && claimedMembers.isEmpty();
+        return claimedTypes.isEmpty() && claimedImplements.isEmpty() && claimedMembers.isEmpty();
+    }
+
+    /** Whether a replacement of interface {@code iface} in implements lists may proceed. */
+    private boolean admitsImplements(String iface) {
+        if (nothingClaimed() || inOwnedScope() || iface == null) return true;
+        if (!claimedImplements.contains(iface)) return true;
+        LOGGER.debug("Ignored implements list registration for {}: the loader API runtime owns it", iface);
+        return false;
     }
 
     /** Whether a registration keyed on type {@code owner} may proceed. */
@@ -9820,6 +9897,10 @@ public class RetromodTransformer implements ClassFileTransformer {
             case FIELD -> {
                 String name = key.name();
                 purgeFields(k -> k.owner().equals(owner) && k.name().equals(name));
+            }
+            case IMPLEMENTS -> {
+                implementedInterfaceRewrites.remove(owner);
+                legacyOnlyInterfaceRewrites.remove(owner);
             }
         }
         // Cached views of the tables must be rebuilt from what is left.

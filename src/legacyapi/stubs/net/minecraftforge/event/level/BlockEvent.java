@@ -9,4 +9,12 @@ public interface BlockEvent {
     LevelAccessor getLevel();
     BlockPos getPos();
     BlockState getState();
+
+    final class BreakEvent implements BlockEvent {
+        public BreakEvent(net.minecraft.world.level.Level level, BlockPos pos, BlockState state, net.minecraft.world.entity.player.Player player,
+                net.minecraftforge.common.util.Result result) {}
+        public LevelAccessor getLevel() { throw new UnsupportedOperationException(); }
+        public BlockPos getPos() { throw new UnsupportedOperationException(); }
+        public BlockState getState() { throw new UnsupportedOperationException(); }
+    }
 }

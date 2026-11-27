@@ -8,8 +8,16 @@ import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodTransformer.MethodKey;
 import com.retromod.core.RetromodVersion;
 import com.retromod.shim.common.Legacy1203RenameBridge;
+import com.retromod.shim.neoforge.NeoForgeMovedMembers;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.MethodInsnNode;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -51,12 +59,36 @@ class Renames1203Test {
 
     @Test
     void targetEventGettersTakeNeoForgeNames() {
+        // NeoForge 1.21.1 is the oldest host the Forge to NeoForge shim reaches; it registers the moved members there.
+        RetromodVersion.TARGET_MC_VERSION = "1.21.1";
         RetromodTransformer transformer = RetromodTransformer.getInstance();
         transformer.clearRedirectsForTesting();
-        Forge_1_20_to_NeoForge_1_21.registerChangeTargetRenames(transformer);
+        String forgeEvent = "net/minecraftforge/event/entity/living/LivingChangeTargetEvent";
         String event = "net/neoforged/neoforge/event/entity/living/LivingChangeTargetEvent";
-        var target = transformer.getMethodRedirects().get(new MethodKey(event, "getOriginalTarget", "()Lnet/minecraft/world/entity/LivingEntity;"));
-        assertNotNull(target, "an unreadable host is NeoForge from 1.21, which renamed them");
-        assertEquals("getOriginalAboutToBeSetTarget", target.name());
+        transformer.registerClassRedirect(forgeEvent, event);
+        NeoForgeMovedMembers.register(transformer);
+
+        String entity = "Lnet/minecraft/world/entity/LivingEntity;";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "boh/TargetHandler", null, "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "onTarget",
+                "(L" + forgeEvent + ";)" + entity, null, null);
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, forgeEvent, "getOriginalTarget", "()" + entity, false);
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+
+        ClassNode node = new ClassNode();
+        new ClassReader(transformer.transformClass(cw.toByteArray(), "boh/TargetHandler")).accept(node, 0);
+        MethodInsnNode call = null;
+        for (AbstractInsnNode insn : node.methods.get(0).instructions) {
+            if (insn instanceof MethodInsnNode found) call = found;
+        }
+        assertNotNull(call);
+        assertEquals(event + ".getOriginalAboutToBeSetTarget()" + entity, call.owner + "." + call.name + call.desc,
+                "a Forge 1.20.1 handler reads the target under NeoForge's name");
     }
 }
