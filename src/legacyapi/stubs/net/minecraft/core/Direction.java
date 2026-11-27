@@ -5,4 +5,7 @@ public enum Direction {
     DOWN, UP, NORTH, SOUTH, WEST, EAST;
 
     public enum Axis { X, Y, Z }
+    public int getStepX() { throw new UnsupportedOperationException(); }
+    public int getStepY() { throw new UnsupportedOperationException(); }
+    public int getStepZ() { throw new UnsupportedOperationException(); }
 }

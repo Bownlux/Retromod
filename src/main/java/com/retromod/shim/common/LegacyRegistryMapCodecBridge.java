@@ -57,12 +57,24 @@ public final class LegacyRegistryMapCodecBridge {
     private static final String FORGE_REGISTER_DESC =
             "(Ljava/lang/String;Ljava/util/function/Supplier;)Lnet/minecraftforge/registries/RegistryObject;";
 
+    /** The worldgen type wrappers 1.20.5 built on a map codec; a mod built them on a codec, as tree placers do (#415). */
+    static final String[] WORLDGEN_TYPES = {
+            "net/minecraft/world/level/levelgen/feature/treedecorators/TreeDecoratorType",
+            "net/minecraft/world/level/levelgen/feature/trunkplacers/TrunkPlacerType",
+            "net/minecraft/world/level/levelgen/feature/foliageplacers/FoliagePlacerType",
+            "net/minecraft/world/level/levelgen/feature/rootplacers/RootPlacerType",
+            "net/minecraft/world/level/levelgen/feature/featuresize/FeatureSizeType",
+            LegacyBlockStateProviderBridge.TYPE};
+    static final String WORLDGEN_TYPE_FACTORY = "com/retromod/generated/LegacyWorldgenTypes";
+
     private LegacyRegistryMapCodecBridge() {}
 
     /** Registers the generated class and the embedded helper it calls, for the register wrappers. */
     public static void registerClasses(RetromodTransformer transformer) {
         boolean processorViews = hostProcessorTypesAreMapCodecs();
         transformer.registerSyntheticClass(CLASS, generate(LegacyKeyDispatchCodecBridge.hostReadsBothShapes(), processorViews));
+        // The shared map codecs, where each value is recorded for a rebuilt generator's codec() to return.
+        LegacyMapCodecsSynthetic.register(transformer);
         // Its own class, so the value class every register wrapper calls never needs the processor type to load.
         if (processorViews) {
             transformer.registerSyntheticClass(PROCESSOR_VIEW, WorldgenTypeBridgeSynthetic.generateWrapper(PROCESSOR_VIEW, PROCESSOR_TYPE));
@@ -76,6 +88,7 @@ public final class LegacyRegistryMapCodecBridge {
         String host = RetromodVersion.TARGET_MC_VERSION;
         if (host == null || RetromodVersion.compareMcVersions(host, FIRST_MAP_CODEC_HOST) < 0) return;
         registerClasses(transformer);
+        registerWorldgenTypeConstructors(transformer, ClassResourceInspector::read);
         // A Forge mod's event keeps its owner on Forge; on NeoForge the class move may run first.
         String[] events = McReflect.isNeoForge()
                 ? new String[] {"net/minecraftforge/registries/RegisterEvent", "net/neoforged/neoforge/registries/RegisterEvent"}
@@ -92,6 +105,51 @@ public final class LegacyRegistryMapCodecBridge {
                     CLASS, "registerDeferred", REGISTER_DEFERRED_DESC, true);
             transformer.limitRedirectToModsBefore(FORGE_REGISTER, "register", FORGE_REGISTER_DESC, FIRST_MAP_CODEC_HOST);
         }
+    }
+
+    /** {@code new TrunkPlacerType(codec)} and its siblings, built on the codec as a map codec where the host takes only that. */
+    static void registerWorldgenTypeConstructors(RetromodTransformer transformer, java.util.function.Function<String, ClassNode> host) {
+        java.util.List<String> types = new java.util.ArrayList<>();
+        for (String type : WORLDGEN_TYPES) {
+            ClassNode node = host.apply(type);
+            // Unreadable, every host from 1.20.5 takes the map codec, except that 26.3 replaced the state provider type,
+            // which LegacyBlockStateProviderBridge rebuilds there.
+            boolean takesMapCodec = node == null
+                    ? !type.equals(LegacyBlockStateProviderBridge.TYPE) || RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, "26.3") < 0
+                    : hasConstructor(node, "(L" + MAP_CODEC + ";)V") && !hasConstructor(node, "(L" + CODEC + ";)V");
+            if (takesMapCodec) types.add(type);
+        }
+        if (types.isEmpty()) return;
+        transformer.registerSyntheticClass(WORLDGEN_TYPE_FACTORY, generateWorldgenTypeFactory(types));
+        for (String type : types) {
+            transformer.registerConstructorRedirect(type, "(L" + CODEC + ";)V", WORLDGEN_TYPE_FACTORY, "create",
+                    "(L" + CODEC + ";)L" + type + ";");
+        }
+    }
+
+    private static boolean hasConstructor(ClassNode node, String desc) {
+        return node.methods.stream().anyMatch(m -> m.name.equals("<init>") && m.desc.equals(desc));
+    }
+
+    /** {@code static <Type> create(Codec codec)} for each type: the type built on {@code LegacyRegistryMapCodec.of(codec)}. */
+    static byte[] generateWorldgenTypeFactory(java.util.List<String> types) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, WORLDGEN_TYPE_FACTORY, null, "java/lang/Object", null);
+        for (String type : types) {
+            MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "create", "(L" + CODEC + ";)L" + type + ";", null, null);
+            mv.visitCode();
+            mv.visitTypeInsn(NEW, type);
+            mv.visitInsn(DUP);
+            // A record codec is already a map codec inside; any other codec is wrapped as one that is both.
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitMethodInsn(INVOKESTATIC, CLASS, "of", "(" + OBJECT + ")" + OBJECT, false);
+            mv.visitTypeInsn(CHECKCAST, MAP_CODEC);
+            mv.visitMethodInsn(INVOKESPECIAL, type, "<init>", "(L" + MAP_CODEC + ";)V", false);
+            mv.visitInsn(ARETURN);
+            end(mv);
+        }
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     /**
@@ -190,7 +248,7 @@ public final class LegacyRegistryMapCodecBridge {
         end(mv);
     }
 
-    /** {@code static Object of(Object value)}: a codec that is not yet a map codec becomes one that is both. */
+    /** {@code static Object of(Object value)}: a codec that is not yet a map codec becomes one that is both, once per codec. */
     private static void emitOf(ClassWriter cw, boolean processorViews) {
         MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "of", "(" + OBJECT + ")" + OBJECT, null, null);
         mv.visitCode();
@@ -203,6 +261,16 @@ public final class LegacyRegistryMapCodecBridge {
         mv.visitVarInsn(ALOAD, 0);
         mv.visitTypeInsn(INSTANCEOF, MAP_CODEC);
         mv.visitJumpInsn(IFNE, unchanged);
+        // The same codec registered again keeps the value it got the first time.
+        Label fresh = new Label();
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitMethodInsn(INVOKESTATIC, LegacyMapCodecsSynthetic.INTERNAL, "remembered", LegacyMapCodecsSynthetic.OF_DESC, false);
+        mv.visitInsn(DUP);
+        mv.visitTypeInsn(INSTANCEOF, CLASS);
+        mv.visitJumpInsn(IFEQ, fresh);
+        mv.visitInsn(ARETURN);
+        mv.visitLabel(fresh);
+        mv.visitInsn(POP);
         mv.visitTypeInsn(NEW, CLASS);
         mv.visitInsn(DUP);
         mv.visitVarInsn(ALOAD, 0);
@@ -211,6 +279,12 @@ public final class LegacyRegistryMapCodecBridge {
         mv.visitTypeInsn(CHECKCAST, CODEC);
         mv.visitMethodInsn(INVOKESTATIC, CLASS, "mapCodec", "(L" + CODEC + ";)L" + MAP_CODEC + ";", false);
         mv.visitMethodInsn(INVOKESPECIAL, CLASS, "<init>", "(L" + CODEC + ";L" + MAP_CODEC + ";)V", false);
+        // Recorded, so a rebuilt generator's codec() returns this same value and the registry finds it.
+        mv.visitVarInsn(ASTORE, 1);
+        mv.visitVarInsn(ALOAD, 0);
+        mv.visitVarInsn(ALOAD, 1);
+        mv.visitMethodInsn(INVOKESTATIC, LegacyMapCodecsSynthetic.INTERNAL, "remember", LegacyMapCodecsSynthetic.REMEMBER_DESC, false);
+        mv.visitVarInsn(ALOAD, 1);
         mv.visitInsn(ARETURN);
         mv.visitLabel(unchanged);
         mv.visitVarInsn(ALOAD, 0);

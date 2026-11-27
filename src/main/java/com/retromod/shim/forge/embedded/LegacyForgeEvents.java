@@ -738,6 +738,72 @@ public final class LegacyForgeEvents {
         }
     }
 
+    // ------------------------------------------------------------------ 1.17 and 1.18 registry events
+
+    /** The stand-in event posted for each registry path a 1.17 or 1.18 mod's handlers listen to. */
+    private static final Map<String, Class<?>> FORWARDED = new java.util.concurrent.ConcurrentHashMap<>();
+    private static volatile boolean forwarding;
+
+    /** Called first in a 1.17 or 1.18 mod's constructor for each registry its {@code RegistryEvent.Register} handlers use. */
+    public static void forwardRegistry(String id, String path) {
+        // The id is also the namespace setRegistryName adds to a bare name.
+        if (!attached) modId = id.toLowerCase(java.util.Locale.ROOT);
+        Class<?> event = perRegistryEvent(path);
+        if (event == null) return;
+        FORWARDED.put(path, event);
+        synchronized (LegacyForgeEvents.class) {
+            if (forwarding) return;
+            forwarding = true;
+        }
+        Object bus = findModBus(id);
+        Class<?> registerEvent = firstClass("net.neoforged.neoforge.registries.RegisterEvent",
+                "net.minecraftforge.registries.RegisterEvent");
+        if (bus == null || registerEvent == null) return;
+        // The host's RegisterEvent for each registry posts the handlers' own event on the mod bus, with a registrar.
+        addListener(bus, registerEvent, false, host -> forwardRegistryEvent(bus, host));
+    }
+
+    static void forwardRegistryEvent(Object bus, Object registerEvent) {
+        Object key;
+        try {
+            key = LegacyPublicMethods.method(registerEvent.getClass(), "getRegistryKey").invoke(registerEvent);
+        } catch (Throwable t) {
+            return;
+        }
+        String path = registryPathOfKey(String.valueOf(key));
+        Class<?> event = path == null ? null : FORWARDED.get(path);
+        if (event == null) return;
+        Set<Object> registered = Collections.newSetFromMap(new IdentityHashMap<>());
+        Consumer<Object> registrar = entry -> {
+            if (registerEntry(registerEvent, key, entry)) registered.add(entry);
+        };
+        Object vanilla = builtInRegistry(String.valueOf(key));
+        List<Set<Object>> before = holderKeys(vanilla);
+        try {
+            Object legacy = event.getConstructor(Object.class).newInstance(registrar);
+            findMethod(bus.getClass(), "post", 1).invoke(bus, legacy);
+            LOGGER.debug("Legacy mod {}: its {} registry handlers registered {} entries", modId, path, registered.size());
+        } catch (Throwable t) {
+            LOGGER.warn("Legacy mod {}: its {} registry handlers failed", modId, path, unwrap(t));
+        }
+        // Entries registered before a failure stay; any the host refused would stop the registry freeze.
+        dropOrphans(vanilla, before, registered, path);
+    }
+
+    /** This mod's copy of the stand-in event for one registry, which sits beside this class's own copy. */
+    private static Class<?> perRegistryEvent(String path) {
+        String self = LegacyForgeEvents.class.getName();
+        String home = "com.retromod.shim.forge.embedded.LegacyForgeEvents";
+        String prefix = self.substring(0, self.length() - home.length());
+        String name = prefix + "com.retromod.generated.forge118.LegacyRegister_" + path.replace('/', '_');
+        try {
+            return Class.forName(name, false, LegacyForgeEvents.class.getClassLoader());
+        } catch (ClassNotFoundException | LinkageError e) {
+            LOGGER.warn("Legacy mod {}: no {} registry event in the mod, so those handlers will not run", modId, path);
+            return null;
+        }
+    }
+
     /** {@code IForgeRegistry.register(entry)} on the registry a legacy handler received. */
     @SuppressWarnings("unchecked")
     public static void registryRegister(Object registry, Object entry) {

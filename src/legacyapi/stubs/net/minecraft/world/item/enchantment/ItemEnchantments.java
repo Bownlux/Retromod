@@ -7,4 +7,5 @@ import net.minecraft.core.Holder;
 
 public class ItemEnchantments {
     public Set<Object2IntMap.Entry<Holder<Enchantment>>> entrySet() { throw new UnsupportedOperationException(); }
+    public static final ItemEnchantments EMPTY = null;
 }

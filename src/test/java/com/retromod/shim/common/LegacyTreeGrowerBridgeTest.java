@@ -106,6 +106,38 @@ class LegacyTreeGrowerBridgeTest {
         assertFalse(transformer.getSyntheticClasses().containsKey(LegacyTreeGrowerConstructorBridge.HELPER));
     }
 
+    @Test
+    void aVanillaGrowerTheModBuiltIsTreeGrowersConstant() throws Exception {
+        // #384 (Better Than Wolves, Forge 1.20.1 on Forge 26.2): a static AzaleaTreeGrower field grows azaleas.
+        RetromodTransformer transformer = RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        registerRedirects(transformer);
+        String azalea = "net/minecraft/world/level/block/grower/AzaleaTreeGrower";
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/TwinRegistry", null, "java/lang/Object", null);
+        cw.visitField(Opcodes.ACC_STATIC, "AZALEA_TREE", "L" + azalea + ";", null, null).visitEnd();
+        MethodVisitor clinit = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+        clinit.visitCode();
+        clinit.visitTypeInsn(Opcodes.NEW, azalea);
+        clinit.visitInsn(Opcodes.DUP);
+        clinit.visitMethodInsn(Opcodes.INVOKESPECIAL, azalea, "<init>", "()V", false);
+        clinit.visitFieldInsn(Opcodes.PUTSTATIC, "test/TwinRegistry", "AZALEA_TREE", "L" + azalea + ";");
+        clinit.visitInsn(Opcodes.RETURN);
+        clinit.visitMaxs(0, 0);
+        clinit.visitEnd();
+        cw.visitEnd();
+
+        ClassNode registry = node(transformer.transformClass(cw.toByteArray(), "test/TwinRegistry.class"));
+        assertEquals("L" + TREE_GROWER + ";", registry.fields.get(0).desc);
+        MethodInsnNode call = (MethodInsnNode) java.util.Arrays.stream(method(registry, "<clinit>").instructions.toArray())
+                .filter(MethodInsnNode.class::isInstance).findFirst().orElseThrow();
+        assertEquals(VANILLA_GROWERS + ".azalea", call.owner + "." + call.name);
+        // Each helper returns its constant without branches.
+        ClassNode growers = node(generateVanillaGrowers());
+        assertEquals(VANILLA.length, growers.methods.size());
+        for (MethodNode m : growers.methods) new Analyzer<>(new BasicVerifier()).analyze(growers.name, m);
+    }
+
     private static byte[] modGrower() {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "test/PalmTreeGrower", null, OLD_GROWER, null);

@@ -2,9 +2,11 @@
   "required": true,
   "minVersion": "0.8",
   "package": "com.retromod.testmod.neoforge.mixin",
+  "plugin": "com.retromod.testmod.neoforge.mixin.SubmitCollectorHostsOnly",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "LegacyResizeDisplayMixin"
+    "LegacyResizeDisplayMixin",
+    "LegacyFirstPersonArmMixin"
   ],
   "injectors": {
     "defaultRequire": 1

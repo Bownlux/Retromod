@@ -6,6 +6,8 @@ package com.retromod.shim.api.common;
 
 import com.retromod.core.RetromodTransformer;
 import com.retromod.util.RetromodLog;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,6 +17,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.function.Predicate;
 
@@ -42,13 +45,23 @@ public final class GeckoLibCorePackageMoves {
 
     /** Called by {@link GeckoLibApiShim}, which runs on every loader. */
     public static void register(RetromodTransformer transformer) {
-        registerIfHostMerged(transformer, GeckoLibCorePackageMoves::hostHasClass);
+        registerIfHostMerged(transformer, GeckoLibCorePackageMoves::installedHasClass, GeckoLibCorePackageMoves::installedDeclaresClass);
     }
 
     static int registerIfHostMerged(RetromodTransformer transformer, Predicate<String> hostHasClass) {
+        return registerIfHostMerged(transformer, hostHasClass, name -> false);
+    }
+
+    static int registerIfHostMerged(RetromodTransformer transformer, Predicate<String> hostHasClass,
+            Predicate<String> hostDeclaresClass) {
         if (!hostHasClass.test(MERGED_CONTROLLER) || hostHasClass.test(CORE_CONTROLLER)) return 0;
         Map<String, String> moves = classMoves();
         moves.forEach(transformer::registerClassRedirect);
+        // CoreGeoBone and CoreGeoModel were interfaces whose merged names are classes, so a call on them
+        // must become a class call, or it fails with IncompatibleClassChangeError (#404).
+        for (String moved : new LinkedHashSet<>(moves.values())) {
+            if (hostDeclaresClass.test(moved)) transformer.registerClassOwner(moved);
+        }
         LOGGER.debug(RetromodLog.DETAIL, "Registered {} GeckoLib core package move(s) for this host's GeckoLib", moves.size());
         return moves.size();
     }
@@ -77,11 +90,22 @@ public final class GeckoLibCorePackageMoves {
         return moves;
     }
 
-    /**
-     * Reads the class file instead of loading the class: NeoForge's dist cleaner throws for a
-     * client-only class on a dedicated server, even with {@code initialize=false}.
-     */
-    private static boolean hostHasClass(String internalName) {
-        return com.retromod.core.ClassResourceInspector.exists(internalName);
+    /** Whether the installed GeckoLib has the class, in the game or in a library linked to an offline transform. */
+    static boolean installedHasClass(String internalName) {
+        // Reads the class file instead of loading it: NeoForge's dist cleaner throws for a client-only class on a server.
+        return com.retromod.core.ClassResourceInspector.exists(internalName)
+                || com.retromod.core.RetromodTransformer.readLinkedLibraryClassForAdapter(internalName) != null;
+    }
+
+    /** Whether the installed GeckoLib declares the name as a class rather than an interface. */
+    static boolean installedDeclaresClass(String internalName) {
+        ClassNode node = com.retromod.core.ClassResourceInspector.read(internalName);
+        if (node == null) {
+            byte[] linked = com.retromod.core.RetromodTransformer.readLinkedLibraryClassForAdapter(internalName);
+            if (linked == null) return false;
+            node = new ClassNode();
+            new org.objectweb.asm.ClassReader(linked).accept(node, org.objectweb.asm.ClassReader.SKIP_CODE);
+        }
+        return (node.access & Opcodes.ACC_INTERFACE) == 0;
     }
 }

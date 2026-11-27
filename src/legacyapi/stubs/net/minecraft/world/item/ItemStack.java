@@ -46,4 +46,5 @@ public final class ItemStack implements ItemInstance, DataComponentHolder, Mutab
     @Override public <T> T remove(DataComponentType<? extends T> type) { throw new UnsupportedOperationException(); }
     public <T, C> T getCapability(ItemCapability<T, C> capability, C context) { throw new UnsupportedOperationException(); }
     public void onCraftedBy(net.minecraft.world.entity.player.Player player, int amount) { throw new UnsupportedOperationException(); }
+    public int getUseDuration(net.minecraft.world.entity.LivingEntity entity) { throw new UnsupportedOperationException(); }
 }

@@ -57,6 +57,7 @@ import com.retromod.testmod.tests.Test84RefmapFollowsHandler;
 import com.retromod.testmod.tests.Test85RenamedMixinTarget;
 import com.retromod.testmod.tests.Test86OldGuiDrawing;
 import com.retromod.testmod.tests.Test89KeyBindingSubclass;
+import com.retromod.testmod.tests.Test91FollowOwnerGoal;
 import com.retromod.testmod.tests.Test27OwnOverrideMob;
 import com.retromod.testmod.tests.Test28LegacyProcedureMembers;
 import com.retromod.testmod.tests.Test29OwnDamageOverride;
@@ -140,6 +141,7 @@ public final class TestRunner {
         all.add(new Test81OwnLibraryCopy());
         all.add(new Test84RefmapFollowsHandler());
         all.add(new Test85RenamedMixinTarget());
+        all.add(new Test91FollowOwnerGoal());
         // Asked during client init, where a 26.x game has no model manager yet; baked again at world join.
         all.add(new Test67EarlyEntityModels());
         // These register content, so they have to run before the registries freeze after initialization.

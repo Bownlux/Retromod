@@ -20,6 +20,10 @@ public class Fabric_1_20_4_to_1_20_5 implements VersionShim {
 
     @Override
     public void registerRedirects(RetromodTransformer transformer) {
+        // 1.20.5 removed the Vanishable item marker; an intermediary host gets an empty stand-in, a 26.x one gets it from the 26.1 shim.
+        if (!com.retromod.core.RetromodVersion.isUnobfuscatedTarget(com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            com.retromod.shim.common.RemovedItemBaseBridge.registerIntermediaryMarkers(transformer);
+        }
         // DFU 8 (1.20.5) removed DataResult.get(); its Either is rebuilt from the result.
         transformer.registerMethodRedirect("com/mojang/serialization/DataResult", "get",
                 "()Lcom/mojang/datafixers/util/Either;",

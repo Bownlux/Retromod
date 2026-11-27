@@ -7,4 +7,6 @@ public class ClientLevel extends Level {
     public ClientLevelData getLevelData() { throw new UnsupportedOperationException(); }
 
     public static class ClientLevelData implements net.minecraft.world.level.storage.LevelData {}
+    public static final net.minecraft.network.chat.Component DEFAULT_QUIT_MESSAGE = null;
+    public void disconnect(net.minecraft.network.chat.Component reason) { throw new UnsupportedOperationException(); }
 }

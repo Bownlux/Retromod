@@ -89,6 +89,8 @@ public class RetromodTestModNeoForge {
         if (FMLEnvironment.dist.isClient()) ItemPropertyCase.register(modBus);
         // A mixin on a method 26.1 renamed, as many client mods hook resizeDisplay(). Client only.
         if (FMLEnvironment.dist.isClient()) RenamedMixinTargetCase.register();
+        // A first-person arm redirect in the 1.21.9 shape must still apply on 26.3's split renderer (#390).
+        if (FMLEnvironment.dist.isClient()) FirstPersonArmMixinCase.register();
         // Lootr's trigger shape: it implements CriterionTrigger and keeps its own listeners, which 26.2 removed.
         ListenerTriggerCase.register(modBus);
         // A loot function and condition type and a structure processor type, which 26.1 and 26.2 turned into map codec
@@ -558,6 +560,11 @@ public class RetromodTestModNeoForge {
         // must be translated exactly when this mod is.
         n++; passed += check(n, "#358 a library versioned only by its manifest is translated with this mod",
             () -> LibraryCalls.manifestVersionedLibraryTranslatedLike(RetromodTestModNeoForge.class,
+                    "retromod-test-mod-neoforge"));
+        // Jade for 1.21.1 names only a NeoForge 21.0 floor. NeoForge 1.21.1 runs such a jar as it is, as
+        // it runs this mod.
+        n++; passed += check(n, "A jar NeoForge 1.21.1 runs as it is is translated exactly when this mod is",
+            () -> LibraryCalls.nativeJarTranslatedLike(RetromodTestModNeoForge.class,
                     "retromod-test-mod-neoforge"));
         // A move for a library's users never applies to the jar that defines the class, as GeckoLib 4's own
         // jar was moved onto com.geckolib and its classes could not load.

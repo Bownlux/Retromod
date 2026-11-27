@@ -159,24 +159,13 @@ public final class LegacyCodecTypeBridge {
         // The mod's own codec(), with the old return type.
         cw.visitMethod(Opcodes.ACC_PROTECTED | Opcodes.ACC_ABSTRACT, "codec", OLD_SAM, null, null).visitEnd();
 
-        // codec() as the host calls it: a record codec unwraps to its map codec; any other codec
+        // codec() as the host calls it: the same map codec the registration stored, so the registry finds the
+        // generator's codec by identity. A record codec otherwise unwraps to its map codec, and any other codec
         // is used as one, which is what the old method promised.
         MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PROTECTED, "codec", NEW_SAM, null, null);
         mv.visitCode();
         mv.visitVarInsn(Opcodes.ALOAD, 0);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, name, "codec", OLD_SAM, false);
-        mv.visitVarInsn(Opcodes.ASTORE, 1);
-        Label notRecord = new Label();
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitTypeInsn(Opcodes.INSTANCEOF, MAP_CODEC_CODEC);
-        mv.visitJumpInsn(Opcodes.IFEQ, notRecord);
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
-        mv.visitTypeInsn(Opcodes.CHECKCAST, MAP_CODEC_CODEC);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, MAP_CODEC_CODEC, "codec", NEW_SAM, false);
-        mv.visitInsn(Opcodes.ARETURN);
-        mv.visitLabel(notRecord);
-        // The same map codec the registration stored, so the registry finds the generator's codec by identity.
-        mv.visitVarInsn(Opcodes.ALOAD, 1);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, LegacyMapCodecsSynthetic.INTERNAL, "of", LegacyMapCodecsSynthetic.OF_DESC, false);
         mv.visitTypeInsn(Opcodes.CHECKCAST, MAP_CODEC);
         mv.visitInsn(Opcodes.ARETURN);

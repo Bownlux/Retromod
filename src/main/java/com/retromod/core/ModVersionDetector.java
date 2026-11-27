@@ -328,6 +328,7 @@ public class ModVersionDetector {
         if (mcVersion == null) {
             mcVersion = inferMcVersionFromNameOrForgeFloor(jar.getName(), tomlContent);
         }
+        mcVersion = hostVersionWhenLoaderAccepts(mcVersion, "forge");
         String forgeVersion = toml.get("forge");
 
         Set<String> packages = scanModPackages(jar, modId);
@@ -511,6 +512,7 @@ public class ModVersionDetector {
             // NeoForge's loaderVersion counts FML releases, so only the file name is left.
             mcVersion = inferMcVersionFromFileName(jar.getName(), null);
         }
+        mcVersion = hostVersionWhenLoaderAccepts(mcVersion, "neoforge");
         String neoforgeVersion = toml.get("neoforge");
 
         Set<String> packages = scanModPackages(jar, modId);
@@ -526,6 +528,33 @@ public class ModVersionDetector {
             apiDeps,
             checkForRemovedApis(apiDeps)
         );
+    }
+
+    /**
+     * The older release each loader accepts as its host's own, by host version. Read from the support
+     * matrix in each loader's own jar: Forge 52 and newer on 1.21.1, NeoForge's loader 4 to 8 on 1.21.1,
+     * and NeoForge's loader 9 and newer on 1.21.8.
+     */
+    private static final Map<String, Map<String, String>> LOADER_ACCEPTED_RELEASE = Map.of(
+            "forge", Map.of("1.21.1", "1.21"),
+            "neoforge", Map.of("1.21.1", "1.21", "1.21.8", "1.21.7"));
+
+    /** The host version when the host's own loader runs a mod built for {@code version} as one of its own, else {@code version}. */
+    private String hostVersionWhenLoaderAccepts(String version, String modLoader) {
+        String host = RetromodVersion.TARGET_MC_VERSION;
+        // Only the loader that runs the jar vouches for it. A Forge jar on NeoForge still needs translating.
+        String hostLoader = preferredLoader != null ? preferredLoader : defaultPreferredLoader;
+        if (version == null || host == null || !modLoader.equals(hostLoader)) return version;
+        String accepted = LOADER_ACCEPTED_RELEASE.get(modLoader).get(host);
+        try {
+            // 1.21.0, as a NeoForge 21.0 floor reads, is the same release as 1.21.
+            if (accepted == null || RetromodVersion.compareMcVersions(version, accepted) != 0) return version;
+        } catch (NumberFormatException unreadable) {
+            return version;
+        }
+        LOGGER.debug(RetromodLog.DETAIL, "{} {} accepts mods built for Minecraft {} as its own, so this one "
+                + "needs no translation", modLoader, host, version);
+        return host;
     }
 
     private String readMetadata(JarFile jar, JarEntry entry) throws IOException {

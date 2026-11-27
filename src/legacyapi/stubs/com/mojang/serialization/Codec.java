@@ -30,4 +30,5 @@ public interface Codec<A> extends Encoder<A>, Decoder<A> {
     }
     default <S> Codec<S> flatXmap(Function<? super A, ? extends DataResult<? extends S>> to,
             Function<? super S, ? extends DataResult<? extends A>> from) { throw new UnsupportedOperationException(); }
+    default Codec<A> validate(Function<A, DataResult<A>> check) { throw new UnsupportedOperationException(); }
 }

@@ -4,7 +4,6 @@
  */
 package com.retromod.shim.api.common;
 
-import com.retromod.core.ClassResourceInspector;
 import com.retromod.core.MinecraftVersionedApiShim;
 import com.retromod.core.RetromodTransformer;
 import com.retromod.core.RetromodVersion;
@@ -107,8 +106,7 @@ public class GeckoLib5ApiShim implements MinecraftVersionedApiShim {
     /** Reads, never loads, a class from the game's class loader or from a library linked to an offline transform. */
     private static boolean installedHasClass(String internalName) {
         // In a game the loader has put the jars in mods/ on this class loader before the shims register.
-        return ClassResourceInspector.exists(internalName)
-                || RetromodTransformer.readLinkedLibraryClassForAdapter(internalName) != null;
+        return GeckoLibCorePackageMoves.installedHasClass(internalName);
     }
 
     /** The moves this shim can register, for tests and reporting. */

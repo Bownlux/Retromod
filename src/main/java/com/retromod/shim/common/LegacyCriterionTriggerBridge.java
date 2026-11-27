@@ -42,6 +42,7 @@ public final class LegacyCriterionTriggerBridge {
     private static final String ENTITY_PREDICATE = CRITERIA + "EntityPredicate";
     private static final String ITEM_PREDICATE = CRITERIA + "ItemPredicate";
     private static final String TRIGGERS = "net/minecraft/advancements/CriteriaTriggers";
+    static final String PLAYER_TRIGGER = CRITERIA + "PlayerTrigger";
     private static final String CRITERION_TRIGGER = "net/minecraft/advancements/CriterionTrigger";
     static final String MOVED_CRITERION_TRIGGER = "net/minecraft/advancements/triggers/CriterionTrigger";
     static final String OLD_LISTENER = CRITERION_TRIGGER + "$Listener";
@@ -84,6 +85,9 @@ public final class LegacyCriterionTriggerBridge {
         String context = "L" + CONTEXT_PREDICATE + ";";
         t.registerMethodRedirect(TRIGGERS, "register", "(L" + CRITERION_TRIGGER + ";)L" + CRITERION_TRIGGER + ";",
                 CALLS, "register", "(L" + CRITERION_TRIGGER + ";)L" + CRITERION_TRIGGER + ";");
+        // The id a PlayerTrigger was built with is the one the old register names it by (#415).
+        t.registerConstructorRedirect(PLAYER_TRIGGER, "(L" + ID + ";)V", CALLS, "playerTrigger",
+                "(L" + ID + ";)L" + PLAYER_TRIGGER + ";");
         t.registerExactFieldRedirect(CONTEXT_PREDICATE, "ANY", context, CALLS, "any", "()" + context);
         t.registerMethodRedirect(ENTITY_PREDICATE, "fromJson", "(" + JSON_OBJECT + "Ljava/lang/String;" + read + ")" + context,
                 CALLS, "fromJson", "(" + JSON_OBJECT + "Ljava/lang/String;L" + READ_CONTEXT + ";)" + context);
@@ -418,6 +422,7 @@ public final class LegacyCriterionTriggerBridge {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         cw.visit(V17, ACC_PUBLIC | ACC_FINAL | ACC_SUPER, CALLS, null, "java/lang/Object", null);
         forward(cw, "register", "(" + trigger + ")" + trigger, "register", 1);
+        forward(cw, "playerTrigger", "(L" + ID + ";)L" + PLAYER_TRIGGER + ";", "playerTrigger", 1);
         forward(cw, "any", "()" + context, "any", 0);
         forward(cw, "fromJson", "(" + JSON_OBJECT + "Ljava/lang/String;L" + READ_CONTEXT + ";)" + context, "fromJson", 3);
         forward(cw, "toJson", "(" + context + "L" + WRITE_CONTEXT + ";)" + JSON_ELEMENT, "toJson", 1);

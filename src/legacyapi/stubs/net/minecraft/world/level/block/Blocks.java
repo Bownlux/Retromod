@@ -8,4 +8,6 @@ public final class Blocks {
     public static final Block MOSS_BLOCK = null;
     public static final Block FURNACE = null;
     private Blocks() {}
+    public static final Block SNOW = null;
+    public static final Block GRASS_BLOCK = null;
 }

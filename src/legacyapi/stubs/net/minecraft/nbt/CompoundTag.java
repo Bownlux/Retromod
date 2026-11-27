@@ -25,4 +25,9 @@ public final class CompoundTag implements Tag {
     public CompoundTag copy() { throw new UnsupportedOperationException(); }
     public CompoundTag merge(CompoundTag other) { throw new UnsupportedOperationException(); }
     public Tag remove(String key) { throw new UnsupportedOperationException(); }
+    public float getFloatOr(String key, float fallback) { throw new UnsupportedOperationException(); }
+    public void putFloat(String key, float value) { throw new UnsupportedOperationException(); }
+    public void putShort(String key, short value) { throw new UnsupportedOperationException(); }
+    public String getStringOr(String key, String fallback) { throw new UnsupportedOperationException(); }
+    public void putIntArray(String key, int[] value) { throw new UnsupportedOperationException(); }
 }

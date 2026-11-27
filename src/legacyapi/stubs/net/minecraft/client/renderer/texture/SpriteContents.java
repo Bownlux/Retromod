@@ -7,4 +7,6 @@ import net.minecraft.server.packs.metadata.MetadataSectionType;
 public class SpriteContents {
     public <T> Optional<T> getAdditionalMetadata(MetadataSectionType<T> type) { throw new UnsupportedOperationException(); }
     public net.minecraft.resources.Identifier name() { throw new UnsupportedOperationException(); }
+    public int width() { throw new UnsupportedOperationException(); }
+    public int height() { throw new UnsupportedOperationException(); }
 }

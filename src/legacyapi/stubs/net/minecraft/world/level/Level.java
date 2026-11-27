@@ -41,4 +41,6 @@ public class Level implements CollisionGetter {
     public net.minecraft.world.level.dimension.DimensionType dimensionType() { throw new UnsupportedOperationException(); }
     // The host also has a covariant abstract form returning EnvironmentAttributeSystem; this is the reader bridge.
     public net.minecraft.world.attribute.EnvironmentAttributeReader environmentAttributes() { throw new UnsupportedOperationException(); }
+    public boolean isClientSide() { throw new UnsupportedOperationException(); }
+    public void playLocalSound(double x, double y, double z, net.minecraft.sounds.SoundEvent sound, net.minecraft.sounds.SoundSource source, float volume, float pitch, boolean distanceDelay) { throw new UnsupportedOperationException(); }
 }

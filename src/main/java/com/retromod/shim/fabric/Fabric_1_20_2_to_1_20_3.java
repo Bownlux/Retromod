@@ -38,6 +38,14 @@ public class Fabric_1_20_2_to_1_20_3 implements VersionShim {
         // Entity.getTeam() returns PlayerTeam from 1.20.3. A 26.x host takes the Mojang-named bridge from the 26.1 shim.
         if (!com.retromod.core.RetromodVersion.isUnobfuscatedTarget(com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
             com.retromod.shim.common.LegacyEntityTeamBridge.registerIntermediary(transformer);
+            // 1.20.3 made FallingBlock abstract, so a plain one is built as a generated block.
+            com.retromod.shim.common.LegacyFallingBlockBridge.registerAbstractBase(transformer,
+                com.retromod.shim.common.LegacyFallingBlockBridge.Names.INTERMEDIARY);
+        } else {
+            // A new scoreboard objective takes display settings from 1.20.3; a 26.x host reads Mojang names.
+            com.retromod.shim.common.LegacyScoreboardBridge.register(transformer);
+            com.retromod.shim.common.LegacyFallingBlockBridge.registerAbstractBase(transformer,
+                com.retromod.shim.common.LegacyFallingBlockBridge.Names.MOJANG);
         }
     }
 

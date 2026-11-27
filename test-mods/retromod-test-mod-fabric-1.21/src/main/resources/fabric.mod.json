@@ -18,6 +18,9 @@
       "com.retromod.testmod121.RetromodTestMod121"
     ]
   },
+  "mixins": [
+    "retromod_test_mod_121.mixins.json"
+  ],
   "depends": {
     "fabricloader": ">=0.15.11",
     "minecraft": "1.21.1",

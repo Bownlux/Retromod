@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Hold My Items' first-person renderer mixin on 26.2 and the 26.3 split (#281/#312). */
+/** Hold My Items' first-person renderer mixin on 26.2 and the 26.3 split (#281/#312/#390). */
 class MixinFirstPersonRendererAdapterTest {
 
     private static final String MIXIN = "Lorg/spongepowered/asm/mixin/Mixin;";
@@ -47,6 +47,10 @@ class MixinFirstPersonRendererAdapterTest {
     private static final String RESOLVER = "net/minecraft/client/renderer/item/ItemModelResolver";
     private static final String HANDS_STATE =
             "net/minecraft/client/renderer/state/level/FirstPersonHandsAndItemsRenderState";
+    private static final String RENDERER_COPY =
+            com.retromod.shim.common.RebuiltApiClasses.ROOT + "minecraft/client/renderer/LegacyItemInHandRenderer";
+    private static final String BLOCK_DISPATCHER_COPY =
+            com.retromod.shim.common.RebuiltApiClasses.ROOT + "minecraft/client/renderer/LegacyBlockRenderDispatcher";
 
     @TempDir
     Path tempDir;
@@ -105,6 +109,33 @@ class MixinFirstPersonRendererAdapterTest {
     }
 
     @Test
+    void movesAMixinTheBytecodePassAlreadyPointedAtRetromodsRendererCopy() throws IOException {
+        // On 26.3 the class redirect to Retromod's own ItemInHandRenderer runs first, embedded under the mod's package.
+        String copy = "com/retromod/embedded/hmi_test/" + RENDERER_COPY;
+        ClassNode node = read(MixinFirstPersonRendererAdapter.adapt(armRedirectMixin(copy), host(true)));
+
+        assertEquals(Type.getObjectType(SPLIT), ((List<?>) value(node.invisibleAnnotations.get(0), "value")).get(0),
+                "the copy is not what Minecraft draws with, so the mixin must still move to the split renderer");
+        assertEquals("(L" + SPLIT + ";" + MixinFirstPersonRendererAdapter.NEW_ARM.substring(1),
+                method(node, "renderOverhaul").desc, "the copy in the handler's receiver becomes the split renderer");
+        assertFalse(node.methods.stream().anyMatch(m -> m.desc.contains(RENDERER_COPY)),
+                "no member may keep naming the copy");
+    }
+
+    @Test
+    void routesAHeldBlockFromRetromodsRebuiltBlockDispatcher() throws IOException {
+        String copy = "com/retromod/embedded/hmi_test/" + BLOCK_DISPATCHER_COPY;
+        ClassNode node = read(MixinFirstPersonRendererAdapter.adapt(heldBlockMixinThroughCopy(copy), host(false)));
+        MethodNode render = method(node, "render");
+
+        assertFalse(calls(render, copy, "get"), "the rebuilt dispatcher has no held-block draw for the duck interface");
+        assertFalse(casts(render, BLOCK_INTERFACE),
+                "the cast to the stripped mixin's interface would throw ClassCastException");
+        assertTrue(calls(render, node.name, "retromod$renderHeldBlock"),
+                "the held block must reach the mixin-owned fallback");
+    }
+
+    @Test
     void leavesTheMixinOnItsOldTargetWhenTheHostStillHasIt() throws IOException {
         FuzzyMethodResolver host = host(false);
         ClassNode node = read(MixinFirstPersonRendererAdapter.adapt(armRedirectMixin(), host));
@@ -126,6 +157,26 @@ class MixinFirstPersonRendererAdapterTest {
         assertEquals(null, onSplitHost,
                 "on 26.3 the mixin must survive until the post-remap step moves it to the split renderer");
         assertEquals(OLD, withoutSuccessor, "without the successor the old rule still disables it");
+    }
+
+    @Test
+    void removedTargetCheckKeepsARendererMixinWhoseRedirectsEndAtRetromodsCopy() {
+        com.retromod.core.RetromodTransformer transformer = com.retromod.core.RetromodTransformer.getInstance();
+        transformer.clearRedirectsForTesting();
+        String intermediary = "net/minecraft/class_759";
+        try {
+            transformer.registerClassRedirect(intermediary, OLD);
+            transformer.registerClassRedirect(OLD, RENDERER_COPY);
+            var compatibility = new MixinCompatibilityTransformer(transformer);
+            ClassNode mixin = read(mixin(intermediary, c -> {}));
+
+            String flagged = compatibility.mixinTargetsRemovedClass(mixin,
+                    name -> !name.equals(OLD.replace('/', '.')) && !name.equals(intermediary.replace('/', '.')));
+
+            assertEquals(null, flagged, "26.3 rebuilds ItemInHandRenderer, but the mixin must still reach the split retarget");
+        } finally {
+            transformer.clearRedirectsForTesting();
+        }
     }
 
     @Test
@@ -269,7 +320,12 @@ class MixinFirstPersonRendererAdapterTest {
     }
 
     private static byte[] armRedirectMixin() {
-        return mixin(OLD, c -> {
+        return armRedirectMixin(OLD);
+    }
+
+    /** The arm redirect on {@code target}, whose handler receives that type; the selector keeps Minecraft's name. */
+    private static byte[] armRedirectMixin(String target) {
+        return mixin(target, c -> {
             MethodVisitor shadow = c.visitMethod(Opcodes.ACC_PROTECTED | Opcodes.ACC_ABSTRACT, "renderPlayerArm",
                     "(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;IFF"
                             + "Lnet/minecraft/world/entity/HumanoidArm;)V", null, null);
@@ -277,7 +333,7 @@ class MixinFirstPersonRendererAdapterTest {
             shadow.visitEnd();
 
             MethodVisitor handler = c.visitMethod(Opcodes.ACC_PRIVATE, "renderOverhaul",
-                    "(L" + OLD + ";" + MixinFirstPersonRendererAdapter.OLD_ARM.substring(1), null, null);
+                    "(L" + target + ";" + MixinFirstPersonRendererAdapter.OLD_ARM.substring(1), null, null);
             AnnotationVisitor redirect = handler.visitAnnotation(REDIRECT, true);
             AnnotationVisitor methods = redirect.visitArray("method");
             methods.visit(null, "submitHandsWithItems" + MixinFirstPersonRendererAdapter.OLD_HANDS);
@@ -291,6 +347,32 @@ class MixinFirstPersonRendererAdapterTest {
             handler.visitInsn(Opcodes.RETURN);
             handler.visitMaxs(0, 13);
             handler.visitEnd();
+        });
+    }
+
+    /** The held-block draw as the bytecode pass leaves it on 26.x: the rebuilt dispatcher, cast to the mod's interface. */
+    private static byte[] heldBlockMixinThroughCopy(String copy) {
+        return mixin(OLD, c -> {
+            c.visitField(Opcodes.ACC_PRIVATE, "minecraft", "L" + MINECRAFT + ";", null, null).visitEnd();
+            MethodVisitor render = c.visitMethod(Opcodes.ACC_PRIVATE, "render",
+                    "(Lnet/minecraft/world/level/block/state/BlockState;Lcom/mojang/blaze3d/vertex/PoseStack;"
+                            + "Lnet/minecraft/client/renderer/SubmitNodeCollector;I"
+                            + "Lnet/minecraft/client/multiplayer/ClientLevel;"
+                            + "Lnet/minecraft/client/player/AbstractClientPlayer;)V", null, null);
+            render.visitCode();
+            render.visitVarInsn(Opcodes.ALOAD, 0);
+            render.visitFieldInsn(Opcodes.GETFIELD, "test/mixin/RendererMixin", "minecraft", "L" + MINECRAFT + ";");
+            render.visitMethodInsn(Opcodes.INVOKESTATIC, copy, "get", "(Ljava/lang/Object;)L" + copy + ";", false);
+            render.visitTypeInsn(Opcodes.CHECKCAST, copy);
+            render.visitTypeInsn(Opcodes.CHECKCAST, BLOCK_INTERFACE);
+            for (int slot = 1; slot <= 6; slot++) {
+                render.visitVarInsn(slot == 4 ? Opcodes.ILOAD : Opcodes.ALOAD, slot);
+            }
+            render.visitMethodInsn(Opcodes.INVOKEINTERFACE, BLOCK_INTERFACE, "renderSingleBlockWithEmission",
+                    MixinFirstPersonRendererAdapter.HELD_BLOCK_DESC, true);
+            render.visitInsn(Opcodes.RETURN);
+            render.visitMaxs(7, 7);
+            render.visitEnd();
         });
     }
 
@@ -340,6 +422,16 @@ class MixinFirstPersonRendererAdapterTest {
     private static boolean calls(MethodNode method, String owner, String name) {
         for (AbstractInsnNode insn : method.instructions) {
             if (insn instanceof MethodInsnNode call && call.owner.equals(owner) && call.name.equals(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean casts(MethodNode method, String type) {
+        for (AbstractInsnNode insn : method.instructions) {
+            if (insn instanceof org.objectweb.asm.tree.TypeInsnNode cast && cast.getOpcode() == Opcodes.CHECKCAST
+                    && cast.desc.equals(type)) {
                 return true;
             }
         }

@@ -13,6 +13,7 @@ public class Entity {
 
     public EntityType<?> getType() { throw new UnsupportedOperationException(); }
     public int getId() { throw new UnsupportedOperationException(); }
+    public boolean isInLiquid() { throw new UnsupportedOperationException(); }
     public java.util.UUID getUUID() { throw new UnsupportedOperationException(); }
     public net.minecraft.world.phys.Vec3 getDeltaMovement() { throw new UnsupportedOperationException(); }
     public float getYHeadRot() { throw new UnsupportedOperationException(); }
@@ -46,4 +47,6 @@ public class Entity {
     public boolean canBeCollidedWith(Entity other) { throw new UnsupportedOperationException(); }
     public boolean isPassenger() { throw new UnsupportedOperationException(); }
     public boolean isCrouching() { throw new UnsupportedOperationException(); }
+    public net.minecraft.world.damagesource.DamageSources damageSources() { throw new UnsupportedOperationException(); }
+    public EntityAttachments getAttachments() { throw new UnsupportedOperationException(); }
 }

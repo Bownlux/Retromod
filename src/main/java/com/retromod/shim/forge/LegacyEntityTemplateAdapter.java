@@ -37,7 +37,7 @@ import org.objectweb.asm.tree.VarInsnNode;
 public final class LegacyEntityTemplateAdapter implements Opcodes {
 
     public static final String FLAG = "legacy-entity-templates";
-    static final String COMMANDS_HELPER = "com/retromod/generated/LegacyCommandResults";
+    public static final String COMMANDS_HELPER = "com/retromod/generated/LegacyCommandResults";
     private static final String COMMANDS = "net/minecraft/commands/Commands";
     private static final String SOURCE = "Lnet/minecraft/commands/CommandSourceStack;";
     private static final String PARSE = "Lcom/mojang/brigadier/ParseResults;";
@@ -56,13 +56,7 @@ public final class LegacyEntityTemplateAdapter implements Opcodes {
     }
 
     static void register(RetromodTransformer transformer, ClassNode commands, ClassNode living) {
-        if (returnsVoid(commands, "performPrefixedCommand")) {
-            transformer.registerSyntheticClass(COMMANDS_HELPER, commandResults());
-            transformer.registerMethodRedirect(COMMANDS, "performPrefixedCommand", "(" + SOURCE + "Ljava/lang/String;)I",
-                    COMMANDS_HELPER, "performPrefixedCommand", "(L" + COMMANDS + ";" + SOURCE + "Ljava/lang/String;)I", true);
-            transformer.registerMethodRedirect(COMMANDS, "performCommand", "(" + PARSE + "Ljava/lang/String;)I",
-                    COMMANDS_HELPER, "performCommand", "(L" + COMMANDS + ";" + PARSE + "Ljava/lang/String;)I", true);
-        }
+        if (returnsVoid(commands, "performPrefixedCommand")) registerCommandResults(transformer);
         String drop = dropExperienceShape(living);
         if (drop != null) {
             hostDropExperience = drop;
@@ -124,6 +118,15 @@ public final class LegacyEntityTemplateAdapter implements Opcodes {
         code.add(done);
         code.add(new InsnNode(RETURN));
         return bridge;
+    }
+
+    /** Sends the int-returning command calls, which return nothing from 1.20.3, to helpers that answer 0. */
+    public static void registerCommandResults(RetromodTransformer transformer) {
+        transformer.registerSyntheticClass(COMMANDS_HELPER, commandResults());
+        transformer.registerMethodRedirect(COMMANDS, "performPrefixedCommand", "(" + SOURCE + "Ljava/lang/String;)I",
+                COMMANDS_HELPER, "performPrefixedCommand", "(L" + COMMANDS + ";" + SOURCE + "Ljava/lang/String;)I", true);
+        transformer.registerMethodRedirect(COMMANDS, "performCommand", "(" + PARSE + "Ljava/lang/String;)I",
+                COMMANDS_HELPER, "performCommand", "(L" + COMMANDS + ";" + PARSE + "Ljava/lang/String;)I", true);
     }
 
     private static boolean returnsVoid(ClassNode owner, String method) {

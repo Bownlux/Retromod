@@ -92,6 +92,13 @@ public final class Legacy1205MemberBridge {
             {"net/minecraft/network/FriendlyByteBuf$Writer", "accept", "encode"},
     };
 
+    /** Getters 1.20.5 renamed when it made their class a record: owner, old name, descriptor, accessor name. */
+    static final String[][] RECORD_ACCESSORS = {
+            {"net/minecraft/network/syncher/EntityDataAccessor", "getId", "()I", "id"},
+            {"net/minecraft/network/syncher/EntityDataAccessor", "getSerializer",
+                    "()Lnet/minecraft/network/syncher/EntityDataSerializer;", "serializer"},
+    };
+
     /** A removed member, its old descriptor, and the helper that answers for it. */
     record Member(String owner, String name, String desc) {
         String helperDesc() {
@@ -186,8 +193,14 @@ public final class Legacy1205MemberBridge {
         }
         boolean scute = fieldRenamedOnHost(ITEMS, "SCUTE", "TURTLE_SCUTE");
         registerRedirects(transformer, members, renames, scute, shape);
+        registerRecordAccessors(transformer);
+        registerStaticEquipmentSlot(transformer);
         if (temptGoalTakesPredicate()) registerTemptGoalWidening(transformer);
         if (propertiesLostStackSize()) registerPropertiesStackSize(transformer);
+        // Item.getMaxStackSize() became getDefaultMaxStackSize(); the stack's own getMaxStackSize() stayed.
+        if (itemStackSizeRenamed()) {
+            transformer.registerInheritedMethodRedirect(ITEM, "getMaxStackSize", "()I", ITEM, "getDefaultMaxStackSize", "()I");
+        }
         registerItemNames(transformer);
         enableLevelTooltips(transformer);
         // ItemParser.parseForItem and its result went with the component parser; Carry On reads its model overrides with it.
@@ -372,6 +385,101 @@ public final class Legacy1205MemberBridge {
         }
     }
 
+    /** The record accessors' old getters, which Epic Core API's {@code LivingEntity} mixin reads while the game starts (#398). */
+    static void registerRecordAccessors(RetromodTransformer transformer) {
+        for (String[] accessor : RECORD_ACCESSORS) {
+            ClassNode owner = ClassResourceInspector.read(accessor[0]);
+            // Offline the host version decides, which this bridge already checked.
+            if (owner != null && (hasMethod(owner, accessor[1], accessor[2]) || !hasMethod(owner, accessor[3], accessor[2]))) continue;
+            transformer.registerMethodRedirect(accessor[0], accessor[1], accessor[2], accessor[0], accessor[3], accessor[2]);
+        }
+    }
+
+    static final String EQUIPMENT_SLOTS = "com/retromod/generated/LegacyEquipmentSlots";
+    static final String SLOT_FOR_ITEM = "(L" + ITEM_STACK + ";)L" + SLOT + ";";
+    static final String EQUIPABLE = "net/minecraft/world/item/Equipable";
+    static final String EQUIPPABLE = "net/minecraft/world/item/equipment/Equippable";
+    /** The loader item stack extensions whose {@code getEquipmentSlot()} the entity asks first. */
+    static final String[] STACK_EXTENSIONS = {"net/neoforged/neoforge/common/extensions/IItemStackExtension",
+            "net/minecraftforge/common/extensions/IForgeItemStack"};
+
+    /** The static {@code Mob.getEquipmentSlotForItem(stack)} that 1.20.5 made an entity method, which Villager Recruits loads its equipment with (#394). */
+    static void registerStaticEquipmentSlot(RetromodTransformer transformer) {
+        ClassNode living = ClassResourceInspector.read(LIVING);
+        boolean instance = living == null || living.methods.stream().anyMatch(method -> method.name.equals("getEquipmentSlotForItem")
+                && method.desc.equals(SLOT_FOR_ITEM) && (method.access & Opcodes.ACC_STATIC) == 0);
+        if (!instance) return;
+        // 1.21.2 replaced the Equipable interface with the equippable item component.
+        boolean component = ClassResourceInspector.read(LEVEL_DATA) != null ? !ClassResourceInspector.exists(EQUIPABLE)
+                : !hostBefore("1.21.2");
+        boolean extension = false;
+        for (String type : STACK_EXTENSIONS) {
+            ClassNode node = ClassResourceInspector.read(type);
+            extension |= node != null && hasMethod(node, "getEquipmentSlot", "()L" + SLOT + ";");
+        }
+        transformer.registerSyntheticClass(EQUIPMENT_SLOTS, generateEquipmentSlots(component, extension));
+        for (String owner : new String[] {MOB, LIVING}) {
+            // Inherited, since an unqualified call in a mob subclass names the subclass.
+            transformer.registerInheritedMethodRedirect(owner, "getEquipmentSlotForItem", SLOT_FOR_ITEM, EQUIPMENT_SLOTS,
+                    "getEquipmentSlotForItem", SLOT_FOR_ITEM);
+            // The host's instance method has the same key, so an instance call keeps it, whatever the mod's version.
+            transformer.limitRedirectToStaticCalls(owner, "getEquipmentSlotForItem", SLOT_FOR_ITEM);
+            transformer.limitRedirectToModsBefore(owner, "getEquipmentSlotForItem", SLOT_FOR_ITEM, "1.20.5");
+        }
+    }
+
+    /** {@code static EquipmentSlot getEquipmentSlotForItem(ItemStack)}: the slot the stack or its item asks for, or the main hand. */
+    static byte[] generateEquipmentSlots(boolean component, boolean extension) {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
+            @Override
+            protected String getCommonSuperClass(String first, String second) {
+                return "java/lang/Object";
+            }
+        };
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, EQUIPMENT_SLOTS, null,
+                "java/lang/Object", null);
+        MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "getEquipmentSlotForItem", SLOT_FOR_ITEM,
+                null, null);
+        mv.visitCode();
+        Label mainHand = new Label();
+        if (extension) {
+            // stack.getEquipmentSlot(), the loader's own answer, which the entity asks first.
+            Label noAnswer = new Label();
+            mv.visitVarInsn(Opcodes.ALOAD, 0);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, ITEM_STACK, "getEquipmentSlot", "()L" + SLOT + ";", false);
+            mv.visitInsn(Opcodes.DUP);
+            mv.visitJumpInsn(Opcodes.IFNULL, noAnswer);
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitLabel(noAnswer);
+            mv.visitInsn(Opcodes.POP);
+        }
+        mv.visitVarInsn(Opcodes.ALOAD, 0);
+        if (component) {
+            // stack.get(DataComponents.EQUIPPABLE), whose slot is the item's.
+            mv.visitFieldInsn(Opcodes.GETSTATIC, COMPONENTS, "EQUIPPABLE", "L" + COMPONENT_TYPE + ";");
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, ITEM_STACK, "get", "(L" + COMPONENT_TYPE + ";)Ljava/lang/Object;", false);
+            mv.visitTypeInsn(Opcodes.CHECKCAST, EQUIPPABLE);
+            mv.visitInsn(Opcodes.DUP);
+            mv.visitJumpInsn(Opcodes.IFNULL, mainHand);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, EQUIPPABLE, "slot", "()L" + SLOT + ";", false);
+        } else {
+            // Equipable.get(stack), as 1.20.1 asked.
+            mv.visitMethodInsn(Opcodes.INVOKESTATIC, EQUIPABLE, "get", "(L" + ITEM_STACK + ";)L" + EQUIPABLE + ";", true);
+            mv.visitInsn(Opcodes.DUP);
+            mv.visitJumpInsn(Opcodes.IFNULL, mainHand);
+            mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, EQUIPABLE, "getEquipmentSlot", "()L" + SLOT + ";", true);
+        }
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitLabel(mainHand);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitFieldInsn(Opcodes.GETSTATIC, SLOT, "MAINHAND", "L" + SLOT + ";");
+        mv.visitInsn(Opcodes.ARETURN);
+        mv.visitMaxs(0, 0);
+        mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
     /** The host's own Entity decides; offline, the host version does. */
     static boolean hostIsPast1205() {
         ClassNode entity = ClassResourceInspector.read(ENTITY);
@@ -382,6 +490,13 @@ public final class Legacy1205MemberBridge {
     private static boolean removedOnHost(Member member) {
         ClassNode owner = ClassResourceInspector.read(member.owner());
         return owner == null || !hasMethod(owner, member.name(), member.desc());
+    }
+
+    /** Whether the host's Item has getDefaultMaxStackSize() and no getMaxStackSize(); offline, past 1.20.5 decides. */
+    private static boolean itemStackSizeRenamed() {
+        ClassNode item = ClassResourceInspector.read(ITEM);
+        if (item == null) return true;
+        return !hasMethod(item, "getMaxStackSize", "()I") && hasMethod(item, "getDefaultMaxStackSize", "()I");
     }
 
     private static boolean renamedOnHost(String oldName, String newName) {

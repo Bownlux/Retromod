@@ -8,4 +8,5 @@ import net.minecraft.util.ProblemReporter;
 public abstract class TagValueOutput implements ValueOutput {
     public static TagValueOutput createWithContext(ProblemReporter reporter, HolderLookup.Provider registries) { throw new UnsupportedOperationException(); }
     public CompoundTag buildResult() { throw new UnsupportedOperationException(); }
+    public static TagValueOutput createWithoutContext(ProblemReporter reporter) { throw new UnsupportedOperationException(); }
 }

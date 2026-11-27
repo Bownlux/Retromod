@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.retromod.testmod121.mixin",
+  "plugin": "com.retromod.testmod121.mixin.SubmitCollectorHostsOnly",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "LegacyFirstPersonArmMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

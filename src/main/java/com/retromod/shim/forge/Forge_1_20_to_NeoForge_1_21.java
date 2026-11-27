@@ -141,6 +141,8 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         com.retromod.shim.common.LegacyFrameTimeBridge.register(transformer);
         // 1.21 replaced the VertexConsumer builder chain (vertex, color, uv, endVertex) with addVertex and setters.
         com.retromod.shim.common.LegacyVertexApiBridge.register(transformer);
+        // It also took a model's and a part's color as one int, which an old entity model never draws with (#404).
+        com.retromod.shim.common.LegacyModelDrawBridge.register(transformer);
         // 1.20.3 made Entity.getTeam() return PlayerTeam, and the Forge chain reaches it from here.
         com.retromod.shim.common.LegacyEntityTeamBridge.register(transformer);
         // Item.getShareTag went with stack NBT. Sophisticated Backpacks saves a placed backpack through it.
@@ -148,6 +150,10 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         // A mod built on Forge 46 for 1.20 still names Entity.getLevel(), which 1.20 renamed to level().
         // Lootr reads the player's level that way while a chest is open.
         registerEntityGetLevelRename(transformer);
+        // 1.20.3 renamed short grass and the block property that turns off break particles; Penumbra Phantasm uses both (#415).
+        com.retromod.shim.common.Legacy1203RenameBridge.register(transformer);
+        // 1.20.3 also gave a new scoreboard objective its display settings; MCreator procedures add objectives (#406).
+        com.retromod.shim.common.LegacyScoreboardBridge.register(transformer);
         com.retromod.shim.common.LegacyFoodPropertiesBridge.register(transformer);
         com.retromod.shim.common.LegacyToolItemBridge.register(transformer);
         com.retromod.shim.common.Legacy1205MemberBridge.register(transformer);
@@ -182,10 +188,16 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         com.retromod.shim.common.LegacyPotionUtilsBridge.register(transformer);
         com.retromod.shim.common.LegacyHolderConstantBridge.register(transformer);
         com.retromod.shim.common.RemovedItemBaseBridge.registerRemovedIn(transformer, "1.20.5");
+        // 1.20.2 made image buttons draw GUI sprites, so until 1.21.2 a texture region is rebuilt on the old blit.
+        com.retromod.shim.common.LegacyTextureImageButtonBridge.register(transformer);
+        // 1.21 dropped the pet follow goal's flying flag and the two curse checks.
+        com.retromod.shim.common.Legacy121MembersBridge.register(transformer);
 
         // The rest only applies on a NeoForge runtime. On Forge it would rewrite a mod's @Mod to the
         // NeoForge one, and Forge then reports "has mods that were not found".
         if (!McReflect.isNeoForge()) {
+            // Forge 26.2 removed ForgeChunkManager, so the level's own forced chunks take its place.
+            LegacyForgeChunkManagerBridge.registerForge(transformer);
             LOGGER.debug("Skipping Forge → NeoForge migration redirects (runtime is not NeoForge)");
             return;
         }
@@ -388,6 +400,16 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         );
         // Forge's HUD overlays and their events run on NeoForge's GUI layers.
         com.retromod.shim.neoforge.LegacyNeoForgeGuiOverlayBridge.register(transformer);
+        // The HUD event's window and float partial tick, which NeoForge 1.21 dropped (#410).
+        com.retromod.shim.neoforge.LegacyNeoForgeGuiEventBridge.register(transformer);
+        // Forge's ShieldBlockEvent is NeoForge's LivingShieldBlockEvent, with the shield damage and cancel renamed (#415).
+        LegacyShieldBlockEventBridge.register(transformer);
+        // NeoForge renamed the target event's getters, which Box of Horrors and Penumbra Phantasm's mobs read (#406, #415).
+        registerChangeTargetRenames(transformer);
+        // The datapack registry event kept its members. Moved even where 26.3 renamed it again, so that rename follows.
+        for (String event : new String[]{"DataPackRegistryEvent", "DataPackRegistryEvent$NewRegistry"}) {
+            transformer.registerClassRedirect("net/minecraftforge/registries/" + event, "net/neoforged/neoforge/registries/" + event);
+        }
         transformer.registerClassRedirect(
             "net/minecraftforge/client/event/EntityRenderersEvent",
             "net/neoforged/neoforge/client/event/EntityRenderersEvent"
@@ -790,6 +812,19 @@ public class Forge_1_20_to_NeoForge_1_21 implements VersionShim {
         }
         // Calls name the mod's own entity or Player, so the redirect follows the hierarchy.
         transformer.registerInheritedMethodRedirect(entity, "getLevel", desc, entity, "level", desc);
+    }
+
+    /** Forge's {@code LivingChangeTargetEvent} target getters and setter under the names NeoForge gave them, where the host has those. */
+    static void registerChangeTargetRenames(RetromodTransformer transformer) {
+        String event = "net/neoforged/neoforge/event/entity/living/LivingChangeTargetEvent";
+        String entity = "Lnet/minecraft/world/entity/LivingEntity;";
+        ClassNode host = ClassResourceInspector.read(event);
+        if (host != null && host.methods.stream().noneMatch(m -> m.name.equals("getNewAboutToBeSetTarget"))) return;
+        for (String owner : new String[]{"net/minecraftforge/event/entity/living/LivingChangeTargetEvent", event}) {
+            transformer.registerMethodRedirect(owner, "getNewTarget", "()" + entity, event, "getNewAboutToBeSetTarget", "()" + entity);
+            transformer.registerMethodRedirect(owner, "setNewTarget", "(" + entity + ")V", event, "setNewAboutToBeSetTarget", "(" + entity + ")V");
+            transformer.registerMethodRedirect(owner, "getOriginalTarget", "()" + entity, event, "getOriginalAboutToBeSetTarget", "()" + entity);
+        }
     }
 
     /** Answers the removed {@code Item.getShareTag(stack)} with the item's own override, else the stack's custom data. */

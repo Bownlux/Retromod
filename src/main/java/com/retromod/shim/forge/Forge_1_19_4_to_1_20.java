@@ -37,7 +37,10 @@ public class Forge_1_19_4_to_1_20 implements VersionShim {
                     "(" + material + extra + ")L" + properties + ";",
                     properties, "of", "()L" + properties + ";");
         }
-        transformer.registerStaticFieldNuller("net/minecraft/world/level/material/Material");
+        // On 26.1 and newer the vanilla gap bridge rebuilds Material, so its constants are real there.
+        if (!com.retromod.core.RetromodVersion.isUnobfuscatedTarget(com.retromod.core.RetromodVersion.TARGET_MC_VERSION)) {
+            transformer.registerStaticFieldNuller("net/minecraft/world/level/material/Material");
+        }
         transformer.registerClassRedirect(
             "net/minecraft/world/level/material/MaterialColor",
             "net/minecraft/world/level/material/MapColor"

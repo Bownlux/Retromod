@@ -8,7 +8,9 @@ public final class ModelPart {
     public void render(com.mojang.blaze3d.vertex.PoseStack pose, com.mojang.blaze3d.vertex.VertexConsumer consumer, int light, int overlay, int color) { throw new UnsupportedOperationException(); }
     public boolean hasChild(String name) { throw new UnsupportedOperationException(); }
     public ModelPart getChild(String name) { throw new UnsupportedOperationException(); }
-    public static final class Cube {}
+    public static final class Cube {
+        public void compile(com.mojang.blaze3d.vertex.PoseStack.Pose pose, com.mojang.blaze3d.vertex.VertexConsumer consumer, int light, int overlay, int color) { throw new UnsupportedOperationException(); }
+    }
     public PartPose storePose() { throw new UnsupportedOperationException(); }
     public void loadPose(PartPose pose) { throw new UnsupportedOperationException(); }
     public java.util.List<ModelPart> getAllParts() { throw new UnsupportedOperationException(); }

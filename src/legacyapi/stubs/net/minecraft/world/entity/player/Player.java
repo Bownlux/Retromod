@@ -15,4 +15,6 @@ public class Player extends LivingEntity {
     public boolean isCreative() { throw new UnsupportedOperationException(); }
     public net.minecraft.server.permissions.PermissionSet permissions() { throw new UnsupportedOperationException(); }
     public float getLuck() { throw new UnsupportedOperationException(); }
+    public double blockInteractionRange() { throw new UnsupportedOperationException(); }
+    public void sendSystemMessage(net.minecraft.network.chat.Component message) { throw new UnsupportedOperationException(); }
 }

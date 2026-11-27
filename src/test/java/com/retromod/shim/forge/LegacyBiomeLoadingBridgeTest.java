@@ -90,6 +90,23 @@ class LegacyBiomeLoadingBridgeTest {
         assertTrue(node(modifier).interfaces.contains("net/minecraftforge/common/world/BiomeModifier"));
     }
 
+    @Test
+    void theEventAnswersTheCategoryTheBiomesIdHad() {
+        // #408 (Monke Madness, Forge 1.18.2 on Forge 1.20.1): monkeys spawn where getCategory() is JUNGLE or SAVANNA.
+        ClassNode event = new ClassNode();
+        new ClassReader(LegacyBiomeLoadingBridge.generateEvent()).accept(event, 0);
+        MethodNode category = event.methods.stream().filter(m -> m.name.equals("getCategory")).findFirst().orElseThrow();
+        assertEquals("()L" + LegacyBiomeLoadingBridge.CATEGORY + ";", category.desc);
+        assertEquals(com.retromod.shim.forge.embedded.LegacyBiomeCategory.JUNGLE,
+                com.retromod.shim.forge.embedded.LegacyBiomeCategory.of("minecraft:bamboo_jungle"));
+        assertEquals(com.retromod.shim.forge.embedded.LegacyBiomeCategory.SAVANNA,
+                com.retromod.shim.forge.embedded.LegacyBiomeCategory.of("minecraft:windswept_savanna"));
+        assertEquals(com.retromod.shim.forge.embedded.LegacyBiomeCategory.SWAMP,
+                com.retromod.shim.forge.embedded.LegacyBiomeCategory.of("biomesoplenty:bayou_marsh"));
+        assertEquals(com.retromod.shim.forge.embedded.LegacyBiomeCategory.NONE,
+                com.retromod.shim.forge.embedded.LegacyBiomeCategory.of("othermod:something"));
+    }
+
     private void write(String name, byte[] bytes) throws Exception {
         Path file = modRoot.resolve(name + ".class");
         Files.createDirectories(file.getParent());

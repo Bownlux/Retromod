@@ -5,6 +5,7 @@
 package com.retromod.testmod.forge;
 
 import com.retromod.testlib.forge.RetromodTestLibForge;
+import com.retromod.testnative.forge.RetromodTestNativeForge;
 import net.minecraft.world.item.Tier;
 import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraftforge.common.util.LazyOptional;
@@ -32,6 +33,43 @@ final class LibraryCalls {
             throws java.io.IOException {
         return translatedByRetromod(RetromodTestLibForge.class, "retromod-test-lib-forge")
                 == translatedByRetromod(mod, modTitle);
+    }
+
+    /**
+     * Whether the jar built for 1.21 is left as it is on Forge 1.21.1 and older, which run it as their own,
+     * and translated on newer Forge. NeoForge never reads its mods.toml, so it is not checked there.
+     */
+    static boolean forge121JarTranslatedOnlyAbove1211() throws java.io.IOException {
+        if (onNeoForge()) return true;
+        boolean newerHost = compareVersions(net.minecraftforge.versions.mcp.MCPVersion.getMCVersion(), "1.21.1") > 0;
+        return translatedByRetromod(RetromodTestNativeForge.class, "retromod-test-native-forge") == newerHost;
+    }
+
+    private static boolean onNeoForge() {
+        try {
+            Class.forName("net.neoforged.fml.loading.FMLLoader", false, LibraryCalls.class.getClassLoader());
+            return true;
+        } catch (ClassNotFoundException forge) {
+            return false;
+        }
+    }
+
+    /** Compares dotted versions number by number, so 1.21.10 is newer than 1.21.1. */
+    private static int compareVersions(String left, String right) {
+        String[] a = left.split("\\.");
+        String[] b = right.split("\\.");
+        for (int i = 0; i < Math.max(a.length, b.length); i++) {
+            int x = leadingNumber(i < a.length ? a[i] : "0");
+            int y = leadingNumber(i < b.length ? b[i] : "0");
+            if (x != y) return Integer.compare(x, y);
+        }
+        return 0;
+    }
+
+    /** The digits a version part starts with, such as 1 in 1-rc1, or 0 when it has none. */
+    private static int leadingNumber(String part) {
+        String digits = part.replaceAll("\\D.*", "");
+        return digits.isEmpty() ? 0 : Integer.parseInt(digits);
     }
 
     /**

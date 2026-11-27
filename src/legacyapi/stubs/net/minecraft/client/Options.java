@@ -5,4 +5,8 @@ public class Options {
     public void save() { throw new UnsupportedOperationException(); }
     public OptionInstance<GraphicsPreset> graphicsPreset() { throw new UnsupportedOperationException(); }
     public OptionInstance<Boolean> improvedTransparency() { throw new UnsupportedOperationException(); }
+    public boolean useNativeTransport() { throw new UnsupportedOperationException(); }
+    public net.minecraft.client.CameraType getCameraType() { throw new UnsupportedOperationException(); }
+    public OptionInstance<Double> fovEffectScale() { throw new UnsupportedOperationException(); }
+    public OptionInstance<Boolean> fullscreen() { throw new UnsupportedOperationException(); }
 }

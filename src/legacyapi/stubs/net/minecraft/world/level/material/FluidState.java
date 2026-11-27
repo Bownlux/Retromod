@@ -6,4 +6,5 @@ public final class FluidState {
     public boolean is(net.minecraft.tags.TagKey<Fluid> tag) { throw new UnsupportedOperationException(); }
     public Fluid getType() { throw new UnsupportedOperationException(); }
     public net.minecraft.world.level.block.state.BlockState createLegacyBlock() { throw new UnsupportedOperationException(); }
+    public boolean isEmpty() { throw new UnsupportedOperationException(); }
 }

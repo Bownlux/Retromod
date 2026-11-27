@@ -224,7 +224,11 @@ public final class Common_1_21_11_to_26_1_ClassMoves {
         LegacyEraCallsBridge.register(transformer);
         // Removed members the big content mods call, rebuilt on their replacements.
         LegacyContentCallsBridge.register(transformer);
+        // Single members that kept otherwise clean mods from linking: reach, food, packs, attacks, toasts and screens.
+        LegacyVanillaGapsBridge.register(transformer);
         LegacyDepthBlendBridge.registerDepthState(transformer);
+        // 26.1 also replaced the pipeline builder's blend shortcut, which 26.2's bridge already adapted.
+        LegacyRenderPipelineBuilderBridge.registerBlend(transformer);
         // The chunk's moved flag, the spawn entry codec and the villager type constants, for every loader on 26.1.
         LegacyWorldgenMembersBridge.registerOlder(transformer);
 

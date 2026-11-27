@@ -9,4 +9,5 @@ public final class ItemInput {
     public Holder<Item> item() { throw new UnsupportedOperationException(); }
 
     public DataComponentPatch components() { throw new UnsupportedOperationException(); }
+    public net.minecraft.world.item.ItemStack createItemStack(int count) throws com.mojang.brigadier.exceptions.CommandSyntaxException { throw new UnsupportedOperationException(); }
 }

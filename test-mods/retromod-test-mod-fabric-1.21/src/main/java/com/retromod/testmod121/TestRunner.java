@@ -14,6 +14,7 @@ import com.retromod.testmod121.tests.Test58LegacySaveOverrides;
 import com.retromod.testmod121.tests.Test81OldSingletonLootEntry;
 import com.retromod.testmod121.tests.Test82OldLootReads;
 import com.retromod.testmod121.tests.Test85OldPlacementTypes;
+import com.retromod.testmod121.tests.Test90FirstPersonArmMixin;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.server.MinecraftServer;
@@ -40,6 +41,7 @@ public final class TestRunner {
         // Client networking classes cannot load on a dedicated server.
         if (FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT) {
             tests.add(new Test40ClientPayloadPacket());
+            tests.add(new Test90FirstPersonArmMixin());
         }
         return tests;
     }

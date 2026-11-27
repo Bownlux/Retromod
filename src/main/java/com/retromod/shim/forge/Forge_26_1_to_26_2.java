@@ -61,6 +61,8 @@ public class Forge_26_1_to_26_2 implements VersionShim {
             return;
         }
         ForgeEventBusSynthetics.register(transformer);
+        // ForgeChunkManager went too, so a 1.21 mod's forced chunks become the level's own.
+        LegacyForgeChunkManagerBridge.registerForge(transformer);
         // EventBus 7 also removed the old Event base that old mods' own events extend, and Event.Result.
         LegacyEventBaseBridge.register(transformer);
         // Forge 26.2 made EntityEvent, LivingEvent, PlayerEvent, LevelEvent and BlockEvent interfaces, which a

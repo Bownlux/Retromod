@@ -6,4 +6,5 @@ import net.minecraft.world.entity.player.PlayerSkin;
 
 public abstract class AbstractClientPlayer extends Player {
     public PlayerSkin getSkin() { throw new UnsupportedOperationException(); }
+    public float getFieldOfViewModifier(boolean firstPerson, float fovEffectScale) { throw new UnsupportedOperationException(); }
 }

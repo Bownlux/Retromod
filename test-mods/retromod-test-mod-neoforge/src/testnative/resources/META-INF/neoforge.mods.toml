@@ -1,0 +1,17 @@
+# Shaped like Jade 15.10.6 for 1.21.1: no minecraft dependency names the version, only a NeoForge
+# 21.0 floor. NeoForge 1.21.1 runs it as it is, as it runs mods built for 1.21.
+modLoader = "javafml"
+loaderVersion = "[1,)"
+license = "MIT"
+
+[[mods]]
+modId = "retromod_test_native_neoforge"
+version = "${file.jarVersion}"
+displayName = "Retromod Test Native (NeoForge)"
+description = "Built for this host, so it loads as it is. Install it next to the test mod."
+
+[[dependencies.retromod_test_native_neoforge]]
+modId = "neoforge"
+type = "required"
+versionRange = "[21.0.143,)"
+side = "BOTH"

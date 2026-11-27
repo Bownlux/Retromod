@@ -27,8 +27,14 @@ public class NeoForge_1_20_6_to_1_21 implements VersionShim {
         com.retromod.shim.common.Legacy1205MemberBridge.registerChunkStatusRename(transformer);
         // 1.21 replaced Minecraft.getFrameTime() with the delta tracker.
         com.retromod.shim.common.LegacyFrameTimeBridge.register(transformer);
+        // The HUD event lost its window and float partial tick the same way.
+        LegacyNeoForgeGuiEventBridge.register(transformer);
         // 1.21 replaced the VertexConsumer builder chain (vertex, color, uv, endVertex) with addVertex and setters.
         com.retromod.shim.common.LegacyVertexApiBridge.register(transformer);
+        // It also took a model's and a part's color as one int.
+        com.retromod.shim.common.LegacyModelDrawBridge.register(transformer);
+        // 1.21 also dropped the pet follow goal's flying flag and the two curse checks.
+        com.retromod.shim.common.Legacy121MembersBridge.register(transformer);
         // The Forge-era StairBlock(Supplier, Properties) that NeoForge 1.21 dropped.
         com.retromod.shim.forge.LegacyStairBlockBridge.register(transformer);
         // Rarity.create became an enum extension declared in the mod's metadata.

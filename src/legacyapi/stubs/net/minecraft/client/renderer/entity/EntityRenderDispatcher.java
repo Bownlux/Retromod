@@ -14,4 +14,5 @@ public class EntityRenderDispatcher {
             double x, double y, double z, com.mojang.blaze3d.vertex.PoseStack poseStack, net.minecraft.client.renderer.SubmitNodeCollector collector) {
         throw new UnsupportedOperationException();
     }
+    public <T extends net.minecraft.world.entity.Entity> EntityRenderer<? super T, ?> getRenderer(T entity) { throw new UnsupportedOperationException(); }
 }

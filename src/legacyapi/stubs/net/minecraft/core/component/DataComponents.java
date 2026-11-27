@@ -13,4 +13,8 @@ public final class DataComponents {
     public static final DataComponentType<net.minecraft.world.item.DyeColor> DYE = null;
     public static final DataComponentType<net.minecraft.world.item.component.CookingFuel> COOKING_FUEL = null;
     public static final DataComponentType<net.minecraft.world.item.equipment.Equippable> EQUIPPABLE = null;
+    public static final DataComponentType<net.minecraft.world.food.FoodProperties> FOOD = null;
+    public static final DataComponentType<net.minecraft.world.item.component.ItemAttributeModifiers> ATTRIBUTE_MODIFIERS = null;
+    public static final DataComponentType<net.minecraft.world.item.enchantment.ItemEnchantments> ENCHANTMENTS = null;
+    public static final DataComponentType<net.minecraft.world.item.component.TypedEntityData<net.minecraft.world.level.block.entity.BlockEntityType<?>>> BLOCK_ENTITY_DATA = null;
 }

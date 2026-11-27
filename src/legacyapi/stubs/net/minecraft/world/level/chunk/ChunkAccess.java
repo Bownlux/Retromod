@@ -7,4 +7,5 @@ import net.minecraft.world.level.block.state.BlockState;
 public abstract class ChunkAccess {
     public void markPosForPostProcessing(BlockPos pos) { throw new UnsupportedOperationException(); }
     public abstract BlockState setBlockState(BlockPos pos, BlockState state, int flags);
+    public record PackedTicks(java.util.List<?> blocks, java.util.List<?> fluids) {}
 }

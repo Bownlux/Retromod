@@ -43,6 +43,15 @@ public final class LegacyTreeGrowerBridge {
     static final String GROWER = "com/retromod/generated/LegacyTreeGrower";
     static final String MEGA_GROWER = "com/retromod/generated/LegacyMegaTreeGrower";
     static final String SAPLING_FACTORY = "com/retromod/generated/LegacySaplingBlock";
+    static final String VANILLA_GROWERS = "com/retromod/generated/LegacyVanillaTreeGrowers";
+
+    /** 1.20.1's own grower classes and the TreeGrower constant each became, with the old constructor's descriptor. */
+    static final String[][] VANILLA = {
+        {"OakTreeGrower", "OAK", "()V"}, {"SpruceTreeGrower", "SPRUCE", "()V"}, {"BirchTreeGrower", "BIRCH", "()V"},
+        {"JungleTreeGrower", "JUNGLE", "()V"}, {"AcaciaTreeGrower", "ACACIA", "()V"},
+        {"DarkOakTreeGrower", "DARK_OAK", "()V"}, {"CherryTreeGrower", "CHERRY", "()V"},
+        {"AzaleaTreeGrower", "AZALEA", "()V"}, {"MangroveTreeGrower", "MANGROVE", "(F)V"},
+    };
 
     private static final String RANDOM = "net/minecraft/util/RandomSource";
     private static final String KEY = "net/minecraft/resources/ResourceKey";
@@ -100,6 +109,32 @@ public final class LegacyTreeGrowerBridge {
             transformer.registerConstructorRedirect(SAPLING, "(L" + grower + ";L" + PROPERTIES + ";)V",
                     SAPLING_FACTORY, "of", factoryDesc);
         }
+        // A vanilla grower the mod built itself, such as new AzaleaTreeGrower(), is now one of TreeGrower's constants.
+        transformer.registerSyntheticClass(VANILLA_GROWERS, generateVanillaGrowers());
+        for (String[] vanilla : VANILLA) {
+            String old = "net/minecraft/world/level/block/grower/" + vanilla[0];
+            transformer.registerClassRedirect(old, TREE_GROWER);
+            transformer.registerConstructorRedirect(old, vanilla[2], VANILLA_GROWERS, vanilla[1].toLowerCase(java.util.Locale.ROOT),
+                    vanilla[2].replace(")V", ")" + L_TREE_GROWER));
+        }
+    }
+
+    /** One static method per vanilla grower, returning its TreeGrower constant; Mangrove's tall-tree chance is dropped. */
+    static byte[] generateVanillaGrowers() {
+        ClassWriter cw = writer();
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER, VANILLA_GROWERS, null,
+                "java/lang/Object", null);
+        for (String[] vanilla : VANILLA) {
+            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, vanilla[1].toLowerCase(java.util.Locale.ROOT),
+                    vanilla[2].replace(")V", ")" + L_TREE_GROWER), null, null);
+            mv.visitCode();
+            mv.visitFieldInsn(Opcodes.GETSTATIC, TREE_GROWER, vanilla[1], L_TREE_GROWER);
+            mv.visitInsn(Opcodes.ARETURN);
+            mv.visitMaxs(0, 0);
+            mv.visitEnd();
+        }
+        cw.visitEnd();
+        return cw.toByteArray();
     }
 
     static byte[] generateGrower() {

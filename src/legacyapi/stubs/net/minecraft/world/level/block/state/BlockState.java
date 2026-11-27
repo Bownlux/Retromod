@@ -7,6 +7,8 @@ public class BlockState {
     // Declared on BlockBehaviour.BlockStateBase on the host.
     // A default method of TypedInstance on the host.
     public boolean is(net.minecraft.tags.TagKey<net.minecraft.world.level.block.Block> tag) { throw new UnsupportedOperationException(); }
+    // TypedInstance.is(type) on the host, erased to Object.
+    public boolean is(Object type) { throw new UnsupportedOperationException(); }
     public boolean isAir() { throw new UnsupportedOperationException(); }
     public Block getBlock() { throw new UnsupportedOperationException(); }
     // Declared on BlockBehaviour.BlockStateBase on the host.
@@ -22,4 +24,9 @@ public class BlockState {
     public <T extends Comparable<T>> T getValue(net.minecraft.world.level.block.state.properties.Property<T> property) { throw new UnsupportedOperationException(); }
     // Declared on BlockBehaviour.BlockStateBase on the host; a virtual call resolves either way.
     public net.minecraft.world.level.material.FluidState getFluidState() { throw new UnsupportedOperationException(); }
+    public net.minecraft.world.item.ItemStack getCloneItemStack(net.minecraft.world.level.LevelReader level, net.minecraft.core.BlockPos pos, boolean includeData) { throw new UnsupportedOperationException(); }
+    public boolean liquid() { throw new UnsupportedOperationException(); }
+    public boolean ignitedByLava() { throw new UnsupportedOperationException(); }
+    public boolean canBeReplaced() { throw new UnsupportedOperationException(); }
+    public net.minecraft.world.level.material.PushReaction getPistonPushReaction() { throw new UnsupportedOperationException(); }
 }

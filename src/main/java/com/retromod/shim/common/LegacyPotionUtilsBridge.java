@@ -22,8 +22,9 @@ import org.slf4j.LoggerFactory;
  * <p>A Mojang-named mod that tags a potion stack, such as a Forge 1.20.1 mod building a brewing
  * recipe output, fails with {@code NoClassDefFoundError} as soon as that code runs. The class is
  * redirected to a generated one that keeps the old static methods and reads or writes the
- * component. It covers {@code setPotion}, {@code setCustomEffects}, and {@code getPotion}. Other
- * old helpers, such as {@code getColor} and {@code getMobEffects}, still fail when called.
+ * component. It covers {@code setPotion}, {@code setCustomEffects}, {@code getPotion},
+ * {@code getMobEffects}, and {@code getCustomEffects}. Other old helpers, such as {@code getColor},
+ * still fail when called.
  * {@code getPotion} returns null for a stack without a potion, where 1.20.1 returned the empty
  * potion that no longer exists.
  *
@@ -143,6 +144,51 @@ public final class LegacyPotionUtilsBridge {
         getPotion.visitInsn(Opcodes.ARETURN);
         getPotion.visitMaxs(0, 0);
         getPotion.visitEnd();
+
+        // getMobEffects(stack): the potion's effects, then the custom ones, in a new list as 1.20.1 returned
+        MethodVisitor allEffects = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "getMobEffects",
+                "(" + L_STACK + ")Ljava/util/List;", null, null);
+        allEffects.visitCode();
+        allEffects.visitTypeInsn(Opcodes.NEW, "java/util/ArrayList");
+        allEffects.visitInsn(Opcodes.DUP);
+        allEffects.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/util/ArrayList", "<init>", "()V", false);
+        allEffects.visitVarInsn(Opcodes.ASTORE, 1);
+        allEffects.visitVarInsn(Opcodes.ALOAD, 0);
+        loadContents(allEffects);
+        allEffects.visitMethodInsn(Opcodes.INVOKEVIRTUAL, CONTENTS, "getAllEffects", "()Ljava/lang/Iterable;", false);
+        allEffects.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/lang/Iterable", "iterator", "()Ljava/util/Iterator;", true);
+        allEffects.visitVarInsn(Opcodes.ASTORE, 2);
+        Label nextEffect = new Label();
+        Label allAdded = new Label();
+        allEffects.visitLabel(nextEffect);
+        allEffects.visitVarInsn(Opcodes.ALOAD, 2);
+        allEffects.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/Iterator", "hasNext", "()Z", true);
+        allEffects.visitJumpInsn(Opcodes.IFEQ, allAdded);
+        allEffects.visitVarInsn(Opcodes.ALOAD, 1);
+        allEffects.visitVarInsn(Opcodes.ALOAD, 2);
+        allEffects.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/Iterator", "next", "()Ljava/lang/Object;", true);
+        allEffects.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/List", "add", "(Ljava/lang/Object;)Z", true);
+        allEffects.visitInsn(Opcodes.POP);
+        allEffects.visitJumpInsn(Opcodes.GOTO, nextEffect);
+        allEffects.visitLabel(allAdded);
+        allEffects.visitVarInsn(Opcodes.ALOAD, 1);
+        allEffects.visitInsn(Opcodes.ARETURN);
+        allEffects.visitMaxs(0, 0);
+        allEffects.visitEnd();
+
+        // getCustomEffects(stack): a new list of only the custom effects
+        MethodVisitor customEffects = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "getCustomEffects",
+                "(" + L_STACK + ")Ljava/util/List;", null, null);
+        customEffects.visitCode();
+        customEffects.visitTypeInsn(Opcodes.NEW, "java/util/ArrayList");
+        customEffects.visitInsn(Opcodes.DUP);
+        customEffects.visitVarInsn(Opcodes.ALOAD, 0);
+        loadContents(customEffects);
+        customEffects.visitMethodInsn(Opcodes.INVOKEVIRTUAL, CONTENTS, "customEffects", "()Ljava/util/List;", false);
+        customEffects.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/util/ArrayList", "<init>", "(Ljava/util/Collection;)V", false);
+        customEffects.visitInsn(Opcodes.ARETURN);
+        customEffects.visitMaxs(0, 0);
+        customEffects.visitEnd();
 
         cw.visitEnd();
         return cw.toByteArray();

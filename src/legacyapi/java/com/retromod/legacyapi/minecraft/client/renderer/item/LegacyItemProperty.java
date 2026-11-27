@@ -5,6 +5,7 @@
 package com.retromod.legacyapi.minecraft.client.renderer.item;
 
 import com.mojang.serialization.MapCodec;
+import com.retromod.legacyapi.forge.LegacySharedSlots;
 import com.retromod.shim.common.embedded.LegacyLog;
 import java.util.function.ToDoubleFunction;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -20,6 +21,10 @@ public final class LegacyItemProperty implements RangeSelectItemModelProperty {
     /** {@code {"id": <old property id>}}, next to the range dispatch's own fields. */
     public static final MapCodec<LegacyItemProperty> MAP_CODEC =
             Identifier.CODEC.fieldOf("id").xmap(LegacyItemProperty::new, LegacyItemProperty::id);
+
+    // The shared slot the frame lookup of LegacyVanillaGaps reads.
+    private static final String ITEM_OWNER_SLOT = "minecraft.itemOwner";
+    private static volatile ThreadLocal<Object> ownerSlot;
 
     private final Identifier id;
     private final String key;
@@ -40,13 +45,26 @@ public final class LegacyItemProperty implements RangeSelectItemModelProperty {
         if (function == null) return Float.NEGATIVE_INFINITY;
         // The old functions took the living entity holding the stack, which 26.x passes as an item owner.
         LivingEntity entity = owner == null ? null : owner.asLivingEntity();
+        // An old function asked stack.isFramed() for a stack in an item frame; the frame is kept here while it runs.
+        ThreadLocal<Object> reading = owners();
+        Object outer = reading.get();
+        reading.set(new Object[]{stack, owner});
         try {
             return (float) function.applyAsDouble(new Object[]{stack, level, entity, seed});
         } catch (RuntimeException | LinkageError failure) {
             LegacyLog.warnOnce("item property " + key, "The old item property " + key + " threw " + failure
                     + ", so Retromod shows its items as if no override on it held");
             return Float.NEGATIVE_INFINITY;
+        } finally {
+            reading.set(outer);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ThreadLocal<Object> owners() {
+        ThreadLocal<Object> shared = ownerSlot;
+        if (shared == null) ownerSlot = shared = LegacySharedSlots.get(ITEM_OWNER_SLOT, 1, ThreadLocal.class, ThreadLocal::new);
+        return shared;
     }
 
     @Override

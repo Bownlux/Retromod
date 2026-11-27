@@ -5,6 +5,8 @@
 package com.retromod.shim.common;
 
 import com.retromod.core.RetromodTransformer;
+import com.retromod.core.RetromodVersion;
+import com.retromod.shim.forge.LegacyEntityTemplateAdapter;
 
 /**
  * Follows vanilla renames from Minecraft 1.19 that 1.18.2 mods still use.
@@ -18,6 +20,7 @@ import com.retromod.core.RetromodTransformer;
 public final class LegacyMinecraft119Bridge {
 
     private static final String GAME_EVENT = "net/minecraft/world/level/gameevent/GameEvent";
+    static final String PREFIXED_COMMAND_RETURNS_VOID = "1.20.3";
 
     /** 1.18.2 game event constant to its 1.19 name. */
     static final String[][] GAME_EVENT_RENAMES = {
@@ -41,5 +44,16 @@ public final class LegacyMinecraft119Bridge {
         LegacyVillagerBridge.register(transformer);
         transformer.registerClassRedirect("net/minecraft/network/protocol/game/ClientboundAddMobPacket",
                 "net/minecraft/network/protocol/game/ClientboundAddEntityPacket");
+        // 1.19 renamed Commands.performCommand(source, command), which skipped a leading slash, to performPrefixedCommand.
+        String commands = "net/minecraft/commands/Commands";
+        String run = "(Lnet/minecraft/commands/CommandSourceStack;Ljava/lang/String;)I";
+        if (RetromodVersion.compareMcVersions(RetromodVersion.TARGET_MC_VERSION, PREFIXED_COMMAND_RETURNS_VOID) < 0) {
+            transformer.registerMethodRedirect(commands, "performCommand", run, commands, "performPrefixedCommand", run);
+            return;
+        }
+        // From 1.20.3 it returns nothing, so the call goes to the helper that runs it and answers 0.
+        LegacyEntityTemplateAdapter.registerCommandResults(transformer);
+        transformer.registerMethodRedirect(commands, "performCommand", run, LegacyEntityTemplateAdapter.COMMANDS_HELPER,
+                "performPrefixedCommand", "(L" + commands + ";" + run.substring(1), true);
     }
 }

@@ -24,6 +24,12 @@ public class NeoForge_1_20_2_to_1_20_3 implements VersionShim {
         com.retromod.shim.common.LegacyTreeGrowerBridge.register(transformer);
         // 1.20.3 made Entity.getTeam() return the PlayerTeam it always held.
         com.retromod.shim.common.LegacyEntityTeamBridge.register(transformer);
+        // It gave a new scoreboard objective its display settings.
+        com.retromod.shim.common.LegacyScoreboardBridge.register(transformer);
+        // It renamed short grass and the block property that turns off break particles.
+        com.retromod.shim.common.Legacy1203RenameBridge.register(transformer);
+        // It folded sand and gravel into ColoredFallingBlock and made FallingBlock abstract.
+        com.retromod.shim.common.LegacyFallingBlockBridge.register(transformer);
     }
 
     @Override
